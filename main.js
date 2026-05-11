@@ -1920,38 +1920,64 @@ function genRoomCode() {
 function peerIdFromCode(code) { return 'spel-' + code.toUpperCase(); }
 
 // ICE-config med STUN + TURN. TURN behövs när någondera spelare sitter bakom
-// symmetric NAT (vanligt på mobildata, jobbnätverk, vissa hemrouter).
-// OpenRelay är ett gratis publikt TURN-projekt — bra för hobby, ingen garanti.
+// symmetric NAT (vanligt på mobildata, jobbnätverk, vissa hem-routrar).
+// Flera leverantörer för redundans — om en är nere fungerar förhoppningsvis nån annan.
 const PEER_CONFIG = {
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      // Open Relay (Metered) — gratis publika TURN
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+      // Relay.expressturn (free dev tier — kontot kan rotera, men funkar oftast)
+      { urls: 'turn:relay1.expressturn.com:3478', username: 'efSGN6PB0YJMNK7K1Q', credential: 'gTPeFLGN1u9q8qzx' },
     ],
+    iceCandidatePoolSize: 4,
   },
+  debug: 1,
 };
 
 function startPeer(id) {
   return new Promise((resolve, reject) => {
     const peer = id ? new Peer(id, PEER_CONFIG) : new Peer(PEER_CONFIG);
-    peer.on('open', (openId) => resolve(peer));
-    peer.on('error', (err) => reject(err));
+    let settled = false;
+    peer.on('open', (openId) => { if (!settled) { settled = true; resolve(peer); } });
+    peer.on('error', (err) => {
+      console.warn('PeerJS error', err);
+      if (!settled) { settled = true; reject(err); }
+      else {
+        // Visas i lobbyn så användaren ser tydligt vad som händer
+        showLobbyError('Peer-fel: ' + (err.type || err.message || 'okänt'));
+      }
+    });
   });
+}
+
+// Diagnostik: koppla ICE-state till lobby-meddelandet så vi ser var handshaken hänger.
+function attachIceDiagnostics(conn, msgEl) {
+  // PeerConnection blir tillgänglig en stund efter att connect/answer skapats
+  const tryAttach = () => {
+    const pc = conn.peerConnection;
+    if (!pc) { setTimeout(tryAttach, 200); return; }
+    const update = () => {
+      const ice = pc.iceConnectionState;
+      const gather = pc.iceGatheringState;
+      const sig = pc.signalingState;
+      if (msgEl) msgEl.textContent = `ICE: ${ice} · gather: ${gather} · sig: ${sig}`;
+      console.log('[ICE]', { ice, gather, sig });
+    };
+    pc.addEventListener('iceconnectionstatechange', update);
+    pc.addEventListener('icegatheringstatechange', update);
+    pc.addEventListener('signalingstatechange', update);
+    pc.addEventListener('icecandidateerror', (e) => {
+      console.warn('[ICE candidate error]', e.errorCode, e.errorText, e.url);
+    });
+    update();
+  };
+  tryAttach();
 }
 
 async function hostGame() {
@@ -1976,9 +2002,15 @@ async function hostGame() {
   lobbyHostMsgEl.textContent = 'Väntar på spelare...';
   APP.peer.on('connection', (conn) => {
     APP.conn = conn;
+    lobbyHostMsgEl.textContent = 'Spelare hittade — etablerar koppling...';
+    attachIceDiagnostics(conn, lobbyHostMsgEl);
     conn.on('open', () => {
       setupConnHandlers();
       startMatch('host');
+    });
+    conn.on('error', (err) => {
+      console.warn('host conn error', err);
+      showLobbyError('Anslutningsfel: ' + (err.type || err.message || 'okänt'));
     });
   });
 }
@@ -2009,27 +2041,41 @@ async function joinGame() {
     showLobbyError('PeerJS-fel: ' + (err.type || err.message || 'okänt'));
     return;
   }
+  // Fångar peer-unavailable och liknande som dyker upp EFTER att startPeer resolvat
+  APP.peer.on('error', (err) => {
+    console.warn('peer error post-open', err);
+    if (err.type === 'peer-unavailable') {
+      showLobbyError('Hittade inte värdens rum. Är koden rätt och håller hen lobbyn öppen?');
+    } else if (err.type === 'network') {
+      showLobbyError('Nätverksfel mot signaleringsservern.');
+    }
+  });
   const conn = APP.peer.connect(peerIdFromCode(code), { reliable: true });
   APP.conn = conn;
   let opened = false;
+  lobbyJoinMsgEl.textContent = 'Signalering klar — etablerar WebRTC...';
+  attachIceDiagnostics(conn, lobbyJoinMsgEl);
   conn.on('open', () => {
     opened = true;
     setupConnHandlers();
     startMatch('client');
   });
   conn.on('error', (err) => {
+    console.warn('conn error', err);
     if (!opened) {
-      showLobbyError('Kunde inte ansluta — kontrollera koden.');
+      showLobbyError('Anslutningsfel: ' + (err.type || err.message || 'okänt'));
     }
   });
   setTimeout(() => {
     if (!opened) {
-      showLobbyError('Timeout — ingen anslutning.');
+      const pc = conn.peerConnection;
+      const ice = pc ? pc.iceConnectionState : 'unknown';
+      showLobbyError(`Timeout efter 30s. ICE-state: ${ice}. Troligt NAT/TURN-problem — testa en annan webbläsare eller annat nätverk.`);
       try { APP.peer.destroy(); } catch (_) {}
       APP.peer = null;
       APP.conn = null;
     }
-  }, 15000);
+  }, 30000);
 }
 
 function startMatch(mode) {
