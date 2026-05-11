@@ -22,6 +22,11 @@
     }
     canvas { display: block; touch-action: none; }
 
+    /* Spel-UI är dolt tills lobbyn är avklarad */
+    body:not(.in-game) #hud,
+    body:not(.in-game) #touch-ui,
+    body:not(.in-game) #shop { display: none !important; }
+
     /* HUD */
     #hud {
       position: fixed; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left));
@@ -161,6 +166,71 @@
     }
     #restart-btn:active { transform: scale(0.97); }
 
+    /* Lobby (startskärm + anslutningsstatus) */
+    #lobby {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #0d1424 0%, #1b2838 100%);
+      color: #fff;
+      display: flex;
+      align-items: center; justify-content: center;
+      flex-direction: column;
+      font: 16px/1.4 system-ui, sans-serif;
+      padding: 24px;
+      z-index: 500;
+      text-align: center;
+    }
+    #lobby.hidden { display: none; }
+    #lobby h1 {
+      font-size: 36px; margin: 0 0 6px;
+      color: #ff7733;
+      letter-spacing: 1px;
+    }
+    #lobby .sub { opacity: 0.7; margin-bottom: 28px; font-size: 13px; }
+    .lobby-btn {
+      background: rgba(60,120,200,0.85);
+      color: #fff;
+      border: 2px solid rgba(200,220,255,0.6);
+      border-radius: 10px;
+      padding: 14px 32px;
+      font: 600 16px/1 system-ui, sans-serif;
+      margin: 6px;
+      cursor: pointer;
+      min-width: 220px;
+      touch-action: manipulation;
+    }
+    .lobby-btn:active { transform: scale(0.97); }
+    .lobby-btn.secondary { background: rgba(40,60,90,0.7); border-color: rgba(140,160,200,0.5); }
+    .lobby-btn.danger { background: rgba(140,60,60,0.7); border-color: rgba(220,150,150,0.6); }
+    .lobby-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #lobby-code-input {
+      background: rgba(0,0,0,0.4); color: #fff;
+      border: 2px solid rgba(180,200,255,0.5);
+      border-radius: 10px;
+      padding: 14px 18px;
+      font: 600 24px/1 ui-monospace, monospace;
+      letter-spacing: 8px;
+      text-align: center;
+      width: 200px;
+      text-transform: uppercase;
+      margin: 6px 0;
+    }
+    #lobby-code-display {
+      font: 700 56px/1 ui-monospace, monospace;
+      letter-spacing: 14px;
+      color: #88ccff;
+      background: rgba(0,0,0,0.45);
+      padding: 18px 24px;
+      border-radius: 12px;
+      border: 2px solid rgba(140,180,240,0.5);
+      margin: 14px 0;
+      cursor: pointer;
+      user-select: all; -webkit-user-select: all;
+    }
+    #lobby .msg { opacity: 0.85; margin: 10px 0; min-height: 22px; }
+    #lobby .err { color: #ff8877; font-weight: 600; }
+    .lobby-panel { display: none; flex-direction: column; align-items: center; }
+    .lobby-panel.visible { display: flex; }
+
     /* Porträtt-varning */
     #orient {
       position: fixed; inset: 0;
@@ -191,8 +261,35 @@
       }
     }
   </script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
+  <div id="lobby">
+    <h1>SPEL</h1>
+    <div class="sub">Hero Line Wars · 1v1</div>
+
+    <div class="lobby-panel visible" id="lobby-main">
+      <button class="lobby-btn" id="btn-host">Host Game</button>
+      <button class="lobby-btn" id="btn-join">Join Game</button>
+      <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-hosting">
+      <div>Din rumskod:</div>
+      <div id="lobby-code-display">----</div>
+      <div class="msg" id="lobby-host-msg">Förbereder...</div>
+      <button class="lobby-btn danger" id="btn-host-cancel">Avbryt</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-joining">
+      <div>Ange 4-tecken kod:</div>
+      <input id="lobby-code-input" maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text" />
+      <button class="lobby-btn" id="btn-join-connect">Anslut</button>
+      <div class="msg" id="lobby-join-msg"></div>
+      <button class="lobby-btn secondary" id="btn-join-back">Tillbaka</button>
+    </div>
+  </div>
+
   <div id="hud">
     <div id="status">Förbereder...</div>
     <div class="hint">vänster: rörelse · höger: tap eller drag-sikta</div>
