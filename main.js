@@ -2233,7 +2233,8 @@ window.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
 // ---- Shop (lokal UI-state + populate + refresh) ----
 
-const shopEl = document.getElementById('shop');
+const shopHeroEl = document.getElementById('shop-hero');
+const shopMinionEl = document.getElementById('shop-minion');
 const shopState = { selectedTier: 1, selectedLane: 1 };
 const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
@@ -2380,7 +2381,8 @@ function refreshShopUI() {
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
   }
 
-  shopEl.classList.toggle('visible', inBase);
+  if (shopHeroEl) shopHeroEl.classList.toggle('visible', inBase);
+  if (shopMinionEl) shopMinionEl.classList.toggle('visible', inBase);
 }
 
 populateShop();
