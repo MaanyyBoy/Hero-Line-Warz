@@ -698,12 +698,13 @@ function makePlayerCreepMesh(ownerIdx) {
 // APP-STATE
 // ============================================================
 
+const RELAY_URL = 'wss://hero-line-warz.onrender.com';
+
 const APP = {
   mode: 'lobby',          // 'lobby' | 'solo' | 'host' | 'client'
   localSide: 1,           // 1 eller 2 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
-  peer: null,
-  conn: null,
+  ws: null,               // WebSocket till relay-servern (host + client)
   // Klient-input som ska skickas
   pendingEvents: [],
   lastInputSent: 0,
@@ -713,6 +714,13 @@ const APP = {
   // Senast mottagen state (bara client använder för render)
   lastStateRecv: null,
 };
+
+function wsOpen() { return APP.ws && APP.ws.readyState === WebSocket.OPEN; }
+function wsSendEnvelope(obj) {
+  if (!wsOpen()) return;
+  try { APP.ws.send(JSON.stringify(obj)); } catch (_) {}
+}
+function sendGameMsg(msg) { wsSendEnvelope({ t: 'msg', d: msg }); }
 
 // nextEntityId är globalt på host/solo. Klient läser bara id från state.
 let nextEntityId = 1;
@@ -1832,28 +1840,27 @@ const INPUT_SEND_INTERVAL = 1 / 30;   // 30 Hz input
 const STATE_SEND_INTERVAL = 1 / 20;   // 20 Hz state
 
 function flushClientInput() {
-  if (APP.mode !== 'client' || !APP.conn || !APP.conn.open) return;
+  if (APP.mode !== 'client' || !wsOpen()) return;
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = APP.pendingEvents;
   APP.pendingEvents = [];
-  const msg = { t: 'in', j: { x: dir.x, z: dir.z }, ev: evs };
-  try { APP.conn.send(msg); } catch (_) {}
+  sendGameMsg({ t: 'in', j: { x: dir.x, z: dir.z }, ev: evs });
   lastInputJoy = dir;
 }
 
 function maybeSendClientInput(now) {
-  if (APP.mode !== 'client' || !APP.conn || !APP.conn.open) return;
+  if (APP.mode !== 'client' || !wsOpen()) return;
   if (now - APP.lastInputSent < INPUT_SEND_INTERVAL && APP.pendingEvents.length === 0) return;
   APP.lastInputSent = now;
   flushClientInput();
 }
 
 function maybeSendHostState(now) {
-  if (APP.mode !== 'host' || !APP.conn || !APP.conn.open) return;
+  if (APP.mode !== 'host' || !wsOpen()) return;
   if (now - APP.lastStateSent < STATE_SEND_INTERVAL) return;
   APP.lastStateSent = now;
-  try { APP.conn.send(serializeState()); } catch (_) {}
+  sendGameMsg(serializeState());
 }
 
 function handleNetworkMessage(msg) {
@@ -1862,28 +1869,10 @@ function handleNetworkMessage(msg) {
     applyRemoteState(msg);
   } else if (msg.t === 'in' && APP.mode === 'host') {
     APP.remoteInputs = msg;
-    // Apply events omedelbart
     if (msg.ev && msg.ev.length && sides[2]) {
       for (const ev of msg.ev) applyEvent(sides[2], ev);
     }
-  } else if (msg.t === 'bye') {
-    showLobbyError('Motståndaren lämnade matchen.');
-    returnToLobby();
   }
-}
-
-function setupConnHandlers() {
-  if (!APP.conn) return;
-  APP.conn.on('data', handleNetworkMessage);
-  APP.conn.on('close', () => {
-    if (APP.mode === 'host' || APP.mode === 'client') {
-      showLobbyError('Anslutningen tappades.');
-      returnToLobby();
-    }
-  });
-  APP.conn.on('error', (err) => {
-    console.warn('conn error', err);
-  });
 }
 
 // ---- Lobby logic ----
@@ -1909,173 +1898,133 @@ function showLobbyError(msg) {
   lobbyJoinMsgEl.innerHTML = `<span class="err">${msg}</span>`;
 }
 
-function genRoomCode() {
-  // 4 versala bokstäver, ingen O/I för att slippa förväxling
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let s = '';
-  for (let i = 0; i < 4; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-  return s;
-}
-
-function peerIdFromCode(code) { return 'spel-' + code.toUpperCase(); }
-
-// ICE-config med STUN + TURN. TURN behövs när någondera spelare sitter bakom
-// symmetric NAT (vanligt på mobildata, jobbnätverk, vissa hem-routrar).
-// Flera leverantörer för redundans — om en är nere fungerar förhoppningsvis nån annan.
-const PEER_CONFIG = {
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      // Open Relay (Metered) — gratis publika TURN
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-      // Relay.expressturn (free dev tier — kontot kan rotera, men funkar oftast)
-      { urls: 'turn:relay1.expressturn.com:3478', username: 'efSGN6PB0YJMNK7K1Q', credential: 'gTPeFLGN1u9q8qzx' },
-    ],
-    iceCandidatePoolSize: 4,
-  },
-  debug: 1,
-};
-
-function startPeer(id) {
+// ---- WebSocket relay-anslutning ----
+// Öppnar en WS till relay-servern och registrerar en envelope-handler.
+// Server-protokoll:
+//   client → server : { t: 'host' } | { t: 'join', code } | { t: 'msg', d } | { t: 'leave' }
+//   server → client : { t: 'hosted', code } | { t: 'joined', code } | { t: 'join-error', msg }
+//                     | { t: 'peer-joined' } | { t: 'peer-left' } | { t: 'msg', d }
+function openRelay() {
   return new Promise((resolve, reject) => {
-    const peer = id ? new Peer(id, PEER_CONFIG) : new Peer(PEER_CONFIG);
+    if (wsOpen()) { resolve(APP.ws); return; }
+    let ws;
+    try { ws = new WebSocket(RELAY_URL); }
+    catch (e) { reject(e); return; }
     let settled = false;
-    peer.on('open', (openId) => { if (!settled) { settled = true; resolve(peer); } });
-    peer.on('error', (err) => {
-      console.warn('PeerJS error', err);
-      if (!settled) { settled = true; reject(err); }
-      else {
-        // Visas i lobbyn så användaren ser tydligt vad som händer
-        showLobbyError('Peer-fel: ' + (err.type || err.message || 'okänt'));
-      }
-    });
+    const fail = (msg) => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch (_) {}
+      reject(new Error(msg));
+    };
+    const to = setTimeout(() => fail('Tog för lång tid att nå relay-servern'), 60000);
+    ws.onopen = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      APP.ws = ws;
+      ws.onmessage = handleRelayEnvelope;
+      ws.onclose = onRelayClose;
+      ws.onerror = (err) => { console.warn('WS error', err); };
+      resolve(ws);
+    };
+    ws.onerror = (err) => { console.warn('WS error pre-open', err); fail('Kunde inte ansluta till relay-servern'); };
+    ws.onclose = () => { fail('Anslutningen stängdes innan den öppnades'); };
   });
 }
 
-// Diagnostik: koppla ICE-state till lobby-meddelandet så vi ser var handshaken hänger.
-function attachIceDiagnostics(conn, msgEl) {
-  // PeerConnection blir tillgänglig en stund efter att connect/answer skapats
-  const tryAttach = () => {
-    const pc = conn.peerConnection;
-    if (!pc) { setTimeout(tryAttach, 200); return; }
-    const update = () => {
-      const ice = pc.iceConnectionState;
-      const gather = pc.iceGatheringState;
-      const sig = pc.signalingState;
-      if (msgEl) msgEl.textContent = `ICE: ${ice} · gather: ${gather} · sig: ${sig}`;
-      console.log('[ICE]', { ice, gather, sig });
-    };
-    pc.addEventListener('iceconnectionstatechange', update);
-    pc.addEventListener('icegatheringstatechange', update);
-    pc.addEventListener('signalingstatechange', update);
-    pc.addEventListener('icecandidateerror', (e) => {
-      console.warn('[ICE candidate error]', e.errorCode, e.errorText, e.url);
-    });
-    update();
-  };
-  tryAttach();
+function handleRelayEnvelope(e) {
+  let env;
+  try { env = JSON.parse(e.data); } catch (_) { return; }
+  if (!env || typeof env !== 'object') return;
+  if (env.t === 'hosted') {
+    onHosted(env.code);
+  } else if (env.t === 'joined') {
+    onJoined(env.code);
+  } else if (env.t === 'join-error') {
+    showLobbyError(env.msg || 'Kunde inte ansluta.');
+    closeRelay();
+  } else if (env.t === 'peer-joined') {
+    onPeerJoined();
+  } else if (env.t === 'peer-left') {
+    if (APP.mode === 'host' || APP.mode === 'client') {
+      showLobbyError('Motståndaren lämnade matchen.');
+      returnToLobby();
+    }
+  } else if (env.t === 'msg') {
+    handleNetworkMessage(env.d);
+  }
+}
+
+function onRelayClose() {
+  console.log('WS closed');
+  if (APP.mode === 'host' || APP.mode === 'client') {
+    showLobbyError('Anslutningen till servern tappades.');
+    returnToLobby();
+  }
+}
+
+function closeRelay() {
+  if (APP.ws) {
+    try { APP.ws.onclose = null; APP.ws.close(); } catch (_) {}
+    APP.ws = null;
+  }
+}
+
+let pendingHostCode = null;
+
+function onHosted(code) {
+  pendingHostCode = code;
+  lobbyCodeDisplayEl.textContent = code;
+  lobbyHostMsgEl.textContent = 'Väntar på spelare...';
+}
+
+function onPeerJoined() {
+  if (APP.mode !== 'lobby') return;
+  startMatch('host');
+}
+
+function onJoined(code) {
+  if (APP.mode !== 'lobby') return;
+  startMatch('client');
 }
 
 async function hostGame() {
-  if (typeof Peer === 'undefined') {
-    showLobbyError('PeerJS-biblioteket kunde inte laddas. Kolla nätverk eller blockerare och ladda om sidan.');
-    return;
-  }
   showLobbyPanel('hosting');
-  lobbyHostMsgEl.textContent = 'Skapar rum...';
-  const code = genRoomCode();
+  lobbyHostMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
   try {
-    APP.peer = await startPeer(peerIdFromCode(code));
+    await openRelay();
   } catch (err) {
-    // Om peer-id redan finns globalt, försök ett annat
-    if (err && err.type === 'unavailable-id') {
-      return hostGame();
-    }
-    showLobbyError('Kunde inte skapa rum: ' + (err.type || err.message || 'okänt fel'));
+    showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
-  lobbyCodeDisplayEl.textContent = code;
-  lobbyHostMsgEl.textContent = 'Väntar på spelare...';
-  APP.peer.on('connection', (conn) => {
-    APP.conn = conn;
-    lobbyHostMsgEl.textContent = 'Spelare hittade — etablerar koppling...';
-    attachIceDiagnostics(conn, lobbyHostMsgEl);
-    conn.on('open', () => {
-      setupConnHandlers();
-      startMatch('host');
-    });
-    conn.on('error', (err) => {
-      console.warn('host conn error', err);
-      showLobbyError('Anslutningsfel: ' + (err.type || err.message || 'okänt'));
-    });
-  });
+  wsSendEnvelope({ t: 'host' });
+  lobbyHostMsgEl.textContent = 'Skapar rum...';
 }
 
 function cancelHosting() {
-  if (APP.peer) { try { APP.peer.destroy(); } catch (_) {} APP.peer = null; }
-  APP.conn = null;
+  closeRelay();
+  pendingHostCode = null;
   lobbyCodeDisplayEl.textContent = '----';
   lobbyHostMsgEl.textContent = '';
   showLobbyPanel('main');
 }
 
 async function joinGame() {
-  if (typeof Peer === 'undefined') {
-    lobbyJoinMsgEl.innerHTML = '<span class="err">PeerJS kunde inte laddas. Ladda om sidan.</span>';
-    return;
-  }
   const code = lobbyCodeInputEl.value.trim().toUpperCase();
   if (code.length !== 4) {
     lobbyJoinMsgEl.innerHTML = '<span class="err">Koden måste vara 4 tecken.</span>';
     return;
   }
-  lobbyJoinMsgEl.textContent = 'Ansluter...';
+  lobbyJoinMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
   try {
-    // Klient behöver också ett unikt id; PeerJS genererar slumpmässigt om vi inte anger
-    APP.peer = await startPeer(undefined);
+    await openRelay();
   } catch (err) {
-    showLobbyError('PeerJS-fel: ' + (err.type || err.message || 'okänt'));
+    showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
-  // Fångar peer-unavailable och liknande som dyker upp EFTER att startPeer resolvat
-  APP.peer.on('error', (err) => {
-    console.warn('peer error post-open', err);
-    if (err.type === 'peer-unavailable') {
-      showLobbyError('Hittade inte värdens rum. Är koden rätt och håller hen lobbyn öppen?');
-    } else if (err.type === 'network') {
-      showLobbyError('Nätverksfel mot signaleringsservern.');
-    }
-  });
-  const conn = APP.peer.connect(peerIdFromCode(code), { reliable: true });
-  APP.conn = conn;
-  let opened = false;
-  lobbyJoinMsgEl.textContent = 'Signalering klar — etablerar WebRTC...';
-  attachIceDiagnostics(conn, lobbyJoinMsgEl);
-  conn.on('open', () => {
-    opened = true;
-    setupConnHandlers();
-    startMatch('client');
-  });
-  conn.on('error', (err) => {
-    console.warn('conn error', err);
-    if (!opened) {
-      showLobbyError('Anslutningsfel: ' + (err.type || err.message || 'okänt'));
-    }
-  });
-  setTimeout(() => {
-    if (!opened) {
-      const pc = conn.peerConnection;
-      const ice = pc ? pc.iceConnectionState : 'unknown';
-      showLobbyError(`Timeout efter 30s. ICE-state: ${ice}. Troligt NAT/TURN-problem — testa en annan webbläsare eller annat nätverk.`);
-      try { APP.peer.destroy(); } catch (_) {}
-      APP.peer = null;
-      APP.conn = null;
-    }
-  }, 30000);
+  lobbyJoinMsgEl.textContent = 'Söker rummet...';
+  wsSendEnvelope({ t: 'join', code });
 }
 
 function startMatch(mode) {
@@ -2105,8 +2054,8 @@ function startMatch(mode) {
 }
 
 function returnToLobby() {
-  if (APP.conn) { try { APP.conn.send({ t: 'bye' }); } catch (_) {} try { APP.conn.close(); } catch (_) {} APP.conn = null; }
-  if (APP.peer) { try { APP.peer.destroy(); } catch (_) {} APP.peer = null; }
+  closeRelay();
+  pendingHostCode = null;
   if (sides[1]) { removeSide(sides[1]); sides[1] = null; }
   if (sides[2]) { removeSide(sides[2]); sides[2] = null; }
   for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects']) {
@@ -2128,8 +2077,7 @@ document.getElementById('btn-join').addEventListener('click', () => {
   setTimeout(() => lobbyCodeInputEl.focus(), 50);
 });
 document.getElementById('btn-join-back').addEventListener('click', () => {
-  if (APP.peer) { try { APP.peer.destroy(); } catch (_) {} APP.peer = null; }
-  APP.conn = null;
+  closeRelay();
   showLobbyPanel('main');
 });
 document.getElementById('btn-join-connect').addEventListener('click', joinGame);
