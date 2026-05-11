@@ -423,12 +423,74 @@ const MONSTER_MELEE_INTERVAL = 1.0;
 const GOLD_PER_KILL = 5;
 const RESPAWN_TIME = 5.0;
 
-const PLAYER_CREEP_HP = 25;
-const PLAYER_CREEP_SPEED = 1.5;
-const PLAYER_CREEP_COST = 10;
+// Wave-monsters vs minions (när auto-spawn-monstren attackerar opp:s minions i sin arena)
 const CREEP_VS_CREEP_DAMAGE = 5;
 const CREEP_VS_CREEP_RANGE = 1.5;
 const CREEP_VS_CREEP_INTERVAL = 1.5;
+
+// ---- Income ----
+const INCOME_BASE = 2;            // start-income (gold per tick)
+const INCOME_INTERVAL = 15.0;     // sekunder mellan tick
+const INCOME_MINION_RATIO = 0.2;  // 20% av minion-kostnaden går till income-boost
+
+// ---- Tier-unlocks (sekventiellt) ----
+const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
+
+// ---- Minion-arketyper och tiers ----
+// 6 arketyper × 5 tiers = 30 unika minions.
+const ARCHETYPE_BASE = {
+  slasher:  { cost: 10, hp: 18, speed: 1.6, damage: 3, range: 1.0, interval: 0.8, attackType: 'melee' },
+  archer:   { cost: 14, hp: 15, speed: 1.4, damage: 4, range: 3.5, interval: 1.2, attackType: 'arrow' },
+  bruiser:  { cost: 18, hp: 32, speed: 1.3, damage: 5, range: 1.2, interval: 1.3, attackType: 'melee' },
+  mage:     { cost: 22, hp: 20, speed: 1.3, damage: 5, range: 3.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
+  tank:     { cost: 26, hp: 60, speed: 1.15, damage: 2, range: 1.0, interval: 1.4, attackType: 'melee' },
+  champion: { cost: 35, hp: 48, speed: 1.3, damage: 8, range: 1.5, interval: 1.5, attackType: 'melee' },
+};
+const ARCHETYPE_ORDER = ['slasher', 'archer', 'bruiser', 'mage', 'tank', 'champion'];
+const ARCHETYPE_NAMES = {
+  slasher: 'Knivman', archer: 'Bågskytt', bruiser: 'Krossare',
+  mage: 'Mystiker', tank: 'Sköldbärare', champion: 'Hövding',
+};
+
+const TIER_MULT = { 1: 1.0, 2: 2.0, 3: 4.0, 4: 7.0, 5: 11.0 };
+const TIER_NAMES = { 1: 'Goblin', 2: 'Ork', 3: 'Vandöd', 4: 'Demon', 5: 'Drakätt' };
+const TIER_SCALE = { 1: 1.0, 2: 1.08, 3: 1.14, 4: 1.20, 5: 1.28 };
+const TIER_PALETTE = {
+  1: { body: 0x4d6e3a, armor: 0x5a4f3a, accent: 0x2c3a1a, eye: 0x222222, glow: 0 },
+  2: { body: 0x35462a, armor: 0x2a2520, accent: 0x8a3a3a, eye: 0xff5522, glow: 0.35 },
+  3: { body: 0x8a8a96, armor: 0x3a3a44, accent: 0x55ddff, eye: 0x66e0ff, glow: 0.9 },
+  4: { body: 0x6a2a26, armor: 0x1a0a08, accent: 0xff7733, eye: 0xff5511, glow: 1.1 },
+  5: { body: 0xc4a050, armor: 0x4a3a1a, accent: 0xffaa22, eye: 0xffcc44, glow: 0.7 },
+};
+
+// Generera MINION_TYPES från arketyp × tier
+const MINION_TYPES = {};
+for (const tier of [1, 2, 3, 4, 5]) {
+  for (const arch of ARCHETYPE_ORDER) {
+    const base = ARCHETYPE_BASE[arch];
+    const mult = TIER_MULT[tier];
+    const id = `T${tier}_${arch}`;
+    MINION_TYPES[id] = {
+      id, tier, archetype: arch,
+      name: `${TIER_NAMES[tier]} ${ARCHETYPE_NAMES[arch]}`,
+      cost: Math.round(base.cost * mult),
+      hp: Math.round(base.hp * mult),
+      speed: base.speed,
+      damage: Math.round(base.damage * mult),
+      range: base.range,
+      interval: base.interval,
+      attackType: base.attackType,
+      aoeRadius: base.aoeRadius || 0,
+    };
+  }
+}
+
+// Kill-bounty för opp's minion = 20% av dess kostnad
+const MINION_KILL_RATIO = 0.2;
+
+// Creep-projektil-hastigheter
+const ARROW_SPEED = 14;
+const MAGIC_PROJ_SPEED = 10;
 
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = 15;
@@ -627,71 +689,307 @@ function makeMonsterMesh() {
   return grp;
 }
 
-function makePlayerCreepMesh(ownerIdx) {
-  const cfg = SIDE_CFG[ownerIdx];
-  const grp = new THREE.Group();
-  const armorMat = new THREE.MeshStandardMaterial({
-    color: cfg.gruntColor, roughness: 0.55, metalness: 0.25,
-    emissive: cfg.gruntEmissive, emissiveIntensity: 0.25,
+// ---- Minion-mesh-fabriker ----
+// Varje arketyp har en distinkt silhuett. Tier-paletten ger färg/glow.
+// Plym/accent på huvudet använder ägar-sidans färg så det syns vems minion det är.
+
+function buildHumanoidBase(grp, palette, opts = {}) {
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: palette.body, roughness: 0.85,
+    emissive: palette.glow > 0.6 ? palette.body : 0x000000,
+    emissiveIntensity: palette.glow > 0.6 ? 0.06 : 0,
   });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x251a12, roughness: 0.9 });
+  const armorMat = new THREE.MeshStandardMaterial({
+    color: palette.armor, roughness: 0.55, metalness: 0.35,
+  });
+  const torsoW = opts.torsoW ?? 0.50;
+  const torsoH = opts.torsoH ?? 0.45;
+  const torsoD = opts.torsoD ?? 0.36;
+  const legW = opts.legW ?? 0.14;
+  const legH = opts.legH ?? 0.36;
+  const armW = opts.armW ?? 0.13;
+  const armH = opts.armH ?? 0.40;
+  const headR = opts.headR ?? 0.17;
 
-  // Ben (mörka)
-  const legGeo = new THREE.BoxGeometry(0.14, 0.36, 0.14);
-  const legL = new THREE.Mesh(legGeo, darkMat); legL.position.set(-0.13, 0.18, 0); grp.add(legL);
-  const legR = new THREE.Mesh(legGeo, darkMat); legR.position.set(0.13, 0.18, 0); grp.add(legR);
+  // Ben
+  const legGeo = new THREE.BoxGeometry(legW, legH, legW);
+  const legL = new THREE.Mesh(legGeo, armorMat); legL.position.set(-0.13, legH/2, 0); grp.add(legL);
+  const legR = new THREE.Mesh(legGeo, armorMat); legR.position.set(0.13, legH/2, 0); grp.add(legR);
 
-  // Torso (rustning)
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.45, 0.38), armorMat);
-  torso.position.y = 0.62;
-  grp.add(torso);
+  // Torso
+  const torsoY = legH + torsoH/2;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(torsoW, torsoH, torsoD), bodyMat);
+  torso.position.y = torsoY; grp.add(torso);
 
-  // Skulderplåtar
-  const shGeo = new THREE.SphereGeometry(0.16, 10, 8);
-  const shL = new THREE.Mesh(shGeo, armorMat); shL.position.set(-0.29, 0.82, 0); shL.scale.set(1, 0.6, 1); grp.add(shL);
-  const shR = new THREE.Mesh(shGeo, armorMat); shR.position.set(0.29, 0.82, 0); shR.scale.set(1, 0.6, 1); grp.add(shR);
+  // Armar
+  const armGeo = new THREE.BoxGeometry(armW, armH, armW);
+  const armY = torsoY - 0.02;
+  const armL = new THREE.Mesh(armGeo, bodyMat); armL.position.set(-(torsoW/2 + armW/2), armY, 0); grp.add(armL);
+  const armR = new THREE.Mesh(armGeo, bodyMat); armR.position.set(torsoW/2 + armW/2, armY, 0); grp.add(armR);
 
-  // Armar (mörka)
-  const armGeo = new THREE.BoxGeometry(0.13, 0.4, 0.13);
-  const armL = new THREE.Mesh(armGeo, darkMat); armL.position.set(-0.31, 0.62, 0); grp.add(armL);
-  const armR = new THREE.Mesh(armGeo, darkMat); armR.position.set(0.31, 0.62, 0); grp.add(armR);
-
-  // Huvud (hud)
+  // Huvud
+  const headY = torsoY + torsoH/2 + headR + 0.04;
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.17, 12, 10),
-    new THREE.MeshStandardMaterial({ color: 0xe2c4a6, roughness: 0.7 })
+    new THREE.SphereGeometry(headR, 14, 10),
+    new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.82 })
   );
-  head.position.y = 1.02;
-  grp.add(head);
+  head.position.y = headY; grp.add(head);
 
-  // Hjälm (halv-sfär + plym)
-  const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.19, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-    armorMat
-  );
-  helmet.position.y = 1.05;
-  grp.add(helmet);
+  // Glödande ögon (för högre tiers)
+  if (palette.glow > 0) {
+    const eyeMat = new THREE.MeshStandardMaterial({
+      color: palette.eye, emissive: palette.eye, emissiveIntensity: palette.glow,
+    });
+    const eyeR = headR * 0.18;
+    const ex = headR * 0.32, ey = headY + 0.01, ez = headR * 0.78;
+    const eL = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 6, 5), eyeMat); eL.position.set(-ex, ey, ez); grp.add(eL);
+    const eRm = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 6, 5), eyeMat); eRm.position.set(ex, ey, ez); grp.add(eRm);
+  }
+
+  return { bodyMat, armorMat, torsoY, headY, headR, armY, torsoW, torsoH };
+}
+
+function addOwnerPlume(grp, headY, plumeColor) {
   const plume = new THREE.Mesh(
-    new THREE.ConeGeometry(0.05, 0.18, 8),
-    new THREE.MeshStandardMaterial({ color: cfg.gruntColor, emissive: cfg.gruntEmissive, emissiveIntensity: 0.4 })
+    new THREE.ConeGeometry(0.05, 0.18, 6),
+    new THREE.MeshStandardMaterial({ color: plumeColor, emissive: plumeColor, emissiveIntensity: 0.45 })
   );
-  plume.position.set(0, 1.32, -0.05);
+  plume.position.set(0, headY + 0.20, -0.04);
   grp.add(plume);
+}
 
-  // Svärd (höger sida)
-  const swordHilt = new THREE.Mesh(
-    new THREE.BoxGeometry(0.04, 0.18, 0.04),
-    new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.8 })
-  );
-  swordHilt.position.set(0.42, 0.7, 0.05); grp.add(swordHilt);
-  const swordBlade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.04, 0.45, 0.015),
-    new THREE.MeshStandardMaterial({ color: 0xc8d0d8, roughness: 0.3, metalness: 0.8 })
-  );
-  swordBlade.position.set(0.42, 1.02, 0.05); grp.add(swordBlade);
+function buildSlasherBody(grp, palette, plumeColor) {
+  const b = buildHumanoidBase(grp, palette, {
+    torsoW: 0.42, torsoH: 0.40, torsoD: 0.30, legH: 0.32, armH: 0.34, headR: 0.15,
+  });
+  // Två dolkar
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xccd0d8, roughness: 0.3, metalness: 0.85 });
+  const hiltMat = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.9 });
+  for (const sign of [-1, 1]) {
+    const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.04), hiltMat);
+    hilt.position.set(sign * 0.30, b.armY - 0.20, 0.08);
+    grp.add(hilt);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.20, 0.012), bladeMat);
+    blade.position.set(sign * 0.30, b.armY - 0.32, 0.08);
+    grp.add(blade);
+  }
+  addOwnerPlume(grp, b.headY, plumeColor);
+}
 
+function buildArcherBody(grp, palette, plumeColor) {
+  const b = buildHumanoidBase(grp, palette, {
+    torsoW: 0.46, torsoH: 0.42, torsoD: 0.32, legH: 0.34, headR: 0.16,
+  });
+  // Båge — torus-segment (en halv båge)
+  const bow = new THREE.Mesh(
+    new THREE.TorusGeometry(0.30, 0.025, 8, 20, Math.PI),
+    new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.8 })
+  );
+  bow.position.set(-0.30, b.armY, 0.10);
+  bow.rotation.z = Math.PI / 2;
+  grp.add(bow);
+  // Bågsträng
+  const string = new THREE.Mesh(
+    new THREE.BoxGeometry(0.005, 0.58, 0.005),
+    new THREE.MeshStandardMaterial({ color: 0xddd0b0, roughness: 0.6 })
+  );
+  string.position.set(-0.30, b.armY, 0.10);
+  grp.add(string);
+  // Koger på rygg
+  const quiver = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.06, 0.28, 8),
+    new THREE.MeshStandardMaterial({ color: 0x4a2818, roughness: 0.8 })
+  );
+  quiver.position.set(0.10, b.torsoY + 0.05, -0.15);
+  quiver.rotation.x = -0.3;
+  grp.add(quiver);
+  addOwnerPlume(grp, b.headY, plumeColor);
+}
+
+function buildBruiserBody(grp, palette, plumeColor) {
+  const b = buildHumanoidBase(grp, palette, {
+    torsoW: 0.56, torsoH: 0.48, torsoD: 0.40, legH: 0.36, armH: 0.42, headR: 0.18,
+  });
+  // Yxa: skaft + huvud
+  const handle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6),
+    new THREE.MeshStandardMaterial({ color: 0x4a2e1a, roughness: 0.9 })
+  );
+  handle.position.set(0.36, b.armY, 0.05);
+  handle.rotation.z = 0.15;
+  grp.add(handle);
+  const axHead = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.18, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0xa0a8b0, roughness: 0.4, metalness: 0.75 })
+  );
+  axHead.position.set(0.46, b.armY + 0.22, 0.05);
+  axHead.rotation.z = 0.15;
+  grp.add(axHead);
+  // Skulderplåtar
+  const shMat = new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.4, metalness: 0.5 });
+  for (const sign of [-1, 1]) {
+    const sh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), shMat);
+    sh.position.set(sign * 0.34, b.torsoY + b.torsoH/2 - 0.05, 0);
+    sh.scale.set(1, 0.55, 1);
+    grp.add(sh);
+  }
+  addOwnerPlume(grp, b.headY, plumeColor);
+}
+
+function buildMageBody(grp, palette, plumeColor) {
+  const grp2 = grp;
+  const b = buildHumanoidBase(grp2, palette, {
+    torsoW: 0.42, torsoH: 0.44, torsoD: 0.32, legH: 0.30, armH: 0.36, headR: 0.16,
+  });
+  // Lång hatt/hood (kon)
+  const hoodMat = new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.85 });
+  const hood = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.40, 12), hoodMat);
+  hood.position.set(0, b.headY + 0.16, 0);
+  hood.rotation.x = -0.1;
+  grp.add(hood);
+  // Stav
+  const staff = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.035, 0.035, 0.95, 6),
+    new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 })
+  );
+  staff.position.set(0.30, b.torsoY + 0.10, 0.05);
+  grp.add(staff);
+  // Orb (glödande accent)
+  const orb = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.10, 0),
+    new THREE.MeshStandardMaterial({
+      color: palette.accent, emissive: palette.accent, emissiveIntensity: 1.0,
+      roughness: 0.2,
+    })
+  );
+  orb.position.set(0.30, b.torsoY + 0.62, 0.05);
+  grp.add(orb);
+  addOwnerPlume(grp, b.headY + 0.18, plumeColor);
+}
+
+function buildTankBody(grp, palette, plumeColor) {
+  const b = buildHumanoidBase(grp, palette, {
+    torsoW: 0.60, torsoH: 0.52, torsoD: 0.42, legH: 0.32, armH: 0.38, headR: 0.17,
+  });
+  // Stor sköld vänster
+  const shieldMat = new THREE.MeshStandardMaterial({
+    color: palette.accent, roughness: 0.5, metalness: 0.6,
+    emissive: palette.accent, emissiveIntensity: palette.glow * 0.3,
+  });
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.40), shieldMat);
+  shield.position.set(-0.40, b.armY, 0.08);
+  grp.add(shield);
+  // Sköld-mittenboss
+  const boss = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.4, metalness: 0.7 })
+  );
+  boss.position.set(-0.43, b.armY, 0.08);
+  grp.add(boss);
+  // Tjock helkroppsrustning på torson
+  const chest = new THREE.Mesh(
+    new THREE.BoxGeometry(0.62, 0.40, 0.18),
+    new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.45, metalness: 0.6 })
+  );
+  chest.position.set(0, b.torsoY, 0.18);
+  grp.add(chest);
+  // Mace till höger
+  const maceHandle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 0.45, 6),
+    new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 })
+  );
+  maceHandle.position.set(0.38, b.armY - 0.10, 0.05);
+  grp.add(maceHandle);
+  const maceHead = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.10, 0),
+    new THREE.MeshStandardMaterial({ color: 0x666c70, roughness: 0.5, metalness: 0.6 })
+  );
+  maceHead.position.set(0.38, b.armY + 0.18, 0.05);
+  grp.add(maceHead);
+  addOwnerPlume(grp, b.headY, plumeColor);
+}
+
+function buildChampionBody(grp, palette, plumeColor) {
+  const b = buildHumanoidBase(grp, palette, {
+    torsoW: 0.62, torsoH: 0.55, torsoD: 0.42, legH: 0.38, armH: 0.46, headR: 0.20,
+  });
+  // Helmet med crested top
+  const helmMat = new THREE.MeshStandardMaterial({
+    color: palette.armor, roughness: 0.35, metalness: 0.7,
+    emissive: palette.accent, emissiveIntensity: palette.glow * 0.2,
+  });
+  const helm = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 14, 8, 0, Math.PI * 2, 0, Math.PI / 1.5),
+    helmMat
+  );
+  helm.position.y = b.headY + 0.03;
+  grp.add(helm);
+  // Crest
+  const crest = new THREE.Mesh(
+    new THREE.BoxGeometry(0.04, 0.10, 0.30),
+    new THREE.MeshStandardMaterial({ color: palette.accent, emissive: palette.accent, emissiveIntensity: 0.5 })
+  );
+  crest.position.set(0, b.headY + 0.22, 0);
+  grp.add(crest);
+  // Stort tvåhandssvärd
+  const hilt = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.16, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 })
+  );
+  hilt.position.set(0.36, b.armY - 0.18, 0.05);
+  grp.add(hilt);
+  const crossguard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.04, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0xc0a050, roughness: 0.4, metalness: 0.6 })
+  );
+  crossguard.position.set(0.36, b.armY - 0.08, 0.05);
+  grp.add(crossguard);
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.07, 0.75, 0.018),
+    new THREE.MeshStandardMaterial({ color: 0xe0e6ec, roughness: 0.25, metalness: 0.9 })
+  );
+  blade.position.set(0.36, b.armY + 0.35, 0.05);
+  grp.add(blade);
+  // Cape bak
+  const cape = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.55, 0.65),
+    new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.7, side: THREE.DoubleSide })
+  );
+  cape.position.set(0, b.torsoY - 0.05, -0.22);
+  cape.rotation.x = 0.1;
+  grp.add(cape);
+  addOwnerPlume(grp, b.headY + 0.22, plumeColor);
+}
+
+const ARCHETYPE_BUILDERS = {
+  slasher: buildSlasherBody,
+  archer: buildArcherBody,
+  bruiser: buildBruiserBody,
+  mage: buildMageBody,
+  tank: buildTankBody,
+  champion: buildChampionBody,
+};
+
+function makeMinionMesh(typeId, ownerIdx) {
+  const def = MINION_TYPES[typeId];
+  if (!def) {
+    console.warn('Unknown minion type', typeId);
+    return new THREE.Group();
+  }
+  const palette = TIER_PALETTE[def.tier];
+  const scale = TIER_SCALE[def.tier];
+  const ownerCfg = SIDE_CFG[ownerIdx];
+  const grp = new THREE.Group();
+  ARCHETYPE_BUILDERS[def.archetype](grp, palette, ownerCfg.gruntColor);
+  grp.scale.setScalar(scale);
   setShadow(grp, true, false);
   return grp;
+}
+
+// Behåll gamla namnet som alias så client/host-reconcile inte kraschar
+// om vi nånsin saknar typeId. Default = T1 bruiser.
+function makePlayerCreepMesh(ownerIdx, typeId) {
+  return makeMinionMesh(typeId || 'T1_bruiser', ownerIdx);
 }
 
 // ============================================================
@@ -754,7 +1052,10 @@ function createSide(idx) {
     attackCounter: 0,
     // Resurser
     gold: 0,
+    income: INCOME_BASE,
+    incomeTimer: 0,
     items: { sword: 0, boots: 0, vit: 0 },
+    tierUnlocks: { 1: true, 2: false, 3: false, 4: false, 5: false },
     // Skills
     skills: {
       q: { cd: 0, max: 4.0 },
@@ -764,11 +1065,12 @@ function createSide(idx) {
     // Torn
     tower: { hp: TOWER_MAX_HP, maxHp: TOWER_MAX_HP },
     // Mobile entities
-    monsters: [],         // inkommande hot mot detta torn
-    playerCreeps: [],     // egna grunts (befinner sig i opp's arena, marscherar mot opp's torn)
-    projectiles: [],      // hjältens auto-attack
-    fireballs: [],        // Q (Eldklot)
-    novaEffects: [],      // F (Frostnova) visuell ring
+    monsters: [],            // inkommande hot mot detta torn
+    playerCreeps: [],        // egna minions (befinner sig i opp's arena, marscherar mot opp's torn)
+    projectiles: [],         // hjältens auto-attack
+    fireballs: [],           // Q (Eldklot)
+    novaEffects: [],         // F (Frostnova) visuell ring
+    creepProjectiles: [],    // pilar/magi från MINA minions (i opp's arena)
     // Wave-system
     wave: {
       current: 0, toSpawn: 0, spawnTimer: 0,
@@ -785,6 +1087,7 @@ function removeSide(side) {
   for (const p of side.projectiles) scene.remove(p.mesh);
   for (const f of side.fireballs) scene.remove(f.mesh);
   for (const n of side.novaEffects) scene.remove(n.mesh);
+  for (const cp of side.creepProjectiles) scene.remove(cp.mesh);
 }
 
 // ============================================================
@@ -804,18 +1107,58 @@ function hostSpawnMonster(side, lane) {
   });
 }
 
-function hostSpawnPlayerCreep(side, lane) {
-  // side = ägaren. Grunt spawnas i OPP's lane (västra änden).
+function hostSpawnMinion(side, typeId, lane) {
+  const def = MINION_TYPES[typeId];
+  if (!def) return;
   const oppIdx = 3 - side.idx;
   const oppCfg = SIDE_CFG[oppIdx];
-  const z = oppCfg.laneZ[lane]; // opp's egen lane = vår oppLaneZ
-  const mesh = makePlayerCreepMesh(side.idx);
+  const z = oppCfg.laneZ[lane];
+  const mesh = makeMinionMesh(typeId, side.idx);
   mesh.position.set(oppCfg.spawnX, 0, z);
   scene.add(mesh);
   side.playerCreeps.push({
-    id: nextEntityId++, lane, hp: PLAYER_CREEP_HP, speed: PLAYER_CREEP_SPEED,
+    id: nextEntityId++,
+    typeId,
+    lane,
+    hp: def.hp, maxHp: def.hp,
+    speed: def.speed,
+    damage: def.damage,
+    range: def.range,
+    interval: def.interval,
+    attackType: def.attackType,
+    aoeRadius: def.aoeRadius || 0,
+    cost: def.cost,
     pathIndex: 0, atkCd: 0,
     mesh,
+  });
+}
+
+// Spawnar en creep-projektil (pil eller magisk glob) från en minion.
+function hostSpawnCreepProjectile(ownerSide, creep, target, targetType) {
+  const isMagic = creep.attackType === 'magic';
+  const mesh = isMagic
+    ? new THREE.Mesh(
+        new THREE.SphereGeometry(0.15, 10, 8),
+        new THREE.MeshStandardMaterial({
+          color: 0xaa44ff, emissive: 0xaa44ff, emissiveIntensity: 1.0,
+          roughness: 0.3,
+        })
+      )
+    : new THREE.Mesh(
+        new THREE.ConeGeometry(0.045, 0.35, 6),
+        new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.7 })
+      );
+  mesh.position.set(creep.mesh.position.x, 1.0, creep.mesh.position.z);
+  scene.add(mesh);
+  ownerSide.creepProjectiles.push({
+    id: nextEntityId++,
+    mesh,
+    target,
+    targetType,         // 'monster' | 'hero'
+    damage: creep.damage,
+    aoeRadius: creep.aoeRadius || 0,
+    speed: isMagic ? MAGIC_PROJ_SPEED : ARROW_SPEED,
+    kind: isMagic ? 'magic' : 'arrow',
   });
 }
 
@@ -900,7 +1243,7 @@ function updateMonsters(side, dt) {
           m.atkCd = CREEP_VS_CREEP_INTERVAL;
           if (nearest.hp <= 0) {
             const idx2 = opp.playerCreeps.indexOf(nearest);
-            if (idx2 >= 0) { scene.remove(nearest.mesh); opp.playerCreeps.splice(idx2, 1); }
+            if (idx2 >= 0) { scene.remove(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); }
           }
         }
         const dx = nearest.mesh.position.x - m.mesh.position.x;
@@ -943,8 +1286,8 @@ function updateMonsters(side, dt) {
 }
 
 function updatePlayerCreeps(side, dt) {
-  // Side's playerCreeps lever i opp's arena, marscherar mot opp's torn.
-  // De fightas mot opp's monsters (samma arena).
+  // Side's playerCreeps (minions) lever i opp's arena, marscherar mot opp's torn.
+  // De kan attackera opp's monsters OCH opp's hjälte.
   const oppIdx = 3 - side.idx;
   const opp = sides[oppIdx];
   const oppCfg = SIDE_CFG[oppIdx];
@@ -952,6 +1295,7 @@ function updatePlayerCreeps(side, dt) {
   for (let i = side.playerCreeps.length - 1; i >= 0; i--) {
     const c = side.playerCreeps[i];
 
+    // Nått opp's torn?
     const dxT = oppCfg.tower.x - c.mesh.position.x;
     const dzT = oppCfg.tower.z - c.mesh.position.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
@@ -963,26 +1307,49 @@ function updatePlayerCreeps(side, dt) {
 
     c.atkCd = Math.max(0, c.atkCd - dt);
 
-    // Närmsta opp's monster
+    // Hitta närmaste fiende inom c.range — prio: hjälten om i räckvidd, annars närmsta monster
+    let target = null;
+    let targetType = null;
+    let bestDist = c.range;
+
+    if (opp && !opp.hero.dead) {
+      const dx = opp.hero.x - c.mesh.position.x;
+      const dz = opp.hero.z - c.mesh.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < bestDist) { bestDist = d; target = opp.hero; targetType = 'hero'; }
+    }
     if (opp) {
-      let nearest = null, bestDist = CREEP_VS_CREEP_RANGE;
       for (const m of opp.monsters) {
         const dx = m.mesh.position.x - c.mesh.position.x;
         const dz = m.mesh.position.z - c.mesh.position.z;
         const d = Math.hypot(dx, dz);
-        if (d < bestDist) { bestDist = d; nearest = m; }
+        if (d < bestDist) { bestDist = d; target = m; targetType = 'monster'; }
       }
-      if (nearest) {
-        if (c.atkCd <= 0) {
-          nearest.hp -= CREEP_VS_CREEP_DAMAGE;
-          c.atkCd = CREEP_VS_CREEP_INTERVAL;
-          if (nearest.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(nearest), side);
+    }
+
+    if (target) {
+      // Riktning mot mål
+      const tx = (targetType === 'hero') ? target.x : target.mesh.position.x;
+      const tz = (targetType === 'hero') ? target.z : target.mesh.position.z;
+      c.mesh.rotation.y = Math.atan2(tx - c.mesh.position.x, tz - c.mesh.position.z);
+
+      if (c.atkCd <= 0) {
+        if (c.attackType === 'melee') {
+          // Direkt skada
+          if (targetType === 'hero') {
+            opp.hero.hp = Math.max(0, opp.hero.hp - c.damage);
+            if (opp.hero.hp <= 0) killHero(opp);
+          } else {
+            target.hp -= c.damage;
+            if (target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(target), side);
+          }
+        } else {
+          // arrow / magic — spawna projektil
+          hostSpawnCreepProjectile(side, c, target, targetType);
         }
-        const dx = nearest.mesh.position.x - c.mesh.position.x;
-        const dz = nearest.mesh.position.z - c.mesh.position.z;
-        c.mesh.rotation.y = Math.atan2(dx, dz);
-        continue;
+        c.atkCd = c.interval;
       }
+      continue;  // stå still och slåss
     }
 
     // Walk mot opp:s torn (genom opp's lane c.lane)
@@ -1004,6 +1371,76 @@ function updatePlayerCreeps(side, dt) {
   }
 }
 
+function updateCreepProjectiles(side, dt) {
+  const oppIdx = 3 - side.idx;
+  const opp = sides[oppIdx];
+  for (let i = side.creepProjectiles.length - 1; i >= 0; i--) {
+    const p = side.creepProjectiles[i];
+    // Kolla att mål finns kvar
+    let alive = false;
+    let tx, tz, ty;
+    if (p.targetType === 'hero') {
+      alive = opp && !opp.hero.dead;
+      if (alive) { tx = opp.hero.x; tz = opp.hero.z; ty = 0.9; }
+    } else {
+      alive = opp && opp.monsters.includes(p.target);
+      if (alive) { tx = p.target.mesh.position.x; tz = p.target.mesh.position.z; ty = 0.9; }
+    }
+    if (!alive) {
+      scene.remove(p.mesh);
+      side.creepProjectiles.splice(i, 1);
+      continue;
+    }
+    const dx = tx - p.mesh.position.x;
+    const dy = ty - p.mesh.position.y;
+    const dz = tz - p.mesh.position.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 0.4) {
+      // Träff
+      if (p.targetType === 'hero') {
+        opp.hero.hp = Math.max(0, opp.hero.hp - p.damage);
+        if (opp.hero.hp <= 0) killHero(opp);
+      } else {
+        p.target.hp -= p.damage;
+        if (p.target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(p.target), side);
+      }
+      // AoE-splash (magic)
+      if (p.aoeRadius > 0) {
+        const ix = tx, iz = tz;
+        // Hjälten också om i radien
+        if (opp && !opp.hero.dead) {
+          if (Math.hypot(opp.hero.x - ix, opp.hero.z - iz) < p.aoeRadius) {
+            opp.hero.hp = Math.max(0, opp.hero.hp - p.damage);
+            if (opp.hero.hp <= 0) killHero(opp);
+          }
+        }
+        if (opp) for (let k = opp.monsters.length - 1; k >= 0; k--) {
+          const m = opp.monsters[k];
+          if (m === p.target) continue;
+          if (Math.hypot(m.mesh.position.x - ix, m.mesh.position.z - iz) < p.aoeRadius) {
+            m.hp -= p.damage;
+            if (m.hp <= 0) hostKillMonster(opp, k, side);
+          }
+        }
+      }
+      scene.remove(p.mesh);
+      side.creepProjectiles.splice(i, 1);
+      continue;
+    }
+    const step = p.speed * dt;
+    p.mesh.position.x += (dx / dist) * step;
+    p.mesh.position.y += (dy / dist) * step;
+    p.mesh.position.z += (dz / dist) * step;
+    // Rotera pilen så den pekar mot målet (arrow only)
+    if (p.kind === 'arrow') {
+      p.mesh.rotation.x = Math.atan2(dy, Math.hypot(dx, dz)) - Math.PI / 2;
+      p.mesh.rotation.y = Math.atan2(dx, dz);
+    } else {
+      p.mesh.rotation.y += dt * 6;  // mageglob snurrar
+    }
+  }
+}
+
 function hostKillMonster(side, idx, byPlayerSide) {
   const m = side.monsters[idx];
   if (!m) return;
@@ -1014,6 +1451,11 @@ function hostKillMonster(side, idx, byPlayerSide) {
   // eller opp (opp's creep dödade monstret).
   if (byPlayerSide) byPlayerSide.gold += GOLD_PER_KILL;
   else side.gold += GOLD_PER_KILL;
+}
+
+// Bounty för att döda en opp:s minion = 20% av dess kostnad (min 1g).
+function minionBounty(creep) {
+  return Math.max(1, Math.floor((creep.cost || 10) * MINION_KILL_RATIO));
 }
 
 function killHero(side) {
@@ -1105,7 +1547,7 @@ function updateProjectiles(side, dt) {
           if (k >= 0) hostKillMonster(side, k, side); // hjälten dödade — guld till sidan
         } else {
           const k = opp.playerCreeps.indexOf(p.target);
-          if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += GOLD_PER_KILL; }
+          if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); }
         }
       }
       if (p.isAoE) {
@@ -1123,7 +1565,7 @@ function updateProjectiles(side, dt) {
           if (c === p.target) continue;
           if (Math.hypot(c.mesh.position.x - ix, c.mesh.position.z - iz) < PASSIVE_AOE_RADIUS) {
             c.hp -= p.damage;
-            if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += GOLD_PER_KILL; }
+            if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); }
           }
         }
       }
@@ -1182,7 +1624,7 @@ function updateFireballs(side, dt) {
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(c);
         c.hp -= ELDKLOT_DAMAGE;
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += GOLD_PER_KILL; }
+        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
       }
     }
     if (f.traveled > ELDKLOT_RANGE) {
@@ -1217,7 +1659,7 @@ function hostCastFrostnova(side) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
       c.hp -= NOVA_DAMAGE;
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += GOLD_PER_KILL; }
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
     }
   }
 }
@@ -1262,12 +1704,11 @@ function updateSkillCooldowns(side, dt) {
 // HOST: APPLICERA INPUT FÖR EN SIDA
 // ============================================================
 
-const SHOP_ITEMS = {
-  sword:       { cost: 50, apply: (s) => { s.attackDmg += 5; } },
-  boots:       { cost: 40, apply: (s) => { s.moveSpeed += 1; } },
-  vit:         { cost: 60, apply: (s) => { s.hero.maxHp += 50; s.hero.hp = s.hero.maxHp; } },
-  'grunt-top': { cost: PLAYER_CREEP_COST, apply: (s) => hostSpawnPlayerCreep(s, 1) },
-  'grunt-bot': { cost: PLAYER_CREEP_COST, apply: (s) => hostSpawnPlayerCreep(s, 2) },
+// Hjälte-items (egen sektion i shoppen, ingen income-boost)
+const HERO_SHOP_ITEMS = {
+  sword: { cost: 50, label: 'Svärd',     desc: '+5 skada', apply: (s) => { s.attackDmg += 5; } },
+  boots: { cost: 40, label: 'Stövlar',   desc: '+1 hastighet', apply: (s) => { s.moveSpeed += 1; } },
+  vit:   { cost: 60, label: 'Vitalitet', desc: '+50 HP', apply: (s) => { s.hero.maxHp += 50; s.hero.hp = s.hero.maxHp; } },
 };
 
 function applyMovement(side, joyX, joyZ, dt) {
@@ -1293,15 +1734,35 @@ function applyEvent(side, ev) {
     if (ev.key === 'q') hostCastEldklot(side, ev.dx, ev.dz);
     else if (ev.key === 'f') hostCastFrostnova(side);
     else if (ev.key === 'e') hostCastBlink(side, ev.dx, ev.dz);
-  } else if (ev.type === 'shop') {
-    if (side.hero.dead) return;
-    if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
-    const item = SHOP_ITEMS[ev.item];
-    if (!item) return;
-    if (side.gold < item.cost) return;
+    return;
+  }
+  if (ev.type !== 'shop') return;
+  if (side.hero.dead) return;
+  if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
+
+  if (ev.kind === 'hero') {
+    const item = HERO_SHOP_ITEMS[ev.item];
+    if (!item || side.gold < item.cost) return;
     side.gold -= item.cost;
     if (ev.item in side.items) side.items[ev.item]++;
     item.apply(side);
+  } else if (ev.kind === 'minion') {
+    const def = MINION_TYPES[ev.minionType];
+    if (!def || !side.tierUnlocks[def.tier]) return;
+    if (side.gold < def.cost) return;
+    if (ev.lane !== 1 && ev.lane !== 2) return;
+    side.gold -= def.cost;
+    side.income += Math.floor(def.cost * INCOME_MINION_RATIO);
+    hostSpawnMinion(side, ev.minionType, ev.lane);
+  } else if (ev.kind === 'unlock') {
+    const tier = ev.tier;
+    if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
+    // Sekventiellt: alla tiers under måste redan vara upplåsta
+    for (let t = 2; t < tier; t++) if (!side.tierUnlocks[t]) return;
+    const cost = TIER_UNLOCK_COST[tier];
+    if (side.gold < cost) return;
+    side.gold -= cost;
+    side.tierUnlocks[tier] = true;
   }
 }
 
@@ -1315,6 +1776,7 @@ const clientMeshes = {
   fireballs: new Map(),
   projectiles: new Map(),
   novaEffects: new Map(),
+  creepProjectiles: new Map(),
 };
 
 function clientReconcileEntities(sideIdx, key, list, makeMesh) {
@@ -1366,6 +1828,9 @@ function applyRemoteState(state) {
     side.mesh.visible = !sData.h.d;
     // Resurser
     side.gold = sData.g;
+    side.income = sData.inc ?? side.income;
+    side.incomeTimer = sData.incT ?? side.incomeTimer;
+    if (sData.tu) side.tierUnlocks = sData.tu;
     side.items = sData.i;
     side.moveSpeed = sData.ms;
     side.attackDmg = sData.ad;
@@ -1383,7 +1848,7 @@ function applyRemoteState(state) {
     side.wave.betweenTimer = sData.w.bt;
     // Entiteter
     clientReconcileEntities(idx, 'monsters', sData.M, () => makeMonsterMesh());
-    clientReconcileEntities(idx, 'playerCreeps', sData.C, () => makePlayerCreepMesh(idx));
+    clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => makeMinionMesh(e.typeId || 'T1_bruiser', idx));
     clientReconcileEntities(idx, 'fireballs', sData.F, () => new THREE.Mesh(
       new THREE.SphereGeometry(0.35, 14, 10),
       new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xcc2200, emissiveIntensity: 1.0 })
@@ -1404,6 +1869,18 @@ function applyRemoteState(state) {
       ring.rotation.x = -Math.PI / 2;
       return ring;
     });
+    clientReconcileEntities(idx, 'creepProjectiles', sData.CP || [], (e) => {
+      if (e.kind === 'magic') {
+        return new THREE.Mesh(
+          new THREE.SphereGeometry(0.15, 10, 8),
+          new THREE.MeshStandardMaterial({ color: 0xaa44ff, emissive: 0xaa44ff, emissiveIntensity: 1.0 })
+        );
+      }
+      return new THREE.Mesh(
+        new THREE.ConeGeometry(0.045, 0.35, 6),
+        new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.7 })
+      );
+    });
   }
   matchState.gameOver = !!state.m.o;
   matchState.gameWon = !!state.m.w;
@@ -1423,6 +1900,9 @@ function serializeSide(side) {
       d: side.hero.dead, rt: side.hero.respawnTimer,
     },
     g: side.gold,
+    inc: side.income,
+    incT: +side.incomeTimer.toFixed(2),
+    tu: side.tierUnlocks,
     i: side.items,
     ms: side.moveSpeed,
     ad: side.attackDmg,
@@ -1431,10 +1911,11 @@ function serializeSide(side) {
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
     M: side.monsters.map(m => ({ id: m.id, x: m.mesh.position.x, z: m.mesh.position.z, ry: m.mesh.rotation.y })),
-    C: side.playerCreeps.map(c => ({ id: c.id, x: c.mesh.position.x, z: c.mesh.position.z, ry: c.mesh.rotation.y })),
+    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.mesh.position.x, z: c.mesh.position.z, ry: c.mesh.rotation.y })),
     F: side.fireballs.map((f, i) => ({ id: 'f' + side.idx + '_' + i, x: f.mesh.position.x, y: 1.0, z: f.mesh.position.z })),
     P: side.projectiles.map((p, i) => ({ id: 'p' + side.idx + '_' + i, x: p.mesh.position.x, y: p.mesh.position.y, z: p.mesh.position.z, aoe: p.isAoE })),
     N: side.novaEffects.map((n, i) => ({ id: 'n' + side.idx + '_' + i, x: n.mesh.position.x, z: n.mesh.position.z, life: n.life / n.maxLife })),
+    CP: side.creepProjectiles.map(p => ({ id: p.id, x: p.mesh.position.x, y: p.mesh.position.y, z: p.mesh.position.z, kind: p.kind })),
   };
 }
 
@@ -1526,7 +2007,7 @@ function updateHud() {
     : `HP: ${side.hero.hp}/${side.hero.maxHp}`;
   const top = [
     heroLine,
-    `Guld: ${side.gold}`,
+    `Guld: ${side.gold} <span style="opacity:0.7">(+${side.income}/15s)</span>`,
     `<span style="color:#88aaff">Du: ${side.tower.hp}/${side.tower.maxHp}</span>`,
     `<span style="color:#ff8888">Motst: ${opp ? opp.tower.hp + '/' + opp.tower.maxHp : '–'}</span>`,
   ];
@@ -1747,31 +2228,161 @@ window.addEventListener('touchmove', onTouchMove, { passive: false });
 window.addEventListener('touchend', onTouchEnd, { passive: false });
 window.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
-// ---- Shop ----
+// ---- Shop (lokal UI-state + populate + refresh) ----
 
 const shopEl = document.getElementById('shop');
-const shopBtns = Array.from(document.querySelectorAll('.shop-btn'));
+const shopState = { selectedTier: 1, selectedLane: 1 };
+const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
-shopBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const id = btn.dataset.item;
-    sendOrApplyEvent({ type: 'shop', item: id });
-  });
-});
+function getNextLockedTier(side) {
+  for (let t = 2; t <= 5; t++) if (!side.tierUnlocks[t]) return t;
+  return null;
+}
 
-function updateShop() {
-  const side = sides[APP.localSide];
-  if (!side) { shopEl.classList.remove('visible'); return; }
-  const inBase = !side.hero.dead && inSideBase(side.idx, side.hero.x, side.hero.z);
-  shopEl.classList.toggle('visible', inBase);
-  if (inBase) {
-    for (const btn of shopBtns) {
-      const id = btn.dataset.item;
-      const cost = SHOP_ITEMS[id].cost;
-      btn.disabled = side.gold < cost;
-    }
+function populateShop() {
+  // HJÄLTE-items
+  const heroRow = document.getElementById('shop-hero-row');
+  heroRow.innerHTML = '';
+  shopRefs.heroBtns = [];
+  for (const [id, def] of Object.entries(HERO_SHOP_ITEMS)) {
+    const btn = document.createElement('button');
+    btn.className = 'shop-btn';
+    btn.dataset.kind = 'hero';
+    btn.dataset.item = id;
+    btn.innerHTML = `${def.label} (${def.cost}g)<small>${def.desc}</small>`;
+    btn.addEventListener('click', () => sendOrApplyEvent({ type: 'shop', kind: 'hero', item: id }));
+    heroRow.appendChild(btn);
+    shopRefs.heroBtns.push(btn);
+  }
+
+  // Lane-toggle
+  const laneRow = document.getElementById('shop-lane-row');
+  laneRow.innerHTML = '';
+  shopRefs.laneBtns = [];
+  for (const lane of [1, 2]) {
+    const btn = document.createElement('button');
+    btn.className = 'lane-btn' + (shopState.selectedLane === lane ? ' active' : '');
+    btn.dataset.lane = String(lane);
+    btn.textContent = lane === 1 ? '▲ Övre' : '▼ Nedre';
+    btn.addEventListener('click', () => { shopState.selectedLane = lane; refreshShopUI(); });
+    laneRow.appendChild(btn);
+    shopRefs.laneBtns.push(btn);
+  }
+
+  // Tier-tabs
+  const tierRow = document.getElementById('shop-tier-row');
+  tierRow.innerHTML = '';
+  shopRefs.tierBtns = [];
+  for (const tier of [1, 2, 3, 4, 5]) {
+    const btn = document.createElement('button');
+    btn.className = 'tier-btn';
+    btn.dataset.tier = String(tier);
+    btn.addEventListener('click', () => onTierClick(tier));
+    tierRow.appendChild(btn);
+    shopRefs.tierBtns.push(btn);
+  }
+
+  // Minion-grid (6 slots, label byts vid tier-byte)
+  const grid = document.getElementById('shop-minion-grid');
+  grid.innerHTML = '';
+  shopRefs.minionBtns = [];
+  for (let i = 0; i < ARCHETYPE_ORDER.length; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'shop-btn minion-btn minion-' + ARCHETYPE_ORDER[i];
+    btn.dataset.slot = String(i);
+    btn.addEventListener('click', () => onMinionClick(i));
+    grid.appendChild(btn);
+    shopRefs.minionBtns.push(btn);
   }
 }
+
+function onTierClick(tier) {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  if (side.tierUnlocks[tier]) {
+    shopState.selectedTier = tier;
+    refreshShopUI();
+    return;
+  }
+  // Locked tier — försök låsa upp om det är nästa i tur och har råd
+  const next = getNextLockedTier(side);
+  if (tier === next && side.gold >= TIER_UNLOCK_COST[tier]) {
+    sendOrApplyEvent({ type: 'shop', kind: 'unlock', tier });
+  }
+}
+
+function onMinionClick(slot) {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const tier = shopState.selectedTier;
+  if (!side.tierUnlocks[tier]) return;
+  const arch = ARCHETYPE_ORDER[slot];
+  const typeId = `T${tier}_${arch}`;
+  sendOrApplyEvent({ type: 'shop', kind: 'minion', minionType: typeId, lane: shopState.selectedLane });
+}
+
+function refreshShopUI() {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const inBase = !side.hero.dead && inSideBase(side.idx, side.hero.x, side.hero.z);
+
+  // Auto-byt till lägsta upplåsta tier om vald är låst
+  if (!side.tierUnlocks[shopState.selectedTier]) {
+    for (let t = 5; t >= 1; t--) if (side.tierUnlocks[t]) { shopState.selectedTier = t; break; }
+  }
+
+  // Hero-knappar
+  for (const btn of shopRefs.heroBtns) {
+    const cost = HERO_SHOP_ITEMS[btn.dataset.item].cost;
+    btn.disabled = side.gold < cost || side.hero.dead;
+  }
+
+  // Lane-knappar
+  for (const btn of shopRefs.laneBtns) {
+    btn.classList.toggle('active', +btn.dataset.lane === shopState.selectedLane);
+  }
+
+  // Tier-tabs
+  const next = getNextLockedTier(side);
+  for (const btn of shopRefs.tierBtns) {
+    const tier = +btn.dataset.tier;
+    const unlocked = !!side.tierUnlocks[tier];
+    const isActive = tier === shopState.selectedTier;
+    const isNext = tier === next;
+    btn.classList.toggle('active', unlocked && isActive);
+    btn.classList.toggle('locked', !unlocked);
+    const cost = TIER_UNLOCK_COST[tier];
+    const canUnlock = !unlocked && isNext && side.gold >= cost;
+    btn.classList.toggle('can-unlock', canUnlock);
+    if (unlocked) {
+      btn.innerHTML = `Tier ${tier}`;
+      btn.disabled = false;
+    } else if (isNext) {
+      btn.innerHTML = `Tier ${tier}<small>Lås upp ${cost}g</small>`;
+      btn.disabled = !canUnlock || side.hero.dead;
+    } else {
+      btn.innerHTML = `Tier ${tier}<small>Låst</small>`;
+      btn.disabled = true;
+    }
+  }
+
+  // Minion-knappar (6 för vald tier)
+  for (const btn of shopRefs.minionBtns) {
+    const slot = +btn.dataset.slot;
+    const arch = ARCHETYPE_ORDER[slot];
+    const typeId = `T${shopState.selectedTier}_${arch}`;
+    const def = MINION_TYPES[typeId];
+    btn.innerHTML = `${ARCHETYPE_NAMES[arch]} (${def.cost}g)<small>HP ${def.hp} · DMG ${def.damage}${def.attackType === 'arrow' ? ' · pil' : def.attackType === 'magic' ? ' · AoE' : ''}</small>`;
+    const unlocked = !!side.tierUnlocks[shopState.selectedTier];
+    btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
+  }
+
+  shopEl.classList.toggle('visible', inBase);
+}
+
+populateShop();
+
+function updateShop() { refreshShopUI(); }
 
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
@@ -2058,7 +2669,7 @@ function returnToLobby() {
   pendingHostCode = null;
   if (sides[1]) { removeSide(sides[1]); sides[1] = null; }
   if (sides[2]) { removeSide(sides[2]); sides[2] = null; }
-  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects']) {
+  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles']) {
     for (const m of clientMeshes[key].values()) for (const mesh of m.values()) scene.remove(mesh);
     clientMeshes[key].clear();
   }
@@ -2129,12 +2740,22 @@ function simulateAll(dt) {
     updateWaves(side, dt);
     updateMonsters(side, dt);
     updatePlayerCreeps(side, dt);
+    updateCreepProjectiles(side, dt);
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
     updateFireballs(side, dt);
     updateNovaEffects(side, dt);
+    tickIncome(side, dt);
   }
   checkMatchEnd();
+}
+
+function tickIncome(side, dt) {
+  side.incomeTimer += dt;
+  while (side.incomeTimer >= INCOME_INTERVAL) {
+    side.incomeTimer -= INCOME_INTERVAL;
+    side.gold += side.income;
+  }
 }
 
 function tick() {
