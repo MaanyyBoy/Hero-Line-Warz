@@ -1054,6 +1054,7 @@ function createSide(idx) {
     gold: 0,
     income: INCOME_BASE,
     incomeTimer: 0,
+    incomeTickCount: 0,
     items: { sword: 0, boots: 0, vit: 0 },
     tierUnlocks: { 1: true, 2: false, 3: false, 4: false, 5: false },
     // Skills
@@ -1830,6 +1831,7 @@ function applyRemoteState(state) {
     side.gold = sData.g;
     side.income = sData.inc ?? side.income;
     side.incomeTimer = sData.incT ?? side.incomeTimer;
+    if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
     if (sData.tu) side.tierUnlocks = sData.tu;
     side.items = sData.i;
     side.moveSpeed = sData.ms;
@@ -1902,6 +1904,7 @@ function serializeSide(side) {
     g: side.gold,
     inc: side.income,
     incT: +side.incomeTimer.toFixed(2),
+    incC: side.incomeTickCount || 0,
     tu: side.tierUnlocks,
     i: side.items,
     ms: side.moveSpeed,
@@ -1953,7 +1956,7 @@ function checkMatchEnd() {
 // KAMERA
 // ============================================================
 
-const cameraOffset = new THREE.Vector3(0, 9, 7);
+const cameraOffset = new THREE.Vector3(0, 12, 9.3);
 const cameraTarget = new THREE.Vector3();
 
 function updateCamera(dt) {
@@ -2007,7 +2010,7 @@ function updateHud() {
     : `HP: ${side.hero.hp}/${side.hero.maxHp}`;
   const top = [
     heroLine,
-    `Guld: ${side.gold} <span style="opacity:0.7">(+${side.income}/15s)</span>`,
+    `Guld: ${side.gold}`,
     `<span style="color:#88aaff">Du: ${side.tower.hp}/${side.tower.maxHp}</span>`,
     `<span style="color:#ff8888">Motst: ${opp ? opp.tower.hp + '/' + opp.tower.maxHp : '–'}</span>`,
   ];
@@ -2660,6 +2663,7 @@ function startMatch(mode) {
   matchState.gameOver = false;
   matchState.gameWon = false;
   matchState.winner = 0;
+  resetIncomeTickTracking();
   lobbyEl.classList.add('hidden');
   document.body.classList.add('in-game');
 }
@@ -2678,6 +2682,7 @@ function returnToLobby() {
   lobbyEl.classList.remove('hidden');
   showLobbyPanel('main');
   APP.mode = 'lobby';
+  resetIncomeTickTracking();
 }
 
 document.getElementById('btn-host').addEventListener('click', hostGame);
@@ -2755,6 +2760,44 @@ function tickIncome(side, dt) {
   while (side.incomeTimer >= INCOME_INTERVAL) {
     side.incomeTimer -= INCOME_INTERVAL;
     side.gold += side.income;
+    side.incomeTickCount = (side.incomeTickCount || 0) + 1;
+  }
+}
+
+// ---- Income-display + tick-notiser ----
+
+const incomeDisplayEl = document.getElementById('income-display');
+
+function updateIncomeDisplay() {
+  if (!incomeDisplayEl) return;
+  const side = sides[APP.localSide];
+  if (!side) return;
+  incomeDisplayEl.textContent = `Income: ${side.income}g / 15s`;
+}
+
+function showIncomeNotification(amount) {
+  const el = document.createElement('div');
+  el.className = 'income-popup';
+  el.textContent = `Income +${amount}g`;
+  document.body.appendChild(el);
+  setTimeout(() => { try { el.remove(); } catch (_) {} }, 1700);
+}
+
+let lastSeenIncomeTickCount = null;
+function resetIncomeTickTracking() { lastSeenIncomeTickCount = null; }
+
+function checkIncomeTickNotifications() {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const cur = side.incomeTickCount || 0;
+  if (lastSeenIncomeTickCount === null) {
+    lastSeenIncomeTickCount = cur;
+    return;
+  }
+  if (cur > lastSeenIncomeTickCount) {
+    const delta = cur - lastSeenIncomeTickCount;
+    showIncomeNotification(side.income * delta);
+    lastSeenIncomeTickCount = cur;
   }
 }
 
@@ -2773,6 +2816,8 @@ function tick() {
   if (APP.mode === 'host') maybeSendHostState(now);
 
   updateHud();
+  updateIncomeDisplay();
+  checkIncomeTickNotifications();
   updateSkillButtonStyles();
   updateAimIndicators();
   updateShop();
