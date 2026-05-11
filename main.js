@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
 
 // ============================================================
 // THREE.JS GRUND-SETUP
@@ -1928,6 +1928,10 @@ function startPeer(id) {
 }
 
 async function hostGame() {
+  if (typeof Peer === 'undefined') {
+    showLobbyError('PeerJS-biblioteket kunde inte laddas. Kolla nätverk eller blockerare och ladda om sidan.');
+    return;
+  }
   showLobbyPanel('hosting');
   lobbyHostMsgEl.textContent = 'Skapar rum...';
   const code = genRoomCode();
@@ -1961,6 +1965,10 @@ function cancelHosting() {
 }
 
 async function joinGame() {
+  if (typeof Peer === 'undefined') {
+    lobbyJoinMsgEl.innerHTML = '<span class="err">PeerJS kunde inte laddas. Ladda om sidan.</span>';
+    return;
+  }
   const code = lobbyCodeInputEl.value.trim().toUpperCase();
   if (code.length !== 4) {
     lobbyJoinMsgEl.innerHTML = '<span class="err">Koden måste vara 4 tecken.</span>';
