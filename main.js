@@ -5687,33 +5687,83 @@ const HEROES = [
   { id: 'hero-10',   name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
 ];
 
-// Hero-info för Heroes-browsern (skill-beskrivningar + passiver)
+// Hero-info för Heroes-browsern (skill-beskrivningar + passiver + ikoner)
 const HERO_INFO = {
   magiker: {
     skills: {
-      q: { name: 'Fire Wave', desc: 'Skickar ut en triangulär eldvåg framför hjälten (45° vinkel, 10 m lång). Träffar alla fiender i konen med direkt damage och applicerar 3 sekunders DoT (damage over time).' },
-      f: { name: 'Frost Nova', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
-      e: { name: 'Black Hole', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
+      q: { name: 'Fire Wave', icon: '🔥', desc: 'Skickar ut en triangulär eldvåg framför hjälten (45° vinkel, 5 m lång). Träffar alla fiender i konen med direkt damage och applicerar 3 sekunders DoT (damage over time).' },
+      f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
+      e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
-    passive: { name: 'Arcane Echo', desc: 'Var 4:e auto-attack är en AoE-pulse som skadar fiender runt träffpunkten.' },
+    passive: { name: 'Arcane Echo', icon: '✦', desc: 'Var 4:e auto-attack är en AoE-pulse som skadar fiender runt träffpunkten.' },
   },
   legolas: {
     skills: {
-      q: { name: 'Vine Trap Rain', desc: 'Skjuter en pil i luften som regnar ner pilar över en 3 m radie zon i 3 sekunder. Gör inget direkt damage — bara DoT och rotar fiender på plats medan de är i zonen.' },
-      f: { name: 'Hunter\'s Focus', desc: '5 sekunders self-buff: +10% auto-attack damage, +10% crit chans, +30% crit damage.' },
-      e: { name: 'Shadow Dash', desc: 'Snabb dash framåt (4 m). Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
+      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Skjuter en pil i luften som regnar ner pilar över en 3 m radie zon i 3 sekunder. Gör inget direkt damage — bara DoT och rotar fiender på plats medan de är i zonen.' },
+      f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5 sekunders self-buff: +10% auto-attack damage, +10% crit chans, +30% crit damage.' },
+      e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
     },
     passive: null,
   },
   gimlu: {
     skills: {
-      q: { name: 'Titan\'s Taunt', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction och healas 20% av all skada han tar.' },
-      f: { name: 'Iron Will', desc: '3 sekunders aktiveringsfönster. All damage Gimlu tar lagras i en mätare. Vid slutet exploderar han i AoE (6 m radie) och gör damage = den lagrade summan till alla fiender runt.' },
-      e: { name: 'Hammer Throw', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att teleportera till den.' },
+      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction och healas 20% av all skada han tar.' },
+      f: { name: 'Iron Will', icon: '🛡', desc: '3 sekunders aktiveringsfönster. All damage Gimlu tar lagras i en mätare. Vid slutet exploderar han i AoE (6 m radie) och gör damage = den lagrade summan till alla fiender runt.' },
+      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att teleportera till den.' },
     },
     passive: null,
   },
 };
+
+// Inline-SVG-porträtt per hero (används i Heroes-browser och hero-pick).
+function heroPortraitSVG(heroId) {
+  if (heroId === 'magiker') return `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><radialGradient id="bg-mg" cx="50%" cy="40%"><stop offset="0%" stop-color="#5a48a8"/><stop offset="100%" stop-color="#15102a"/></radialGradient></defs>
+      <rect width="100" height="100" fill="url(#bg-mg)"/>
+      <path d="M 8 100 Q 50 62 92 100 Z" fill="#241845"/>
+      <circle cx="50" cy="56" r="13" fill="#e6c7a5"/>
+      <path d="M 38 62 Q 50 90 62 62 Q 60 78 50 80 Q 40 78 38 62 Z" fill="#eaeaea"/>
+      <ellipse cx="50" cy="55" rx="2.6" ry="2" fill="#eaeaea"/>
+      <ellipse cx="50" cy="36" rx="22" ry="4" fill="#241845"/>
+      <path d="M 32 34 L 50 6 L 68 34 Z" fill="#3a2c70"/>
+      <circle cx="50" cy="22" r="2.8" fill="#ffe0a0"/>
+      <circle cx="44" cy="55" r="1.4" fill="#1a1430"/>
+      <circle cx="56" cy="55" r="1.4" fill="#1a1430"/>
+    </svg>`;
+  if (heroId === 'legolas') return `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><radialGradient id="bg-lg" cx="50%" cy="40%"><stop offset="0%" stop-color="#345528"/><stop offset="100%" stop-color="#0c1808"/></radialGradient></defs>
+      <rect width="100" height="100" fill="url(#bg-lg)"/>
+      <path d="M 5 100 Q 50 65 95 100 Z" fill="#3a5028"/>
+      <path d="M 18 80 L 24 100 L 6 100 Z" fill="#5a3a1a"/>
+      <line x1="74" y1="42" x2="93" y2="20" stroke="#ddc680" stroke-width="2.5"/>
+      <polygon points="92,18 88,24 96,22" fill="#bbb"/>
+      <circle cx="50" cy="54" r="14" fill="#efd4b0"/>
+      <path d="M 36 50 Q 50 32 64 50 L 66 64 Q 50 50 34 64 Z" fill="#eed8a8"/>
+      <path d="M 30 52 Q 50 22 70 52 L 70 60 Q 50 36 30 60 Z" fill="#223a18" opacity="0.65"/>
+      <circle cx="44" cy="55" r="1.5" fill="#2a1a08"/>
+      <circle cx="56" cy="55" r="1.5" fill="#2a1a08"/>
+      <ellipse cx="50" cy="60" rx="3" ry="1" fill="#a48060"/>
+    </svg>`;
+  if (heroId === 'gimlu') return `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><radialGradient id="bg-gm" cx="50%" cy="40%"><stop offset="0%" stop-color="#6a4a32"/><stop offset="100%" stop-color="#1a1208"/></radialGradient></defs>
+      <rect width="100" height="100" fill="url(#bg-gm)"/>
+      <path d="M 5 100 Q 50 58 95 100 Z" fill="#4a4e54"/>
+      <path d="M 50 100 L 32 78 L 68 78 Z" fill="#5a5e64" opacity="0.6"/>
+      <circle cx="50" cy="60" r="16" fill="#d9a878"/>
+      <path d="M 30 50 Q 50 32 70 50 L 70 56 L 30 56 Z" fill="#686c70"/>
+      <ellipse cx="50" cy="44" rx="21" ry="14" fill="#586064"/>
+      <polygon points="50,18 47,32 53,32" fill="#9fa3a7"/>
+      <rect x="48" y="52" width="4" height="10" fill="#5a5e62"/>
+      <path d="M 32 66 Q 50 96 68 66 Q 64 84 50 86 Q 36 84 32 66 Z" fill="#6e3a18"/>
+      <ellipse cx="50" cy="66" rx="11" ry="2.4" fill="#6e3a18"/>
+      <circle cx="43" cy="60" r="1.6" fill="#1a1208"/>
+      <circle cx="57" cy="60" r="1.6" fill="#1a1208"/>
+    </svg>`;
+  return null; // placeholder → caller använder fallback (initial)
+}
 
 const heroPickEl = document.getElementById('hero-pick');
 const hpTimerEl = document.getElementById('hp-timer');
@@ -5736,67 +5786,117 @@ const heroPickState = {
 // === Heroes-browser (huvudmenyn) ===
 const heroesBrowserContent = document.getElementById('heroes-browser-content');
 const itemsBrowserContent = document.getElementById('items-browser-content');
-let heroesBrowserSelected = null;
+const heroDetailModal = document.getElementById('hero-detail-modal');
+const heroDetailBody = document.getElementById('hero-detail-body');
+const itemDetailModal = document.getElementById('item-detail-modal');
+const itemDetailBody = document.getElementById('item-detail-body');
 let heroesBrowserSkillKey = null;
 
 function renderHeroesBrowser() {
   if (!heroesBrowserContent) return;
   heroesBrowserContent.innerHTML = '';
-  // Grid
   const grid = document.createElement('div');
   grid.className = 'browser-grid';
   for (const h of HEROES) {
     const card = document.createElement('div');
-    card.className = 'browser-card' + (h.available ? '' : ' locked') + (h.id === heroesBrowserSelected ? ' selected' : '');
-    card.innerHTML = `<div class="card-icon">${h.initial}</div><div class="card-name">${h.name}</div><div class="card-role">${h.role}</div>`;
-    if (h.available) card.addEventListener('click', () => { heroesBrowserSelected = h.id; heroesBrowserSkillKey = null; renderHeroesBrowser(); });
+    card.className = 'browser-card' + (h.available ? '' : ' locked');
+    const portrait = heroPortraitSVG(h.id);
+    const portraitHtml = portrait ? portrait : h.initial;
+    card.innerHTML = `<div class="card-icon">${portraitHtml}</div><div class="card-name">${h.name}</div><div class="card-role">${h.role}</div>`;
+    if (h.available) card.addEventListener('click', () => openHeroDetailModal(h.id));
     grid.appendChild(card);
   }
   heroesBrowserContent.appendChild(grid);
-  // Detail
-  if (heroesBrowserSelected) {
-    const hero = HEROES.find(h => h.id === heroesBrowserSelected);
-    const info = HERO_INFO[heroesBrowserSelected];
-    const def = HERO_DEFS[heroesBrowserSelected] || HERO_DEFS.magiker;
-    if (hero && info) {
-      const detail = document.createElement('div');
-      detail.className = 'browser-detail';
-      const statRows = [
-        ['HP', def.baseHp],
-        ['AA-dmg', def.baseDmg],
-        ['AA-range', def.attackRange.toFixed(1) + ' m'],
-        ['AA-interval', def.attackInterval.toFixed(2) + ' s'],
-        ['Move-speed', def.baseMoveSpeed.toFixed(1)],
-      ].map(([l, v]) => `<div class="stat-row"><span class="stat-label">${l}</span><span class="stat-val">${v}</span></div>`).join('');
-      const skillItems = ['q', 'f', 'e'].map(key => {
-        const s = info.skills[key];
-        return `<div class="skill-item${heroesBrowserSkillKey === key ? ' expanded' : ''}" data-skill="${key}">
-          <div class="skill-head"><div class="skill-key ${key}">${key.toUpperCase()}</div><span>${s.name}</span></div>
-          <div class="skill-desc">${s.desc}</div>
-        </div>`;
-      }).join('');
-      const passive = info.passive
-        ? `<div class="skill-item${heroesBrowserSkillKey === 'p' ? ' expanded' : ''}" data-skill="p">
-            <div class="skill-head"><div class="skill-key p">P</div><span>${info.passive.name}</span></div>
-            <div class="skill-desc">${info.passive.desc}</div>
-          </div>`
-        : '';
-      detail.innerHTML = `<h3>${hero.name}</h3><div class="sub-role">${hero.role}</div>
-        <div class="stat-grid">${statRows}</div>
-        <div class="skill-list">${skillItems}${passive}</div>`;
-      heroesBrowserContent.appendChild(detail);
-      detail.querySelectorAll('.skill-item').forEach(el => {
-        el.addEventListener('click', () => {
-          const k = el.dataset.skill;
-          heroesBrowserSkillKey = (heroesBrowserSkillKey === k) ? null : k;
-          renderHeroesBrowser();
-        });
-      });
-    }
-  }
+}
+
+function openHeroDetailModal(heroId) {
+  const hero = HEROES.find(h => h.id === heroId);
+  const info = HERO_INFO[heroId];
+  const def = HERO_DEFS[heroId] || HERO_DEFS.magiker;
+  if (!hero || !info || !heroDetailModal) return;
+  heroesBrowserSkillKey = null;
+  renderHeroDetail(heroId, hero, info, def);
+  heroDetailModal.classList.remove('hidden');
+}
+function closeHeroDetailModal() { if (heroDetailModal) heroDetailModal.classList.add('hidden'); }
+
+function renderHeroDetail(heroId, hero, info, def) {
+  const portrait = heroPortraitSVG(heroId) || `<div style="font:800 36px/100px sans-serif;text-align:center;color:#ffd34a">${hero.initial}</div>`;
+  const statRows = [
+    ['HP', def.baseHp],
+    ['AA-dmg', def.baseDmg],
+    ['AA-range', def.attackRange.toFixed(1) + ' m'],
+    ['AA-interval', def.attackInterval.toFixed(2) + ' s'],
+    ['Move-speed', def.baseMoveSpeed.toFixed(1)],
+  ].map(([l, v]) => `<div class="stat-row"><span class="stat-label">${l}</span><span class="stat-val">${v}</span></div>`).join('');
+  const skillItems = ['q', 'f', 'e'].map(key => {
+    const s = info.skills[key];
+    return `<div class="skill-item${heroesBrowserSkillKey === key ? ' expanded' : ''}" data-skill="${key}">
+      <div class="skill-head"><div class="skill-key ${key}">${s.icon || key.toUpperCase()}</div><span>${key.toUpperCase()} · ${s.name}</span></div>
+      <div class="skill-desc">${s.desc}</div>
+    </div>`;
+  }).join('');
+  const passive = info.passive
+    ? `<div class="skill-item${heroesBrowserSkillKey === 'p' ? ' expanded' : ''}" data-skill="p">
+        <div class="skill-head"><div class="skill-key p">${info.passive.icon || 'P'}</div><span>Passiv · ${info.passive.name}</span></div>
+        <div class="skill-desc">${info.passive.desc}</div>
+      </div>`
+    : '';
+  heroDetailBody.innerHTML = `
+    <div class="hero-modal-head">
+      <div class="hero-modal-portrait">${portrait}</div>
+      <div>
+        <h2>${hero.name}</h2>
+        <div class="sub-role">${hero.role}</div>
+      </div>
+    </div>
+    <div class="stat-grid">${statRows}</div>
+    <div class="skill-list">${skillItems}${passive}</div>
+  `;
+  heroDetailBody.querySelectorAll('.skill-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const k = el.dataset.skill;
+      heroesBrowserSkillKey = (heroesBrowserSkillKey === k) ? null : k;
+      renderHeroDetail(heroId, hero, info, def);
+    });
+  });
 }
 
 // === Items-browser ===
+function openItemDetailModal(itemId) {
+  const def = ITEM_TYPES[itemId];
+  if (!def || !def.variants || !itemDetailModal) return;
+  renderItemDetail(itemId, def);
+  itemDetailModal.classList.remove('hidden');
+}
+function closeItemDetailModal() { if (itemDetailModal) itemDetailModal.classList.add('hidden'); }
+
+function renderItemDetail(itemId, def) {
+  const variantBlocks = Object.values(def.variants).map(v => {
+    const sample = v.statsAtLevel(1);
+    const statKeys = Object.keys(sample);
+    const thead = `<th>Lvl</th>${statKeys.map(k => `<th>${STAT_LABELS[k] || k}</th>`).join('')}`;
+    const rows = [];
+    for (let lvl = 1; lvl <= 10; lvl++) {
+      const s = v.statsAtLevel(lvl);
+      rows.push(`<tr><td class="lv">${lvl}</td>${statKeys.map(k => `<td>${fmtStatVal(k, s[k])}</td>`).join('')}</tr>`);
+    }
+    const activeHtml = v.activeAtMax
+      ? `<div class="variant-active"><b>Active (lvl 10):</b> ${v.activeAtMax.description || ''} — ${v.activeAtMax.duration}s effekt, ${v.activeAtMax.cooldown}s cd</div>`
+      : '';
+    return `<div class="variant-block">
+      <div class="variant-name">${v.icon || ''} ${v.name}</div>
+      <div class="variant-desc">${v.description || ''}</div>
+      <table class="tier-table"><thead><tr>${thead}</tr></thead><tbody>${rows.join('')}</tbody></table>
+      ${activeHtml}
+    </div>`;
+  }).join('');
+  itemDetailBody.innerHTML = `<h3 style="color:#ffd34a;margin:0 0 4px;font-size:24px">${def.icon || ''} ${def.name}</h3>
+    <div class="sub-role">${def.description || ''}</div>
+    <div class="sub-role" style="margin-bottom:10px">Köp: ${ITEM_BUY_COST}g · Uppgradering lvl N: 500×2^(N-1) guld · Max level 10</div>
+    <div class="variant-list">${variantBlocks}</div>`;
+}
+
 let itemsBrowserSelected = null;
 
 function fmtStatVal(key, val) {
@@ -5818,44 +5918,12 @@ function renderItemsBrowser() {
     if (!def) continue;
     const hasVariants = !!def.variants;
     const card = document.createElement('div');
-    card.className = 'browser-card' + (hasVariants ? '' : ' locked') + (itemId === itemsBrowserSelected ? ' selected' : '');
-    card.innerHTML = `<div class="card-icon">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasVariants ? 'Click for details' : 'Coming Soon'}</div>`;
-    if (hasVariants) card.addEventListener('click', () => { itemsBrowserSelected = itemId; renderItemsBrowser(); });
+    card.className = 'browser-card' + (hasVariants ? '' : ' locked');
+    card.innerHTML = `<div class="card-icon" style="font-size:34px;background:linear-gradient(135deg,#2a2456,#15102a)">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasVariants ? 'Klicka för detaljer' : 'Coming Soon'}</div>`;
+    if (hasVariants) card.addEventListener('click', () => openItemDetailModal(itemId));
     grid.appendChild(card);
   }
   itemsBrowserContent.appendChild(grid);
-  if (itemsBrowserSelected) {
-    const def = ITEM_TYPES[itemsBrowserSelected];
-    if (def && def.variants) {
-      const detail = document.createElement('div');
-      detail.className = 'browser-detail';
-      const variantBlocks = Object.values(def.variants).map(v => {
-        // Bygg tier-tabell lvl 1..10
-        const sample = v.statsAtLevel(1);
-        const statKeys = Object.keys(sample);
-        const thead = `<th>Lvl</th>${statKeys.map(k => `<th>${STAT_LABELS[k] || k}</th>`).join('')}`;
-        const rows = [];
-        for (let lvl = 1; lvl <= 10; lvl++) {
-          const s = v.statsAtLevel(lvl);
-          rows.push(`<tr><td class="lv">${lvl}</td>${statKeys.map(k => `<td>${fmtStatVal(k, s[k])}</td>`).join('')}</tr>`);
-        }
-        const activeHtml = v.activeAtMax
-          ? `<div class="variant-active"><b>Active (lvl 10):</b> ${v.activeAtMax.description || ''} — ${v.activeAtMax.duration}s effekt, ${v.activeAtMax.cooldown}s cd</div>`
-          : '';
-        return `<div class="variant-block">
-          <div class="variant-name">${v.icon || ''} ${v.name}</div>
-          <div class="variant-desc">${v.description || ''}</div>
-          <table class="tier-table"><thead><tr>${thead}</tr></thead><tbody>${rows.join('')}</tbody></table>
-          ${activeHtml}
-        </div>`;
-      }).join('');
-      const buyCost = ITEM_BUY_COST;
-      detail.innerHTML = `<h3>${def.name}</h3><div class="sub-role">${def.description || ''}</div>
-        <div class="sub-role" style="margin-bottom:10px">Köp: ${buyCost}g · Uppgradering lvl N: 500×2^(N-1) guld · Max level 10</div>
-        <div class="variant-list">${variantBlocks}</div>`;
-      itemsBrowserContent.appendChild(detail);
-    }
-  }
 }
 
 function renderHeroGrid() {
@@ -5864,7 +5932,9 @@ function renderHeroGrid() {
     const card = document.createElement('div');
     card.className = 'hp-card' + (h.available ? '' : ' locked');
     card.dataset.heroId = h.id;
-    card.innerHTML = `<div class="hp-portrait">${h.initial}</div><div class="hp-name">${h.name}</div><div class="hp-role">${h.role}</div>`;
+    const portrait = heroPortraitSVG(h.id);
+    const portraitHtml = portrait ? portrait : h.initial;
+    card.innerHTML = `<div class="hp-portrait">${portraitHtml}</div><div class="hp-name">${h.name}</div><div class="hp-role">${h.role}</div>`;
     if (h.available) {
       card.addEventListener('click', () => selectHero(h.id));
     }
@@ -6277,6 +6347,13 @@ document.getElementById('btn-heroes').addEventListener('click', () => { renderHe
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
 document.getElementById('btn-heroes-back').addEventListener('click', () => showLobbyPanel('main'));
 document.getElementById('btn-items-back').addEventListener('click', () => showLobbyPanel('main'));
+const btnHeroDetailBack = document.getElementById('btn-hero-detail-back');
+if (btnHeroDetailBack) btnHeroDetailBack.addEventListener('click', closeHeroDetailModal);
+const btnItemDetailBack = document.getElementById('btn-item-detail-back');
+if (btnItemDetailBack) btnItemDetailBack.addEventListener('click', closeItemDetailModal);
+// Klick på modal-bakgrund stänger också
+if (heroDetailModal) heroDetailModal.addEventListener('click', (e) => { if (e.target === heroDetailModal) closeHeroDetailModal(); });
+if (itemDetailModal) itemDetailModal.addEventListener('click', (e) => { if (e.target === itemDetailModal) closeItemDetailModal(); });
 
 // ============================================================
 // HUVUDLOOP
