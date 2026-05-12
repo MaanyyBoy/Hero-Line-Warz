@@ -1095,6 +1095,13 @@ const HERO_BASE_MOVE_SPEED = 6;
 const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
+
+// Per-hero baseline stats (matchar server/game-engine.js HERO_DEFS).
+const HERO_DEFS = {
+  magiker: { name: 'Gandulf', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
+  legolas: { name: 'Legolas', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
+};
+function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
 const PASSIVE_EVERY = 4;
 const PASSIVE_AOE_RADIUS = 2.0;
@@ -1439,8 +1446,8 @@ function addOwnerPlume(grp, headY, plumeColor) {
 }
 
 // Hero-kopia: klon av hero-mesh + glödande röd aura/halo så den syns som "fiendens dubbelgångare".
-function makeHeroCopyMesh(ownerSideIdx) {
-  const grp = makeHeroMesh(ownerSideIdx);
+function makeHeroCopyMesh(ownerSideIdx, heroId) {
+  const grp = makeHeroMesh(ownerSideIdx, heroId);
   // Lägg på en glödande aura runt fötterna
   const aura = new THREE.Mesh(
     new THREE.RingGeometry(0.42, 0.62, 24),
@@ -1465,9 +1472,16 @@ function makeHeroCopyMesh(ownerSideIdx) {
   return grp;
 }
 
-function makeHeroMesh(idx) {
+// Hero-mesh-dispatcher per heroId. Default Gandulf (magiker).
+function makeHeroMesh(idx, heroId) {
+  if (heroId === 'legolas') return makeLegolasMesh(idx);
+  return makeGandulfMesh(idx);
+}
+
+function makeGandulfMesh(idx) {
   const cfg = SIDE_CFG[idx];
   const grp = new THREE.Group();
+  grp.userData.heroId = 'magiker';
 
   const robeColor = idx === 1 ? 0x2a2456 : 0x3a1f3a;
   const trimColor = cfg.heroColor;
@@ -1567,6 +1581,114 @@ function makeHeroMesh(idx) {
   );
   orb.position.set(0.05, -1.25, 0.05);
   rig.rightArm.add(orb);
+
+  setShadow(grp, true, false);
+  return grp;
+}
+
+// Legolas — agile archer. Skogsgrön/läder-look, blont hår, pilbåge + koger.
+function makeLegolasMesh(idx) {
+  const cfg = SIDE_CFG[idx];
+  const grp = new THREE.Group();
+  grp.userData.heroId = 'legolas';
+
+  const trimColor = cfg.heroColor;
+  const tunicColor = 0x3a5028;       // skogsgrön
+  const leatherColor = 0x5a3a1a;     // brun läder
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xefd4b0, roughness: 0.5 });
+  const tunicMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.85 });
+  const leatherMat = new THREE.MeshStandardMaterial({ color: leatherColor, roughness: 0.7 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
+
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.085, legH: 0.32, armR: 0.075, armH: 0.36,
+    torsoR: 0.20, torsoH: 0.46, headR: 0.16,
+    torsoShape: 'capsule',
+    bodyMat: tunicMat, armorMat: leatherMat, skinMat,
+    limbMat: tunicMat, legMat: bootMat,
+  });
+
+  // Bälte
+  const belt = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.03, 0.04, 10, 22),
+    new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.8 })
+  );
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = rig.hipY + 0.05;
+  grp.add(belt);
+
+  // Lätt brigandine-väst ovanpå tunikan (mörkare grön)
+  const vest = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 1.06, rig.torsoR * 1.06, rig.torsoH * 0.7, 12, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x223a18, roughness: 0.8 })
+  );
+  vest.position.y = rig.hipY + rig.torsoH * 0.35;
+  grp.add(vest);
+
+  // Trim (lyser i sidans färg) — diskret rand över bröstet
+  const trim = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.07, 0.025, 8, 22),
+    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.5, emissive: trimColor, emissiveIntensity: 0.4 })
+  );
+  trim.rotation.x = Math.PI / 2;
+  trim.position.y = rig.torsoTopY - 0.05;
+  grp.add(trim);
+
+  // Långt hår — bakåt-hängande, blont
+  const hairColor = 0xeed8a8;
+  const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.7 });
+  // Hjälmkapsel ovanpå huvudet (hair-shell)
+  const hairTop = new THREE.Mesh(new THREE.SphereGeometry(rig.headR * 1.06, 14, 12, 0, Math.PI * 2, 0, Math.PI / 2.2), hairMat);
+  hairTop.position.y = rig.headY + rig.headR * 0.05;
+  grp.add(hairTop);
+  // Långt hår bak (cylindrar)
+  const hairBack = new THREE.Mesh(new THREE.CylinderGeometry(rig.headR * 0.7, rig.headR * 0.45, 0.32, 10), hairMat);
+  hairBack.position.set(0, rig.headY - 0.08, -rig.headR * 0.55);
+  hairBack.rotation.x = 0.15;
+  grp.add(hairBack);
+
+  // Båge — TorusGeometry halv-cirkel i höger hand
+  const bowMat = new THREE.MeshStandardMaterial({ color: 0x6b4a20, roughness: 0.7, metalness: 0.05 });
+  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.025, 8, 18, Math.PI), bowMat);
+  bow.position.set(0.08, -0.40, 0.08);
+  bow.rotation.set(0, Math.PI / 2, Math.PI / 2);
+  rig.rightArm.add(bow);
+  // Bågsträng (tunn linje)
+  const stringMat = new THREE.MeshStandardMaterial({ color: 0xeeeacf, roughness: 0.6 });
+  const string = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.64, 6), stringMat);
+  string.position.set(0.08, -0.40, 0.08);
+  string.rotation.set(0, 0, Math.PI / 2);
+  rig.rightArm.add(string);
+
+  // Koger på rygg (med pilar)
+  const quiver = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.06, 0.34, 10),
+    new THREE.MeshStandardMaterial({ color: 0x4a2818, roughness: 0.8 })
+  );
+  quiver.position.set(-0.10, rig.torsoTopY - 0.18, -0.18);
+  quiver.rotation.x = -0.4;
+  quiver.rotation.z = -0.25;
+  grp.add(quiver);
+  // Pilar i kogret (några ConeGeometry-toppar som syns över skuldran)
+  for (let i = 0; i < 4; i++) {
+    const arrow = new THREE.Mesh(
+      new THREE.ConeGeometry(0.012, 0.18, 6),
+      new THREE.MeshStandardMaterial({ color: 0xddc680, roughness: 0.6 })
+    );
+    arrow.position.set(-0.07 - i * 0.022, rig.torsoTopY + 0.05, -0.18);
+    arrow.rotation.x = -0.4;
+    arrow.rotation.z = -0.25;
+    grp.add(arrow);
+  }
+
+  // Diskret aura under fötterna (visuell agility-feel)
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.32, 0.46, 24),
+    new THREE.MeshBasicMaterial({ color: 0x66ff88, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.02;
+  grp.add(aura);
 
   setShadow(grp, true, false);
   return grp;
@@ -2454,13 +2576,14 @@ function maintainTargetLock(side) {
   }
   let target = resolveTargetEntity(side, opp);
   let isMonster = side.targetType === 'monster';
+  const range = side.attackRange || HERO_ATTACK_RANGE;
   if (target) {
     const tx = target.mesh.position.x, tz = target.mesh.position.z;
     const d = Math.hypot(tx - side.hero.x, tz - side.hero.z);
-    if (d > HERO_ATTACK_RANGE) target = null;
+    if (d > range) target = null;
   }
   if (!target) {
-    const t = findClosestHostile(side, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    const t = findClosestHostile(side, side.hero.x, side.hero.z, range);
     if (t) {
       target = t.entity;
       isMonster = t.isMonster;
@@ -2501,7 +2624,8 @@ function updateHeroAttack(side, dt) {
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
     damage: side.attackDmg * auraDmg, isAoE,
   });
-  side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
+  const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
 }
 
 function updateProjectiles(side, dt) {
@@ -2791,9 +2915,12 @@ function itemDefForEntry(entry) {
 
 // Räknar om hjältens stats från bas + alla items i inventoryn + aktiva buffar.
 function recomputeSideStats(side) {
-  let attackDmg = HERO_BASE_ATTACK_DMG;
-  let moveSpeedFlat = HERO_BASE_MOVE_SPEED;
-  let maxHpFlat = HERO_MAX_HP;
+  const def = heroDef(side.heroId);
+  side.attackRange = def.attackRange;
+  side.attackInterval = def.attackInterval;
+  let attackDmg = def.baseDmg;
+  let moveSpeedFlat = def.baseMoveSpeed;
+  let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0;
   let moveSpeedPct = 0;
   let skillDmgPct = 0;
@@ -2921,7 +3048,7 @@ function applyEvent(side, ev) {
   if (ev.type === 'aa') {
     if (side.hero.dead) return;
     side.aaActive = true;
-    const t = findClosestHostile(side, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    const t = findClosestHostile(side, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE);
     if (t) {
       side.targetId = t.entity.id;
       side.targetType = t.isMonster ? 'monster' : 'creep';
@@ -3346,7 +3473,7 @@ function applyRemoteState(state) {
       );
     });
     clientReconcileEntities(idx, 'heroCopies', sData.HC || [], (e) => {
-      const m = makeHeroCopyMesh(e.owner || idx);
+      const m = makeHeroCopyMesh(e.owner || idx, e.heroId || 'magiker');
       attachHpBar(m, 2.0);
       return m;
     });
@@ -4464,7 +4591,7 @@ const duelState = {
 
 const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
-  { id: 'hero-2',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'legolas',   name: 'Legolas',     role: 'Archer',       initial: 'L',   available: true  },
   { id: 'hero-3',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -4814,6 +4941,36 @@ function enterPlayPhase() {
   duelState.matchTimer = 0;
   duelState.announceTimer = 0;
   duelState.lastWinner = 0;
+  // Sätt heroId och byt mesh om hjälten skiljer från default.
+  // Solo: läs från heroPickState.selected. MP: side.heroId är redan satt via clientReconcileSide.
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s) continue;
+    if (APP.mode === 'solo' && idx === APP.localSide && heroPickState.selected) {
+      s.heroId = heroPickState.selected;
+    }
+    swapHeroMeshIfNeeded(s);
+  }
+  // Recompute stats för solo (MP får från servern)
+  if (APP.mode === 'solo') {
+    if (sides[1]) recomputeSideStats(sides[1]);
+  }
+}
+
+function swapHeroMeshIfNeeded(side) {
+  const wantedHeroId = side.heroId || 'magiker';
+  const currentHeroId = side.mesh?.userData?.heroId || 'magiker';
+  if (wantedHeroId === currentHeroId) return;
+  // Behåll position, rotation och hp-bar-state
+  const oldMesh = side.mesh;
+  const newMesh = makeHeroMesh(side.idx, wantedHeroId);
+  newMesh.position.copy(oldMesh.position);
+  newMesh.rotation.y = oldMesh.rotation.y;
+  newMesh.visible = oldMesh.visible;
+  attachHpBar(newMesh, 2.0, true);
+  scene.add(newMesh);
+  scene.remove(oldMesh);
+  side.mesh = newMesh;
 }
 
 function returnToLobby() {

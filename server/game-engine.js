@@ -9,12 +9,34 @@
 // === Hero & melee-konstanter ===
 const HERO_R = 0.45;
 const TOWER_R = 1.6;
+// Bas-värden (används som fallback om heroId saknar def). Per-hero stats i HERO_DEFS.
 const HERO_MAX_HP = 100;
 const HERO_BASE_MOVE_SPEED = 6;
 const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
 const PROJECTILE_SPEED = 18;
+
+// Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
+const HERO_DEFS = {
+  magiker: {
+    name: 'Gandulf',
+    baseHp: 100,
+    baseDmg: 5,
+    attackRange: 4.0,
+    attackInterval: 1.0,
+    baseMoveSpeed: 6.0,
+  },
+  legolas: {
+    name: 'Legolas',
+    baseHp: 85,           // glass-cannon
+    baseDmg: 6,           // mer per AA
+    attackRange: 6.0,     // längre räckvidd än Gandulf (4.0)
+    attackInterval: 0.7,  // snabbare AA än Gandulf (1.0)
+    baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
+  },
+};
+function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PASSIVE_EVERY = 4;
 const PASSIVE_AOE_RADIUS = 2.0;
 
@@ -227,9 +249,12 @@ function gainXp(side, amount) {
 }
 
 function recomputeSideStats(side) {
-  let attackDmg = HERO_BASE_ATTACK_DMG;
-  let moveSpeedFlat = HERO_BASE_MOVE_SPEED;
-  let maxHpFlat = HERO_MAX_HP;
+  const def = heroDef(side.heroId);
+  side.attackRange = def.attackRange;
+  side.attackInterval = def.attackInterval;
+  let attackDmg = def.baseDmg;
+  let moveSpeedFlat = def.baseMoveSpeed;
+  let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0, dmgReductionPct = 0, maxHpPct = 0;
   const addStats = (s) => {
     if (!s) return;
@@ -700,12 +725,13 @@ function maintainTargetLock(side, opp, state) {
   let target = resolveTargetEntity(side, opp, state);
   let isMonster = side.targetType === 'monster';
   let isHero = side.targetType === 'hero';
+  const range = side.attackRange || HERO_ATTACK_RANGE;
   if (target) {
     const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
-    if (d > HERO_ATTACK_RANGE) target = null;
+    if (d > range) target = null;
   }
   if (!target) {
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE, state);
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, range, state);
     if (t) {
       target = t.entity;
       isMonster = !!t.isMonster;
@@ -745,7 +771,8 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     damage: side.attackDmg * auraDmg, isAoE,
   });
-  side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
+  const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -980,7 +1007,7 @@ function applyEvent(state, sideIdx, ev) {
     const opp = state.sides[3 - sideIdx];
     side.aaActive = true;
     // Lock omedelbart på närmaste fiende (om någon i range)
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE, state);
     if (t) {
       side.targetId = t.entity.id;
       side.targetType = t.isMonster ? 'monster' : 'creep';
@@ -1077,6 +1104,7 @@ function spawnHeroCopy(state, winnerSide) {
   oppSide.heroCopies.push({
     id: state.nextEntityId++,
     ownerSideIdx: winnerIdx,
+    heroId: winnerSide.heroId || 'magiker',
     x: oppCfg.spawnX, z, ry: 0,
     lane,
     hp: maxHp, maxHp,
@@ -1417,7 +1445,7 @@ function serializeSide(side) {
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
     N: side.novaEffects.map(n => ({ id: n.id, x: n.x, z: n.z, life: n.life / n.maxLife })),
     CP: side.creepProjectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, kind: p.kind })),
-    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
+    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
     HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
   };
 }
