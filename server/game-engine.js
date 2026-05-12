@@ -65,7 +65,18 @@ const MONSTER_XP_REWARD = 10;
 const CREEP_XP_RATIO = 0.6;
 
 // Hero pick-fas
-const PICK_PHASE_DURATION = 60; // sek   // XP = creep.cost * 0.6
+const PICK_PHASE_DURATION = 60; // sek
+
+// Duel-system: var 5:e min stannar lane-fas och båda hjältar slåss i arena
+const DUEL_INTERVAL = 300;      // 5 min mellan dueler
+const DUEL_DURATION = 90;       // max sekunder per duel
+const DUEL_MAX_COUNT = 4;
+const DUEL_REWARDS_GOLD = [500, 1500, 5000, 10000];
+const DUEL_ANNOUNCE_TIME = 4;   // sek att visa vinnare efter duel
+// Arena ligger separat från huvudkartan (centrum z=35)
+const ARENA_CX = 0;
+const ARENA_CZ = 35;
+const ARENA_RADIUS = 9;   // XP = creep.cost * 0.6
 
 const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
 
@@ -165,6 +176,10 @@ function isHeroWalkable(idx, x, z) {
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
   if (dx * dx + dz * dz < (TOWER_R + HERO_R) * (TOWER_R + HERO_R)) return false;
   return inSideBase(idx, x, z) || inSideLanes(idx, x, z);
+}
+function isArenaWalkable(x, z) {
+  const dx = x - ARENA_CX, dz = z - ARENA_CZ;
+  return (dx * dx + dz * dz) < (ARENA_RADIUS - HERO_R) * (ARENA_RADIUS - HERO_R);
 }
 function isCreepPos(x, z) {
   if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 14.55) return true;
@@ -355,6 +370,12 @@ function createGameState() {
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
     phase: 'pick',
     pickTimer: PICK_PHASE_DURATION,
+    duelActive: false,
+    duelTimer: DUEL_INTERVAL,
+    duelMatchTimer: 0,
+    duelCount: 0,
+    duelLastWinner: 0,         // sida-idx, 0=ingen/tie
+    duelAnnounceTimer: 0,      // sek kvar att visa vinnar-banner
   };
 }
 
@@ -619,8 +640,16 @@ function updateCreepProjectiles(state, side, opp, dt) {
   }
 }
 
-function findClosestHostile(side, opp, x, z, maxDist) {
+function findClosestHostile(side, opp, x, z, maxDist, state) {
   let best = null, bestDist = maxDist;
+  // Under duel: bara opp:s hero räknas (creeps/monsters är frysta)
+  if (state && state.duelActive) {
+    if (opp && !opp.hero.dead) {
+      const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
+      if (d < bestDist) return { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx };
+    }
+    return null;
+  }
   for (const m of side.monsters) {
     const d = Math.hypot(m.x - x, m.z - z);
     if (d < bestDist) { bestDist = d; best = { entity: m, isMonster: true }; }
@@ -632,8 +661,12 @@ function findClosestHostile(side, opp, x, z, maxDist) {
   return best;
 }
 
-// Slå upp target-entitet från side.targetId/Type — ingår monster/creep.
-function resolveTargetEntity(side, opp) {
+// Slå upp target-entitet — kan vara monster/creep/hero (hero under duel).
+function resolveTargetEntity(side, opp, state) {
+  if (side.targetType === 'hero') {
+    if (state && state.duelActive && opp && !opp.hero.dead) return opp.hero;
+    return null;
+  }
   if (!side.targetId) return null;
   if (side.targetType === 'monster') {
     for (const m of side.monsters) if (m.id === side.targetId) return m;
@@ -646,8 +679,7 @@ function resolveTargetEntity(side, opp) {
   return null;
 }
 
-// Validera target varje tick; byt till närmaste om out-of-range/dödad. Sätt aaActive=false om inga.
-function maintainTargetLock(side, opp) {
+function maintainTargetLock(side, opp, state) {
   if (!side.aaActive || side.hero.dead) {
     if (side.hero.dead) {
       side.aaActive = false;
@@ -655,34 +687,40 @@ function maintainTargetLock(side, opp) {
     }
     return null;
   }
-  let target = resolveTargetEntity(side, opp);
+  let target = resolveTargetEntity(side, opp, state);
   let isMonster = side.targetType === 'monster';
+  let isHero = side.targetType === 'hero';
   if (target) {
     const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
     if (d > HERO_ATTACK_RANGE) target = null;
   }
   if (!target) {
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE, state);
     if (t) {
       target = t.entity;
-      isMonster = t.isMonster;
-      side.targetId = target.id;
-      side.targetType = isMonster ? 'monster' : 'creep';
+      isMonster = !!t.isMonster;
+      isHero = !!t.isHero;
+      if (isHero) {
+        side.targetId = 0;
+        side.targetType = 'hero';
+      } else {
+        side.targetId = target.id;
+        side.targetType = isMonster ? 'monster' : 'creep';
+      }
     } else {
       side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
-      // Behåll aaActive=true — hjälten väntar tills fiende dyker upp i range
       return null;
     }
   }
   side.targetX = target.x;
   side.targetZ = target.z;
-  return { entity: target, isMonster };
+  return { entity: target, isMonster, isHero };
 }
 
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
-  const target = maintainTargetLock(side, opp);
+  const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
@@ -691,7 +729,10 @@ function updateHeroAttack(state, side, opp, dt) {
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
-    target: target.entity, targetIsMonster: target.isMonster,
+    target: target.entity,
+    targetIsMonster: !!target.isMonster,
+    targetIsHero: !!target.isHero,
+    targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     damage: side.attackDmg * auraDmg, isAoE,
   });
   side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
@@ -700,23 +741,36 @@ function updateHeroAttack(state, side, opp, dt) {
 function updateProjectiles(state, side, opp, dt) {
   for (let i = side.projectiles.length - 1; i >= 0; i--) {
     const p = side.projectiles[i];
-    const targetAlive = p.targetIsMonster
-      ? side.monsters.includes(p.target)
-      : (opp && opp.playerCreeps.includes(p.target));
-    if (!targetAlive) { side.projectiles.splice(i, 1); continue; }
-    const tp = p.target;
-    const dx = tp.x - p.x, dy = 0.9 - p.y, dz = tp.z - p.z;
+    let targetAlive;
+    let tp;
+    if (p.targetIsHero) {
+      const ts = state.sides[p.targetSideIdx];
+      targetAlive = ts && !ts.hero.dead;
+      tp = ts ? ts.hero : null;
+    } else if (p.targetIsMonster) {
+      targetAlive = side.monsters.includes(p.target);
+      tp = p.target;
+    } else {
+      targetAlive = opp && opp.playerCreeps.includes(p.target);
+      tp = p.target;
+    }
+    if (!targetAlive || !tp) { side.projectiles.splice(i, 1); continue; }
+    const dx = tp.x - p.x, dy = (p.targetIsHero ? 1.0 : 0.9) - p.y, dz = tp.z - p.z;
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
-      p.target.hp -= p.damage;
-      if (p.target.hp <= 0) {
-        if (p.targetIsMonster) {
-          const k = side.monsters.indexOf(p.target);
-          if (k >= 0) killMonster(side, k, side);
-        } else {
-          const k = opp.playerCreeps.indexOf(p.target);
-          if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
+      if (p.targetIsHero) {
+        damageHero(state.sides[p.targetSideIdx], p.damage);
+      } else {
+        p.target.hp -= p.damage;
+        if (p.target.hp <= 0) {
+          if (p.targetIsMonster) {
+            const k = side.monsters.indexOf(p.target);
+            if (k >= 0) killMonster(side, k, side);
+          } else {
+            const k = opp.playerCreeps.indexOf(p.target);
+            if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
+          }
         }
       }
       if (p.isAoE) {
@@ -780,6 +834,14 @@ function updateFireballs(state, side, opp, dt) {
         if (m.hp <= 0) killMonster(side, j, side);
       }
     }
+    // Duel: hit opp.hero med Eldklot om i radie
+    if (state.duelActive && opp && !opp.hero.dead && !f.hit.has('opp-hero')) {
+      const d = Math.hypot(opp.hero.x - f.x, opp.hero.z - f.z);
+      if (d < ELDKLOT_RADIUS + 0.5) {
+        f.hit.add('opp-hero');
+        damageHero(opp, f.damage);
+      }
+    }
     if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
       const c = opp.playerCreeps[j];
       if (f.hit.has(c)) continue;
@@ -821,6 +883,12 @@ function castFrostnova(state, sideIdx) {
       if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
+  // Duel: nova träffar opp.hero om i radie
+  if (state.duelActive && opp && !opp.hero.dead) {
+    if (Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z) < NOVA_RADIUS) {
+      damageHero(opp, novaDmg);
+    }
+  }
 }
 
 function updateNovaEffects(side, dt) {
@@ -859,9 +927,10 @@ function applyMovement(side, joyX, joyZ, dt) {
   side.hero.facingZ = ndz;
   const nx = side.hero.x + ndx * side.moveSpeed * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * strength * dt;
-  if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
-  else if (isHeroWalkable(side.idx, nx, side.hero.z)) side.hero.x = nx;
-  else if (isHeroWalkable(side.idx, side.hero.x, nz)) side.hero.z = nz;
+  const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z);
+  if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
+  else if (check(nx, side.hero.z)) side.hero.x = nx;
+  else if (check(side.hero.x, nz)) side.hero.z = nz;
 }
 
 function tickIncome(side, dt) {
@@ -982,6 +1051,97 @@ function applyEvent(state, sideIdx, ev) {
   }
 }
 
+// === Duel-system ===
+function startDuel(state) {
+  state.duelActive = true;
+  state.duelMatchTimer = DUEL_DURATION;
+  state.duelAnnounceTimer = 0;
+  // Teleportera båda hjältar in i arenan, full HP, rensa CD och projektiler
+  const positions = [
+    { x: ARENA_CX - 5, z: ARENA_CZ },         // side 1: västra sidan
+    { x: ARENA_CX + 5, z: ARENA_CZ },         // side 2: östra sidan
+  ];
+  for (const idx of [1, 2]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    const p = positions[idx - 1];
+    s.hero.x = p.x;
+    s.hero.z = p.z;
+    s.hero.hp = s.hero.maxHp;
+    s.hero.dead = false;
+    s.hero.respawnTimer = 0;
+    s.hero.facingX = (idx === 1 ? 1 : -1);
+    s.hero.facingZ = 0;
+    s.attackCd = 0;
+    s.aaActive = false;
+    s.targetId = 0; s.targetType = ''; s.targetX = 0; s.targetZ = 0;
+    s.skills.q.cd = 0;
+    s.skills.f.cd = 0;
+    s.skills.e.cd = 0;
+    s.projectiles = [];
+    s.fireballs = [];
+    s.novaEffects = [];
+    s.inDuel = true;
+    s.heroFountainAura = false;
+  }
+}
+
+function endDuel(state) {
+  const s1 = state.sides[1], s2 = state.sides[2];
+  let winnerIdx = 0;
+  if (s1 && s2) {
+    const a = !s1.hero.dead, b = !s2.hero.dead;
+    if (a && !b) winnerIdx = 1;
+    else if (b && !a) winnerIdx = 2;
+    else if (a && b) {
+      // Timeout — högre HP% vinner
+      const hp1 = s1.hero.hp / s1.hero.maxHp;
+      const hp2 = s2.hero.hp / s2.hero.maxHp;
+      if (hp1 > hp2 + 0.01) winnerIdx = 1;
+      else if (hp2 > hp1 + 0.01) winnerIdx = 2;
+      // annars tie (0)
+    }
+  }
+  state.duelCount += 1;
+  state.duelLastWinner = winnerIdx;
+  state.duelAnnounceTimer = DUEL_ANNOUNCE_TIME;
+  if (winnerIdx > 0) {
+    const winner = state.sides[winnerIdx];
+    const rewardIdx = Math.min(state.duelCount - 1, DUEL_REWARDS_GOLD.length - 1);
+    winner.gold += DUEL_REWARDS_GOLD[rewardIdx];
+    // Level-up belöning (Fas 5 hanterar lvl 30 → hero-kopia istället)
+    if (winner.level < MAX_LEVEL) {
+      winner.level += 1;
+      winner.xp = 0;
+      winner.xpToNext = winner.level >= MAX_LEVEL ? 0 : xpForLevel(winner.level);
+      recomputeSideStats(winner);
+    }
+    // TODO Fas 5: om winner.level >= MAX_LEVEL, spawna hero-kopia på fiendens lane
+  }
+  // Teleportera tillbaka till baserna, full HP, rensa allt duel-rest
+  for (const idx of [1, 2]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    const cfg = SIDE_CFG[idx];
+    s.hero.x = cfg.heroSpawn.x;
+    s.hero.z = cfg.heroSpawn.z;
+    s.hero.hp = s.hero.maxHp;
+    s.hero.dead = false;
+    s.hero.respawnTimer = 0;
+    s.attackCd = 0;
+    s.aaActive = false;
+    s.targetId = 0; s.targetType = ''; s.targetX = 0; s.targetZ = 0;
+    s.projectiles = [];
+    s.fireballs = [];
+    s.novaEffects = [];
+    s.inDuel = false;
+  }
+  state.duelActive = false;
+  state.duelMatchTimer = 0;
+  // Nästa duel om vi inte nått max
+  state.duelTimer = state.duelCount < DUEL_MAX_COUNT ? DUEL_INTERVAL : Infinity;
+}
+
 function tickGame(state, dt) {
   if (state.matchState.gameOver) return;
   // Hero pick-fas: bara timer + transition. Inga waves/monsters under denna fas.
@@ -992,10 +1152,47 @@ function tickGame(state, dt) {
     const timeUp = state.pickTimer <= 0;
     if (bothConfirmed || timeUp) {
       state.phase = 'game';
+      state.duelTimer = DUEL_INTERVAL;
       recomputeSideStats(s1);
       recomputeSideStats(s2);
     }
     return;
+  }
+  // Tick announce timer (vinnar-banner efter duel)
+  if (state.duelAnnounceTimer > 0) state.duelAnnounceTimer = Math.max(0, state.duelAnnounceTimer - dt);
+  // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
+  if (state.duelActive) {
+    // Movement
+    for (const sideIdx of [1, 2]) {
+      const side = state.sides[sideIdx];
+      const j = state.lastInputs[sideIdx].j;
+      if (j) applyMovement(side, j.x, j.z, dt);
+    }
+    // Hero-attacker (mot opp.hero, hanteras i findClosestHostile när state.duelActive)
+    for (const sideIdx of [1, 2]) {
+      const side = state.sides[sideIdx];
+      const opp = state.sides[3 - sideIdx];
+      updateSkillCooldowns(side, dt);
+      if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
+      updateProjectiles(state, side, opp, dt);
+      updateFireballs(state, side, opp, dt);
+      updateNovaEffects(side, dt);
+      updateActiveBuffs(side, dt);
+    }
+    // Duel match timer
+    state.duelMatchTimer = Math.max(0, state.duelMatchTimer - dt);
+    const s1 = state.sides[1], s2 = state.sides[2];
+    const someoneDead = s1.hero.dead || s2.hero.dead;
+    if (someoneDead || state.duelMatchTimer <= 0) endDuel(state);
+    return;
+  }
+  // Triggern: är det dags för nästa duel?
+  if (state.duelCount < DUEL_MAX_COUNT && state.duelTimer > 0) {
+    state.duelTimer = Math.max(0, state.duelTimer - dt);
+    if (state.duelTimer <= 0) {
+      startDuel(state);
+      return;
+    }
   }
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
@@ -1095,6 +1292,12 @@ function serializeState(state) {
     s: { 1: serializeSide(state.sides[1]), 2: serializeSide(state.sides[2]) },
     ph: state.phase || 'game',
     pT: +(state.pickTimer || 0).toFixed(1),
+    dA: state.duelActive ? 1 : 0,
+    dT: +(state.duelTimer === Infinity ? 0 : (state.duelTimer || 0)).toFixed(1),
+    dM: +(state.duelMatchTimer || 0).toFixed(1),
+    dC: state.duelCount || 0,
+    dW: state.duelLastWinner || 0,
+    dAn: +(state.duelAnnounceTimer || 0).toFixed(2),
   };
 }
 

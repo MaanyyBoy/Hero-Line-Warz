@@ -853,6 +853,69 @@ const TEXTURES = {
   makePortal(-27, 12); makePortal(-27, 4);
   makePortal(-27, -4); makePortal(-27, -12);
 
+  // === DUEL-ARENA (separat zon på z=35, utanför huvudkartan) ===
+  (function buildDuelArena() {
+    const ax = 0, az = 35;
+    const radius = 9;
+    // Stenplattform — låg cylinder
+    const platMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xc8b890, roughness: 0.85 });
+    const platform = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius + 0.3, 0.3, 48), platMat);
+    platform.position.set(ax, 0.15, az);
+    platform.receiveShadow = true;
+    platform.castShadow = true;
+    scene.add(platform);
+    // Inre golv (något ljusare/mörkare för visuell variation)
+    const innerMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xa89868, roughness: 0.9 });
+    const inner = new THREE.Mesh(new THREE.CircleGeometry(radius - 0.5, 48), innerMat);
+    inner.rotation.x = -Math.PI / 2;
+    inner.position.set(ax, 0.32, az);
+    inner.receiveShadow = true;
+    scene.add(inner);
+    // Stenring-vägg runt kanten — låga klossar i cirkel
+    const wallMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0x988868, roughness: 0.85 });
+    const blocks = 24;
+    for (let i = 0; i < blocks; i++) {
+      const ang = (i / blocks) * Math.PI * 2;
+      const r = radius - 0.05;
+      const block = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6 + (i % 2) * 0.15, 1.4), wallMat);
+      block.position.set(ax + Math.cos(ang) * r, 0.3 + 0.35, az + Math.sin(ang) * r);
+      block.rotation.y = -ang;
+      block.castShadow = true;
+      block.receiveShadow = true;
+      scene.add(block);
+    }
+    // 4 facklor (glödande poler) på 0°, 90°, 180°, 270°
+    for (let i = 0; i < 4; i++) {
+      const ang = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const r = radius - 0.6;
+      const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.1, 1.6, 8),
+        new THREE.MeshStandardMaterial({ color: 0x2a1a10, roughness: 0.9 })
+      );
+      pole.position.set(ax + Math.cos(ang) * r, 0.3 + 0.8, az + Math.sin(ang) * r);
+      pole.castShadow = true;
+      scene.add(pole);
+      const flame = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 12, 10),
+        new THREE.MeshStandardMaterial({ color: 0xff8030, emissive: 0xff5010, emissiveIntensity: 1.4, transparent: true, opacity: 0.95 })
+      );
+      flame.position.set(ax + Math.cos(ang) * r, 0.3 + 1.7, az + Math.sin(ang) * r);
+      scene.add(flame);
+      const light = new THREE.PointLight(0xff7a30, 0.6, 6, 2);
+      light.position.set(ax + Math.cos(ang) * r, 0.3 + 1.7, az + Math.sin(ang) * r);
+      scene.add(light);
+    }
+    // Centrum-runa på golvet (cirkel med glödande mönster)
+    const runeMat = new THREE.MeshStandardMaterial({
+      color: 0xffa040, emissive: 0xff6020, emissiveIntensity: 0.6,
+      transparent: true, opacity: 0.65, side: THREE.DoubleSide,
+    });
+    const rune = new THREE.Mesh(new THREE.RingGeometry(1.8, 2.2, 32), runeMat);
+    rune.rotation.x = -Math.PI / 2;
+    rune.position.set(ax, 0.34, az);
+    scene.add(rune);
+  })();
+
   // Hemisphere: himmel ovanifrån + jord-bounce nedifrån
   const hemi = new THREE.HemisphereLight(0xc4dcff, 0x3a2b1a, 0.55);
   hemi.position.set(0, 50, 0);
@@ -3133,6 +3196,13 @@ function applyRemoteState(state) {
   APP.lastStateRecv = state;
   // Hero pick-fas sync
   if (state.ph !== undefined) handleRemotePickState(state);
+  // Duel-state
+  duelState.active = !!state.dA;
+  duelState.timer = state.dT || 0;
+  duelState.matchTimer = state.dM || 0;
+  duelState.count = state.dC || 0;
+  duelState.lastWinner = state.dW || 0;
+  duelState.announceTimer = state.dAn || 0;
   for (const idx of [1, 2]) {
     const sData = state.s[idx];
     if (!sData) continue;
@@ -3391,6 +3461,58 @@ function updateHud() {
   else if (APP.mode === 'client') bottom.push('CLIENT');
   statusEl.innerHTML = top.join(' | ') + '<br>' + bottom.join(' | ');
   updateLevelUI(side);
+}
+
+const duelInfoEl = document.getElementById('duel-info');
+const duelInfoTimerEl = document.getElementById('duel-info-timer');
+const duelBannerEl = document.getElementById('duel-banner');
+const duelBannerTitleEl = document.getElementById('duel-banner-title');
+const duelBannerSubEl = document.getElementById('duel-banner-sub');
+
+function fmtMs(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r < 10 ? '0' : ''}${r}`;
+}
+
+function updateDuelHud() {
+  if (!duelInfoEl || !duelBannerEl) return;
+  // Solo eller utanför match: dölj
+  if (APP.mode === 'solo' || APP.mode === 'lobby') {
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.add('hidden');
+    return;
+  }
+  if (duelState.active) {
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.remove('hidden');
+    duelBannerTitleEl.textContent = `DUEL ${duelState.count + 1}`;
+    duelBannerSubEl.textContent = `Sista mannen kvar vinner — ${fmtMs(duelState.matchTimer)}`;
+  } else if (duelState.announceTimer > 0) {
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.remove('hidden');
+    if (duelState.lastWinner === 0) {
+      duelBannerTitleEl.textContent = 'DUELN OAVGJORD';
+      duelBannerSubEl.textContent = '';
+    } else if (duelState.lastWinner === APP.localSide) {
+      duelBannerTitleEl.textContent = 'DU VANN DUELN!';
+      const rewards = [500, 1500, 5000, 10000];
+      const r = rewards[Math.min(duelState.count - 1, 3)] || 0;
+      duelBannerSubEl.textContent = `+${r} guld · +1 level`;
+    } else {
+      duelBannerTitleEl.textContent = 'DU FÖRLORADE DUELN';
+      duelBannerSubEl.textContent = 'Bättre lycka nästa gång';
+    }
+  } else if (duelState.count < 4 && duelState.timer > 0) {
+    duelBannerEl.classList.add('hidden');
+    duelInfoEl.classList.remove('hidden');
+    duelInfoTimerEl.textContent = fmtMs(duelState.timer);
+    duelInfoEl.classList.toggle('urgent', duelState.timer <= 10);
+  } else {
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.add('hidden');
+  }
 }
 
 const levelBadgeEl = document.getElementById('level-badge');
@@ -4280,6 +4402,11 @@ function handleNetworkMessage(msg) {
 
 // ---- Hero pick-skärm ----
 // 10 hjältar — endast Magikern available just nu.
+// Duel-state speglas från server (eller default i solo)
+const duelState = {
+  active: false, timer: 0, matchTimer: 0, count: 0, lastWinner: 0, announceTimer: 0,
+};
+
 const HEROES = [
   { id: 'magiker',   name: 'Magikern',    role: 'Mage',         initial: 'M',   available: true  },
   { id: 'hero-2',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -4841,6 +4968,7 @@ function tick() {
   tickAllHpBars();
 
   updateHud();
+  updateDuelHud();
   updateIncomeDisplay();
   checkIncomeTickNotifications();
   updateSkillButtonStyles();

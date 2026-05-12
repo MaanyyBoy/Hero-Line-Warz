@@ -462,6 +462,57 @@
       100% { opacity: 0; transform: translate(-50%, -48px); }
     }
 
+    /* Duel-info (countdown till nästa duel) */
+    #duel-info {
+      position: fixed;
+      top: max(8px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translate(-50%, 42px);
+      color: #ffaa66;
+      font: 600 12px/1 system-ui, sans-serif;
+      background: rgba(40,20,10,0.78);
+      padding: 5px 11px;
+      border-radius: 7px;
+      border: 1px solid rgba(255,170,102,0.45);
+      pointer-events: none;
+      z-index: 60;
+      letter-spacing: 0.5px;
+    }
+    #duel-info.hidden { display: none; }
+    #duel-info.urgent { color: #ffeb55; border-color: rgba(255,235,85,0.7); animation: pulse-duel 0.7s ease-in-out infinite; }
+    @keyframes pulse-duel { 0%, 100% { transform: translate(-50%, 42px) scale(1); } 50% { transform: translate(-50%, 42px) scale(1.08); } }
+
+    /* Duel-banner (visas under aktiv duel + vinnarannouncement) */
+    #duel-banner {
+      position: fixed;
+      top: 35%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      text-align: center;
+      pointer-events: none;
+      z-index: 70;
+      background: rgba(40,10,5,0.85);
+      padding: 20px 48px;
+      border-radius: 14px;
+      border: 3px solid rgba(255,170,80,0.7);
+      box-shadow: 0 0 32px rgba(255,140,50,0.5);
+    }
+    #duel-banner.hidden { display: none; }
+    #duel-banner-title {
+      font: 800 32px/1 system-ui, sans-serif;
+      color: #ffcc55;
+      letter-spacing: 2px;
+      text-shadow: 0 0 10px rgba(255,140,50,0.8);
+    }
+    #duel-banner-sub {
+      font: 600 14px/1.3 system-ui, sans-serif;
+      opacity: 0.9;
+      margin-top: 6px;
+    }
+    body:not(.in-game) #duel-info,
+    body:not(.in-game) #duel-banner { display: none !important; }
+
     /* Endgame-overlay (vinst/förlust) */
     #endgame {
       position: fixed; inset: 0;
@@ -755,6 +806,12 @@
   </div>
 
   <div id="income-display">Income: 2g / 15s</div>
+
+  <div id="duel-info" class="hidden">Duel om <span id="duel-info-timer">5:00</span></div>
+  <div id="duel-banner" class="hidden">
+    <div id="duel-banner-title">DUEL!</div>
+    <div id="duel-banner-sub"></div>
+  </div>
 
   <div id="touch-ui">
     <div id="joy"><div id="joy-knob"></div></div>
