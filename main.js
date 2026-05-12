@@ -1055,7 +1055,7 @@ function createSide(idx) {
     income: INCOME_BASE,
     incomeTimer: 0,
     incomeTickCount: 0,
-    items: { sword: 0, boots: 0, vit: 0 },
+    inventory: [],   // [{ itemId, level }] max 4
     tierUnlocks: { 1: true, 2: false, 3: false, 4: false, 5: false },
     // Skills
     skills: {
@@ -1705,12 +1705,60 @@ function updateSkillCooldowns(side, dt) {
 // HOST: APPLICERA INPUT FÖR EN SIDA
 // ============================================================
 
-// Hjälte-items (egen sektion i shoppen, ingen income-boost)
-const HERO_SHOP_ITEMS = {
-  sword: { cost: 50, label: 'Svärd',     desc: '+5 skada', apply: (s) => { s.attackDmg += 5; } },
-  boots: { cost: 40, label: 'Stövlar',   desc: '+1 hastighet', apply: (s) => { s.moveSpeed += 1; } },
-  vit:   { cost: 60, label: 'Vitalitet', desc: '+50 HP', apply: (s) => { s.hero.maxHp += 50; s.hero.hp = s.hero.maxHp; } },
+// ============================================================
+// HJÄLTE-ITEMS (6 st, max level 10)
+// Placeholder — användaren fyller i statsAtLevel-funktionerna senare.
+//
+// statsAtLevel(level) returnerar ett objekt med några av:
+//   attackDmg, moveSpeed, maxHp
+// Värden ADDERAS till hjältens bas-stats. Bas är:
+//   attackDmg = 5, moveSpeed = 6, maxHp = 100
+//
+// Exempel hur ni fyller i:
+//   item1: { ..., statsAtLevel: (level) => ({ attackDmg: 3 * level, maxHp: 15 * level }) }
+//   → Level 3 ger då +9 skada och +45 max HP
+// ============================================================
+
+const ITEM_TYPES = {
+  item1: { id: 'item1', name: 'Item 1', icon: '①', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item2: { id: 'item2', name: 'Item 2', icon: '②', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item3: { id: 'item3', name: 'Item 3', icon: '③', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item4: { id: 'item4', name: 'Item 4', icon: '④', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item5: { id: 'item5', name: 'Item 5', icon: '⑤', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item6: { id: 'item6', name: 'Item 6', icon: '⑥', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
 };
+const ITEM_ORDER = ['item1', 'item2', 'item3', 'item4', 'item5', 'item6'];
+const ITEM_BUY_COST = 200;
+const ITEM_MAX_LEVEL = 10;
+const INVENTORY_SLOTS = 4;
+
+function itemUpgradeCost(currentLevel) {
+  // 1->2 = 500, 2->3 = 1000, ..., 9->10 = 128000
+  return 500 * Math.pow(2, currentLevel - 1);
+}
+
+// Räknar om hjältens stats från bas + alla items i inventoryn.
+function recomputeSideStats(side) {
+  let attackDmg = HERO_BASE_ATTACK_DMG;
+  let moveSpeed = HERO_BASE_MOVE_SPEED;
+  let maxHp = HERO_MAX_HP;
+  for (const it of side.inventory) {
+    const def = ITEM_TYPES[it.itemId];
+    if (!def || !def.statsAtLevel) continue;
+    const s = def.statsAtLevel(it.level) || {};
+    if (s.attackDmg) attackDmg += s.attackDmg;
+    if (s.moveSpeed) moveSpeed += s.moveSpeed;
+    if (s.maxHp) maxHp += s.maxHp;
+  }
+  side.attackDmg = attackDmg;
+  side.moveSpeed = moveSpeed;
+  if (maxHp !== side.hero.maxHp) {
+    const delta = maxHp - side.hero.maxHp;
+    side.hero.maxHp = maxHp;
+    if (delta > 0) side.hero.hp = Math.min(maxHp, side.hero.hp + delta);
+    else if (side.hero.hp > maxHp) side.hero.hp = maxHp;
+  }
+}
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
@@ -1741,12 +1789,25 @@ function applyEvent(side, ev) {
   if (side.hero.dead) return;
   if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
 
-  if (ev.kind === 'hero') {
-    const item = HERO_SHOP_ITEMS[ev.item];
-    if (!item || side.gold < item.cost) return;
-    side.gold -= item.cost;
-    if (ev.item in side.items) side.items[ev.item]++;
-    item.apply(side);
+  if (ev.kind === 'item') {
+    const def = ITEM_TYPES[ev.item];
+    if (!def) return;
+    const existing = side.inventory.find(it => it.itemId === ev.item);
+    if (!existing) {
+      // Köp lvl 1
+      if (side.inventory.length >= INVENTORY_SLOTS) return;
+      if (side.gold < ITEM_BUY_COST) return;
+      side.gold -= ITEM_BUY_COST;
+      side.inventory.push({ itemId: ev.item, level: 1 });
+    } else {
+      // Uppgradera till nästa level
+      if (existing.level >= ITEM_MAX_LEVEL) return;
+      const cost = itemUpgradeCost(existing.level);
+      if (side.gold < cost) return;
+      side.gold -= cost;
+      existing.level += 1;
+    }
+    recomputeSideStats(side);
   } else if (ev.kind === 'minion') {
     const def = MINION_TYPES[ev.minionType];
     if (!def || !side.tierUnlocks[def.tier]) return;
@@ -1833,7 +1894,7 @@ function applyRemoteState(state) {
     side.incomeTimer = sData.incT ?? side.incomeTimer;
     if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
     if (sData.tu) side.tierUnlocks = sData.tu;
-    side.items = sData.i;
+    if (sData.inv) side.inventory = sData.inv.map(e => ({ itemId: e.id, level: e.lv }));
     side.moveSpeed = sData.ms;
     side.attackDmg = sData.ad;
     side.attackCounter = sData.ac;
@@ -1906,7 +1967,7 @@ function serializeSide(side) {
     incT: +side.incomeTimer.toFixed(2),
     incC: side.incomeTickCount || 0,
     tu: side.tierUnlocks,
-    i: side.items,
+    inv: side.inventory.map(it => ({ id: it.itemId, lv: it.level })),
     ms: side.moveSpeed,
     ad: side.attackDmg,
     ac: side.attackCounter,
@@ -2260,17 +2321,16 @@ function getNextLockedTier(side) {
 }
 
 function populateShop() {
-  // HJÄLTE-items
+  // ITEMS (6 st, samma knapp = köp om ej ägd, uppgradera om ägd)
   const heroRow = document.getElementById('shop-hero-row');
   heroRow.innerHTML = '';
   shopRefs.heroBtns = [];
-  for (const [id, def] of Object.entries(HERO_SHOP_ITEMS)) {
+  for (const itemId of ITEM_ORDER) {
+    const def = ITEM_TYPES[itemId];
     const btn = document.createElement('button');
-    btn.className = 'shop-btn';
-    btn.dataset.kind = 'hero';
-    btn.dataset.item = id;
-    btn.innerHTML = `${def.label} (${def.cost}g)<small>${def.desc}</small>`;
-    btn.addEventListener('click', () => sendOrApplyEvent({ type: 'shop', kind: 'hero', item: id }));
+    btn.className = 'shop-btn item-btn';
+    btn.dataset.item = itemId;
+    btn.addEventListener('click', () => sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId }));
     heroRow.appendChild(btn);
     shopRefs.heroBtns.push(btn);
   }
@@ -2351,10 +2411,27 @@ function refreshShopUI() {
     for (let t = 5; t >= 1; t--) if (side.tierUnlocks[t]) { shopState.selectedTier = t; break; }
   }
 
-  // Hero-knappar
+  // Item-knappar (köp eller uppgradera samma knapp)
   for (const btn of shopRefs.heroBtns) {
-    const cost = HERO_SHOP_ITEMS[btn.dataset.item].cost;
-    btn.disabled = side.gold < cost || side.hero.dead;
+    const itemId = btn.dataset.item;
+    const def = ITEM_TYPES[itemId];
+    if (!def) continue;
+    const existing = side.inventory.find(it => it.itemId === itemId);
+    btn.classList.remove('owned', 'maxlvl');
+    if (!existing) {
+      const invFull = side.inventory.length >= INVENTORY_SLOTS;
+      btn.innerHTML = `${def.icon} ${def.name}<small>${invFull ? 'Inventory full' : 'Köp ' + ITEM_BUY_COST + 'g'}</small>`;
+      btn.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
+    } else if (existing.level >= ITEM_MAX_LEVEL) {
+      btn.classList.add('owned', 'maxlvl');
+      btn.innerHTML = `${def.icon} ${def.name}<small>MAX (lvl ${existing.level})</small>`;
+      btn.disabled = true;
+    } else {
+      btn.classList.add('owned');
+      const cost = itemUpgradeCost(existing.level);
+      btn.innerHTML = `${def.icon} ${def.name}<small>Lvl ${existing.level} → ${existing.level+1} · ${cost}g</small>`;
+      btn.disabled = side.hero.dead || side.gold < cost;
+    }
   }
 
   // Lane-knappar
@@ -2404,6 +2481,150 @@ function refreshShopUI() {
 populateShop();
 
 function updateShop() { refreshShopUI(); }
+
+// ============================================================
+// INVENTORY (4 slots längst ner i mitten) + tooltip
+// ============================================================
+
+const inventorySlotEls = Array.from(document.querySelectorAll('.inventory-slot'));
+const tooltipEl = document.getElementById('item-tooltip');
+const tooltipNameEl = tooltipEl ? tooltipEl.querySelector('.tt-name') : null;
+const tooltipLevelEl = tooltipEl ? tooltipEl.querySelector('.tt-level') : null;
+const tooltipStatsEl = tooltipEl ? tooltipEl.querySelector('.tt-stats') : null;
+const tooltipCostEl = tooltipEl ? tooltipEl.querySelector('.tt-cost') : null;
+
+const STAT_LABELS = {
+  attackDmg: 'skada',
+  moveSpeed: 'rörelsehastighet',
+  maxHp: 'max HP',
+};
+
+function showItemTooltipForSlot(slotEl) {
+  if (!tooltipEl) return;
+  const itemId = slotEl.dataset.itemId;
+  const level = +(slotEl.dataset.level || 0);
+  const def = ITEM_TYPES[itemId];
+  if (!def || !level) return;
+  // Name + level
+  tooltipNameEl.textContent = def.name;
+  tooltipLevelEl.textContent = `Level ${level} / ${ITEM_MAX_LEVEL}`;
+  // Stats
+  const stats = def.statsAtLevel ? (def.statsAtLevel(level) || {}) : {};
+  tooltipStatsEl.innerHTML = '';
+  const keys = Object.keys(stats);
+  if (keys.length === 0) {
+    const d = document.createElement('div');
+    d.className = 'stat empty';
+    d.textContent = '(stats fylls i senare)';
+    tooltipStatsEl.appendChild(d);
+  } else {
+    for (const k of keys) {
+      const v = stats[k];
+      if (!v) continue;
+      const d = document.createElement('div');
+      d.className = 'stat';
+      const sign = v > 0 ? '+' : '';
+      d.textContent = `${sign}${v} ${STAT_LABELS[k] || k}`;
+      tooltipStatsEl.appendChild(d);
+    }
+  }
+  // Cost-line
+  if (level >= ITEM_MAX_LEVEL) {
+    tooltipCostEl.textContent = 'MAX LEVEL';
+    tooltipCostEl.classList.add('max');
+  } else {
+    tooltipCostEl.classList.remove('max');
+    tooltipCostEl.textContent = `Uppgradera till lvl ${level + 1}: ${itemUpgradeCost(level)}g`;
+  }
+  // Position ovanför slot
+  tooltipEl.classList.remove('hidden');
+  const rect = slotEl.getBoundingClientRect();
+  // Mät tooltip-storlek efter att den är synlig
+  const ttRect = tooltipEl.getBoundingClientRect();
+  let left = rect.left + rect.width / 2 - ttRect.width / 2;
+  let top = rect.top - ttRect.height - 8;
+  // Klampa till skärmen
+  left = Math.max(8, Math.min(window.innerWidth - ttRect.width - 8, left));
+  if (top < 8) top = rect.bottom + 8;
+  tooltipEl.style.left = left + 'px';
+  tooltipEl.style.top = top + 'px';
+}
+
+function hideItemTooltip() {
+  if (tooltipEl) tooltipEl.classList.add('hidden');
+}
+
+let tooltipPinnedSlot = null;
+for (const slotEl of inventorySlotEls) {
+  // Desktop hover
+  slotEl.addEventListener('mouseenter', () => {
+    if (!slotEl.dataset.itemId) return;
+    if (tooltipPinnedSlot) return; // pinned mode tar över
+    showItemTooltipForSlot(slotEl);
+  });
+  slotEl.addEventListener('mouseleave', () => {
+    if (tooltipPinnedSlot) return;
+    hideItemTooltip();
+  });
+  // Tap-toggle (mobil)
+  slotEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!slotEl.dataset.itemId) return;
+    if (tooltipPinnedSlot === slotEl) {
+      tooltipPinnedSlot = null;
+      hideItemTooltip();
+    } else {
+      tooltipPinnedSlot = slotEl;
+      showItemTooltipForSlot(slotEl);
+    }
+  });
+}
+// Klick utanför stänger pinned tooltip
+document.addEventListener('click', () => {
+  if (tooltipPinnedSlot) {
+    tooltipPinnedSlot = null;
+    hideItemTooltip();
+  }
+});
+
+function updateInventoryDisplay() {
+  const side = sides[APP.localSide];
+  if (!side) {
+    for (const slotEl of inventorySlotEls) {
+      slotEl.classList.add('empty');
+      slotEl.classList.remove('owned');
+      slotEl.innerHTML = '';
+      slotEl.dataset.itemId = '';
+      slotEl.dataset.level = '';
+    }
+    return;
+  }
+  for (let i = 0; i < INVENTORY_SLOTS; i++) {
+    const slotEl = inventorySlotEls[i];
+    if (!slotEl) continue;
+    const item = side.inventory[i];
+    if (item) {
+      const def = ITEM_TYPES[item.itemId];
+      slotEl.classList.remove('empty');
+      slotEl.classList.add('owned');
+      slotEl.dataset.itemId = item.itemId;
+      slotEl.dataset.level = String(item.level);
+      slotEl.innerHTML = `${def ? def.icon : '?'}<span class="level-badge">${item.level}</span>`;
+      // Om pinned + uppdaterad data, uppdatera tooltip
+      if (tooltipPinnedSlot === slotEl) showItemTooltipForSlot(slotEl);
+    } else {
+      slotEl.classList.add('empty');
+      slotEl.classList.remove('owned');
+      slotEl.innerHTML = '';
+      slotEl.dataset.itemId = '';
+      slotEl.dataset.level = '';
+      if (tooltipPinnedSlot === slotEl) {
+        tooltipPinnedSlot = null;
+        hideItemTooltip();
+      }
+    }
+  }
+}
 
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
@@ -2839,6 +3060,7 @@ function tick() {
   updateSkillButtonStyles();
   updateAimIndicators();
   updateShop();
+  updateInventoryDisplay();
   updateCamera(dt);
 
   renderer.render(scene, camera);

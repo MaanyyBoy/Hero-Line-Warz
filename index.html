@@ -202,6 +202,95 @@
     .tier-btn small { display: block; font-weight: 400; opacity: 0.78; margin-top: 2px; font-size: 10px; }
     .tier-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* Items-knappar (utility / upgrade-stil) */
+    .shop-btn.item-btn {
+      min-width: 110px;
+      background: rgba(70,95,140,0.7);
+      border-color: rgba(200,220,255,0.5);
+      padding: 7px 9px;
+    }
+    .shop-btn.item-btn.owned {
+      background: rgba(120,90,160,0.78);
+      border-color: rgba(220,180,255,0.7);
+    }
+    .shop-btn.item-btn.maxlvl {
+      background: rgba(80,130,80,0.72);
+      border-color: rgba(180,220,180,0.7);
+    }
+
+    /* Inventory längst ner i mitten — 4 slots */
+    #inventory {
+      position: fixed;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 50;
+      pointer-events: auto;
+    }
+    .inventory-slot {
+      width: 52px;
+      height: 52px;
+      background: rgba(15,25,40,0.85);
+      border: 2px solid rgba(180,200,255,0.5);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font: 600 24px/1 system-ui, sans-serif;
+      position: relative;
+      touch-action: manipulation;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    }
+    .inventory-slot.empty {
+      border-style: dashed;
+      opacity: 0.5;
+      cursor: default;
+    }
+    .inventory-slot .level-badge {
+      position: absolute;
+      bottom: 2px;
+      right: 3px;
+      background: rgba(60,120,200,0.92);
+      color: #fff;
+      font: 700 10px/1 system-ui, sans-serif;
+      padding: 2px 5px;
+      border-radius: 4px;
+      letter-spacing: 0.2px;
+    }
+    .inventory-slot.owned:active { transform: scale(0.96); }
+
+    /* Tooltip för items i inventory */
+    #item-tooltip {
+      position: fixed;
+      background: rgba(15,25,40,0.96);
+      border: 1px solid rgba(180,200,255,0.6);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: #fff;
+      font: 400 12px/1.45 system-ui, sans-serif;
+      z-index: 110;
+      pointer-events: none;
+      max-width: 240px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+    }
+    #item-tooltip.hidden { display: none; }
+    #item-tooltip .tt-name { font-weight: 700; font-size: 14px; margin-bottom: 4px; color: #ffd34a; }
+    #item-tooltip .tt-level { opacity: 0.85; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.5px; }
+    #item-tooltip .tt-stats { margin-bottom: 6px; }
+    #item-tooltip .tt-stats .stat { opacity: 0.95; }
+    #item-tooltip .tt-stats .stat.empty { opacity: 0.55; font-style: italic; }
+    #item-tooltip .tt-cost { font-size: 11px; opacity: 0.85; color: #aae0ff; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.12); }
+    #item-tooltip .tt-cost.max { color: #aaffaa; }
+
+    body:not(.in-game) #inventory,
+    body:not(.in-game) #item-tooltip { display: none !important; }
+
     /* Minion-knappar — färgkodade per arketyp */
     .shop-btn.minion-btn { min-width: 100px; }
     .shop-btn.minion-slasher  { background: rgba(80,60,100,0.7); border-color: rgba(180,160,220,0.5); }
@@ -409,7 +498,7 @@
   <div id="shop-container">
     <div id="shop-hero" class="shop-panel">
       <button class="shop-header" data-shop="hero">
-        <span>HJÄLTE</span>
+        <span>ITEMS</span>
         <span class="chevron">▾</span>
       </button>
       <div class="shop-body">
@@ -428,6 +517,20 @@
         <div class="shop-row" id="shop-minion-grid"></div>
       </div>
     </div>
+  </div>
+
+  <div id="inventory">
+    <div class="inventory-slot empty" data-slot="0"></div>
+    <div class="inventory-slot empty" data-slot="1"></div>
+    <div class="inventory-slot empty" data-slot="2"></div>
+    <div class="inventory-slot empty" data-slot="3"></div>
+  </div>
+
+  <div id="item-tooltip" class="hidden">
+    <div class="tt-name"></div>
+    <div class="tt-level"></div>
+    <div class="tt-stats"></div>
+    <div class="tt-cost"></div>
   </div>
 
   <div id="endgame">
