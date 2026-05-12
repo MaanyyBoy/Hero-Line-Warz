@@ -512,7 +512,52 @@
       margin-top: 6px;
     }
     body:not(.in-game) #duel-info,
-    body:not(.in-game) #duel-banner { display: none !important; }
+    body:not(.in-game) #duel-banner,
+    body:not(.in-game) #wave-banner { display: none !important; }
+
+    /* Wave-banner — stor centrerad notis när ny wave startar */
+    #wave-banner {
+      position: fixed;
+      top: 28%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      text-align: center;
+      pointer-events: none;
+      z-index: 65;
+      background: rgba(20,30,55,0.88);
+      padding: 18px 44px;
+      border-radius: 14px;
+      border: 3px solid rgba(180,200,255,0.65);
+      box-shadow: 0 0 28px rgba(120,160,255,0.45);
+      animation: wave-banner-pop 2.6s ease-out forwards;
+    }
+    #wave-banner.boss {
+      background: rgba(55,15,15,0.92);
+      border-color: rgba(255,140,80,0.85);
+      box-shadow: 0 0 36px rgba(255,90,40,0.7);
+    }
+    #wave-banner.hidden { display: none; }
+    #wave-banner-title {
+      font: 800 30px/1 system-ui, sans-serif;
+      color: #aacdff;
+      letter-spacing: 2.5px;
+      text-shadow: 0 0 10px rgba(120,160,255,0.7);
+    }
+    #wave-banner.boss #wave-banner-title { color: #ffcc55; text-shadow: 0 0 12px rgba(255,140,50,0.85); }
+    #wave-banner-sub {
+      font: 700 18px/1.3 system-ui, sans-serif;
+      opacity: 0.95;
+      margin-top: 6px;
+      letter-spacing: 1px;
+    }
+    @keyframes wave-banner-pop {
+      0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+      12%  { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+      22%  { transform: translate(-50%, -50%) scale(1); }
+      85%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -54%) scale(0.95); }
+    }
 
     /* Endgame-overlay (vinst/förlust) */
     #endgame {
@@ -813,6 +858,11 @@
   <div id="duel-banner" class="hidden">
     <div id="duel-banner-title">DUEL!</div>
     <div id="duel-banner-sub"></div>
+  </div>
+
+  <div id="wave-banner" class="hidden">
+    <div id="wave-banner-title">WAVE 1</div>
+    <div id="wave-banner-sub">Soldiers</div>
   </div>
 
   <div id="touch-ui">

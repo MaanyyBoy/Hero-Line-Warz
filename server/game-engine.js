@@ -43,10 +43,46 @@ const PASSIVE_AOE_RADIUS = 2.0;
 const MONSTER_AGGRO_RANGE = 5.0;
 const MONSTER_LEASH_RANGE = 7.5;
 const TOWER_REACH = 2.3;
-const MONSTER_MELEE_DAMAGE = 8;
+const MONSTER_MELEE_DAMAGE = 8;       // fallback om monster saknar damage
 const MONSTER_MELEE_INTERVAL = 1.0;
 const GOLD_PER_KILL = 5;
 const RESPAWN_TIME = 5.0;
+
+// === Wave-system (50 waves, boss var 10:e) ===
+const MAX_WAVES = 50;
+const INITIAL_PREP_TIME = 10;          // sek innan wave 1
+const WAVE_GAP_TIME = 10;              // sek mellan waves
+const WAVE_COUNT_PER_LANE = 15;        // 15 per lane = 30 totalt
+const WAVE_STAGGER_X = 1.0;            // m mellan monster i kolumn
+const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
+const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+
+function getWaveDef(waveNum) {
+  if (waveNum < 1 || waveNum > MAX_WAVES) return null;
+  const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
+  const isBoss = (waveNum % 10 === 0);
+  if (isBoss) {
+    return {
+      number: waveNum,
+      name: BOSS_NAMES[tierIdx],
+      isBoss: true,
+      count: 1,
+      monsterHp: 200 + tierIdx * 250,   // 200, 450, 700, 950, 1200
+      monsterDmg: 18 + tierIdx * 6,     // 18, 24, 30, 36, 42
+      monsterSpeed: 1.8,
+    };
+  }
+  const inTier = ((waveNum - 1) % 10) + 1;  // 1..9 (10 = boss)
+  return {
+    number: waveNum,
+    name: WAVE_NAMES[tierIdx],
+    isBoss: false,
+    count: WAVE_COUNT_PER_LANE * 2,
+    monsterHp: Math.round(10 + tierIdx * 12 + inTier * 1.5),
+    monsterDmg: Math.round((8 + tierIdx * 4 + inTier * 0.6) * 10) / 10,
+    monsterSpeed: 2.0 + tierIdx * 0.05,
+  };
+}
 
 const CREEP_VS_CREEP_DAMAGE = 5;
 const CREEP_VS_CREEP_RANGE = 1.5;
@@ -390,7 +426,14 @@ function createSide(idx) {
     fireballs: [],
     novaEffects: [],
     creepProjectiles: [],
-    wave: { current: 0, toSpawn: 0, spawnTimer: 0, spawnInterval: 1.0, betweenTimer: 3.0, active: false },
+    wave: {
+      current: 0,
+      active: false,
+      betweenTimer: INITIAL_PREP_TIME,
+      name: '',
+      isBoss: false,
+      bannerPulse: 0,             // ökas vid wave-start så klienten triggar banner
+    },
     heroCopies: [],
   };
   recomputeSideStats(side);
@@ -485,28 +528,58 @@ function updateSkillCooldowns(side, dt) {
 }
 
 function updateWaves(state, side, dt) {
-  if (!side.wave.active) {
-    side.wave.betweenTimer -= dt;
-    if (side.wave.betweenTimer <= 0) {
-      side.wave.current++;
-      side.wave.toSpawn = 4 + side.wave.current * 2;
-      side.wave.spawnTimer = 0;
-      side.wave.active = true;
+  const w = side.wave;
+  // Slut: efter wave 50 + alla döda, inga fler waves
+  if (w.current >= MAX_WAVES && !w.active) return;
+  if (!w.active) {
+    w.betweenTimer = Math.max(0, w.betweenTimer - dt);
+    if (w.betweenTimer <= 0 && w.current < MAX_WAVES) {
+      w.current += 1;
+      const def = getWaveDef(w.current);
+      w.name = def.name;
+      w.isBoss = def.isBoss;
+      w.active = true;
+      w.bannerPulse = (w.bannerPulse || 0) + 1;
+      spawnWaveAtOnce(state, side, def);
     }
     return;
   }
-  if (side.wave.toSpawn > 0) {
-    side.wave.spawnTimer -= dt;
-    if (side.wave.spawnTimer <= 0) {
-      const lane = (side.wave.toSpawn % 2 === 0) ? 1 : 2;
-      spawnMonster(state, side, lane);
-      side.wave.toSpawn--;
-      side.wave.spawnTimer = side.wave.spawnInterval;
-    }
-  } else if (side.monsters.length === 0) {
-    side.wave.active = false;
-    side.wave.betweenTimer = 5.0;
+  // Wave aktiv tills alla monsters borta
+  if (side.monsters.length === 0) {
+    w.active = false;
+    w.betweenTimer = WAVE_GAP_TIME;
   }
+}
+
+function spawnWaveAtOnce(state, side, def) {
+  if (def.isBoss) {
+    // Boss spawnar ensam i lane 1
+    spawnMonsterFromDef(state, side, 1, 0, def);
+    return;
+  }
+  // 15 per lane, kolumnformation bakåt från spawnX
+  for (let i = 0; i < WAVE_COUNT_PER_LANE; i++) {
+    spawnMonsterFromDef(state, side, 1, i, def);
+    spawnMonsterFromDef(state, side, 2, i, def);
+  }
+}
+
+function spawnMonsterFromDef(state, side, lane, idx, def) {
+  const cfg = SIDE_CFG[side.idx];
+  side.monsters.push({
+    id: state.nextEntityId++,
+    x: cfg.spawnX - idx * WAVE_STAGGER_X,
+    z: cfg.laneZ[lane],
+    ry: 0,
+    lane,
+    hp: def.monsterHp,
+    maxHp: def.monsterHp,
+    speed: def.monsterSpeed,
+    damage: def.monsterDmg,
+    pathIndex: 0,
+    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    isBoss: !!def.isBoss,
+  });
 }
 
 function updateMonsters(state, side, opp, dt) {
@@ -528,7 +601,7 @@ function updateMonsters(state, side, opp, dt) {
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
     m.atkCd = Math.max(0, m.atkCd - dt);
     if (heroAlive && distHero < 1.2 && m.atkCd <= 0) {
-      damageHero(side, MONSTER_MELEE_DAMAGE);
+      damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = MONSTER_MELEE_INTERVAL;
     }
     if (!m.chasing && opp) {
@@ -1438,8 +1511,15 @@ function serializeSide(side) {
     hid: side.heroId || 'magiker',
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
-    w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
-    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: 10 })),
+    w: {
+      c: side.wave.current,
+      a: side.wave.active,
+      bt: +(side.wave.betweenTimer || 0).toFixed(1),
+      n: side.wave.name || '',
+      b: side.wave.isBoss ? 1 : 0,
+      p: side.wave.bannerPulse || 0,
+    },
+    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0 })),
     C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
     F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),

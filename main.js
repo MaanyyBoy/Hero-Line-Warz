@@ -1110,6 +1110,42 @@ const MONSTER_AGGRO_RANGE = 5.0;
 const MONSTER_LEASH_RANGE = 7.5;
 const TOWER_REACH = 2.3;
 const MONSTER_MELEE_DAMAGE = 8;
+
+// === Wave-system (matchar server) ===
+const MAX_WAVES = 50;
+const INITIAL_PREP_TIME = 10;
+const WAVE_GAP_TIME = 10;
+const WAVE_COUNT_PER_LANE = 15;
+const WAVE_STAGGER_X = 1.0;
+const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
+const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+
+function getWaveDef(waveNum) {
+  if (waveNum < 1 || waveNum > MAX_WAVES) return null;
+  const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
+  const isBoss = (waveNum % 10 === 0);
+  if (isBoss) {
+    return {
+      number: waveNum,
+      name: BOSS_NAMES[tierIdx],
+      isBoss: true,
+      count: 1,
+      monsterHp: 200 + tierIdx * 250,
+      monsterDmg: 18 + tierIdx * 6,
+      monsterSpeed: 1.8,
+    };
+  }
+  const inTier = ((waveNum - 1) % 10) + 1;
+  return {
+    number: waveNum,
+    name: WAVE_NAMES[tierIdx],
+    isBoss: false,
+    count: WAVE_COUNT_PER_LANE * 2,
+    monsterHp: Math.round(10 + tierIdx * 12 + inTier * 1.5),
+    monsterDmg: Math.round((8 + tierIdx * 4 + inTier * 0.6) * 10) / 10,
+    monsterSpeed: 2.0 + tierIdx * 0.05,
+  };
+}
 const MONSTER_MELEE_INTERVAL = 1.0;
 const GOLD_PER_KILL = 5;
 const RESPAWN_TIME = 5.0;
@@ -2108,8 +2144,12 @@ function createSide(idx) {
     creepProjectiles: [],    // pilar/magi från MINA minions (i opp's arena)
     // Wave-system
     wave: {
-      current: 0, toSpawn: 0, spawnTimer: 0,
-      spawnInterval: 1.0, betweenTimer: 3.0, active: false,
+      current: 0,
+      active: false,
+      betweenTimer: INITIAL_PREP_TIME,
+      name: '',
+      isBoss: false,
+      bannerPulse: 0,
     },
   };
   recomputeSideStats(side);
@@ -2206,28 +2246,59 @@ function hostSpawnCreepProjectile(ownerSide, creep, target, targetType) {
 // ============================================================
 
 function updateWaves(side, dt) {
-  if (!side.wave.active) {
-    side.wave.betweenTimer -= dt;
-    if (side.wave.betweenTimer <= 0) {
-      side.wave.current++;
-      side.wave.toSpawn = 4 + side.wave.current * 2;
-      side.wave.spawnTimer = 0;
-      side.wave.active = true;
+  const w = side.wave;
+  if (w.current >= MAX_WAVES && !w.active) return;
+  if (!w.active) {
+    w.betweenTimer = Math.max(0, w.betweenTimer - dt);
+    if (w.betweenTimer <= 0 && w.current < MAX_WAVES) {
+      w.current += 1;
+      const def = getWaveDef(w.current);
+      w.name = def.name;
+      w.isBoss = def.isBoss;
+      w.active = true;
+      w.bannerPulse = (w.bannerPulse || 0) + 1;
+      hostSpawnWaveAtOnce(side, def);
     }
     return;
   }
-  if (side.wave.toSpawn > 0) {
-    side.wave.spawnTimer -= dt;
-    if (side.wave.spawnTimer <= 0) {
-      const lane = (side.wave.toSpawn % 2 === 0) ? 1 : 2;
-      hostSpawnMonster(side, lane);
-      side.wave.toSpawn--;
-      side.wave.spawnTimer = side.wave.spawnInterval;
-    }
-  } else if (side.monsters.length === 0) {
-    side.wave.active = false;
-    side.wave.betweenTimer = 5.0;
+  if (side.monsters.length === 0) {
+    w.active = false;
+    w.betweenTimer = WAVE_GAP_TIME;
   }
+}
+
+function hostSpawnWaveAtOnce(side, def) {
+  if (def.isBoss) {
+    hostSpawnMonsterFromDef(side, 1, 0, def);
+    return;
+  }
+  for (let i = 0; i < WAVE_COUNT_PER_LANE; i++) {
+    hostSpawnMonsterFromDef(side, 1, i, def);
+    hostSpawnMonsterFromDef(side, 2, i, def);
+  }
+}
+
+function hostSpawnMonsterFromDef(side, lane, idx, def) {
+  const cfg = SIDE_CFG[side.idx];
+  const z = cfg.laneZ[lane];
+  const x = cfg.spawnX - idx * WAVE_STAGGER_X;
+  const mesh = makeMonsterMesh();
+  if (def.isBoss) mesh.scale.set(1.6, 1.7, 1.6); // visuellt större boss
+  attachHpBar(mesh, def.isBoss ? 2.4 : 1.7);
+  mesh.position.set(x, 0, z);
+  scene.add(mesh);
+  side.monsters.push({
+    id: nextEntityId++,
+    lane,
+    hp: def.monsterHp,
+    maxHp: def.monsterHp,
+    speed: def.monsterSpeed,
+    damage: def.monsterDmg,
+    pathIndex: 0,
+    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    isBoss: !!def.isBoss,
+    mesh,
+  });
 }
 
 function updateMonsters(side, dt) {
@@ -2262,7 +2333,7 @@ function updateMonsters(side, dt) {
 
     m.atkCd = Math.max(0, m.atkCd - dt);
     if (heroAlive && distHero < 1.2 && m.atkCd <= 0) {
-      damageHero(side, MONSTER_MELEE_DAMAGE);
+      damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = MONSTER_MELEE_INTERVAL;
     }
 
@@ -3429,6 +3500,9 @@ function applyRemoteState(state) {
     side.wave.current = sData.w.c;
     side.wave.active = !!sData.w.a;
     side.wave.betweenTimer = sData.w.bt;
+    side.wave.name = sData.w.n || '';
+    side.wave.isBoss = !!sData.w.b;
+    side.wave.bannerPulse = sData.w.p || 0;
     // Entiteter
     clientReconcileEntities(idx, 'monsters', sData.M, () => {
       const m = makeMonsterMesh();
@@ -3694,6 +3768,46 @@ function updateDuelHud() {
   } else {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.add('hidden');
+  }
+}
+
+// Wave-banner: visa stor notis när ny wave startar (server signalerar via bannerPulse)
+const waveBannerEl = document.getElementById('wave-banner');
+const waveBannerTitleEl = document.getElementById('wave-banner-title');
+const waveBannerSubEl = document.getElementById('wave-banner-sub');
+const waveBannerState = { lastSeenPulse: 0, hideTimeout: null };
+
+function showWaveBanner(waveNum, name, isBoss) {
+  if (!waveBannerEl) return;
+  if (isBoss) {
+    waveBannerEl.classList.add('boss');
+    waveBannerTitleEl.textContent = `BOSS — WAVE ${waveNum}`;
+    waveBannerSubEl.textContent = name || '???';
+  } else {
+    waveBannerEl.classList.remove('boss');
+    waveBannerTitleEl.textContent = `WAVE ${waveNum}`;
+    waveBannerSubEl.textContent = name || '';
+  }
+  // Restart animation
+  waveBannerEl.classList.remove('hidden');
+  waveBannerEl.style.animation = 'none';
+  // eslint-disable-next-line no-unused-expressions
+  void waveBannerEl.offsetWidth;
+  waveBannerEl.style.animation = '';
+  if (waveBannerState.hideTimeout) clearTimeout(waveBannerState.hideTimeout);
+  waveBannerState.hideTimeout = setTimeout(() => {
+    waveBannerEl.classList.add('hidden');
+  }, 2600);
+}
+
+function checkWaveBanner() {
+  if (APP.mode === 'lobby') return;
+  const side = sides[APP.localSide];
+  if (!side || !side.wave) return;
+  const pulse = side.wave.bannerPulse || 0;
+  if (pulse > waveBannerState.lastSeenPulse) {
+    waveBannerState.lastSeenPulse = pulse;
+    showWaveBanner(side.wave.current, side.wave.name, side.wave.isBoss);
   }
 }
 
@@ -4941,6 +5055,10 @@ function enterPlayPhase() {
   duelState.matchTimer = 0;
   duelState.announceTimer = 0;
   duelState.lastWinner = 0;
+  // Reset wave-banner tracking
+  waveBannerState.lastSeenPulse = 0;
+  if (waveBannerState.hideTimeout) { clearTimeout(waveBannerState.hideTimeout); waveBannerState.hideTimeout = null; }
+  if (waveBannerEl) waveBannerEl.classList.add('hidden');
   // Sätt heroId och byt mesh om hjälten skiljer från default.
   // Solo: läs från heroPickState.selected. MP: side.heroId är redan satt via clientReconcileSide.
   for (const idx of [1, 2]) {
@@ -5191,6 +5309,7 @@ function tick() {
 
   updateHud();
   updateDuelHud();
+  checkWaveBanner();
   updateIncomeDisplay();
   checkIncomeTickNotifications();
   updateSkillButtonStyles();
