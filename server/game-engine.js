@@ -108,15 +108,35 @@ const CREEP_VS_CREEP_DAMAGE = 5;
 const CREEP_VS_CREEP_RANGE = 1.5;
 const CREEP_VS_CREEP_INTERVAL = 1.5;
 
-const ELDKLOT_SPEED = 16;
-const ELDKLOT_DAMAGE = 15;
-const ELDKLOT_RANGE = 14;
-const ELDKLOT_RADIUS = 0.6;
-const NOVA_RADIUS = 3.5;
+// Gandulf-skills (omgjorda)
+// Fire Wave (Q): triangulär cone framför hero. Direkt dmg + 3s DoT.
+const FIREWAVE_LENGTH = 10;
+const FIREWAVE_HALF_ANGLE = Math.PI / 4;   // 45° → 90° total cone
+const FIREWAVE_DIRECT_DMG = 18;
+const FIREWAVE_DOT_DPS = 6;
+const FIREWAVE_DOT_DURATION = 3.0;
+const FIREWAVE_EFFECT_LIFE = 0.6;          // hur länge cone-mesh visas på klienten
+// Frost Nova (F): target-AoE freeze + shatter
+const NOVA_RADIUS = 3.8;
 const NOVA_DAMAGE = 10;
+const NOVA_FREEZE_TIME = 2.0;
+const NOVA_CAST_DISTANCE = 6;              // drag-räckvidd
+const SHATTER_RADIUS = 2.5;
+const SHATTER_DAMAGE = 15;
+// Black Hole (E): target-AoE pull + explosion vid slutet
+const BLACKHOLE_RADIUS = 3.5;
+const BLACKHOLE_PULL_SPEED = 2.5;
+const BLACKHOLE_DURATION = 3.0;
+const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
+const BLACKHOLE_EXPLOSION_DMG = 30;
+const BLACKHOLE_CAST_DISTANCE = 8;
+// Bakåtkompabilitet med tidigare konstanter (används av hero-copy etc)
+const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
+const ELDKLOT_RANGE = FIREWAVE_LENGTH;
+const ELDKLOT_RADIUS = 0.6;
+const ELDKLOT_SPEED = 16;
 const NOVA_SLOW_MUL = 0.6;
 const NOVA_SLOW_TIME = 2.0;
-const BLINK_RANGE = 6.0;
 const TOWER_MAX_HP = 50;
 
 // Fontän-aura: hero inom radius av egen fontän får regen + buff på output/defense/CDR/AS
@@ -665,6 +685,17 @@ function updateMonsters(state, side, opp, dt) {
   const towerPos = SIDE_CFG[side.idx].tower;
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
+    // DoT-tick (Fire Wave)
+    if ((m.dotRemaining || 0) > 0) {
+      m.dotRemaining -= dt;
+      m.hp -= (m.dotPerSec || 0) * dt;
+      if (m.hp <= 0) { killMonster(side, i, side); continue; }
+    }
+    // Frusen: hoppa över movement + attack-cooldown
+    if ((m.frozenTime || 0) > 0) {
+      m.frozenTime -= dt;
+      continue;
+    }
     const dxT = towerPos.x - m.x, dzT = towerPos.z - m.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       side.tower.hp = Math.max(0, side.tower.hp - 1);
@@ -736,6 +767,17 @@ function updatePlayerCreeps(state, side, opp, dt) {
   const oppCfg = SIDE_CFG[3 - side.idx];
   for (let i = side.playerCreeps.length - 1; i >= 0; i--) {
     const c = side.playerCreeps[i];
+    // DoT-tick
+    if ((c.dotRemaining || 0) > 0) {
+      c.dotRemaining -= dt;
+      c.hp -= (c.dotPerSec || 0) * dt;
+      if (c.hp <= 0) { side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Frusen: hoppa över movement/attack
+    if ((c.frozenTime || 0) > 0) {
+      c.frozenTime -= dt;
+      continue;
+    }
     const dxT = oppCfg.tower.x - c.x, dzT = oppCfg.tower.z - c.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       if (opp) opp.tower.hp = Math.max(0, opp.tower.hp - 1);
@@ -827,6 +869,76 @@ function updateCreepProjectiles(state, side, opp, dt) {
     p.y += (dy / dist) * step;
     p.z += (dz / dist) * step;
   }
+}
+
+// === Skill-effekter (DoT, freeze, shatter) ===
+function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
+  const m = side.monsters[mIdx];
+  if (!m || m.hp <= 0) return;
+  // Shatter: om frusen, splittra is och skicka shards
+  if ((m.frozenTime || 0) > 0) {
+    triggerShatter(state, side, opp, m.x, m.z, side);
+    m.frozenTime = 0;
+  }
+  m.hp -= dmg;
+  if (m.hp <= 0) killMonster(side, mIdx, side);
+}
+function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
+  if (!creep || creep.hp <= 0) return;
+  if ((creep.frozenTime || 0) > 0) {
+    triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
+    creep.frozenTime = 0;
+  }
+  creep.hp -= dmg;
+}
+function applySkillDamageToOppHero(state, side, opp, dmg) {
+  if (!opp || opp.hero.dead) return;
+  if ((opp.hero.frozenTime || 0) > 0) {
+    triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
+    opp.hero.frozenTime = 0;
+  }
+  damageHero(opp, dmg);
+}
+// Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
+function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
+  // Lägg till en visuell shatter-effekt (returneras via novaEffects-liknande list)
+  if (!sourceSide.shatters) sourceSide.shatters = [];
+  sourceSide.shatters.push({ id: state.nextEntityId++, x, z, life: 0.5, maxLife: 0.5 });
+  // Skada närliggande monsters i arenaSide
+  if (arenaSide && arenaSide.monsters) {
+    for (let i = arenaSide.monsters.length - 1; i >= 0; i--) {
+      const m = arenaSide.monsters[i];
+      if (Math.hypot(m.x - x, m.z - z) < SHATTER_RADIUS) {
+        m.hp -= SHATTER_DAMAGE;
+        if (m.hp <= 0) killMonster(arenaSide, i, sourceSide);
+      }
+    }
+  }
+  // Skada närliggande creeps i attackerSide (om arena är opp:s arena)
+  if (attackerSide && attackerSide.playerCreeps) {
+    for (let i = attackerSide.playerCreeps.length - 1; i >= 0; i--) {
+      const c = attackerSide.playerCreeps[i];
+      if (Math.hypot(c.x - x, c.z - z) < SHATTER_RADIUS) {
+        c.hp -= SHATTER_DAMAGE;
+        if (c.hp <= 0) { attackerSide.playerCreeps.splice(i, 1); sourceSide.gold += minionBounty(c); gainXp(sourceSide, minionXp(c)); }
+      }
+    }
+  }
+}
+
+// Lös ut cast-mark (x,z) för target-baserade skills (Nova, Black Hole)
+function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
+  // Tap + lock: använd target's position
+  if (ev.tap === true && side.targetId) {
+    const t = resolveTargetEntity(side, opp, state);
+    if (t) return { x: t.x, z: t.z };
+  }
+  // Drag: dir × distance från hero
+  let dx = ev.dx || 0, dz = ev.dz || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  return { x: side.hero.x + dx * defaultDistance, z: side.hero.z + dz * defaultDistance };
 }
 
 function findClosestHostile(side, opp, x, z, maxDist, state) {
@@ -994,6 +1106,7 @@ function updateProjectiles(state, side, opp, dt) {
   }
 }
 
+// Fire Wave (Q): triangulär cone framför hero. Direkt dmg + DoT som varar 3s.
 function castEldklot(state, sideIdx, dirX, dirZ) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.q.cd > 0) return;
@@ -1001,14 +1114,55 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
   side.skills.q.cd = side.skills.q.max;
-  side.fireballs.push({
+  const opp = state.sides[3 - sideIdx];
+  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1);
+  // Spawna cone-effekt för klient-visuell (lever 0.6s)
+  side.fireWaves = side.fireWaves || [];
+  side.fireWaves.push({
     id: state.nextEntityId++,
-    x: side.hero.x, y: 1.0, z: side.hero.z,
+    x: side.hero.x, z: side.hero.z,
     dx: dirX, dz: dirZ,
-    hit: new Set(),
-    traveled: 0,
-    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    life: FIREWAVE_EFFECT_LIFE, maxLife: FIREWAVE_EFFECT_LIFE,
   });
+  // Träffa alla monsters i cone
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > FIREWAVE_LENGTH || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+    return ang < FIREWAVE_HALF_ANGLE;
+  };
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (!inCone(m.x, m.z)) continue;
+    applySkillDamageToMonster(state, side, opp, j, directDmg);
+    if (m.hp > 0) {
+      m.dotRemaining = FIREWAVE_DOT_DURATION;
+      m.dotPerSec = dotDps;
+    }
+  }
+  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (!inCone(c.x, c.z)) continue;
+    applySkillDamageToCreep(state, side, opp, c, directDmg);
+    if (c.hp > 0) {
+      c.dotRemaining = FIREWAVE_DOT_DURATION;
+      c.dotPerSec = dotDps;
+    } else {
+      const idx = opp.playerCreeps.indexOf(c);
+      if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+  // Duel: träffa opp.hero om i cone
+  if (state.duelActive && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
+    applySkillDamageToOppHero(state, side, opp, directDmg);
+    if (!opp.hero.dead) {
+      opp.hero.dotRemaining = FIREWAVE_DOT_DURATION;
+      opp.hero.dotPerSec = dotDps;
+    }
+  }
 }
 
 function updateFireballs(state, side, opp, dt) {
@@ -1049,37 +1203,47 @@ function updateFireballs(state, side, opp, dt) {
   }
 }
 
-function castFrostnova(state, sideIdx) {
+// Frost Nova (F): target-AoE. Skadar + fryser fiender 2s. Frusen + ny skill-träff → shatter.
+function castFrostnova(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
+  const opp = state.sides[3 - sideIdx];
+  const center = resolveSkillGroundTarget(state, side, opp, ev || {}, NOVA_CAST_DISTANCE);
   side.novaEffects.push({
     id: state.nextEntityId++,
-    x: side.hero.x, z: side.hero.z,
+    x: center.x, z: center.z,
     life: 0.6, maxLife: 0.6,
   });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
-    if (Math.hypot(m.x - side.hero.x, m.z - side.hero.z) < NOVA_RADIUS) {
-      m.hp -= novaDmg;
-      m.slowMul = NOVA_SLOW_MUL;
-      m.slowTime = NOVA_SLOW_TIME;
-      if (m.hp <= 0) killMonster(side, j, side);
+    if (Math.hypot(m.x - center.x, m.z - center.z) < NOVA_RADIUS) {
+      // Träff: om redan frusen → shatter. Annars: skada + frys.
+      const wasFrozen = (m.frozenTime || 0) > 0;
+      applySkillDamageToMonster(state, side, opp, j, novaDmg);
+      const stillAlive = side.monsters[j] === m && m.hp > 0;
+      if (stillAlive && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
     }
   }
-  const opp = state.sides[3 - sideIdx];
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
-    if (Math.hypot(c.x - side.hero.x, c.z - side.hero.z) < NOVA_RADIUS) {
-      c.hp -= novaDmg;
-      if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    if (Math.hypot(c.x - center.x, c.z - center.z) < NOVA_RADIUS) {
+      const wasFrozen = (c.frozenTime || 0) > 0;
+      applySkillDamageToCreep(state, side, opp, c, novaDmg);
+      if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
+      else if (c.hp <= 0) {
+        const idx = opp.playerCreeps.indexOf(c);
+        if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
     }
   }
   // Duel: nova träffar opp.hero om i radie
   if (state.duelActive && opp && !opp.hero.dead) {
-    if (Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z) < NOVA_RADIUS) {
-      damageHero(opp, novaDmg);
+    if (Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z) < NOVA_RADIUS) {
+      const wasFrozen = (opp.hero.frozenTime || 0) > 0;
+      applySkillDamageToOppHero(state, side, opp, novaDmg);
+      if (!opp.hero.dead && !wasFrozen) opp.hero.frozenTime = NOVA_FREEZE_TIME;
     }
   }
 }
@@ -1090,24 +1254,93 @@ function updateNovaEffects(side, dt) {
     n.life -= dt;
     if (n.life <= 0) side.novaEffects.splice(i, 1);
   }
+  // Fire Wave-cone-effekter (livstid)
+  if (side.fireWaves) for (let i = side.fireWaves.length - 1; i >= 0; i--) {
+    side.fireWaves[i].life -= dt;
+    if (side.fireWaves[i].life <= 0) side.fireWaves.splice(i, 1);
+  }
+  // Shatter-effekter (livstid)
+  if (side.shatters) for (let i = side.shatters.length - 1; i >= 0; i--) {
+    side.shatters[i].life -= dt;
+    if (side.shatters[i].life <= 0) side.shatters.splice(i, 1);
+  }
 }
 
-function castBlink(state, sideIdx, dirX, dirZ) {
+// Black Hole (E): spawnar en black hole vid target-position som suger in fiender i 3s
+// och avslutas med en AoE-explosion.
+function castBlink(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
-  const len = Math.hypot(dirX, dirZ);
-  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
-  else { dirX /= len; dirZ /= len; }
-  let dist = BLINK_RANGE, nx, nz;
-  while (dist >= 0.5) {
-    nx = side.hero.x + dirX * dist;
-    nz = side.hero.z + dirZ * dist;
-    if (isHeroWalkable(side.idx, nx, nz)) break;
-    dist -= 0.5;
-  }
-  if (dist < 0.5) return;
+  const opp = state.sides[3 - sideIdx];
+  const center = resolveSkillGroundTarget(state, side, opp, ev || {}, BLACKHOLE_CAST_DISTANCE);
   side.skills.e.cd = side.skills.e.max;
-  side.hero.x = nx; side.hero.z = nz;
+  if (!side.blackHoles) side.blackHoles = [];
+  const skillDmgMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  side.blackHoles.push({
+    id: state.nextEntityId++,
+    x: center.x, z: center.z,
+    life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
+    explosionDmg: BLACKHOLE_EXPLOSION_DMG * skillDmgMul,
+  });
+}
+
+function updateBlackHoles(state, side, opp, dt) {
+  if (!side.blackHoles || side.blackHoles.length === 0) return;
+  for (let i = side.blackHoles.length - 1; i >= 0; i--) {
+    const bh = side.blackHoles[i];
+    bh.life -= dt;
+    // Sug-styrka: smooth pull i radien
+    const pull = BLACKHOLE_PULL_SPEED * dt;
+    for (const m of side.monsters) {
+      const dx = bh.x - m.x, dz = bh.z - m.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+        const f = 1 - d / BLACKHOLE_RADIUS; // starkare vid kanten? nej, starkare nära mitten = (1 - d/r)
+        m.x += (dx / d) * pull * (0.4 + f * 0.6);
+        m.z += (dz / d) * pull * (0.4 + f * 0.6);
+      }
+    }
+    if (opp) for (const c of opp.playerCreeps) {
+      const dx = bh.x - c.x, dz = bh.z - c.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+        const f = 1 - d / BLACKHOLE_RADIUS;
+        c.x += (dx / d) * pull * (0.4 + f * 0.6);
+        c.z += (dz / d) * pull * (0.4 + f * 0.6);
+      }
+    }
+    // Suga in opp.hero under duel
+    if (state.duelActive && opp && !opp.hero.dead) {
+      const dx = bh.x - opp.hero.x, dz = bh.z - opp.hero.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+        opp.hero.x += (dx / d) * pull * 0.5;
+        opp.hero.z += (dz / d) * pull * 0.5;
+      }
+    }
+    if (bh.life <= 0) {
+      // Explosion AoE
+      for (let j = side.monsters.length - 1; j >= 0; j--) {
+        const m = side.monsters[j];
+        if (Math.hypot(m.x - bh.x, m.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          applySkillDamageToMonster(state, side, opp, j, bh.explosionDmg);
+        }
+      }
+      if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+        const c = opp.playerCreeps[j];
+        if (Math.hypot(c.x - bh.x, c.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          applySkillDamageToCreep(state, side, opp, c, bh.explosionDmg);
+          if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      if (state.duelActive && opp && !opp.hero.dead) {
+        if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          applySkillDamageToOppHero(state, side, opp, bh.explosionDmg);
+        }
+      }
+      side.blackHoles.splice(i, 1);
+    }
+  }
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
@@ -1193,8 +1426,8 @@ function applyEvent(state, sideIdx, ev) {
       }
     }
     if (ev.key === 'q') castEldklot(state, sideIdx, dx, dz);
-    else if (ev.key === 'f') castFrostnova(state, sideIdx);
-    else if (ev.key === 'e') castBlink(state, sideIdx, dx, dz);
+    else if (ev.key === 'f') castFrostnova(state, sideIdx, ev);
+    else if (ev.key === 'e') castBlink(state, sideIdx, ev);
     return;
   }
   if (ev.type === 'activate') {
@@ -1494,6 +1727,7 @@ function tickGame(state, dt) {
       if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
       updateProjectiles(state, side, opp, dt);
       updateFireballs(state, side, opp, dt);
+      updateBlackHoles(state, side, opp, dt);
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
     }
@@ -1541,6 +1775,13 @@ function tickGame(state, dt) {
       if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
       }
+      // Fire Wave DoT på hjälten
+      if ((side.hero.dotRemaining || 0) > 0) {
+        side.hero.dotRemaining -= dt;
+        damageHero(side, (side.hero.dotPerSec || 0) * dt);
+      }
+      // Tick freeze på hero (om frusen, hjälten kan inte använda skills/AA — för enkelhet bara dekrementera)
+      if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime -= dt;
     }
   }
   for (const sideIdx of [1, 2]) {
@@ -1551,6 +1792,7 @@ function tickGame(state, dt) {
     updateMonsters(state, side, opp, dt);
     updatePlayerCreeps(state, side, opp, dt);
     updateHeroCopies(state, side, dt);
+    updateBlackHoles(state, side, opp, dt);
     updateCreepProjectiles(state, side, opp, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -1606,14 +1848,17 @@ function serializeSide(side) {
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
     },
-    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0 })),
-    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
+    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0, fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0 })),
+    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
     F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
     N: side.novaEffects.map(n => ({ id: n.id, x: n.x, z: n.z, life: n.life / n.maxLife })),
     CP: side.creepProjectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, kind: p.kind })),
     HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
     HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
+    FW: (side.fireWaves || []).map(f => ({ id: f.id, x: f.x, z: f.z, dx: f.dx, dz: f.dz, life: f.life / f.maxLife })),
+    BH: (side.blackHoles || []).map(b => ({ id: b.id, x: b.x, z: b.z, life: b.life / b.maxLife })),
+    SH: (side.shatters || []).map(s => ({ id: s.id, x: s.x, z: s.z, life: s.life / s.maxLife })),
   };
 }
 

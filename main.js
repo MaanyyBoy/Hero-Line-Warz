@@ -1238,12 +1238,30 @@ const CREEP_XP_RATIO = 0.6;
 const ARROW_SPEED = 14;
 const MAGIC_PROJ_SPEED = 10;
 
-const ELDKLOT_SPEED = 16;
-const ELDKLOT_DAMAGE = 15;
-const ELDKLOT_RANGE = 14;
-const ELDKLOT_RADIUS = 0.6;
-const NOVA_RADIUS = 3.5;
+// Gandulf-skills omskrivna — Fire Wave / Frost Nova target / Black Hole
+const FIREWAVE_LENGTH = 10;
+const FIREWAVE_HALF_ANGLE = Math.PI / 4;
+const FIREWAVE_DIRECT_DMG = 18;
+const FIREWAVE_DOT_DPS = 6;
+const FIREWAVE_DOT_DURATION = 3.0;
+const FIREWAVE_EFFECT_LIFE = 0.6;
+const NOVA_RADIUS = 3.8;
 const NOVA_DAMAGE = 10;
+const NOVA_FREEZE_TIME = 2.0;
+const NOVA_CAST_DISTANCE = 6;
+const SHATTER_RADIUS = 2.5;
+const SHATTER_DAMAGE = 15;
+const BLACKHOLE_RADIUS = 3.5;
+const BLACKHOLE_PULL_SPEED = 2.5;
+const BLACKHOLE_DURATION = 3.0;
+const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
+const BLACKHOLE_EXPLOSION_DMG = 30;
+const BLACKHOLE_CAST_DISTANCE = 8;
+// Bakåtkompabilitet
+const ELDKLOT_SPEED = 16;
+const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
+const ELDKLOT_RANGE = FIREWAVE_LENGTH;
+const ELDKLOT_RADIUS = 0.6;
 const NOVA_SLOW_MUL = 0.6;
 const NOVA_SLOW_TIME = 2.0;
 const BLINK_RANGE = 6.0;
@@ -2479,6 +2497,18 @@ function updateMonsters(side, dt) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
 
+    // DoT-tick (Fire Wave)
+    if ((m.dotRemaining || 0) > 0) {
+      m.dotRemaining -= dt;
+      m.hp -= (m.dotPerSec || 0) * dt;
+      if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
+    }
+    // Frusen: hoppa över movement + attack
+    if ((m.frozenTime || 0) > 0) {
+      m.frozenTime -= dt;
+      continue;
+    }
+
     // Nått tornet?
     const dxT = towerPos.x - m.mesh.position.x;
     const dzT = towerPos.z - m.mesh.position.z;
@@ -2572,6 +2602,18 @@ function updatePlayerCreeps(side, dt) {
 
   for (let i = side.playerCreeps.length - 1; i >= 0; i--) {
     const c = side.playerCreeps[i];
+
+    // DoT-tick
+    if ((c.dotRemaining || 0) > 0) {
+      c.dotRemaining -= dt;
+      c.hp -= (c.dotPerSec || 0) * dt;
+      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Frusen — hoppa över
+    if ((c.frozenTime || 0) > 0) {
+      c.frozenTime -= dt;
+      continue;
+    }
 
     // Nått opp's torn?
     const dxT = oppCfg.tower.x - c.mesh.position.x;
@@ -2930,22 +2972,107 @@ function updateProjectiles(side, dt) {
 // SKILLS (host/solo)
 // ============================================================
 
+// Solo skill-helpers
+function soloResolveSkillGroundTarget(side, ev, defaultDistance) {
+  if (ev && ev.tap === true && side.targetId) {
+    const opp = sides[3 - side.idx];
+    const t = resolveTargetEntity(side, opp);
+    if (t && t.mesh) return { x: t.mesh.position.x, z: t.mesh.position.z };
+  }
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  return { x: side.hero.x + dx * defaultDistance, z: side.hero.z + dz * defaultDistance };
+}
+
+function soloShatter(side, opp, x, z) {
+  // Visuell shatter-ring som fade:as
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.2, SHATTER_RADIUS, 32),
+    new THREE.MeshBasicMaterial({ color: 0xbbe7ff, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.10, z);
+  scene.add(ring);
+  side.shatters = side.shatters || [];
+  side.shatters.push({ mesh: ring, life: 0.5, maxLife: 0.5 });
+  // Damage runt punkten
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z) < SHATTER_RADIUS) {
+      m.hp -= SHATTER_DAMAGE;
+      if (m.hp <= 0) hostKillMonster(side, i, side);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (Math.hypot(c.mesh.position.x - x, c.mesh.position.z - z) < SHATTER_RADIUS) {
+      c.hp -= SHATTER_DAMAGE;
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+}
+
+function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
+  const m = side.monsters[mIdx];
+  if (!m || m.hp <= 0) return;
+  if ((m.frozenTime || 0) > 0) {
+    soloShatter(side, opp, m.mesh.position.x, m.mesh.position.z);
+    m.frozenTime = 0;
+  }
+  m.hp -= dmg;
+  if (m.hp <= 0) hostKillMonster(side, mIdx, side);
+}
+function soloApplySkillDmgToCreep(side, opp, c, dmg) {
+  if ((c.frozenTime || 0) > 0) {
+    soloShatter(side, opp, c.mesh.position.x, c.mesh.position.z);
+    c.frozenTime = 0;
+  }
+  c.hp -= dmg;
+}
+
+// Fire Wave (Q): triangulär cone framför hero. Direct dmg + 3s DoT.
 function hostCastEldklot(side, dirX, dirZ) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
   side.skills.q.cd = side.skills.q.max;
-  const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.35, 14, 10),
-    new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xcc2200, emissiveIntensity: 1.0 })
-  );
-  mesh.position.set(side.hero.x, 1.0, side.hero.z);
-  scene.add(mesh);
-  side.fireballs.push({
-    mesh, dx: dirX, dz: dirZ, hit: new Set(), traveled: 0,
-    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
-  });
+  const opp = sides[3 - side.idx];
+  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1);
+  // Cone-mesh (ConeGeometry) — pekar i dx/dz, fade:as
+  const coneMat = new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+  const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE), FIREWAVE_LENGTH, 16, 1, true), coneMat);
+  // ConeGeometry pekar uppåt. Rotera ner till horisontellt + rikta enligt dirX/dz.
+  coneMesh.rotation.x = -Math.PI / 2;
+  coneMesh.rotation.z = Math.atan2(-dirZ, dirX) + Math.PI / 2;
+  coneMesh.position.set(side.hero.x + dirX * (FIREWAVE_LENGTH / 2), 0.6, side.hero.z + dirZ * (FIREWAVE_LENGTH / 2));
+  scene.add(coneMesh);
+  side.fireWaves = side.fireWaves || [];
+  side.fireWaves.push({ mesh: coneMesh, life: FIREWAVE_EFFECT_LIFE, maxLife: FIREWAVE_EFFECT_LIFE });
+  // Skada alla i cone
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > FIREWAVE_LENGTH || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < FIREWAVE_HALF_ANGLE;
+  };
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
+    soloApplySkillDmgToMonster(side, opp, j, directDmg);
+    if (m.hp > 0) { m.dotRemaining = FIREWAVE_DOT_DURATION; m.dotPerSec = dotDps; }
+  }
+  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
+    soloApplySkillDmgToCreep(side, opp, c, directDmg);
+    if (c.hp > 0) { c.dotRemaining = FIREWAVE_DOT_DURATION; c.dotPerSec = dotDps; }
+    else { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+  }
 }
 
 function updateFireballs(side, dt) {
@@ -2984,34 +3111,38 @@ function updateFireballs(side, dt) {
   }
 }
 
-function hostCastFrostnova(side) {
+// Frost Nova (F): target-AoE freeze + shatter.
+function hostCastFrostnova(side, ev) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
+  const opp = sides[3 - side.idx];
+  const center = soloResolveSkillGroundTarget(side, ev || {}, NOVA_CAST_DISTANCE);
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.3, NOVA_RADIUS, 36),
     new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
   );
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(side.hero.x, 0.08, side.hero.z);
+  ring.position.set(center.x, 0.08, center.z);
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
-  // Skada/slow på alla fientliga i radien (egna monsters + opp's creeps)
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
-    if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
-      m.hp -= novaDmg;
-      m.slowMul = NOVA_SLOW_MUL;
-      m.slowTime = NOVA_SLOW_TIME;
-      if (m.hp <= 0) hostKillMonster(side, j, side);
+    if (Math.hypot(m.mesh.position.x - center.x, m.mesh.position.z - center.z) < NOVA_RADIUS) {
+      const wasFrozen = (m.frozenTime || 0) > 0;
+      soloApplySkillDmgToMonster(side, opp, j, novaDmg);
+      // Om monstret fortfarande lever och inte var fruset — frys
+      const stillExists = side.monsters[j] === m;
+      if (stillExists && m.hp > 0 && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
     }
   }
-  const opp = sides[3 - side.idx];
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
-    if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
-      c.hp -= novaDmg;
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    if (Math.hypot(c.mesh.position.x - center.x, c.mesh.position.z - center.z) < NOVA_RADIUS) {
+      const wasFrozen = (c.frozenTime || 0) > 0;
+      soloApplySkillDmgToCreep(side, opp, c, novaDmg);
+      if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
+      else if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
 }
@@ -3023,27 +3154,100 @@ function updateNovaEffects(side, dt) {
     n.mesh.material.opacity = 0.7 * (n.life / n.maxLife);
     if (n.life <= 0) { scene.remove(n.mesh); side.novaEffects.splice(i, 1); }
   }
+  // Fire Wave-cone fade ut
+  if (side.fireWaves) for (let i = side.fireWaves.length - 1; i >= 0; i--) {
+    const fw = side.fireWaves[i];
+    fw.life -= dt;
+    if (fw.mesh.material) fw.mesh.material.opacity = 0.6 * (fw.life / fw.maxLife);
+    if (fw.life <= 0) { scene.remove(fw.mesh); side.fireWaves.splice(i, 1); }
+  }
+  // Shatter-effekter
+  if (side.shatters) for (let i = side.shatters.length - 1; i >= 0; i--) {
+    const s = side.shatters[i];
+    s.life -= dt;
+    if (s.mesh.material) s.mesh.material.opacity = 0.8 * (s.life / s.maxLife);
+    if (s.life <= 0) { scene.remove(s.mesh); side.shatters.splice(i, 1); }
+  }
 }
 
-function hostCastBlink(side, dirX, dirZ) {
+// Black Hole (E): spawnar black hole vid target. Suger in 3s + explosion vid slut.
+function hostCastBlink(side, ev) {
   if (side.hero.dead || side.skills.e.cd > 0) return;
-  const len = Math.hypot(dirX, dirZ);
-  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
-  else { dirX /= len; dirZ /= len; }
-  let dist = BLINK_RANGE;
-  let nx, nz;
-  while (dist >= 0.5) {
-    nx = side.hero.x + dirX * dist;
-    nz = side.hero.z + dirZ * dist;
-    if (isHeroWalkable(side.idx, nx, nz)) break;
-    dist -= 0.5;
-  }
-  if (dist < 0.5) return;
   side.skills.e.cd = side.skills.e.max;
-  side.hero.x = nx;
-  side.hero.z = nz;
-  side.mesh.position.x = nx;
-  side.mesh.position.z = nz;
+  const center = soloResolveSkillGroundTarget(side, ev || {}, BLACKHOLE_CAST_DISTANCE);
+  const sphereMat = new THREE.MeshStandardMaterial({ color: 0x080012, emissive: 0x442288, emissiveIntensity: 0.9, roughness: 0.3, transparent: true, opacity: 0.95 });
+  const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.8, 24, 16), sphereMat);
+  sphere.position.set(center.x, 0.8, center.z);
+  scene.add(sphere);
+  // Yttre swirl-ring (visuell)
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(BLACKHOLE_RADIUS - 0.3, BLACKHOLE_RADIUS, 48),
+    new THREE.MeshBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(center.x, 0.05, center.z);
+  scene.add(ring);
+  side.blackHoles = side.blackHoles || [];
+  side.blackHoles.push({
+    sphere, ring,
+    x: center.x, z: center.z,
+    life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
+    explosionDmg: BLACKHOLE_EXPLOSION_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+  });
+}
+
+function updateBlackHolesSolo(side, dt) {
+  if (!side.blackHoles || side.blackHoles.length === 0) return;
+  const opp = sides[3 - side.idx];
+  for (let i = side.blackHoles.length - 1; i >= 0; i--) {
+    const bh = side.blackHoles[i];
+    bh.life -= dt;
+    const pull = BLACKHOLE_PULL_SPEED * dt;
+    // Sug in monsters + creeps
+    for (const m of side.monsters) {
+      const dx = bh.x - m.mesh.position.x, dz = bh.z - m.mesh.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+        const f = 1 - d / BLACKHOLE_RADIUS;
+        m.mesh.position.x += (dx / d) * pull * (0.4 + f * 0.6);
+        m.mesh.position.z += (dz / d) * pull * (0.4 + f * 0.6);
+      }
+    }
+    if (opp) for (const c of opp.playerCreeps) {
+      const dx = bh.x - c.mesh.position.x, dz = bh.z - c.mesh.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+        const f = 1 - d / BLACKHOLE_RADIUS;
+        c.mesh.position.x += (dx / d) * pull * (0.4 + f * 0.6);
+        c.mesh.position.z += (dz / d) * pull * (0.4 + f * 0.6);
+      }
+    }
+    // Snurra sfär
+    bh.sphere.rotation.y += dt * 4;
+    bh.ring.rotation.z += dt * 2;
+    // Pulse sphere scale based on life
+    const t = 1 - bh.life / bh.maxLife;
+    bh.sphere.scale.setScalar(1 + 0.3 * Math.sin(t * 20));
+    if (bh.life <= 0) {
+      // Explosion
+      for (let j = side.monsters.length - 1; j >= 0; j--) {
+        const m = side.monsters[j];
+        if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          soloApplySkillDmgToMonster(side, opp, j, bh.explosionDmg);
+        }
+      }
+      if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+        const c = opp.playerCreeps[j];
+        if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg);
+          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      scene.remove(bh.sphere);
+      scene.remove(bh.ring);
+      side.blackHoles.splice(i, 1);
+    }
+  }
 }
 
 function updateSkillCooldowns(side, dt) {
@@ -3374,8 +3578,8 @@ function applyEvent(side, ev) {
       }
     }
     if (ev.key === 'q') hostCastEldklot(side, dx, dz);
-    else if (ev.key === 'f') hostCastFrostnova(side);
-    else if (ev.key === 'e') hostCastBlink(side, dx, dz);
+    else if (ev.key === 'f') hostCastFrostnova(side, ev);
+    else if (ev.key === 'e') hostCastBlink(side, ev);
     return;
   }
   if (ev.type === 'activate') {
@@ -3449,6 +3653,9 @@ const clientMeshes = {
   creepProjectiles: new Map(),
   heroCopies: new Map(),
   heroCopyFireballs: new Map(),
+  fireWaves: new Map(),
+  blackHoles: new Map(),
+  shatters: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -3796,6 +4003,58 @@ function applyRemoteState(state) {
       new THREE.SphereGeometry(0.35, 14, 10),
       new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xff3010, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 })
     ));
+    // Fire Wave-cones från server
+    clientReconcileEntities(idx, 'fireWaves', sData.FW || [], (e) => {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE), FIREWAVE_LENGTH, 16, 1, true), mat);
+      cone.rotation.x = -Math.PI / 2;
+      if (e && typeof e.dx === 'number') cone.rotation.z = Math.atan2(-e.dz, e.dx) + Math.PI / 2;
+      return cone;
+    });
+    // Position FW vid hero.x + dir × len/2 — uppdatera varje frame via mesh.position
+    const fwMap = clientMeshes.fireWaves && clientMeshes.fireWaves.get(idx);
+    if (fwMap && sData.FW) for (const fw of sData.FW) {
+      const m = fwMap.get(fw.id);
+      if (m) {
+        m.position.set(fw.x + fw.dx * (FIREWAVE_LENGTH / 2), 0.6, fw.z + fw.dz * (FIREWAVE_LENGTH / 2));
+        if (m.material) m.material.opacity = 0.55 * fw.life;
+      }
+    }
+    // Black Holes
+    clientReconcileEntities(idx, 'blackHoles', sData.BH || [], () => {
+      const grp = new THREE.Group();
+      const sph = new THREE.Mesh(
+        new THREE.SphereGeometry(0.8, 24, 16),
+        new THREE.MeshStandardMaterial({ color: 0x080012, emissive: 0x442288, emissiveIntensity: 0.9, roughness: 0.3, transparent: true, opacity: 0.95 })
+      );
+      sph.position.y = 0.8;
+      grp.add(sph);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(BLACKHOLE_RADIUS - 0.3, BLACKHOLE_RADIUS, 48),
+        new THREE.MeshBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.05;
+      grp.add(ring);
+      grp.userData.bhSphere = sph;
+      grp.userData.bhRing = ring;
+      return grp;
+    });
+    // Shatter-ringar
+    clientReconcileEntities(idx, 'shatters', sData.SH || [], () => {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.2, SHATTER_RADIUS, 32),
+        new THREE.MeshBasicMaterial({ color: 0xbbe7ff, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.10;
+      return ring;
+    });
+    const shMap = clientMeshes.shatters && clientMeshes.shatters.get(idx);
+    if (shMap && sData.SH) for (const s of sData.SH) {
+      const m = shMap.get(s.id);
+      if (m && m.material) m.material.opacity = 0.8 * s.life;
+    }
   }
   matchState.gameOver = !!state.m.o;
   matchState.gameWon = !!state.m.w;
@@ -4183,7 +4442,7 @@ const aimState = {
   btnCx: 0, btnCy: 0, dx: 0, dz: 0, dragMag: 0,
 };
 const AIM_THRESHOLD = 16;
-const SKILL_AIMABLE = { q: true, e: true, f: false };
+const SKILL_AIMABLE = { q: true, e: true, f: true };
 
 const keys = {};
 window.addEventListener('keydown', (e) => {
@@ -5447,6 +5706,7 @@ function simulateAll(dt) {
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
     updateFireballs(side, dt);
+    updateBlackHolesSolo(side, dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
     tickIncome(side, dt);
