@@ -2432,6 +2432,11 @@ function serializeSide(side) {
       hp: side.hero.hp, mh: side.hero.maxHp,
       fx: side.hero.facingX, fz: side.hero.facingZ,
       d: side.hero.dead, rt: side.hero.respawnTimer,
+      // Debuff-timers (klienten visar ikoner)
+      frz: +(side.hero.frozenTime || 0).toFixed(2),
+      dot: +(side.hero.dotRemaining || 0).toFixed(2),
+      tnt: +(side.hero.tauntedTime || 0).toFixed(2),
+      poi: +(side.hero.poisonRemaining || 0).toFixed(2),
     },
     g: side.gold,
     inc: side.income,

@@ -2948,6 +2948,7 @@ function updateMonsters(side, dt) {
     if (heroAlive && distHero < mAtkRange && m.atkCd <= 0) {
       damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = mAtkInterval;
+      spawnSlashFx(side.hero.x, side.hero.z, 0xff5544);
     }
 
     // Om inte jagar hjälten — leta efter opp's playerCreeps i samma arena
@@ -3081,11 +3082,13 @@ function updatePlayerCreeps(side, dt) {
 
       if (c.atkCd <= 0) {
         if (c.attackType === 'melee') {
-          // Direkt skada
+          // Direkt skada + slash-fx vid målet
           if (targetType === 'hero') {
             damageHero(opp, c.damage);
+            spawnSlashFx(opp.hero.x, opp.hero.z, 0xff5544);
           } else {
             target.hp -= c.damage;
+            spawnSlashFx(target.mesh.position.x, target.mesh.position.z, 0xffaa44);
             if (target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(target), side);
           }
         } else {
@@ -3141,9 +3144,12 @@ function updateCreepProjectiles(side, dt) {
     const dz = tz - p.mesh.position.z;
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
-      // Träff
+      // Träff — spawna hit-spark
+      const sparkColor = p.aoeRadius > 0 ? 0xb060ff : 0xffd060;
+      spawnHitSparkFx(tx, Math.max(0.5, p.mesh.position.y), tz, sparkColor);
       if (p.targetType === 'hero') {
         damageHero(opp, p.damage);
+        spawnSlashFx(opp.hero.x, opp.hero.z, sparkColor);
       } else {
         p.target.hp -= p.damage;
         if (p.target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(p.target), side);
@@ -3155,6 +3161,7 @@ function updateCreepProjectiles(side, dt) {
         if (opp && !opp.hero.dead) {
           if (Math.hypot(opp.hero.x - ix, opp.hero.z - iz) < p.aoeRadius) {
             damageHero(opp, p.damage);
+            spawnSlashFx(opp.hero.x, opp.hero.z, 0xb060ff);
           }
         }
         if (opp) for (let k = opp.monsters.length - 1; k >= 0; k--) {
@@ -3788,6 +3795,8 @@ function hostCastLegolusBuff(side) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
   side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION;
+  // Visuell aim-buff (gulgrön expanderande ring)
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff55, 1.1);
 }
 
 function hostCastLegolusDash(side, ev) {
@@ -3805,8 +3814,11 @@ function hostCastLegolusDash(side, ev) {
   }
   if (dist < 0.5) return;
   side.skills.e.cd = side.skills.e.max;
+  // Visuella spår — start och slut
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ff88, 0.7);
   side.hero.x = nx; side.hero.z = nz;
   side.mesh.position.x = nx; side.mesh.position.z = nz;
+  spawnSkillCastFx(nx, nz, 0x66ff88, 0.7);
   side.legolusDashBuffPending = true;
 }
 
@@ -3880,6 +3892,8 @@ function hostCastGimluIronWill(side) {
   side.skills.f.cd = side.skills.f.max;
   side.ironWillRemaining = IRON_WILL_DURATION;
   side.ironWillStored = 0;
+  // Visuell uppladdning — orange ring runt hero som indikerar buf
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 1.3);
 }
 
 function updateIronWillSolo(side, dt) {
@@ -4718,6 +4732,11 @@ function applyRemoteState(state) {
     side.hero.facingZ = sData.h.fz;
     side.hero.dead = !!sData.h.d;
     side.hero.respawnTimer = sData.h.rt;
+    // Debuff-timers
+    side.hero.frozenTime = sData.h.frz || 0;
+    side.hero.dotRemaining = sData.h.dot || 0;
+    side.hero.tauntedTime = sData.h.tnt || 0;
+    side.hero.poisonRemaining = sData.h.poi || 0;
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
     if (!side.mesh._target) {
       side.mesh.position.x = sData.h.x;
@@ -7180,7 +7199,355 @@ function checkIncomeTickNotifications() {
   }
 }
 
-function animateSceneProps(dt, now) {
+// ============================================================
+// COMBAT FX — kortlivade visuella effekter (slash, hit-spark, heal, shield)
+// ============================================================
+const combatFx = [];
+
+function spawnSlashFx(x, z, color = 0xffd060) {
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.18), mat);
+  plane.position.set(x, 1.0, z);
+  plane.rotation.x = -Math.PI / 2;
+  plane.rotation.z = Math.random() * Math.PI;
+  scene.add(plane);
+  combatFx.push({ mesh: plane, life: 0.22, maxLife: 0.22, kind: 'slash' });
+}
+
+function spawnHitSparkFx(x, y, z, color = 0xffaa44) {
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
+  const burst = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), mat);
+  burst.position.set(x, y, z);
+  scene.add(burst);
+  combatFx.push({ mesh: burst, life: 0.18, maxLife: 0.18, kind: 'spark' });
+}
+
+function spawnHealFx(x, z) {
+  // Grön plus-symbol som flyter upp
+  const grp = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0x66ff88, transparent: true, opacity: 0.95 });
+  const h = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.10, 0.10), mat);
+  const v = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.36, 0.10), mat);
+  grp.add(h); grp.add(v);
+  grp.position.set(x, 1.7, z);
+  scene.add(grp);
+  combatFx.push({ mesh: grp, life: 0.9, maxLife: 0.9, kind: 'heal' });
+}
+
+function spawnShieldBurstFx(x, z, color = 0x66c8ff) {
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.30, 0.45, 28), mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.08, z);
+  scene.add(ring);
+  combatFx.push({ mesh: ring, life: 0.55, maxLife: 0.55, kind: 'shieldBurst' });
+}
+
+function spawnSkillCastFx(x, z, color, radius = 0.6) {
+  // Cast-ring som expanderar (för skills som inte annars har visuell start)
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.08, radius, 32), mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.06, z);
+  scene.add(ring);
+  combatFx.push({ mesh: ring, life: 0.45, maxLife: 0.45, kind: 'castRing' });
+}
+
+function tickCombatFx(dt) {
+  for (let i = combatFx.length - 1; i >= 0; i--) {
+    const e = combatFx[i];
+    e.life -= dt;
+    if (e.life <= 0) {
+      scene.remove(e.mesh);
+      combatFx.splice(i, 1);
+      continue;
+    }
+    const t = 1 - e.life / e.maxLife;
+    if (e.kind === 'slash') {
+      e.mesh.scale.setScalar(1 + t * 0.8);
+      if (e.mesh.material) e.mesh.material.opacity = 0.9 * (1 - t);
+    } else if (e.kind === 'spark') {
+      e.mesh.scale.setScalar(1 + t * 2);
+      if (e.mesh.material) e.mesh.material.opacity = 0.95 * (1 - t);
+    } else if (e.kind === 'heal') {
+      e.mesh.position.y += dt * 1.4;
+      e.mesh.children.forEach(c => { if (c.material) c.material.opacity = 1.0 * (1 - t); });
+    } else if (e.kind === 'shieldBurst') {
+      e.mesh.scale.setScalar(1 + t * 3.5);
+      if (e.mesh.material) e.mesh.material.opacity = 0.7 * (1 - t);
+    } else if (e.kind === 'castRing') {
+      e.mesh.scale.setScalar(1 + t * 1.8);
+      if (e.mesh.material) e.mesh.material.opacity = 0.85 * (1 - t);
+    }
+  }
+}
+
+// Shield-aura: persistent sphere runt heroes som har shield aktiv
+function ensureShieldAura(side) {
+  if (!side.mesh) return;
+  let aura = side.mesh.userData.shieldAura;
+  if (!aura) {
+    aura = new THREE.Mesh(
+      new THREE.SphereGeometry(0.65, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x66c8ff, transparent: true, opacity: 0.18 })
+    );
+    aura.position.y = 0.85;
+    side.mesh.add(aura);
+    side.mesh.userData.shieldAura = aura;
+  }
+  return aura;
+}
+
+function updateShieldAuras(now) {
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s || !s.mesh) continue;
+    const has = (s.shield || 0) > 0 && !s.hero.dead;
+    if (has) {
+      const aura = ensureShieldAura(s);
+      if (aura) {
+        aura.visible = true;
+        const pulse = 0.18 + 0.10 * Math.sin(now * 6);
+        if (aura.material) aura.material.opacity = pulse;
+      }
+    } else if (s.mesh.userData.shieldAura) {
+      s.mesh.userData.shieldAura.visible = false;
+    }
+  }
+}
+
+// Track shield-deltas så vi kan spawna en burst första gången shield gains
+function checkShieldGain() {
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s) continue;
+    const prev = s._shieldPrev || 0;
+    const cur = s.shield || 0;
+    if (cur > prev + 0.5) {
+      // Shield ökade — spawna burst
+      if (s.hero && !s.hero.dead && s.mesh) {
+        spawnShieldBurstFx(s.hero.x, s.hero.z, 0x66c8ff);
+      }
+    }
+    s._shieldPrev = cur;
+  }
+}
+
+// Track hp-gains så vi kan spawna heal-plus, OCH hp-drops för slash
+function checkHealGain() {
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s) continue;
+    const prev = s._hpPrev !== undefined ? s._hpPrev : s.hero.hp;
+    const cur = s.hero.hp;
+    if (cur > prev + 1.0 && !s.hero.dead) {
+      spawnHealFx(s.hero.x, s.hero.z);
+    }
+    // Skada — spawna ett slash om hjälten just tog skada (MP-fallback, solo har redan
+    // egna slash-spawns i melee-källan)
+    if (cur < prev - 0.5 && !s.hero.dead && APP.mode !== 'solo') {
+      spawnSlashFx(s.hero.x, s.hero.z, 0xff5544);
+    }
+    s._hpPrev = cur;
+  }
+}
+
+// === Buff / Debuff status sprites ===
+// Två sprites per hero: en buff-row ovanför HP-baren, en debuff-row till höger om hero.
+// Båda är canvas-baserade billboards som uppdateras varje frame.
+
+const STATUS_BUFF_W = 256, STATUS_BUFF_H = 36;
+const STATUS_DEBUFF_W = 80, STATUS_DEBUFF_H = 200;
+
+function makeStatusSprite(w, h, scaleX, scaleY) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(scaleX, scaleY, 1);
+  sprite.userData.canvas = canvas;
+  sprite.userData.tex = tex;
+  sprite.userData.lastHash = '';
+  return sprite;
+}
+
+function ensureBuffDebuffSprites(side) {
+  if (!side.mesh) return;
+  if (!side.mesh.userData.buffSprite) {
+    const buff = makeStatusSprite(STATUS_BUFF_W, STATUS_BUFF_H, 2.4, 0.34);
+    buff.position.set(0, 2.55, 0);
+    side.mesh.add(buff);
+    side.mesh.userData.buffSprite = buff;
+  }
+  if (!side.mesh.userData.debuffSprite) {
+    const debuff = makeStatusSprite(STATUS_DEBUFF_W, STATUS_DEBUFF_H, 0.5, 1.25);
+    debuff.position.set(0.8, 1.3, 0);
+    side.mesh.add(debuff);
+    side.mesh.userData.debuffSprite = debuff;
+  }
+}
+
+// Returnerar aktiva buffs/debuffs som array av { icon, color, t?, label? }
+function collectBuffs(side) {
+  const list = [];
+  // Shield (Gandulf passive)
+  if ((side.shield || 0) > 0) {
+    list.push({ icon: '🛡', color: '#66c8ff', label: Math.round(side.shield) + '' });
+  }
+  // Skill-dmg stacks (Gandulf passive)
+  if ((side.gandulfBuffStacks || 0) > 0 && (side.gandulfBuffRemaining || 0) > 0) {
+    list.push({ icon: '✦', color: '#b58cff', t: side.gandulfBuffRemaining, label: 'x' + side.gandulfBuffStacks });
+  }
+  // Legolus aim-buff
+  if ((side.legolusBuffRemaining || 0) > 0) {
+    list.push({ icon: '🎯', color: '#ddff55', t: side.legolusBuffRemaining });
+  }
+  // Gimlu Titan's Taunt
+  if ((side.titansTauntRemaining || 0) > 0) {
+    list.push({ icon: '📢', color: '#ffaa55', t: side.titansTauntRemaining });
+  }
+  // Gimlu Iron Will
+  if ((side.ironWillRemaining || 0) > 0) {
+    list.push({ icon: '🔥', color: '#ff7733', t: side.ironWillRemaining });
+  }
+  // Duel speed-buff
+  if ((side.duelSpeedBuffRemaining || 0) > 0) {
+    list.push({ icon: '💨', color: '#ffd34a', t: side.duelSpeedBuffRemaining });
+  }
+  // Fountain aura
+  if (side.heroFountainAura) {
+    list.push({ icon: '💧', color: '#66ddff' });
+  }
+  // Aktiva items (boots/glove)
+  if (side.inventory) {
+    for (const it of side.inventory) {
+      const ar = it.activeRemaining || 0;
+      if (ar > 0) {
+        const def = (typeof ITEM_TYPES !== 'undefined') ? ITEM_TYPES[it.itemId] : null;
+        const icon = (def && def.icon) ? def.icon : '⭐';
+        list.push({ icon, color: '#ffd34a', t: ar });
+      }
+    }
+  }
+  return list;
+}
+
+function collectDebuffs(side) {
+  const list = [];
+  if ((side.hero.frozenTime || 0) > 0) {
+    list.push({ icon: '❄', color: '#88ddff', t: side.hero.frozenTime });
+  }
+  if ((side.hero.dotRemaining || 0) > 0) {
+    list.push({ icon: '🔥', color: '#ff6644', t: side.hero.dotRemaining });
+  }
+  if ((side.hero.poisonRemaining || 0) > 0) {
+    list.push({ icon: '🌿', color: '#88dd66', t: side.hero.poisonRemaining });
+  }
+  if ((side.hero.tauntedTime || 0) > 0) {
+    list.push({ icon: '😡', color: '#ff8844', t: side.hero.tauntedTime });
+  }
+  return list;
+}
+
+function drawBuffSprite(side) {
+  const sprite = side.mesh.userData.buffSprite;
+  if (!sprite) return;
+  const buffs = collectBuffs(side);
+  const hash = buffs.map(b => `${b.icon}|${b.color}|${(b.t || 0).toFixed(1)}|${b.label || ''}`).join('#');
+  if (hash === sprite.userData.lastHash) {
+    sprite.visible = buffs.length > 0;
+    return;
+  }
+  sprite.userData.lastHash = hash;
+  const canvas = sprite.userData.canvas;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  sprite.visible = buffs.length > 0;
+  if (!buffs.length) { sprite.userData.tex.needsUpdate = true; return; }
+  const iconSize = 30;
+  const gap = 4;
+  const totalW = buffs.length * (iconSize + gap) - gap;
+  const startX = Math.max(0, (canvas.width - totalW) / 2);
+  ctx.font = '20px system-ui,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < buffs.length; i++) {
+    const b = buffs[i];
+    const x = startX + i * (iconSize + gap);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x, 2, iconSize, iconSize);
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, 3, iconSize - 2, iconSize - 2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '22px system-ui,sans-serif';
+    ctx.fillText(b.icon, x + iconSize / 2, 16);
+    // Timer-text under
+    if (b.t) {
+      ctx.fillStyle = b.color;
+      ctx.font = '700 11px ui-monospace,monospace';
+      ctx.fillText(b.t.toFixed(1) + 's', x + iconSize / 2, canvas.height - 6);
+    } else if (b.label) {
+      ctx.fillStyle = b.color;
+      ctx.font = '700 11px ui-monospace,monospace';
+      ctx.fillText(b.label, x + iconSize / 2, canvas.height - 6);
+    }
+  }
+  sprite.userData.tex.needsUpdate = true;
+}
+
+function drawDebuffSprite(side) {
+  const sprite = side.mesh.userData.debuffSprite;
+  if (!sprite) return;
+  const debuffs = collectDebuffs(side);
+  const hash = debuffs.map(b => `${b.icon}|${(b.t || 0).toFixed(1)}`).join('#');
+  if (hash === sprite.userData.lastHash) {
+    sprite.visible = debuffs.length > 0;
+    return;
+  }
+  sprite.userData.lastHash = hash;
+  const canvas = sprite.userData.canvas;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  sprite.visible = debuffs.length > 0;
+  if (!debuffs.length) { sprite.userData.tex.needsUpdate = true; return; }
+  const iconSize = 36;
+  const gap = 4;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < debuffs.length; i++) {
+    const b = debuffs[i];
+    const y = 4 + i * (iconSize + gap);
+    if (y + iconSize > canvas.height) break;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(8, y, iconSize, iconSize);
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(9, y + 1, iconSize - 2, iconSize - 2);
+    ctx.fillStyle = '#fff';
+    ctx.font = '24px system-ui,sans-serif';
+    ctx.fillText(b.icon, 8 + iconSize / 2, y + iconSize / 2);
+    if (b.t) {
+      ctx.fillStyle = b.color;
+      ctx.font = '700 12px ui-monospace,monospace';
+      ctx.fillText(b.t.toFixed(1) + 's', 8 + iconSize / 2, y + iconSize - 4);
+    }
+  }
+  sprite.userData.tex.needsUpdate = true;
+}
+
+function updateBuffDebuffSprites() {
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s || !s.mesh || s.hero.dead) continue;
+    ensureBuffDebuffSprites(s);
+    drawBuffSprite(s);
+    drawDebuffSprite(s);
+  }
+}
   // Fontäner: pulsera emissive på vattnet, bobba övre skålens vattenyta
   for (const idx of [1, 2]) {
     const f = towerMeshes[idx];
@@ -7239,6 +7606,11 @@ function tick() {
   animateSceneProps(dt, now);
   tickAllHpBars();
   tickDuelOrbVisual(dt);
+  tickCombatFx(dt);
+  updateShieldAuras(now);
+  checkShieldGain();
+  checkHealGain();
+  updateBuffDebuffSprites();
 
   updateHud();
   updateDuelHud();
