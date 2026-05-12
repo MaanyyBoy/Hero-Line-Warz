@@ -427,20 +427,26 @@
     .shop-btn.minion-champion { background: rgba(140,60,60,0.75); border-color: rgba(240,160,160,0.6); }
     .shop-btn.minion-btn:disabled { background: rgba(40,40,50,0.6); border-color: rgba(120,120,140,0.4); }
 
-    /* Income-display (top center) + popup-notiser vid varje tick */
-    #income-display {
+    /* Top-row: wrapper för income + duel-timer (centrerat överst) */
+    #top-row {
       position: fixed;
       top: max(8px, env(safe-area-inset-top));
       left: 50%;
       transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 60;
+      pointer-events: none;
+    }
+    /* Income-display + popup-notiser vid varje tick */
+    #income-display {
       color: #ffd34a;
       font: 700 14px/1 system-ui, sans-serif;
       background: rgba(15,25,40,0.78);
       padding: 7px 14px;
       border-radius: 10px;
       border: 1px solid rgba(255,211,74,0.4);
-      pointer-events: none;
-      z-index: 60;
       letter-spacing: 0.3px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     }
@@ -462,25 +468,20 @@
       100% { opacity: 0; transform: translate(-50%, -48px); }
     }
 
-    /* Duel-info (countdown till nästa duel) */
+    /* Duel-info (countdown till nästa duel, intill income i top-row) */
     #duel-info {
-      position: fixed;
-      top: max(8px, env(safe-area-inset-top));
-      left: 50%;
-      transform: translate(-50%, 42px);
       color: #ffaa66;
-      font: 600 12px/1 system-ui, sans-serif;
+      font: 700 13px/1 system-ui, sans-serif;
       background: rgba(40,20,10,0.78);
-      padding: 5px 11px;
-      border-radius: 7px;
+      padding: 7px 12px;
+      border-radius: 10px;
       border: 1px solid rgba(255,170,102,0.45);
-      pointer-events: none;
-      z-index: 60;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     }
     #duel-info.hidden { display: none; }
     #duel-info.urgent { color: #ffeb55; border-color: rgba(255,235,85,0.7); animation: pulse-duel 0.7s ease-in-out infinite; }
-    @keyframes pulse-duel { 0%, 100% { transform: translate(-50%, 42px) scale(1); } 50% { transform: translate(-50%, 42px) scale(1.08); } }
+    @keyframes pulse-duel { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.10); } }
 
     /* Duel-banner (visas under aktiv duel + vinnarannouncement) */
     #duel-banner {
@@ -805,9 +806,10 @@
     <div class="hint">vänster: rörelse · höger: tap eller drag-sikta · AA: Space/A</div>
   </div>
 
-  <div id="income-display">Income: 2g / 15s</div>
-
-  <div id="duel-info" class="hidden">Duel om <span id="duel-info-timer">5:00</span></div>
+  <div id="top-row">
+    <div id="income-display">Income: 2g / 15s</div>
+    <div id="duel-info" class="hidden">⏱ Duel <span id="duel-info-timer">5:00</span></div>
+  </div>
   <div id="duel-banner" class="hidden">
     <div id="duel-banner-title">DUEL!</div>
     <div id="duel-banner-sub"></div>
