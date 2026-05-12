@@ -8,7 +8,8 @@
   <title>Spel</title>
   <style>
     :root {
-      --skill-size: 78px;
+      --skill-size: 72px;
+      --aa-size: 96px;
       --joy-size: 140px;
       --joy-knob: 60px;
     }
@@ -67,15 +68,38 @@
       pointer-events: none;
     }
 
-    /* Skill-knappar (nedre höger) – kluster i ML-stil */
-    #skills {
+    /* Combat-kluster (nedre höger) — AA-knapp i hörnet, skills i båge ovanför (MLBB-stil) */
+    #combat-cluster {
       position: absolute;
       right: max(16px, env(safe-area-inset-right));
       bottom: max(16px, env(safe-area-inset-bottom));
-      width: calc(var(--skill-size) * 2.6);
-      height: calc(var(--skill-size) * 2.6);
+      width: 240px; height: 240px;
       pointer-events: none;
     }
+    /* Auto-attack-knapp — större än skills */
+    #aa-btn {
+      position: absolute;
+      right: 0; bottom: 0;
+      width: var(--aa-size); height: var(--aa-size);
+      border-radius: 50%;
+      background: rgba(180,70,30,0.7);
+      border: 3px solid rgba(255,180,100,0.9);
+      color: #fff;
+      font: 800 22px/1 system-ui, sans-serif;
+      letter-spacing: 1.5px;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto;
+      touch-action: none;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.55), inset 0 -3px 6px rgba(0,0,0,0.25);
+      transition: transform 0.08s ease-out;
+    }
+    #aa-btn:active { transform: scale(0.94); }
+    #aa-btn.has-target {
+      background: rgba(220,90,40,0.88);
+      border-color: #ffcc88;
+      box-shadow: 0 0 14px rgba(255,140,60,0.7), 0 4px 14px rgba(0,0,0,0.55), inset 0 -3px 6px rgba(0,0,0,0.25);
+    }
+
     .skill {
       position: absolute;
       width: var(--skill-size); height: var(--skill-size);
@@ -86,22 +110,24 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       pointer-events: auto;
       touch-action: none;
-      gap: 4px;
+      gap: 3px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.45);
     }
-    .skill .lbl { font-size: 12px; opacity: 0.85; }
-    .skill .name { font-size: 13px; font-weight: 700; }
-    .skill .cd { font-size: 18px; font-weight: 700; opacity: 0; }
+    .skill .lbl { font-size: 11px; opacity: 0.85; }
+    .skill .name { font-size: 12px; font-weight: 700; }
+    .skill .cd { font-size: 17px; font-weight: 700; opacity: 0; }
     .skill.cooling { background: rgba(20,20,30,0.7); border-color: rgba(140,140,160,0.5); color: rgba(255,255,255,0.55); }
     .skill.cooling .cd { opacity: 1; }
     .skill.cooling .name { opacity: 0.5; }
     .skill.active { background: rgba(80,120,220,0.8); border-color: #fff; transform: scale(1.06); }
 
-    /* Knapparnas positioner i klustret (rätt nedre hörnet i ML-stil) */
-    #skill-q { right: 0; bottom: 0; background: rgba(180,70,30,0.65); border-color: rgba(255,160,90,0.8); }
+    /* Skill-arc — placerade kring AA på radie ~118px från AA-mitten (47.5,47.5).
+       Q rakt ovanför AA (90°), F upp-vänster (135°), E rakt vänster (180°). */
+    #skill-q { right: 11.5px; bottom: 129.5px; background: rgba(180,70,30,0.65); border-color: rgba(255,160,90,0.8); }
     #skill-q.cooling { background: rgba(40,25,20,0.7); }
-    #skill-f { right: calc(var(--skill-size) * 0.95); bottom: calc(var(--skill-size) * 0.4); background: rgba(40,120,180,0.65); border-color: rgba(140,200,255,0.8); }
+    #skill-f { right: 95px; bottom: 95px; background: rgba(40,120,180,0.65); border-color: rgba(140,200,255,0.8); }
     #skill-f.cooling { background: rgba(20,30,40,0.7); }
-    #skill-e { right: calc(var(--skill-size) * 0.4); bottom: calc(var(--skill-size) * 1.35); background: rgba(130,90,200,0.65); border-color: rgba(200,160,255,0.8); }
+    #skill-e { right: 129.5px; bottom: 11.5px; background: rgba(130,90,200,0.65); border-color: rgba(200,160,255,0.8); }
     #skill-e.cooling { background: rgba(25,20,40,0.7); }
 
     /* Shop-paneler (höger sida) — rollup: header är alltid synlig, body expanderar vid klick */
@@ -553,10 +579,11 @@
 
   <div id="touch-ui">
     <div id="joy"><div id="joy-knob"></div></div>
-    <div id="skills">
+    <div id="combat-cluster">
       <button class="skill" id="skill-e" data-key="e"><span class="name">Blink</span><span class="lbl">E</span><span class="cd"></span></button>
       <button class="skill" id="skill-f" data-key="f"><span class="name">Frost</span><span class="lbl">F</span><span class="cd"></span></button>
       <button class="skill" id="skill-q" data-key="q"><span class="name">Eldklot</span><span class="lbl">Q</span><span class="cd"></span></button>
+      <button id="aa-btn" data-key="aa" aria-label="Auto attack">ATK</button>
     </div>
   </div>
 

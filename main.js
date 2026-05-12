@@ -1161,6 +1161,100 @@ function setShadow(obj, cast = true, recv = false) {
   obj.traverse(o => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = recv; }});
 }
 
+// ---- HP-bar (Sprite med canvas-textur, billboardar automatiskt mot kameran) ----
+
+function createHpBar(hero = false) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 100; canvas.height = 14;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(hero ? 1.2 : 0.85, hero ? 0.17 : 0.13, 1);
+  sprite.renderOrder = 999;
+  sprite.userData.canvas = canvas;
+  sprite.userData.tex = tex;
+  sprite.userData.lastPct = -1;
+  return sprite;
+}
+
+function drawHpBar(sprite, pct) {
+  pct = Math.max(0, Math.min(1, pct));
+  if (Math.abs(pct - sprite.userData.lastPct) < 0.004) return;
+  sprite.userData.lastPct = pct;
+  const ctx = sprite.userData.canvas.getContext('2d');
+  ctx.clearRect(0, 0, 100, 14);
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(0, 0, 100, 14);
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, 99, 13);
+  ctx.fillStyle = pct > 0.35 ? '#2bd054' : (pct > 0.15 ? '#d5a52a' : '#d04a2a');
+  ctx.fillRect(1.5, 1.5, 97 * pct, 11);
+  sprite.userData.tex.needsUpdate = true;
+}
+
+function attachHpBar(meshGroup, yOffset, hero = false) {
+  if (!meshGroup) return null;
+  const bar = createHpBar(hero);
+  bar.position.y = yOffset;
+  meshGroup.add(bar);
+  meshGroup.userData = meshGroup.userData || {};
+  meshGroup.userData.hpBar = bar;
+  meshGroup.userData.hpBarHero = !!hero;
+  return bar;
+}
+
+function updateEntityHpBar(mesh, hp, maxHp, now) {
+  if (!mesh?.userData?.hpBar) return;
+  const bar = mesh.userData.hpBar;
+  const prev = mesh.userData.prevHp;
+  if (prev !== undefined && hp < prev) mesh.userData.lastHurtTime = now;
+  mesh.userData.prevHp = hp;
+  const pct = maxHp > 0 ? hp / maxHp : 0;
+  const damaged = (now - (mesh.userData.lastHurtTime || -10)) < 3.0;
+  const lowHp = pct < 1.0;
+  const showAlways = !!mesh.userData.hpBarHero;
+  bar.visible = (showAlways || damaged || lowHp) && pct > 0;
+  if (bar.visible) drawHpBar(bar, pct);
+}
+
+function tickAllHpBars() {
+  const now = performance.now() / 1000;
+  // Heroes
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s || !s.mesh) continue;
+    updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now);
+    if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
+  }
+  if (APP.mode === 'solo') {
+    for (const idx of [1, 2]) {
+      const s = sides[idx];
+      if (!s) continue;
+      for (const m of s.monsters) updateEntityHpBar(m.mesh, m.hp, 10, now);
+      for (const c of s.playerCreeps) updateEntityHpBar(c.mesh, c.hp, c.maxHp, now);
+    }
+  } else {
+    for (const idx of [1, 2]) {
+      const monMap = clientMeshes.monsters && clientMeshes.monsters.get(idx);
+      if (monMap) for (const mesh of monMap.values()) {
+        const hp = mesh.userData?.curHp ?? 0;
+        const mh = mesh.userData?.maxHp ?? 1;
+        updateEntityHpBar(mesh, hp, mh, now);
+      }
+      const crpMap = clientMeshes.playerCreeps && clientMeshes.playerCreeps.get(idx);
+      if (crpMap) for (const mesh of crpMap.values()) {
+        const hp = mesh.userData?.curHp ?? 0;
+        const mh = mesh.userData?.maxHp ?? 1;
+        updateEntityHpBar(mesh, hp, mh, now);
+      }
+    }
+  }
+}
+
 // ---- Humanoid rig: capsule-lemmar med pivot-grupper för animation ----
 // Ben/armar är pivot-Groups vid leden; capsule-meshen hänger som barn nedanför.
 // Att rotera pivoten roterar lemmen kring leden, som anatomi. Pivoter sparas i
@@ -1731,6 +1825,7 @@ function createSide(idx) {
   const cfg = SIDE_CFG[idx];
   const heroMesh = makeHeroMesh(idx);
   heroMesh.position.set(cfg.heroSpawn.x, 0, cfg.heroSpawn.z);
+  attachHpBar(heroMesh, 2.0, true);
   scene.add(heroMesh);
 
   const side = {
@@ -1754,6 +1849,11 @@ function createSide(idx) {
     cdrMul: 1,
     dmgReductionMul: 1,
     heroFountainAura: false,
+    aaActive: false,
+    targetId: 0,
+    targetType: '',
+    targetX: 0,
+    targetZ: 0,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -1805,6 +1905,7 @@ function hostSpawnMonster(side, lane) {
   const cfg = SIDE_CFG[side.idx];
   const z = cfg.laneZ[lane];
   const mesh = makeMonsterMesh();
+  attachHpBar(mesh, 1.7);
   mesh.position.set(cfg.spawnX, 0, z);
   scene.add(mesh);
   side.monsters.push({
@@ -1821,6 +1922,7 @@ function hostSpawnMinion(side, typeId, lane) {
   const oppCfg = SIDE_CFG[oppIdx];
   const z = oppCfg.laneZ[lane];
   const mesh = makeMinionMesh(typeId, side.idx);
+  attachHpBar(mesh, 1.7);
   mesh.position.set(oppCfg.spawnX, 0, z);
   scene.add(mesh);
   side.playerCreeps.push({
@@ -2201,11 +2303,59 @@ function findClosestHostile(side, x, z, maxDist) {
   return best;
 }
 
+// Slå upp target-entitet från side.targetId/Type (solo mode — entiteterna har .mesh)
+function resolveTargetEntity(side, opp) {
+  if (!side.targetId) return null;
+  if (side.targetType === 'monster') {
+    for (const m of side.monsters) if (m.id === side.targetId) return m;
+    return null;
+  }
+  if (side.targetType === 'creep' && opp) {
+    for (const c of opp.playerCreeps) if (c.id === side.targetId) return c;
+    return null;
+  }
+  return null;
+}
+
+function maintainTargetLock(side) {
+  const opp = sides[3 - side.idx];
+  if (!side.aaActive || side.hero.dead) {
+    if (side.hero.dead) {
+      side.aaActive = false;
+      side.targetId = 0; side.targetType = '';
+    }
+    return null;
+  }
+  let target = resolveTargetEntity(side, opp);
+  let isMonster = side.targetType === 'monster';
+  if (target) {
+    const tx = target.mesh.position.x, tz = target.mesh.position.z;
+    const d = Math.hypot(tx - side.hero.x, tz - side.hero.z);
+    if (d > HERO_ATTACK_RANGE) target = null;
+  }
+  if (!target) {
+    const t = findClosestHostile(side, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    if (t) {
+      target = t.entity;
+      isMonster = t.isMonster;
+      side.targetId = target.id;
+      side.targetType = isMonster ? 'monster' : 'creep';
+    } else {
+      side.targetId = 0; side.targetType = '';
+      // Behåll aaActive — väntar tills fiende dyker upp
+      return null;
+    }
+  }
+  side.targetX = target.mesh.position.x;
+  side.targetZ = target.mesh.position.z;
+  return { entity: target, isMonster };
+}
+
 function updateHeroAttack(side, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
-  if (side.hero.dead || side.attackCd > 0) return;
-  const target = findClosestHostile(side, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
-  if (!target) return;
+  if (side.hero.dead || !side.aaActive) return;
+  const target = maintainTargetLock(side);
+  if (!target || side.attackCd > 0) return;
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
   const mesh = new THREE.Mesh(
@@ -2222,7 +2372,8 @@ function updateHeroAttack(side, dt) {
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
-    ownerSide: target.ownerSide || side, damage: side.attackDmg * auraDmg, isAoE,
+    ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
+    damage: side.attackDmg * auraDmg, isAoE,
   });
   side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
 }
@@ -2636,10 +2787,40 @@ function applyEvent(side, ev) {
     }
     return;
   }
+  if (ev.type === 'aa') {
+    if (side.hero.dead) return;
+    side.aaActive = true;
+    const t = findClosestHostile(side, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    if (t) {
+      side.targetId = t.entity.id;
+      side.targetType = t.isMonster ? 'monster' : 'creep';
+      side.targetX = t.entity.mesh.position.x;
+      side.targetZ = t.entity.mesh.position.z;
+    } else {
+      side.targetId = 0; side.targetType = '';
+    }
+    return;
+  }
+  if (ev.type === 'aa-cancel') {
+    side.aaActive = false;
+    side.targetId = 0; side.targetType = '';
+    return;
+  }
   if (ev.type === 'skill') {
-    if (ev.key === 'q') hostCastEldklot(side, ev.dx, ev.dz);
+    let dx = ev.dx, dz = ev.dz;
+    if (ev.tap === true && side.targetId) {
+      const opp = sides[3 - side.idx];
+      const t = resolveTargetEntity(side, opp);
+      if (t) {
+        const ddx = t.mesh.position.x - side.hero.x;
+        const ddz = t.mesh.position.z - side.hero.z;
+        const m = Math.hypot(ddx, ddz);
+        if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
+      }
+    }
+    if (ev.key === 'q') hostCastEldklot(side, dx, dz);
     else if (ev.key === 'f') hostCastFrostnova(side);
-    else if (ev.key === 'e') hostCastBlink(side, ev.dx, ev.dz);
+    else if (ev.key === 'e') hostCastBlink(side, dx, dz);
     return;
   }
   if (ev.type === 'activate') {
@@ -2747,6 +2928,14 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
     }
     if (e.life !== undefined && mesh.material && mesh.material.opacity !== undefined) {
       mesh.material.opacity = 0.7 * Math.max(0, e.life);
+    }
+    // HP-tracking (för hpBar i MP) — markera lastHurtTime när hp sjunker
+    if (e.hp !== undefined) {
+      mesh.userData = mesh.userData || {};
+      const prev = mesh.userData.curHp;
+      if (prev !== undefined && e.hp < prev) mesh.userData.lastHurtTime = performance.now() / 1000;
+      mesh.userData.curHp = e.hp;
+      mesh.userData.maxHp = e.mh || mesh.userData.maxHp || 1;
     }
   }
   for (const [id, mesh] of map) {
@@ -2950,6 +3139,12 @@ function applyRemoteState(state) {
     side.tower.maxHp = sData.tw.mh;
     // Fontän-aura (för HUD-indikator)
     side.heroFountainAura = !!sData.fa;
+    // AA + target-lock
+    side.aaActive = !!sData.aa;
+    side.targetId = sData.tg || 0;
+    side.targetType = sData.tt || '';
+    side.targetX = sData.tx || 0;
+    side.targetZ = sData.tz || 0;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -2959,8 +3154,16 @@ function applyRemoteState(state) {
     side.wave.active = !!sData.w.a;
     side.wave.betweenTimer = sData.w.bt;
     // Entiteter
-    clientReconcileEntities(idx, 'monsters', sData.M, () => makeMonsterMesh());
-    clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => makeMinionMesh(e.typeId || 'T1_bruiser', idx));
+    clientReconcileEntities(idx, 'monsters', sData.M, () => {
+      const m = makeMonsterMesh();
+      attachHpBar(m, 1.7);
+      return m;
+    });
+    clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => {
+      const m = makeMinionMesh(e.typeId || 'T1_bruiser', idx);
+      attachHpBar(m, 1.7);
+      return m;
+    });
     clientReconcileEntities(idx, 'fireballs', sData.F, () => new THREE.Mesh(
       new THREE.SphereGeometry(0.35, 14, 10),
       new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xcc2200, emissiveIntensity: 1.0 })
@@ -3165,6 +3368,36 @@ aimDot.rotation.x = -Math.PI / 2;
 aimDot.visible = false;
 scene.add(aimDot);
 
+// Target-ring under låst fiende — pulserar lätt
+const targetRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.7, 32),
+  new THREE.MeshBasicMaterial({ color: 0xff5533, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+);
+targetRing.rotation.x = -Math.PI / 2;
+targetRing.visible = false;
+scene.add(targetRing);
+
+function updateTargetIndicator() {
+  const side = sides[APP.localSide];
+  if (!side || !side.aaActive || !side.targetId) {
+    targetRing.visible = false;
+    return;
+  }
+  // Försök hämta target's mesh-position (solo) eller server-skickad targetX/Z (MP)
+  let tx = side.targetX, tz = side.targetZ;
+  if (APP.mode === 'solo') {
+    const opp = sides[3 - side.idx];
+    const t = resolveTargetEntity(side, opp);
+    if (t && t.mesh) { tx = t.mesh.position.x; tz = t.mesh.position.z; }
+  }
+  if (!tx && !tz) { targetRing.visible = false; return; }
+  targetRing.position.set(tx, 0.06, tz);
+  const t = performance.now() / 1000;
+  const s = 1.0 + 0.08 * Math.sin(t * 5);
+  targetRing.scale.set(s, s, 1);
+  targetRing.visible = true;
+}
+
 function updateAimIndicators() {
   const side = sides[APP.localSide];
   if (!side) { aimLine.visible = false; aimDot.visible = false; return; }
@@ -3202,11 +3435,19 @@ function updateAimIndicators() {
 
 const joyEl = document.getElementById('joy');
 const joyKnobEl = document.getElementById('joy-knob');
+const aaBtnEl = document.getElementById('aa-btn');
 const skillEls = {
   q: document.getElementById('skill-q'),
   f: document.getElementById('skill-f'),
   e: document.getElementById('skill-e'),
 };
+
+function triggerAA() {
+  if (APP.mode === 'lobby') return;
+  const side = sides[APP.localSide];
+  if (!side || side.hero.dead) return;
+  sendOrApplyEvent({ type: 'aa' });
+}
 
 const joyState = {
   touchId: null, cx: 0, cy: 0, dx: 0, dz: 0, radius: 70,
@@ -3224,9 +3465,10 @@ window.addEventListener('keydown', (e) => {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
   if (!side) return;
-  if (e.code === 'KeyQ') castLocalSkill('q', side.hero.facingX, side.hero.facingZ);
-  if (e.code === 'KeyE') castLocalSkill('e', side.hero.facingX, side.hero.facingZ);
-  if (e.code === 'KeyR' || e.code === 'KeyF') castLocalSkill('f', 0, 0);
+  if (e.code === 'KeyQ') castLocalSkill('q', side.hero.facingX, side.hero.facingZ, true);
+  if (e.code === 'KeyE') castLocalSkill('e', side.hero.facingX, side.hero.facingZ, true);
+  if (e.code === 'KeyR' || e.code === 'KeyF') castLocalSkill('f', 0, 0, true);
+  if (e.code === 'Space' || e.code === 'KeyA') { e.preventDefault?.(); triggerAA(); }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -3299,15 +3541,15 @@ function endSkillTouch(touch, cancelled) {
   const side = sides[APP.localSide];
   if (!cancelled && side) {
     let dx, dz;
-    if (SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD) {
-      // Drag-riktning är screen-relativ — konvertera till world
+    const isDrag = SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD;
+    if (isDrag) {
       const w = screenToWorld(aimState.dx, aimState.dz);
       dx = w.x; dz = w.z;
     } else {
-      // Facing-fallback är redan i world-koord
       dx = side.hero.facingX; dz = side.hero.facingZ;
     }
-    castLocalSkill(key, dx, dz);
+    // tap=true om INTE drag — låter applyEvent leta upp target-aim
+    castLocalSkill(key, dx, dz, !isDrag);
   }
   aimState.touchId = null;
   aimState.key = null;
@@ -3321,6 +3563,11 @@ function onTouchStart(e) {
     if (joyState.touchId === null && (target === joyEl || target === joyKnobEl || joyEl.contains(target))) {
       e.preventDefault();
       startJoystick(touch);
+      continue;
+    }
+    if (target === aaBtnEl || (aaBtnEl && aaBtnEl.contains(target))) {
+      e.preventDefault();
+      triggerAA();
       continue;
     }
     const key = skillKeyFromTarget(target);
@@ -3347,6 +3594,11 @@ window.addEventListener('touchstart', onTouchStart, { passive: false });
 window.addEventListener('touchmove', onTouchMove, { passive: false });
 window.addEventListener('touchend', onTouchEnd, { passive: false });
 window.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+// Desktop: mouse click på AA-knappen
+if (aaBtnEl) {
+  aaBtnEl.addEventListener('click', (e) => { e.preventDefault(); triggerAA(); });
+}
 
 // ---- Shop (lokal UI-state + populate + refresh) ----
 
@@ -3881,6 +4133,10 @@ function updateSkillButtonStyles() {
       el.querySelector('.cd').textContent = '';
     }
   }
+  if (aaBtnEl) {
+    const hasTarget = !!(side && side.aaActive && side.targetId);
+    aaBtnEl.classList.toggle('has-target', hasTarget);
+  }
 }
 
 // ============================================================
@@ -3894,12 +4150,11 @@ function screenToWorld(sx, sz) {
   return { x: sx, z: sz };
 }
 
-// castLocalSkill tar EMOT world-koord-riktning. Skickas vidare till host (eller
-// appliceras direkt om vi är host/solo). Anropare ansvarar för konvertering.
-function castLocalSkill(key, worldDx, worldDz) {
+// castLocalSkill tar EMOT world-koord-riktning. tap=true betyder "ingen drag — använd target som aim om finns".
+function castLocalSkill(key, worldDx, worldDz, tap = false) {
   const side = sides[APP.localSide];
   if (!side || side.skills[key].cd > 0 || side.hero.dead) return;
-  sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz });
+  sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap });
 }
 
 function sendOrApplyEvent(ev) {
@@ -4344,12 +4599,14 @@ function tick() {
 
   animateAllCharacters(dt);
   animateSceneProps(dt, now);
+  tickAllHpBars();
 
   updateHud();
   updateIncomeDisplay();
   checkIncomeTickNotifications();
   updateSkillButtonStyles();
   updateAimIndicators();
+  updateTargetIndicator();
   updateShop();
   updateInventoryDisplay();
   updateCamera(dt);

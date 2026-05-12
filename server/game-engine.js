@@ -278,6 +278,11 @@ function createSide(idx) {
     attackCounter: 0,
     attackSpeedMul: 1, skillDmgMul: 1, cdrMul: 1, dmgReductionMul: 1,
     heroFountainAura: false,
+    aaActive: false,
+    targetId: 0,
+    targetType: '',
+    targetX: 0,
+    targetZ: 0,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -583,11 +588,58 @@ function findClosestHostile(side, opp, x, z, maxDist) {
   return best;
 }
 
+// Slå upp target-entitet från side.targetId/Type — ingår monster/creep.
+function resolveTargetEntity(side, opp) {
+  if (!side.targetId) return null;
+  if (side.targetType === 'monster') {
+    for (const m of side.monsters) if (m.id === side.targetId) return m;
+    return null;
+  }
+  if (side.targetType === 'creep' && opp) {
+    for (const c of opp.playerCreeps) if (c.id === side.targetId) return c;
+    return null;
+  }
+  return null;
+}
+
+// Validera target varje tick; byt till närmaste om out-of-range/dödad. Sätt aaActive=false om inga.
+function maintainTargetLock(side, opp) {
+  if (!side.aaActive || side.hero.dead) {
+    if (side.hero.dead) {
+      side.aaActive = false;
+      side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+    }
+    return null;
+  }
+  let target = resolveTargetEntity(side, opp);
+  let isMonster = side.targetType === 'monster';
+  if (target) {
+    const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
+    if (d > HERO_ATTACK_RANGE) target = null;
+  }
+  if (!target) {
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    if (t) {
+      target = t.entity;
+      isMonster = t.isMonster;
+      side.targetId = target.id;
+      side.targetType = isMonster ? 'monster' : 'creep';
+    } else {
+      side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+      // Behåll aaActive=true — hjälten väntar tills fiende dyker upp i range
+      return null;
+    }
+  }
+  side.targetX = target.x;
+  side.targetZ = target.z;
+  return { entity: target, isMonster };
+}
+
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
-  if (side.hero.dead || side.attackCd > 0) return;
-  const target = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
-  if (!target) return;
+  if (side.hero.dead || !side.aaActive) return;
+  const target = maintainTargetLock(side, opp);
+  if (!target || side.attackCd > 0) return;
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
@@ -787,10 +839,43 @@ function applyEvent(state, sideIdx, ev) {
     }
     return;
   }
+  if (ev.type === 'aa') {
+    if (side.hero.dead) return;
+    const opp = state.sides[3 - sideIdx];
+    side.aaActive = true;
+    // Lock omedelbart på närmaste fiende (om någon i range)
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, HERO_ATTACK_RANGE);
+    if (t) {
+      side.targetId = t.entity.id;
+      side.targetType = t.isMonster ? 'monster' : 'creep';
+      side.targetX = t.entity.x;
+      side.targetZ = t.entity.z;
+    } else {
+      side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+    }
+    return;
+  }
+  if (ev.type === 'aa-cancel') {
+    side.aaActive = false;
+    side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+    return;
+  }
   if (ev.type === 'skill') {
-    if (ev.key === 'q') castEldklot(state, sideIdx, ev.dx, ev.dz);
+    // Om tap (ingen dx/dz), använd target som aim. Annars använd givet drag-riktning.
+    let dx = ev.dx, dz = ev.dz;
+    const useTargetAim = (ev.tap === true) && side.targetId;
+    if (useTargetAim) {
+      const opp = state.sides[3 - sideIdx];
+      const t = resolveTargetEntity(side, opp);
+      if (t) {
+        const ddx = t.x - side.hero.x, ddz = t.z - side.hero.z;
+        const m = Math.hypot(ddx, ddz);
+        if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
+      }
+    }
+    if (ev.key === 'q') castEldklot(state, sideIdx, dx, dz);
     else if (ev.key === 'f') castFrostnova(state, sideIdx);
-    else if (ev.key === 'e') castBlink(state, sideIdx, ev.dx, ev.dz);
+    else if (ev.key === 'e') castBlink(state, sideIdx, dx, dz);
     return;
   }
   if (ev.type === 'activate') {
@@ -912,10 +997,15 @@ function serializeSide(side) {
     ac: side.attackCounter,
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     fa: side.heroFountainAura ? 1 : 0,
+    aa: side.aaActive ? 1 : 0,
+    tg: side.targetId || 0,
+    tt: side.targetType || '',
+    tx: side.targetX || 0,
+    tz: side.targetZ || 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
-    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry })),
-    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry })),
+    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: 10 })),
+    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
     F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
     N: side.novaEffects.map(n => ({ id: n.id, x: n.x, z: n.z, life: n.life / n.maxLife })),
