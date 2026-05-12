@@ -1299,7 +1299,7 @@ const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
 // Gandulf passive
 const GANDULF_BUFF_DURATION = 3.0;
 const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;
-const GANDULF_BUFF_CDR_PER_STACK = 0.05;
+const GANDULF_SHIELD_PER_HIT_PCT = 0.05;
 const GANDULF_SHIELD_HITS = 3;
 const GANDULF_SHIELD_PCT = 0.30;
 // Bakåtkompabilitet
@@ -3903,14 +3903,15 @@ function gandulfSkillDmgMul(side) {
   return 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_SKILL_DMG_PER_STACK;
 }
 function gandulfCdrMul(side) {
-  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
-  const pct = (side.gandulfBuffStacks || 0) * GANDULF_BUFF_CDR_PER_STACK;
-  return Math.max(0.1, 1 - pct);
+  // Kvar för bakåtkompabilitet — passive ger inte längre CDR
+  return 1;
 }
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
   side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
+  // +5% maxHP shield per hit (stackar additivt, capad på maxHP)
+  side.shield = Math.min(side.hero.maxHp, (side.shield || 0) + side.hero.maxHp * GANDULF_SHIELD_PER_HIT_PCT);
   if (target && typeof target === 'object') {
     target.gandulfHits = (target.gandulfHits || 0) + 1;
     if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
@@ -5837,7 +5838,7 @@ const HERO_INFO = {
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
-    passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Varje skill-träff på en fiende stackar en 3s buf: +5% skill-skada & +5% CDR per hit. Träffar du SAMMA mål med 3 skills får du en shield på 30% av max HP.' },
+    passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Varje skill-träff på en fiende stackar en 3s buf: +5% skill-skada per hit, och ger en shield = 5% av max HP per hit (stackar additivt upp till max HP). Träffar du SAMMA mål med 3 skills får du dessutom en stor shield på 30% av max HP.' },
   },
   legolas: {
     skills: {

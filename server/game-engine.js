@@ -166,7 +166,7 @@ const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
 // Gandulf passive (Arcane Convergence)
 const GANDULF_BUFF_DURATION = 3.0;
 const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;  // 5% skill-dmg per enemy hit (3s)
-const GANDULF_BUFF_CDR_PER_STACK = 0.05;        // 5% CDR per enemy hit
+const GANDULF_SHIELD_PER_HIT_PCT = 0.05;        // +5% maxHP shield per enemy hit
 const GANDULF_SHIELD_HITS = 3;
 const GANDULF_SHIELD_PCT = 0.30;                // 30% av maxHP
 // Black Hole (E): target-AoE pull + explosion vid slutet
@@ -458,14 +458,15 @@ function gandulfSkillDmgMul(side) {
   return 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_SKILL_DMG_PER_STACK;
 }
 function gandulfCdrMul(side) {
-  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
-  const pct = (side.gandulfBuffStacks || 0) * GANDULF_BUFF_CDR_PER_STACK;
-  return Math.max(0.1, 1 - pct);
+  // Kvar för bakåtkompabilitet — passive ger inte längre CDR
+  return 1;
 }
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
   side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
+  // +5% maxHP shield per hit (stackar additivt, capad på maxHP)
+  side.shield = Math.min(side.hero.maxHp, (side.shield || 0) + side.hero.maxHp * GANDULF_SHIELD_PER_HIT_PCT);
   if (target && typeof target === 'object') {
     target.gandulfHits = (target.gandulfHits || 0) + 1;
     if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
