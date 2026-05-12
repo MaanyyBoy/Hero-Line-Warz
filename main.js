@@ -4452,7 +4452,7 @@ const duelState = {
 };
 
 const HEROES = [
-  { id: 'magiker',   name: 'Magikern',    role: 'Mage',         initial: 'M',   available: true  },
+  { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
   { id: 'hero-2',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-3',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
