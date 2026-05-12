@@ -1257,6 +1257,18 @@ const BLACKHOLE_DURATION = 3.0;
 const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
 const BLACKHOLE_EXPLOSION_DMG = 30;
 const BLACKHOLE_CAST_DISTANCE = 8;
+// Legolus
+const VINE_TRAP_RADIUS = 3.0;
+const VINE_TRAP_DURATION = 3.0;
+const VINE_TRAP_DOT_DPS = 8;
+const VINE_TRAP_CAST_DISTANCE = 7;
+const VINE_TRAP_ROOT_REFRESH = 0.25;
+const LEGOLUS_BUFF_DURATION = 5.0;
+const LEGOLUS_BUFF_DMG_PCT = 0.10;
+const LEGOLUS_BUFF_CRIT_PCT = 0.10;
+const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;
+const LEGOLUS_DASH_DISTANCE = 4.0;
+const LEGOLUS_DASH_LIFESTEAL = 0.20;
 // Bakåtkompabilitet
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
@@ -2269,6 +2281,10 @@ function createSide(idx) {
     level: 1,
     xp: 0,
     xpToNext: xpForLevel(1),
+    vineTraps: [],
+    legolusBuffRemaining: 0,
+    legolusDashBuffPending: false,
+    critDmgMul: 2.0,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -2901,12 +2917,20 @@ function updateHeroAttack(side, dt) {
   scene.add(mesh);
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
-  const isCrit = (side.critChancePct || 0) > 0 && Math.random() < side.critChancePct;
-  const critMul = isCrit ? 2 : 1;
+  const buffActive = (side.legolusBuffRemaining || 0) > 0;
+  const buffDmgMul = buffActive ? (1 + LEGOLUS_BUFF_DMG_PCT) : 1;
+  let critChance = (side.critChancePct || 0) + (buffActive ? LEGOLUS_BUFF_CRIT_PCT : 0);
+  let critMulBase = (side.critDmgMul || 2.0) + (buffActive ? LEGOLUS_BUFF_CRIT_DMG_PCT : 0);
+  const dashBuffed = !!side.legolusDashBuffPending;
+  if (dashBuffed) { critChance = 1.0; side.legolusDashBuffPending = false; }
+  const isCrit = critChance > 0 && Math.random() < critChance;
+  const critMul = isCrit ? critMulBase : 1;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
-    damage: side.attackDmg * auraDmg * critMul, isAoE, isCrit,
+    damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
+    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
+    legolusBuffed: dashBuffed,
   });
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
@@ -2931,14 +2955,23 @@ function updateProjectiles(side, dt) {
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
       p.target.hp -= p.damage;
+      let killedTarget = false;
       if (p.target.hp <= 0) {
+        killedTarget = true;
         if (p.targetIsMonster) {
           const k = side.monsters.indexOf(p.target);
-          if (k >= 0) hostKillMonster(side, k, side); // hjälten dödade — guld till sidan
+          if (k >= 0) hostKillMonster(side, k, side);
         } else {
           const k = opp.playerCreeps.indexOf(p.target);
           if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
         }
+      }
+      // Legolus dash-buffed AA: 20% lifesteal + reset E-cd om kill
+      if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+      }
+      if (p.legolusBuffed && killedTarget) {
+        side.skills.e.cd = 0;
       }
       if (p.isAoE) {
         // AoE-skada till andra monsters runt träffpunkten
@@ -3246,6 +3279,104 @@ function updateBlackHolesSolo(side, dt) {
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
       side.blackHoles.splice(i, 1);
+    }
+  }
+}
+
+// === Legolus skills (solo) ===
+function hostCastLegolusVineTrap(side, ev) {
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  const center = soloResolveSkillGroundTarget(side, ev || {}, VINE_TRAP_CAST_DISTANCE);
+  // Visuell brun rot-ring + spinkar
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(center.x, 0.07, center.z);
+  scene.add(ring);
+  // Småspikar/rötter på marken
+  const spikes = [];
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const r = VINE_TRAP_RADIUS * 0.6;
+    const sp = new THREE.Mesh(
+      new THREE.ConeGeometry(0.08, 0.35, 6),
+      new THREE.MeshStandardMaterial({ color: 0x3a5018, roughness: 0.85 })
+    );
+    sp.position.set(center.x + Math.cos(ang) * r, 0.17, center.z + Math.sin(ang) * r);
+    scene.add(sp);
+    spikes.push(sp);
+  }
+  side.vineTraps = side.vineTraps || [];
+  side.vineTraps.push({
+    ring, spikes,
+    x: center.x, z: center.z,
+    life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
+    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1),
+    radius: VINE_TRAP_RADIUS,
+  });
+}
+
+function hostCastLegolusBuff(side) {
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION;
+}
+
+function hostCastLegolusDash(side, ev) {
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  let dist = LEGOLUS_DASH_DISTANCE, nx, nz;
+  while (dist >= 0.5) {
+    nx = side.hero.x + dx * dist;
+    nz = side.hero.z + dz * dist;
+    if (isHeroWalkable(side.idx, nx, nz)) break;
+    dist -= 0.5;
+  }
+  if (dist < 0.5) return;
+  side.skills.e.cd = side.skills.e.max;
+  side.hero.x = nx; side.hero.z = nz;
+  side.mesh.position.x = nx; side.mesh.position.z = nz;
+  side.legolusDashBuffPending = true;
+}
+
+function updateVineTrapsSolo(side, dt) {
+  if (!side.vineTraps || side.vineTraps.length === 0) return;
+  const opp = sides[3 - side.idx];
+  for (let i = side.vineTraps.length - 1; i >= 0; i--) {
+    const vt = side.vineTraps[i];
+    vt.life -= dt;
+    const r2 = vt.radius * vt.radius;
+    // Apply DoT + root på entiteter i radien
+    for (let j = side.monsters.length - 1; j >= 0; j--) {
+      const m = side.monsters[j];
+      const dx = m.mesh.position.x - vt.x, dz = m.mesh.position.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
+        m.hp -= vt.dotPerSec * dt;
+        if (m.hp <= 0) { hostKillMonster(side, j, side); }
+      }
+    }
+    if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+      const c = opp.playerCreeps[j];
+      const dx = c.mesh.position.x - vt.x, dz = c.mesh.position.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
+        c.hp -= vt.dotPerSec * dt;
+        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    // Fade ring + spikar
+    if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * (vt.life / vt.maxLife);
+    if (vt.life <= 0) {
+      if (vt.ring) scene.remove(vt.ring);
+      if (vt.spikes) for (const sp of vt.spikes) scene.remove(sp);
+      side.vineTraps.splice(i, 1);
     }
   }
 }
@@ -3577,9 +3708,17 @@ function applyEvent(side, ev) {
         if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
       }
     }
-    if (ev.key === 'q') hostCastEldklot(side, dx, dz);
-    else if (ev.key === 'f') hostCastFrostnova(side, ev);
-    else if (ev.key === 'e') hostCastBlink(side, ev);
+    const isLegolus = side.heroId === 'legolas';
+    if (ev.key === 'q') {
+      if (isLegolus) hostCastLegolusVineTrap(side, ev);
+      else hostCastEldklot(side, dx, dz);
+    } else if (ev.key === 'f') {
+      if (isLegolus) hostCastLegolusBuff(side);
+      else hostCastFrostnova(side, ev);
+    } else if (ev.key === 'e') {
+      if (isLegolus) hostCastLegolusDash(side, ev);
+      else hostCastBlink(side, ev);
+    }
     return;
   }
   if (ev.type === 'activate') {
@@ -3656,6 +3795,7 @@ const clientMeshes = {
   fireWaves: new Map(),
   blackHoles: new Map(),
   shatters: new Map(),
+  vineTraps: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -3930,6 +4070,9 @@ function applyRemoteState(state) {
     side.level = sData.lv || 1;
     side.xp = sData.xp || 0;
     side.xpToNext = sData.xpN || 0;
+    // Legolus buff-status
+    side.legolusBuffRemaining = sData.lbuf || 0;
+    side.legolusDashBuffPending = !!sData.ldash;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -4040,6 +4183,34 @@ function applyRemoteState(state) {
       grp.userData.bhRing = ring;
       return grp;
     });
+    // Vine Trap-zoner (Legolus Q)
+    clientReconcileEntities(idx, 'vineTraps', sData.VT || [], () => {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
+        new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.07;
+      grp.add(ring);
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        const r = VINE_TRAP_RADIUS * 0.6;
+        const sp = new THREE.Mesh(
+          new THREE.ConeGeometry(0.08, 0.35, 6),
+          new THREE.MeshStandardMaterial({ color: 0x3a5018, roughness: 0.85 })
+        );
+        sp.position.set(Math.cos(ang) * r, 0.17, Math.sin(ang) * r);
+        grp.add(sp);
+      }
+      grp.userData.vtRing = ring;
+      return grp;
+    });
+    const vtMap = clientMeshes.vineTraps && clientMeshes.vineTraps.get(idx);
+    if (vtMap && sData.VT) for (const vt of sData.VT) {
+      const m = vtMap.get(vt.id);
+      if (m && m.userData.vtRing) m.userData.vtRing.material.opacity = 0.65 * vt.life;
+    }
     // Shatter-ringar
     clientReconcileEntities(idx, 'shatters', sData.SH || [], () => {
       const ring = new THREE.Mesh(
@@ -5707,6 +5878,8 @@ function simulateAll(dt) {
     updateProjectiles(side, dt);
     updateFireballs(side, dt);
     updateBlackHolesSolo(side, dt);
+    updateVineTrapsSolo(side, dt);
+    if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
     tickIncome(side, dt);

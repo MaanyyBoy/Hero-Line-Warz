@@ -123,6 +123,18 @@ const NOVA_FREEZE_TIME = 2.0;
 const NOVA_CAST_DISTANCE = 6;              // drag-räckvidd
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
+// Legolus-skills
+const VINE_TRAP_RADIUS = 3.0;
+const VINE_TRAP_DURATION = 3.0;
+const VINE_TRAP_DOT_DPS = 8;
+const VINE_TRAP_CAST_DISTANCE = 7;
+const VINE_TRAP_ROOT_REFRESH = 0.25;     // håller frozenTime hög så länge i zonen
+const LEGOLUS_BUFF_DURATION = 5.0;
+const LEGOLUS_BUFF_DMG_PCT = 0.10;
+const LEGOLUS_BUFF_CRIT_PCT = 0.10;
+const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
+const LEGOLUS_DASH_DISTANCE = 4.0;
+const LEGOLUS_DASH_LIFESTEAL = 0.20;
 // Black Hole (E): target-AoE pull + explosion vid slutet
 const BLACKHOLE_RADIUS = 3.5;
 const BLACKHOLE_PULL_SPEED = 2.5;
@@ -481,6 +493,10 @@ function createSide(idx) {
     xpToNext: xpForLevel(1),
     heroId: 'magiker',
     heroPickConfirmed: false,
+    vineTraps: [],
+    legolusBuffRemaining: 0,
+    legolusDashBuffPending: false,
+    critDmgMul: 2.0,         // base crit-multiplikator (kan justeras av buff)
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -1028,8 +1044,19 @@ function updateHeroAttack(state, side, opp, dt) {
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
-  const isCrit = (side.critChancePct || 0) > 0 && Math.random() < side.critChancePct;
-  const critMul = isCrit ? 2 : 1;
+  // Legolus self-buff aktiv? +10% dmg, +10% crit, +30% crit-dmg
+  const buffActive = (side.legolusBuffRemaining || 0) > 0;
+  const buffDmgMul = buffActive ? (1 + LEGOLUS_BUFF_DMG_PCT) : 1;
+  let critChance = (side.critChancePct || 0) + (buffActive ? LEGOLUS_BUFF_CRIT_PCT : 0);
+  let critMulBase = (side.critDmgMul || 2.0) + (buffActive ? LEGOLUS_BUFF_CRIT_DMG_PCT : 0);
+  // Legolus dash-buff aktiv? Nästa AA = 100% crit + 20% lifesteal
+  const dashBuffed = !!side.legolusDashBuffPending;
+  if (dashBuffed) {
+    critChance = 1.0;
+    side.legolusDashBuffPending = false;
+  }
+  const isCrit = critChance > 0 && Math.random() < critChance;
+  const critMul = isCrit ? critMulBase : 1;
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -1037,7 +1064,9 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsMonster: !!target.isMonster,
     targetIsHero: !!target.isHero,
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
-    damage: side.attackDmg * auraDmg * critMul, isAoE, isCrit,
+    damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
+    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
+    legolusBuffed: dashBuffed,
   });
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
@@ -1064,11 +1093,14 @@ function updateProjectiles(state, side, opp, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
+      let killedTarget = false;
       if (p.targetIsHero) {
         damageHero(state.sides[p.targetSideIdx], p.damage);
+        if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
       } else {
         p.target.hp -= p.damage;
         if (p.target.hp <= 0) {
+          killedTarget = true;
           if (p.targetIsMonster) {
             const k = side.monsters.indexOf(p.target);
             if (k >= 0) killMonster(side, k, side);
@@ -1077,6 +1109,13 @@ function updateProjectiles(state, side, opp, dt) {
             if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
           }
         }
+      }
+      // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill
+      if (p.lifestealRatio > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+      }
+      if (p.legolusBuffed && killedTarget) {
+        side.skills.e.cd = 0;
       }
       if (p.isAoE) {
         for (let k = side.monsters.length - 1; k >= 0; k--) {
@@ -1343,6 +1382,90 @@ function updateBlackHoles(state, side, opp, dt) {
   }
 }
 
+// === Legolus-skills ===
+// Q: Vine Trap Rain — zon som rotar + DoT i 3s, ingen direct dmg
+function castLegolusVineTrap(state, sideIdx, ev) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  const opp = state.sides[3 - sideIdx];
+  const center = resolveSkillGroundTarget(state, side, opp, ev || {}, VINE_TRAP_CAST_DISTANCE);
+  if (!side.vineTraps) side.vineTraps = [];
+  side.vineTraps.push({
+    id: state.nextEntityId++,
+    x: center.x, z: center.z,
+    life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
+    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1),
+    radius: VINE_TRAP_RADIUS,
+  });
+}
+
+function updateVineTraps(state, side, opp, dt) {
+  if (!side.vineTraps || side.vineTraps.length === 0) return;
+  for (let i = side.vineTraps.length - 1; i >= 0; i--) {
+    const vt = side.vineTraps[i];
+    vt.life -= dt;
+    const r2 = vt.radius * vt.radius;
+    // Applicera root + DoT på monsters i radien
+    for (let j = side.monsters.length - 1; j >= 0; j--) {
+      const m = side.monsters[j];
+      const dx = m.x - vt.x, dz = m.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
+        m.hp -= vt.dotPerSec * dt;
+        if (m.hp <= 0) killMonster(side, j, side);
+      }
+    }
+    if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+      const c = opp.playerCreeps[j];
+      const dx = c.x - vt.x, dz = c.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
+        c.hp -= vt.dotPerSec * dt;
+        if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    // Duel: applicera även på opp.hero
+    if (state.duelActive && opp && !opp.hero.dead) {
+      const dx = opp.hero.x - vt.x, dz = opp.hero.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
+        damageHero(opp, vt.dotPerSec * dt);
+      }
+    }
+    if (vt.life <= 0) side.vineTraps.splice(i, 1);
+  }
+}
+
+// F: Self-buff i 5s — +10% dmg, +10% crit, +30% crit-dmg
+function castLegolusBuff(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION;
+}
+
+// E: Kort dash + flagga: nästa AA = 100% crit + 20% lifesteal. Reset cd om buffed AA dödar.
+function castLegolusDash(state, sideIdx, ev) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  let dist = LEGOLUS_DASH_DISTANCE, nx, nz;
+  while (dist >= 0.5) {
+    nx = side.hero.x + dx * dist;
+    nz = side.hero.z + dz * dist;
+    if (isHeroWalkable(side.idx, nx, nz)) break;
+    dist -= 0.5;
+  }
+  if (dist < 0.5) return;
+  side.skills.e.cd = side.skills.e.max;
+  side.hero.x = nx; side.hero.z = nz;
+  side.legolusDashBuffPending = true;
+}
+
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
   const mag = Math.hypot(joyX, joyZ);
@@ -1425,9 +1548,17 @@ function applyEvent(state, sideIdx, ev) {
         if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
       }
     }
-    if (ev.key === 'q') castEldklot(state, sideIdx, dx, dz);
-    else if (ev.key === 'f') castFrostnova(state, sideIdx, ev);
-    else if (ev.key === 'e') castBlink(state, sideIdx, ev);
+    const isLegolus = side.heroId === 'legolas';
+    if (ev.key === 'q') {
+      if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
+      else castEldklot(state, sideIdx, dx, dz);
+    } else if (ev.key === 'f') {
+      if (isLegolus) castLegolusBuff(state, sideIdx);
+      else castFrostnova(state, sideIdx, ev);
+    } else if (ev.key === 'e') {
+      if (isLegolus) castLegolusDash(state, sideIdx, ev);
+      else castBlink(state, sideIdx, ev);
+    }
     return;
   }
   if (ev.type === 'activate') {
@@ -1728,6 +1859,8 @@ function tickGame(state, dt) {
       updateProjectiles(state, side, opp, dt);
       updateFireballs(state, side, opp, dt);
       updateBlackHoles(state, side, opp, dt);
+      updateVineTraps(state, side, opp, dt);
+      if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
     }
@@ -1793,6 +1926,8 @@ function tickGame(state, dt) {
     updatePlayerCreeps(state, side, opp, dt);
     updateHeroCopies(state, side, dt);
     updateBlackHoles(state, side, opp, dt);
+    updateVineTraps(state, side, opp, dt);
+    if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     updateCreepProjectiles(state, side, opp, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -1859,6 +1994,9 @@ function serializeSide(side) {
     FW: (side.fireWaves || []).map(f => ({ id: f.id, x: f.x, z: f.z, dx: f.dx, dz: f.dz, life: f.life / f.maxLife })),
     BH: (side.blackHoles || []).map(b => ({ id: b.id, x: b.x, z: b.z, life: b.life / b.maxLife })),
     SH: (side.shatters || []).map(s => ({ id: s.id, x: s.x, z: s.z, life: s.life / s.maxLife })),
+    VT: (side.vineTraps || []).map(v => ({ id: v.id, x: v.x, z: v.z, life: v.life / v.maxLife })),
+    lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
+    ldash: side.legolusDashBuffPending ? 1 : 0,
   };
 }
 
