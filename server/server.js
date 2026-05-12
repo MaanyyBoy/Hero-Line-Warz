@@ -63,13 +63,22 @@ function gameLoopTick(room) {
   const now = Date.now();
   const dt = Math.min(0.1, Math.max(0.001, (now - room.lastTickMs) / 1000));
   room.lastTickMs = now;
-  engine.tickGame(room.game, dt);
+  try {
+    engine.tickGame(room.game, dt);
+  } catch (e) {
+    console.error(`[${room.code}] tickGame error:`, e && e.stack || e);
+    return;
+  }
   if (now - room.lastStateMs >= STATE_INTERVAL_MS) {
     room.lastStateMs = now;
-    const stateMsg = engine.serializeState(room.game);
-    const envelope = { t: 'msg', d: stateMsg };
-    send(room.host, envelope);
-    send(room.client, envelope);
+    try {
+      const stateMsg = engine.serializeState(room.game);
+      const envelope = { t: 'msg', d: stateMsg };
+      send(room.host, envelope);
+      send(room.client, envelope);
+    } catch (e) {
+      console.error(`[${room.code}] serialize/send error:`, e && e.stack || e);
+    }
   }
 }
 

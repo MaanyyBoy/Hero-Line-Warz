@@ -1265,7 +1265,9 @@ function isHeroWalkable(idx, x, z) {
 function isCreepPos(x, z) {
   if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 14.55) return true;
   if (x >= 10.6 && x <= 27.55 && z >= -14.55 && z <= -0.5) return true;
-  return inLane(x, z, 12) || inLane(x, z, 4) || inLane(x, z, -4) || inLane(x, z, -12);
+  // Utvidgade bakåt (x ned till -45) så monster-spawn-kolumn ryms.
+  const inLaneWide = (cz) => x >= -45 && x <= 11 && z >= cz - 2.85 && z <= cz + 2.85;
+  return inLaneWide(12) || inLaneWide(4) || inLaneWide(-4) || inLaneWide(-12);
 }
 
 // ============================================================

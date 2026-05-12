@@ -251,7 +251,11 @@ function isArenaWalkable(x, z) {
 function isCreepPos(x, z) {
   if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 14.55) return true;
   if (x >= 10.6 && x <= 27.55 && z >= -14.55 && z <= -0.5) return true;
-  return inLane(x, z, 12) || inLane(x, z, 4) || inLane(x, z, -4) || inLane(x, z, -12);
+  // Lane-bounds är utvidgade bakåt (x ned till -45) så att monster-spawn-stagger
+  // (15 i kolumn bakom portalen) ryms och de kan röra sig in i lanen.
+  // Hero använder en smalare inLane via isHeroWalkable som inte ändras.
+  const inLaneWide = (cz) => x >= -45 && x <= 11 && z >= cz - 2.85 && z <= cz + 2.85;
+  return inLaneWide(12) || inLaneWide(4) || inLaneWide(-4) || inLaneWide(-12);
 }
 
 // === Helpers ===
