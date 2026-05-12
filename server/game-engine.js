@@ -35,6 +35,14 @@ const HERO_DEFS = {
     attackInterval: 0.7,  // snabbare AA än Gandulf (1.0)
     baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
   },
+  gimlu: {
+    name: 'Gimlu',
+    baseHp: 140,          // tank
+    baseDmg: 7,           // hård träff
+    attackRange: 2.5,     // melee-räckvidd
+    attackInterval: 1.2,  // tung yxa, långsam
+    baseMoveSpeed: 5.0,   // långsam
+  },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PASSIVE_EVERY = 4;
@@ -57,27 +65,38 @@ const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5]; // 3 kolumner inom lane-bredden
 const WAVE_CLUMP_ROW_SPACING = 1.0;       // m mellan rader bakåt
 const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
 const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+// Per 10 waves: 5 melee, 3 mix, 2 range. Boss räknas som melee (singel-spawn).
+// Index 0..9 = wave (n-1) % 10
+const WAVE_TYPE_PATTERN = ['melee', 'mix', 'range', 'melee', 'mix', 'melee', 'range', 'melee', 'mix', 'boss'];
+// Range-monster har längre attack-range, långsammare AA-interval, lägre HP, slow speed.
+const RANGE_MONSTER_RANGE = 4.5;
+const RANGE_MONSTER_INTERVAL = 1.5;
+const RANGE_MONSTER_SPEED_RATIO = 0.75;
+const RANGE_MONSTER_HP_RATIO = 0.80;
 
 function getWaveDef(waveNum) {
   if (waveNum < 1 || waveNum > MAX_WAVES) return null;
   const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
-  const isBoss = (waveNum % 10 === 0);
+  const waveType = WAVE_TYPE_PATTERN[(waveNum - 1) % 10];
+  const isBoss = waveType === 'boss';
   if (isBoss) {
     return {
       number: waveNum,
       name: BOSS_NAMES[tierIdx],
       isBoss: true,
+      waveType: 'boss',
       count: 1,
-      monsterHp: 200 + tierIdx * 250,   // 200, 450, 700, 950, 1200
-      monsterDmg: 18 + tierIdx * 6,     // 18, 24, 30, 36, 42
+      monsterHp: 200 + tierIdx * 250,
+      monsterDmg: 18 + tierIdx * 6,
       monsterSpeed: 1.8,
     };
   }
-  const inTier = ((waveNum - 1) % 10) + 1;  // 1..9 (10 = boss)
+  const inTier = ((waveNum - 1) % 10) + 1;
   return {
     number: waveNum,
     name: WAVE_NAMES[tierIdx],
     isBoss: false,
+    waveType,                            // 'melee' | 'mix' | 'range'
     count: WAVE_COUNT_PER_LANE * 2,
     monsterHp: Math.round(10 + tierIdx * 12 + inTier * 1.5),
     monsterDmg: Math.round((8 + tierIdx * 4 + inTier * 0.6) * 10) / 10,
@@ -599,29 +618,41 @@ function clumpPositions(spawnX, laneZ, count) {
 
 function spawnWaveAtOnce(state, side, def) {
   if (def.isBoss) {
-    spawnMonsterFromDef(state, side, 1, def.isBoss ? null : 0, def, null);
+    spawnMonsterFromDef(state, side, 1, def, null, 'melee');
     return;
   }
   const cfg = SIDE_CFG[side.idx];
   for (const lane of [1, 2]) {
     const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
-    for (const p of positions) spawnMonsterFromDef(state, side, lane, null, def, p);
+    // Bestäm per-monster attackType baserat på wave-typ
+    let melee, range;
+    if (def.waveType === 'range') { melee = 0; range = WAVE_COUNT_PER_LANE; }
+    else if (def.waveType === 'mix') { melee = Math.ceil(WAVE_COUNT_PER_LANE / 2); range = WAVE_COUNT_PER_LANE - melee; }
+    else { melee = WAVE_COUNT_PER_LANE; range = 0; }
+    let i = 0;
+    for (; i < melee; i++) spawnMonsterFromDef(state, side, lane, def, positions[i], 'melee');
+    for (let j = 0; j < range; j++) spawnMonsterFromDef(state, side, lane, def, positions[melee + j], 'range');
   }
 }
 
-function spawnMonsterFromDef(state, side, lane, idx, def, pos) {
+function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
   const cfg = SIDE_CFG[side.idx];
   const x = pos ? pos.x : cfg.spawnX;
   const z = pos ? pos.z : cfg.laneZ[lane];
+  const isRange = attackType === 'range';
+  const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
+  const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
   side.monsters.push({
     id: state.nextEntityId++,
     x, z,
     ry: 0,
     lane,
-    hp: def.monsterHp,
-    maxHp: def.monsterHp,
-    speed: def.monsterSpeed,
+    hp, maxHp: hp,
+    speed,
     damage: def.monsterDmg,
+    attackType: attackType || 'melee',
+    attackRange: isRange ? RANGE_MONSTER_RANGE : 1.2,
+    attackInterval: isRange ? RANGE_MONSTER_INTERVAL : MONSTER_MELEE_INTERVAL,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: !!def.isBoss,
@@ -646,9 +677,11 @@ function updateMonsters(state, side, opp, dt) {
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
     m.atkCd = Math.max(0, m.atkCd - dt);
-    if (heroAlive && distHero < 1.2 && m.atkCd <= 0) {
+    const atkRange = m.attackRange || 1.2;
+    const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
+    if (heroAlive && distHero < atkRange && m.atkCd <= 0) {
       damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
-      m.atkCd = MONSTER_MELEE_INTERVAL;
+      m.atkCd = atkInterval;
     }
     if (!m.chasing && opp) {
       let nearest = null, bestDist = CREEP_VS_CREEP_RANGE;
@@ -672,7 +705,9 @@ function updateMonsters(state, side, opp, dt) {
     }
     let dirX, dirZ;
     if (m.chasing) {
-      if (distHero < 0.7) continue;
+      // Range-monster stannar längre bort vid attackRange - 0.5; melee går nära
+      const stopDist = m.attackType === 'range' ? Math.max(0.7, (m.attackRange || 4.5) - 0.5) : 0.7;
+      if (distHero < stopDist) continue;
       dirX = dxh / distHero; dirZ = dzh / distHero;
     } else {
       const cfg = SIDE_CFG[side.idx];
@@ -1571,7 +1606,7 @@ function serializeSide(side) {
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
     },
-    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0 })),
+    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0 })),
     C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
     F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),

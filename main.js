@@ -1100,6 +1100,7 @@ const HERO_ATTACK_INTERVAL = 1.0;
 const HERO_DEFS = {
   magiker: { name: 'Gandulf', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
   legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
+  gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -1120,16 +1121,23 @@ const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5];
 const WAVE_CLUMP_ROW_SPACING = 1.0;
 const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
 const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+const WAVE_TYPE_PATTERN = ['melee', 'mix', 'range', 'melee', 'mix', 'melee', 'range', 'melee', 'mix', 'boss'];
+const RANGE_MONSTER_RANGE = 4.5;
+const RANGE_MONSTER_INTERVAL = 1.5;
+const RANGE_MONSTER_SPEED_RATIO = 0.75;
+const RANGE_MONSTER_HP_RATIO = 0.80;
 
 function getWaveDef(waveNum) {
   if (waveNum < 1 || waveNum > MAX_WAVES) return null;
   const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
-  const isBoss = (waveNum % 10 === 0);
+  const waveType = WAVE_TYPE_PATTERN[(waveNum - 1) % 10];
+  const isBoss = waveType === 'boss';
   if (isBoss) {
     return {
       number: waveNum,
       name: BOSS_NAMES[tierIdx],
       isBoss: true,
+      waveType: 'boss',
       count: 1,
       monsterHp: 200 + tierIdx * 250,
       monsterDmg: 18 + tierIdx * 6,
@@ -1141,6 +1149,7 @@ function getWaveDef(waveNum) {
     number: waveNum,
     name: WAVE_NAMES[tierIdx],
     isBoss: false,
+    waveType,
     count: WAVE_COUNT_PER_LANE * 2,
     monsterHp: Math.round(10 + tierIdx * 12 + inTier * 1.5),
     monsterDmg: Math.round((8 + tierIdx * 4 + inTier * 0.6) * 10) / 10,
@@ -1514,6 +1523,7 @@ function makeHeroCopyMesh(ownerSideIdx, heroId) {
 // Hero-mesh-dispatcher per heroId. Default Gandulf (magiker).
 function makeHeroMesh(idx, heroId) {
   if (heroId === 'legolas') return makeLegolasMesh(idx);
+  if (heroId === 'gimlu') return makeGimluMesh(idx);
   return makeGandulfMesh(idx);
 }
 
@@ -1724,6 +1734,124 @@ function makeLegolasMesh(idx) {
   const aura = new THREE.Mesh(
     new THREE.RingGeometry(0.32, 0.46, 24),
     new THREE.MeshBasicMaterial({ color: 0x66ff88, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.02;
+  grp.add(aura);
+
+  setShadow(grp, true, false);
+  return grp;
+}
+
+// Gimlu — stor tjock dvärg. Bred rig, kort men inte kortare än andra heroes
+// (kompenseras med längre torso). Järnhjälm, lång brun beard, plåtrustning, yxa.
+function makeGimluMesh(idx) {
+  const cfg = SIDE_CFG[idx];
+  const grp = new THREE.Group();
+  grp.userData.heroId = 'gimlu';
+
+  const trimColor = cfg.heroColor;
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd9a878, roughness: 0.55 });
+  const armorMat = new THREE.MeshStandardMaterial({ color: 0x6a6e72, roughness: 0.55, metalness: 0.35 });
+  const armorDarkMat = new THREE.MeshStandardMaterial({ color: 0x4a4e54, roughness: 0.6, metalness: 0.4 });
+  const beltMat = new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.8 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
+
+  // Bredare rig + kortare lemmar, men torso lite längre för att kompensera höjden.
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.115, legH: 0.26, armR: 0.10, armH: 0.30,
+    torsoR: 0.30, torsoH: 0.52, headR: 0.20,
+    torsoShape: 'capsule',
+    bodyMat: armorMat, armorMat: armorDarkMat, skinMat,
+    limbMat: armorMat, legMat: bootMat,
+  });
+
+  // Bred bälte
+  const belt = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.04, 0.08, 12, 26),
+    beltMat
+  );
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = rig.hipY + 0.05;
+  grp.add(belt);
+  // Bälte-spänne (i sidans färg)
+  const buckle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.10, 0.06),
+    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.6, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.25 })
+  );
+  buckle.position.set(0, rig.hipY + 0.05, rig.torsoR * 1.05);
+  grp.add(buckle);
+
+  // Bröstplåt (en aning större än torso, lyser i sidans accent)
+  const chest = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 1.04, rig.torsoR * 1.04, rig.torsoH * 0.65, 14, 1, true),
+    armorDarkMat
+  );
+  chest.position.y = rig.hipY + rig.torsoH * 0.4;
+  grp.add(chest);
+  const chestTrim = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.05, 0.04, 10, 22),
+    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.5, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.35 })
+  );
+  chestTrim.rotation.x = Math.PI / 2;
+  chestTrim.position.y = rig.torsoTopY - 0.08;
+  grp.add(chestTrim);
+
+  // Axel-pauldrons (klotformade)
+  for (const sx of [-1, 1]) {
+    const pauld = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      armorDarkMat
+    );
+    pauld.position.set(sx * (rig.torsoR + 0.05), rig.torsoTopY - 0.02, 0);
+    grp.add(pauld);
+  }
+
+  // Stort skägg (chestnut brown) — hänger ner från ansiktet, längre än Gandulfs
+  const beardMat = new THREE.MeshStandardMaterial({ color: 0x6e3a18, roughness: 0.85 });
+  const beard = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.45, 14), beardMat);
+  beard.position.set(0, rig.headY - 0.20, 0.10);
+  beard.rotation.x = Math.PI;
+  grp.add(beard);
+  // Mustasch-cylinder under näsan
+  const mustache = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.20, 10), beardMat);
+  mustache.rotation.z = Math.PI / 2;
+  mustache.position.set(0, rig.headY - 0.02, 0.16);
+  grp.add(mustache);
+
+  // Järnhjälm — kort cylinder + dome ovanpå + näspar (kort cylinder framåt)
+  const helmMat = new THREE.MeshStandardMaterial({ color: 0x686c70, metalness: 0.45, roughness: 0.5 });
+  const helmRing = new THREE.Mesh(new THREE.CylinderGeometry(rig.headR * 1.05, rig.headR * 1.05, 0.16, 16), helmMat);
+  helmRing.position.y = rig.headY + 0.04;
+  grp.add(helmRing);
+  const helmDome = new THREE.Mesh(new THREE.SphereGeometry(rig.headR * 1.05, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2.1), helmMat);
+  helmDome.position.y = rig.headY + 0.12;
+  grp.add(helmDome);
+  // Spik/horn på toppen
+  const helmSpike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 8), new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.6, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.4 }));
+  helmSpike.position.y = rig.headY + 0.32;
+  grp.add(helmSpike);
+  // Näspar (vertikal strip ner i pannan)
+  const nasal = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.04), helmMat);
+  nasal.position.set(0, rig.headY - 0.02, rig.headR * 0.95);
+  grp.add(nasal);
+
+  // Yxa i höger hand — skaft + dubbel-egg blade
+  const haftMat = new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 });
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x9da0a4, metalness: 0.55, roughness: 0.35 });
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.70, 10), haftMat);
+  haft.position.set(0.05, -0.30, 0.05);
+  rig.rightArm.add(haft);
+  // Blade huvud (box som vänder ut från skaftet)
+  const bladeHead = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.26, 0.04), bladeMat);
+  bladeHead.position.set(0.05, -0.55, 0.05);
+  bladeHead.rotation.z = Math.PI / 2;
+  rig.rightArm.add(bladeHead);
+
+  // Liten subtil tank-aura (gråblå glow vid fötterna)
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.36, 0.52, 24),
+    new THREE.MeshBasicMaterial({ color: 0x8fa0b5, transparent: true, opacity: 0.20, side: THREE.DoubleSide })
   );
   aura.rotation.x = -Math.PI / 2;
   aura.position.y = 0.02;
@@ -2286,32 +2414,52 @@ function clumpPositions(spawnX, laneZ, count) {
 
 function hostSpawnWaveAtOnce(side, def) {
   if (def.isBoss) {
-    hostSpawnMonsterFromDef(side, 1, def, null);
+    hostSpawnMonsterFromDef(side, 1, def, null, 'melee');
     return;
   }
   const cfg = SIDE_CFG[side.idx];
   for (const lane of [1, 2]) {
     const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
-    for (const p of positions) hostSpawnMonsterFromDef(side, lane, def, p);
+    let melee, range;
+    if (def.waveType === 'range') { melee = 0; range = WAVE_COUNT_PER_LANE; }
+    else if (def.waveType === 'mix') { melee = Math.ceil(WAVE_COUNT_PER_LANE / 2); range = WAVE_COUNT_PER_LANE - melee; }
+    else { melee = WAVE_COUNT_PER_LANE; range = 0; }
+    let i = 0;
+    for (; i < melee; i++) hostSpawnMonsterFromDef(side, lane, def, positions[i], 'melee');
+    for (let j = 0; j < range; j++) hostSpawnMonsterFromDef(side, lane, def, positions[melee + j], 'range');
   }
 }
 
-function hostSpawnMonsterFromDef(side, lane, def, pos) {
+function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
   const cfg = SIDE_CFG[side.idx];
   const x = pos ? pos.x : cfg.spawnX;
   const z = pos ? pos.z : cfg.laneZ[lane];
+  const isRange = attackType === 'range';
+  const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
+  const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
   const mesh = makeMonsterMesh();
   if (def.isBoss) mesh.scale.set(1.6, 1.7, 1.6);
+  if (isRange) {
+    // Range-monster tintat grönaktigt så de syns annorlunda från melee
+    mesh.traverse(o => {
+      if (o.material && o.material.color && o.isMesh) {
+        o.material = o.material.clone();
+        o.material.color.setHex(0x5a7a4a);
+      }
+    });
+  }
   attachHpBar(mesh, def.isBoss ? 2.4 : 1.7);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
   side.monsters.push({
     id: nextEntityId++,
     lane,
-    hp: def.monsterHp,
-    maxHp: def.monsterHp,
-    speed: def.monsterSpeed,
+    hp, maxHp: hp,
+    speed,
     damage: def.monsterDmg,
+    attackType: attackType || 'melee',
+    attackRange: isRange ? RANGE_MONSTER_RANGE : 1.2,
+    attackInterval: isRange ? RANGE_MONSTER_INTERVAL : 1.0,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: !!def.isBoss,
@@ -2350,9 +2498,11 @@ function updateMonsters(side, dt) {
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
 
     m.atkCd = Math.max(0, m.atkCd - dt);
-    if (heroAlive && distHero < 1.2 && m.atkCd <= 0) {
+    const mAtkRange = m.attackRange || 1.2;
+    const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
+    if (heroAlive && distHero < mAtkRange && m.atkCd <= 0) {
       damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
-      m.atkCd = MONSTER_MELEE_INTERVAL;
+      m.atkCd = mAtkInterval;
     }
 
     // Om inte jagar hjälten — leta efter opp's playerCreeps i samma arena
@@ -2382,7 +2532,8 @@ function updateMonsters(side, dt) {
 
     let dirX, dirZ;
     if (m.chasing) {
-      if (distHero < 0.7) continue;
+      const stopDist = m.attackType === 'range' ? Math.max(0.7, (m.attackRange || 4.5) - 0.5) : 0.7;
+      if (distHero < stopDist) continue;
       dirX = dxh / distHero;
       dirZ = dzh / distHero;
     } else {
@@ -3584,9 +3735,19 @@ function applyRemoteState(state) {
     side.wave.isBoss = !!sData.w.b;
     side.wave.bannerPulse = sData.w.p || 0;
     // Entiteter
-    clientReconcileEntities(idx, 'monsters', sData.M, () => {
+    clientReconcileEntities(idx, 'monsters', sData.M, (e) => {
       const m = makeMonsterMesh();
-      attachHpBar(m, 1.7);
+      if (e && e.boss) m.scale.set(1.6, 1.7, 1.6);
+      if (e && e.r) {
+        // Range-monster grön-tintat
+        m.traverse(o => {
+          if (o.material && o.material.color && o.isMesh) {
+            o.material = o.material.clone();
+            o.material.color.setHex(0x5a7a4a);
+          }
+        });
+      }
+      attachHpBar(m, (e && e.boss) ? 2.4 : 1.7);
       return m;
     });
     clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => {
@@ -4794,7 +4955,7 @@ const duelState = {
 const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
   { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
-  { id: 'hero-3',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'gimlu',     name: 'Gimlu',       role: 'Tank',         initial: 'Gi',  available: true  },
   { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
