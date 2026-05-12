@@ -856,7 +856,7 @@ const TEXTURES = {
   // === DUEL-ARENA (separat zon på z=35, utanför huvudkartan) ===
   (function buildDuelArena() {
     const ax = 0, az = 35;
-    const radius = 9;
+    const radius = 12;  // 30% större än 9
     // Stenplattform — låg cylinder
     const platMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xc8b890, roughness: 0.85 });
     const platform = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius + 0.3, 0.3, 48), platMat);
@@ -873,7 +873,7 @@ const TEXTURES = {
     scene.add(inner);
     // Stenring-vägg runt kanten — låga klossar i cirkel
     const wallMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0x988868, roughness: 0.85 });
-    const blocks = 24;
+    const blocks = 32;
     for (let i = 0; i < blocks; i++) {
       const ang = (i / blocks) * Math.PI * 2;
       const r = radius - 0.05;
@@ -4698,6 +4698,9 @@ function applyRemoteState(state) {
   if (duelState.active && !wasActive) {
     duelState.startBannerMs = performance.now() + 3000;
   }
+  // Sync duel pickup-orbs
+  if (duelState.active) syncDuelOrbsFromState(state.dO);
+  else if (wasActive) clearDuelOrbMeshes();
   for (const idx of [1, 2]) {
     const sData = state.s[idx];
     if (!sData) continue;
@@ -4765,6 +4768,8 @@ function applyRemoteState(state) {
     side.gandulfBuffRemaining = sData.gbuf || 0;
     side.gandulfBuffStacks = sData.gbStk || 0;
     side.shield = sData.shld || 0;
+    // Duel speed-buff
+    side.duelSpeedBuffRemaining = sData.dSp || 0;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -5297,17 +5302,28 @@ function updateAimIndicators() {
   // Returnerar cast-position för en target-baserad skill given drag-distance.
   // Drag: hero + drag-dir × dist. Tap-on-target: target's position. Annars: hero + facing × dist.
   function castGround(dist) {
-    if (dragging) return { x: side.hero.x + w.x * dist, z: side.hero.z + w.z * dist };
-    if (side.targetId && side.targetType) {
+    let p;
+    if (dragging) p = { x: side.hero.x + w.x * dist, z: side.hero.z + w.z * dist };
+    else if (side.targetId && side.targetType) {
       if (APP.mode === 'solo') {
         const opp = sides[3 - side.idx];
         const t = resolveTargetEntity(side, opp);
-        if (t && t.mesh) return { x: t.mesh.position.x, z: t.mesh.position.z };
+        if (t && t.mesh) p = { x: t.mesh.position.x, z: t.mesh.position.z };
       } else if (side.targetX || side.targetZ) {
-        return { x: side.targetX, z: side.targetZ };
+        p = { x: side.targetX, z: side.targetZ };
       }
     }
-    return { x: side.hero.x + side.hero.facingX * dist, z: side.hero.z + side.hero.facingZ * dist };
+    if (!p) p = { x: side.hero.x + side.hero.facingX * dist, z: side.hero.z + side.hero.facingZ * dist };
+    // Clamp till arenan under duel (matchar server-side clamp)
+    if (duelState.active) {
+      const dx = p.x - 0, dz = p.z - 35;
+      const d = Math.hypot(dx, dz);
+      const maxR = 12 - 0.5;
+      if (d > maxR) {
+        p = { x: (dx / d) * maxR, z: 35 + (dz / d) * maxR };
+      }
+    }
+    return p;
   }
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
@@ -6161,6 +6177,101 @@ const duelState = {
   active: false, timer: 0, matchTimer: 0, count: 0, lastWinner: 0, announceTimer: 0,
   startBannerMs: 0,
 };
+// Pickup-orbs som syns under duel (id → { group, age })
+const duelOrbMeshes = new Map();
+
+function makeDuelOrbMesh(type) {
+  const grp = new THREE.Group();
+  const isHeal = type === 'h' || type === 'heal';
+  const color = isHeal ? 0x55ff7a : 0xffd34a;
+  const emissive = isHeal ? 0x22aa44 : 0xff9020;
+  // Central glow-sphere
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.35, 1),
+    new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 1.4, roughness: 0.25, metalness: 0.1 })
+  );
+  core.position.y = 0.9;
+  grp.add(core);
+  // Halo-ring
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(0.50, 0.04, 8, 28),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6 })
+  );
+  halo.position.y = 0.9;
+  halo.rotation.x = Math.PI / 2;
+  grp.add(halo);
+  // Ground-mark ring
+  const ground = new THREE.Mesh(
+    new THREE.RingGeometry(0.45, 0.65, 28),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0.36;
+  grp.add(ground);
+  // Pointlight
+  const light = new THREE.PointLight(color, 0.7, 4, 2);
+  light.position.y = 0.9;
+  grp.add(light);
+  // Icon ovanför (sphere som matchar typ)
+  if (isHeal) {
+    // Plus-symbol av två boxes ovanför
+    const plusMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const ph = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.07, 0.07), plusMat);
+    ph.position.y = 0.9;
+    grp.add(ph);
+    const pv = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.30, 0.07), plusMat);
+    pv.position.y = 0.9;
+    grp.add(pv);
+  } else {
+    // Pil/wing-symbol
+    const wing = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.30, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    wing.position.y = 0.9;
+    wing.rotation.z = Math.PI / 2;
+    grp.add(wing);
+  }
+  grp.userData.orbType = isHeal ? 'heal' : 'speed';
+  return grp;
+}
+
+function syncDuelOrbsFromState(orbList) {
+  const seen = new Set();
+  for (const o of (orbList || [])) {
+    seen.add(o.i);
+    let entry = duelOrbMeshes.get(o.i);
+    if (!entry) {
+      const grp = makeDuelOrbMesh(o.k);
+      grp.position.set(o.x, 0, o.z);
+      scene.add(grp);
+      entry = { grp, age: 0 };
+      duelOrbMeshes.set(o.i, entry);
+    } else {
+      // Position kan justeras (men de rör sig inte i normalfallet)
+      entry.grp.position.x = o.x;
+      entry.grp.position.z = o.z;
+    }
+  }
+  // Ta bort orbs som inte längre finns (consumed eller duel slut)
+  for (const [id, entry] of duelOrbMeshes) {
+    if (!seen.has(id)) {
+      scene.remove(entry.grp);
+      duelOrbMeshes.delete(id);
+    }
+  }
+}
+
+function tickDuelOrbVisual(dt) {
+  // Bob + rotation
+  for (const entry of duelOrbMeshes.values()) {
+    entry.age += dt;
+    entry.grp.position.y = Math.sin(entry.age * 3) * 0.10;
+    entry.grp.rotation.y += dt * 1.3;
+  }
+}
+
+function clearDuelOrbMeshes() {
+  for (const entry of duelOrbMeshes.values()) scene.remove(entry.grp);
+  duelOrbMeshes.clear();
+}
 
 const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
@@ -7127,6 +7238,7 @@ function tick() {
   animateAllCharacters(dt);
   animateSceneProps(dt, now);
   tickAllHpBars();
+  tickDuelOrbVisual(dt);
 
   updateHud();
   updateDuelHud();

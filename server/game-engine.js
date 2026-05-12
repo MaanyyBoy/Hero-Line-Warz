@@ -220,7 +220,16 @@ const DUEL_ANNOUNCE_TIME = 4;   // sek att visa vinnare efter duel
 // Arena ligger separat från huvudkartan (centrum z=35)
 const ARENA_CX = 0;
 const ARENA_CZ = 35;
-const ARENA_RADIUS = 9;
+const ARENA_RADIUS = 12;   // ~30% större än 9
+const ARENA_VISUAL_RADIUS = ARENA_RADIUS;  // för klienten
+// Duel pickup orbs
+const DUEL_ORB_HEAL_PCT = 0.15;            // 15% av maxHP
+const DUEL_ORB_SPEED_BONUS = 0.30;         // +30% movement speed
+const DUEL_ORB_SPEED_DURATION = 1.0;       // sek
+const DUEL_ORB_COUNT_PER_TYPE = 3;
+const DUEL_ORB_SPAWN_WINDOW = 30;          // alla orbs har spawnat inom 30s
+const DUEL_ORB_PICKUP_RADIUS = 0.7;        // m
+const DUEL_ORB_MIN_SPAWN = 0.5;            // sek tidigaste spawn-tid
 
 // Hero-kopia (Fas 5): duel-belöning för max-level vinnare istället för level-up
 const HERO_COPY_STAT_RATIO = 0.7;
@@ -636,6 +645,10 @@ function createGameState() {
     duelCount: 0,
     duelLastWinner: 0,         // sida-idx, 0=ingen/tie
     duelAnnounceTimer: 0,      // sek kvar att visa vinnar-banner
+    duelOrbs: [],              // aktiva pickup-orbs i arenan
+    duelOrbQueue: [],          // orbs som väntar på att spawna (sorterad på t)
+    duelArenaTime: 0,          // tid sedan duel startade (sek)
+    duelOrbIdCounter: 0,
   };
 }
 
@@ -1069,17 +1082,32 @@ function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
 
 // Lös ut cast-mark (x,z) för target-baserade skills (Nova, Black Hole)
 function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
+  let tx, tz;
   // Tap + lock: använd target's position
   if (ev.tap === true && side.targetId) {
     const t = resolveTargetEntity(side, opp, state);
-    if (t) return { x: t.x, z: t.z };
+    if (t) { tx = t.x; tz = t.z; }
   }
-  // Drag: dir × distance från hero
-  let dx = ev.dx || 0, dz = ev.dz || 0;
-  const len = Math.hypot(dx, dz);
-  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
-  else { dx /= len; dz /= len; }
-  return { x: side.hero.x + dx * defaultDistance, z: side.hero.z + dz * defaultDistance };
+  if (tx === undefined) {
+    // Drag: dir × distance från hero
+    let dx = ev.dx || 0, dz = ev.dz || 0;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+    else { dx /= len; dz /= len; }
+    tx = side.hero.x + dx * defaultDistance;
+    tz = side.hero.z + dz * defaultDistance;
+  }
+  // Clamp till arenan under duel så skills inte landar utanför
+  if (state && state.duelActive) {
+    const dx = tx - ARENA_CX, dz = tz - ARENA_CZ;
+    const d = Math.hypot(dx, dz);
+    const maxR = ARENA_RADIUS - 0.5;
+    if (d > maxR) {
+      tx = ARENA_CX + (dx / d) * maxR;
+      tz = ARENA_CZ + (dz / d) * maxR;
+    }
+  }
+  return { x: tx, z: tz };
 }
 
 function findClosestHostile(side, opp, x, z, maxDist, state) {
@@ -1827,8 +1855,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const ndx = joyX / mag, ndz = joyZ / mag;
   side.hero.facingX = ndx;
   side.hero.facingZ = ndz;
-  const nx = side.hero.x + ndx * side.moveSpeed * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * strength * dt;
+  const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * strength * dt;
   const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
@@ -2093,10 +2122,22 @@ function startDuel(state) {
   state.duelActive = true;
   state.duelMatchTimer = DUEL_DURATION;
   state.duelAnnounceTimer = 0;
+  state.duelArenaTime = 0;
+  state.duelOrbs = [];
+  state.duelOrbIdCounter = 0;
+  // Schemalägg 3 heal + 3 speed orbs på random tider inom första 30s
+  const queue = [];
+  for (let i = 0; i < DUEL_ORB_COUNT_PER_TYPE; i++) {
+    queue.push({ type: 'heal', t: DUEL_ORB_MIN_SPAWN + Math.random() * (DUEL_ORB_SPAWN_WINDOW - DUEL_ORB_MIN_SPAWN) });
+    queue.push({ type: 'speed', t: DUEL_ORB_MIN_SPAWN + Math.random() * (DUEL_ORB_SPAWN_WINDOW - DUEL_ORB_MIN_SPAWN) });
+  }
+  queue.sort((a, b) => a.t - b.t);
+  state.duelOrbQueue = queue;
   // Teleportera båda hjältar in i arenan, full HP, rensa CD och projektiler
+  // Större arena (radius 12) — placera spelarna 7m från centrum istället för 5
   const positions = [
-    { x: ARENA_CX - 5, z: ARENA_CZ },         // side 1: västra sidan
-    { x: ARENA_CX + 5, z: ARENA_CZ },         // side 2: östra sidan
+    { x: ARENA_CX - 7, z: ARENA_CZ },         // side 1: västra sidan
+    { x: ARENA_CX + 7, z: ARENA_CZ },         // side 2: östra sidan
   ];
   for (const idx of [1, 2]) {
     const s = state.sides[idx];
@@ -2120,6 +2161,58 @@ function startDuel(state) {
     s.novaEffects = [];
     s.inDuel = true;
     s.heroFountainAura = false;
+    s.duelSpeedBuffRemaining = 0;
+  }
+}
+
+function spawnDuelOrb(state, type) {
+  // Random position inom arenan (uniform i area), minst 1m från kanten
+  const maxR = ARENA_RADIUS - 1.2;
+  const r = Math.sqrt(Math.random()) * maxR;
+  const ang = Math.random() * Math.PI * 2;
+  state.duelOrbIdCounter += 1;
+  state.duelOrbs.push({
+    id: state.duelOrbIdCounter,
+    type,
+    x: ARENA_CX + Math.cos(ang) * r,
+    z: ARENA_CZ + Math.sin(ang) * r,
+  });
+}
+
+function tickDuelOrbs(state, dt) {
+  state.duelArenaTime += dt;
+  // Spawn:a orbs vars t har passerat
+  while (state.duelOrbQueue.length > 0 && state.duelOrbQueue[0].t <= state.duelArenaTime) {
+    const next = state.duelOrbQueue.shift();
+    spawnDuelOrb(state, next.type);
+  }
+  // Tick speed-buff per side
+  for (const idx of [1, 2]) {
+    const s = state.sides[idx];
+    if (s && (s.duelSpeedBuffRemaining || 0) > 0) {
+      s.duelSpeedBuffRemaining = Math.max(0, s.duelSpeedBuffRemaining - dt);
+    }
+  }
+  // Pickup-check: hero touch
+  if (state.duelOrbs.length > 0) {
+    for (let i = state.duelOrbs.length - 1; i >= 0; i--) {
+      const orb = state.duelOrbs[i];
+      for (const idx of [1, 2]) {
+        const s = state.sides[idx];
+        if (!s || s.hero.dead) continue;
+        const d = Math.hypot(s.hero.x - orb.x, s.hero.z - orb.z);
+        if (d < DUEL_ORB_PICKUP_RADIUS) {
+          // Pickup!
+          if (orb.type === 'heal') {
+            s.hero.hp = Math.min(s.hero.maxHp, s.hero.hp + s.hero.maxHp * DUEL_ORB_HEAL_PCT);
+          } else if (orb.type === 'speed') {
+            s.duelSpeedBuffRemaining = DUEL_ORB_SPEED_DURATION;
+          }
+          state.duelOrbs.splice(i, 1);
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -2174,9 +2267,13 @@ function endDuel(state) {
     s.fireballs = [];
     s.novaEffects = [];
     s.inDuel = false;
+    s.duelSpeedBuffRemaining = 0;
   }
   state.duelActive = false;
   state.duelMatchTimer = 0;
+  state.duelOrbs = [];
+  state.duelOrbQueue = [];
+  state.duelArenaTime = 0;
   // Nästa duel om vi inte nått max
   state.duelTimer = state.duelCount < DUEL_MAX_COUNT ? DUEL_INTERVAL : Infinity;
 }
@@ -2228,6 +2325,8 @@ function tickGame(state, dt) {
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
     }
+    // Pickup-orbs (heal + speed)
+    tickDuelOrbs(state, dt);
     // Duel match timer
     state.duelMatchTimer = Math.max(0, state.duelMatchTimer - dt);
     const s1 = state.sides[1], s2 = state.sides[2];
@@ -2391,6 +2490,7 @@ function serializeSide(side) {
     gbuf: +(side.gandulfBuffRemaining || 0).toFixed(2),
     gbStk: side.gandulfBuffStacks || 0,
     shld: +(side.shield || 0).toFixed(1),
+    dSp: +(side.duelSpeedBuffRemaining || 0).toFixed(2),
     IWE: (side.ironWillExplosions || []).map(e => ({ id: e.id, x: e.x, z: e.z, life: e.life / e.maxLife })),
   };
 }
@@ -2408,6 +2508,7 @@ function serializeState(state) {
     dC: state.duelCount || 0,
     dW: state.duelLastWinner || 0,
     dAn: +(state.duelAnnounceTimer || 0).toFixed(2),
+    dO: (state.duelOrbs || []).map(o => ({ i: o.id, k: o.type === 'heal' ? 'h' : 's', x: +o.x.toFixed(2), z: +o.z.toFixed(2) })),
   };
 }
 
