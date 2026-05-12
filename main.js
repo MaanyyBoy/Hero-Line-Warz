@@ -1,8 +1,4 @@
 import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
-import { EffectComposer } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/OutputPass.js';
 
 // ============================================================
 // THREE.JS GRUND-SETUP
@@ -24,31 +20,15 @@ document.body.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
 
-// Bloom-postprocess via EffectComposer — bara emissiva ytor (skill-orbs, runor) bloomar.
-let bloomComposer = null;
-try {
-  bloomComposer = new EffectComposer(renderer);
-  bloomComposer.setSize(window.innerWidth, window.innerHeight);
-  bloomComposer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  bloomComposer.addPass(new RenderPass(scene, camera));
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.55,  // strength
-    0.7,   // radius
-    0.72   // threshold — bara klart upplysta pixlar bloomar
-  );
-  bloomComposer.addPass(bloomPass);
-  bloomComposer.addPass(new OutputPass());
-} catch (e) {
-  console.warn('Bloom composer setup failed, faller tillbaka till direkt rendering', e);
-  bloomComposer = null;
-}
+// Bloom-postprocessing borttagen tillfälligt — three.js' addons använder bare-specifier
+// 'three' internt vilket kräver importmap som inte funkar i alla browsers.
+// Återinförs när vi har ett mer browser-säkert sätt (esm.sh eller liknande).
+const bloomComposer = null;
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  if (bloomComposer) bloomComposer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // ============================================================
