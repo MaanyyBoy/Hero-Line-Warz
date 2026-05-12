@@ -62,7 +62,10 @@ const LEVEL_HP_PCT = 0.04;    // +4% max HP per level
 const LEVEL_MS_PCT = 0.01;    // +1% move-speed per level
 function xpForLevel(level) { return 50 * level; } // XP behövs för att gå från `level` → `level+1`
 const MONSTER_XP_REWARD = 10;
-const CREEP_XP_RATIO = 0.6;   // XP = creep.cost * 0.6
+const CREEP_XP_RATIO = 0.6;
+
+// Hero pick-fas
+const PICK_PHASE_DURATION = 60; // sek   // XP = creep.cost * 0.6
 
 const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
 
@@ -320,6 +323,8 @@ function createSide(idx) {
     level: 1,
     xp: 0,
     xpToNext: xpForLevel(1),
+    heroId: 'magiker',
+    heroPickConfirmed: false,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -348,6 +353,8 @@ function createGameState() {
     nextEntityId: 1,
     matchState: { gameOver: false, winner: 0 },
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
+    phase: 'pick',
+    pickTimer: PICK_PHASE_DURATION,
   };
 }
 
@@ -876,6 +883,19 @@ function applyEvent(state, sideIdx, ev) {
     }
     return;
   }
+  if (ev.type === 'hero-pick') {
+    if (state.phase !== 'pick') return;
+    if (typeof ev.heroId === 'string' && ev.heroId.length < 32) {
+      side.heroId = ev.heroId;
+      side.heroPickConfirmed = false; // ändrade val — unconfirm
+    }
+    return;
+  }
+  if (ev.type === 'hero-confirm') {
+    if (state.phase !== 'pick') return;
+    side.heroPickConfirmed = true;
+    return;
+  }
   if (ev.type === 'aa') {
     if (side.hero.dead) return;
     const opp = state.sides[3 - sideIdx];
@@ -964,6 +984,19 @@ function applyEvent(state, sideIdx, ev) {
 
 function tickGame(state, dt) {
   if (state.matchState.gameOver) return;
+  // Hero pick-fas: bara timer + transition. Inga waves/monsters under denna fas.
+  if (state.phase === 'pick') {
+    state.pickTimer = Math.max(0, state.pickTimer - dt);
+    const s1 = state.sides[1], s2 = state.sides[2];
+    const bothConfirmed = s1.heroPickConfirmed && s2.heroPickConfirmed;
+    const timeUp = state.pickTimer <= 0;
+    if (bothConfirmed || timeUp) {
+      state.phase = 'game';
+      recomputeSideStats(s1);
+      recomputeSideStats(s2);
+    }
+    return;
+  }
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     if (side.hero.dead) {
@@ -1042,6 +1075,8 @@ function serializeSide(side) {
     lv: side.level || 1,
     xp: side.xp || 0,
     xpN: side.xpToNext || 0,
+    hid: side.heroId || 'magiker',
+    hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
     M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: 10 })),
@@ -1058,6 +1093,8 @@ function serializeState(state) {
     t: 'st',
     m: { o: state.matchState.gameOver, win: state.matchState.winner },
     s: { 1: serializeSide(state.sides[1]), 2: serializeSide(state.sides[2]) },
+    ph: state.phase || 'game',
+    pT: +(state.pickTimer || 0).toFixed(1),
   };
 }
 

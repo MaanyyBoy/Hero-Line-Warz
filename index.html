@@ -572,6 +572,145 @@
       #orient { display: flex; }
     }
 
+    /* Hero pick-skärm */
+    #hero-pick {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #08111e 0%, #1a253b 100%);
+      color: #fff;
+      display: flex; flex-direction: column;
+      align-items: center;
+      padding: 24px 32px;
+      z-index: 400;
+      font: 14px/1.4 system-ui, sans-serif;
+      overflow-y: auto;
+    }
+    #hero-pick.hidden { display: none; }
+    .hp-header {
+      display: flex; align-items: center; gap: 16px;
+      margin-bottom: 18px;
+    }
+    .hp-header h2 {
+      margin: 0; font-size: 28px;
+      color: #ffd34a; letter-spacing: 1px;
+    }
+    #hp-timer {
+      background: rgba(0,0,0,0.5);
+      border: 2px solid rgba(255,211,74,0.5);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font: 700 22px/1 ui-monospace, monospace;
+      color: #ffd34a;
+      min-width: 50px;
+      text-align: center;
+    }
+    #hp-timer.urgent {
+      color: #ff8866;
+      border-color: rgba(255,136,102,0.7);
+      animation: hp-timer-pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes hp-timer-pulse {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.12); }
+    }
+    #hp-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(110px, 140px));
+      gap: 12px;
+      max-width: 760px;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+    .hp-card {
+      aspect-ratio: 3 / 4;
+      background: rgba(20,30,55,0.7);
+      border: 2px solid rgba(180,200,255,0.35);
+      border-radius: 10px;
+      padding: 10px 8px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: transform 0.12s ease-out, border-color 0.12s, background 0.12s;
+      touch-action: manipulation;
+      position: relative;
+      overflow: hidden;
+    }
+    .hp-card:hover {
+      border-color: rgba(180,200,255,0.7);
+      transform: translateY(-2px);
+    }
+    .hp-card.locked {
+      background: rgba(30,30,40,0.6);
+      border-style: dashed;
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .hp-card.locked:hover { transform: none; border-color: rgba(120,120,140,0.4); }
+    .hp-card.selected {
+      background: linear-gradient(135deg, rgba(70,120,200,0.7), rgba(120,80,200,0.6));
+      border-color: #ffd34a;
+      box-shadow: 0 0 18px rgba(255,211,74,0.45);
+    }
+    .hp-card.opp-selected {
+      border-color: #ff7766;
+      box-shadow: 0 0 18px rgba(255,119,102,0.4);
+    }
+    .hp-portrait {
+      width: 76px; height: 76px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #5a3eb0, #2a1f5a);
+      border: 2px solid rgba(255,255,255,0.3);
+      display: flex; align-items: center; justify-content: center;
+      font: 800 28px/1 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    .hp-card.locked .hp-portrait {
+      background: linear-gradient(135deg, #444, #222);
+      color: #888;
+    }
+    .hp-name {
+      font: 700 13px/1.2 system-ui, sans-serif;
+      text-align: center;
+      margin-bottom: 2px;
+    }
+    .hp-role {
+      font: 500 10px/1 system-ui, sans-serif;
+      opacity: 0.7;
+      text-align: center;
+    }
+    .hp-footer {
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      width: 100%; max-width: 500px;
+    }
+    #hp-status { font-size: 14px; opacity: 0.85; text-align: center; }
+    #hp-opp-status { font-size: 12px; opacity: 0.7; min-height: 16px; text-align: center; }
+    #hp-confirm {
+      background: linear-gradient(135deg, #4a8fcf 0%, #2a6fb0 100%);
+      color: #fff;
+      border: 2px solid rgba(180,220,255,0.7);
+      border-radius: 10px;
+      padding: 12px 36px;
+      font: 700 16px/1 system-ui, sans-serif;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      touch-action: manipulation;
+      min-width: 200px;
+    }
+    #hp-confirm:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      background: rgba(60,70,90,0.7);
+      border-color: rgba(120,140,170,0.4);
+    }
+    #hp-confirm.confirmed {
+      background: linear-gradient(135deg, #66bb6a 0%, #2e7d32 100%);
+      border-color: rgba(180,255,180,0.8);
+    }
+    #hp-confirm:active:not(:disabled) { transform: scale(0.97); }
+
     /* Desktop-tips */
     @media (pointer: fine) {
       #hud .hint::after { content: " · på dator: WASD + Q/F/E"; }
@@ -679,6 +818,19 @@
   <div id="orient">
     <div class="icon">🔄</div>
     <div><strong>Rotera enheten till landskap</strong><br>Spelet är gjort för bredskärm.</div>
+  </div>
+
+  <div id="hero-pick" class="hidden">
+    <div class="hp-header">
+      <h2>Välj din hjälte</h2>
+      <div id="hp-timer">60</div>
+    </div>
+    <div id="hp-grid"></div>
+    <div class="hp-footer">
+      <div id="hp-status">Välj en hjälte</div>
+      <div id="hp-opp-status"></div>
+      <button id="hp-confirm" disabled>Confirm</button>
+    </div>
   </div>
 
   <script type="module" src="./main.js"></script>

@@ -3131,11 +3131,16 @@ function animateAllCharacters(dt) {
 
 function applyRemoteState(state) {
   APP.lastStateRecv = state;
+  // Hero pick-fas sync
+  if (state.ph !== undefined) handleRemotePickState(state);
   for (const idx of [1, 2]) {
     const sData = state.s[idx];
     if (!sData) continue;
     const side = sides[idx];
     if (!side) continue;
+    // Hero pick info per side
+    if (sData.hid !== undefined) side.heroId = sData.hid;
+    if (sData.hpc !== undefined) side.heroPickConfirmed = !!sData.hpc;
     // Hjälte
     side.hero.x = sData.h.x;
     side.hero.z = sData.h.z;
@@ -4273,6 +4278,169 @@ function handleNetworkMessage(msg) {
   }
 }
 
+// ---- Hero pick-skärm ----
+// 10 hjältar — endast Magikern available just nu.
+const HEROES = [
+  { id: 'magiker',   name: 'Magikern',    role: 'Mage',         initial: 'M',   available: true  },
+  { id: 'hero-2',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-3',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-7',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-8',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-9',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'hero-10',   name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+];
+
+const heroPickEl = document.getElementById('hero-pick');
+const hpTimerEl = document.getElementById('hp-timer');
+const hpGridEl = document.getElementById('hp-grid');
+const hpStatusEl = document.getElementById('hp-status');
+const hpOppStatusEl = document.getElementById('hp-opp-status');
+const hpConfirmBtn = document.getElementById('hp-confirm');
+
+const heroPickState = {
+  active: false,
+  mode: null,           // 'solo' | 'host' | 'client'
+  selected: null,       // egen heroId
+  confirmed: false,     // egen confirm
+  timer: 60,
+  timerHandle: null,
+  oppSelected: null,    // andras heroId (MP)
+  oppConfirmed: false,
+};
+
+function renderHeroGrid() {
+  hpGridEl.innerHTML = '';
+  for (const h of HEROES) {
+    const card = document.createElement('div');
+    card.className = 'hp-card' + (h.available ? '' : ' locked');
+    card.dataset.heroId = h.id;
+    card.innerHTML = `<div class="hp-portrait">${h.initial}</div><div class="hp-name">${h.name}</div><div class="hp-role">${h.role}</div>`;
+    if (h.available) {
+      card.addEventListener('click', () => selectHero(h.id));
+    }
+    hpGridEl.appendChild(card);
+  }
+}
+
+function selectHero(heroId) {
+  if (heroPickState.confirmed) return;
+  const hero = HEROES.find(h => h.id === heroId);
+  if (!hero || !hero.available) return;
+  heroPickState.selected = heroId;
+  refreshHeroCardUI();
+  hpConfirmBtn.disabled = false;
+  hpStatusEl.textContent = `Vald: ${hero.name}`;
+  if (heroPickState.mode === 'host' || heroPickState.mode === 'client') {
+    sendOrApplyEvent({ type: 'hero-pick', heroId });
+  }
+}
+
+function refreshHeroCardUI() {
+  for (const card of hpGridEl.querySelectorAll('.hp-card')) {
+    const id = card.dataset.heroId;
+    card.classList.toggle('selected', id === heroPickState.selected);
+    card.classList.toggle('opp-selected', !!heroPickState.oppSelected && id === heroPickState.oppSelected && id !== heroPickState.selected);
+  }
+}
+
+function confirmHero() {
+  if (!heroPickState.selected || heroPickState.confirmed) return;
+  heroPickState.confirmed = true;
+  hpConfirmBtn.disabled = true;
+  hpConfirmBtn.classList.add('confirmed');
+  if (heroPickState.mode === 'solo') {
+    hpConfirmBtn.textContent = 'Startar...';
+    finishHeroPick();
+  } else {
+    hpConfirmBtn.textContent = 'Väntar på motståndaren...';
+    sendOrApplyEvent({ type: 'hero-confirm' });
+  }
+}
+
+function finishHeroPick() {
+  if (heroPickState.timerHandle) {
+    clearInterval(heroPickState.timerHandle);
+    heroPickState.timerHandle = null;
+  }
+  heroPickState.active = false;
+  heroPickState.mode = null;
+  enterPlayPhase();
+}
+
+function showHeroPick(mode) {
+  setupMatch(mode);  // Skapa sidor + sätt APP.mode INNAN pick visas
+  heroPickState.active = true;
+  heroPickState.mode = mode;
+  heroPickState.selected = null;
+  heroPickState.confirmed = false;
+  heroPickState.timer = 60;
+  heroPickState.oppSelected = null;
+  heroPickState.oppConfirmed = false;
+  hpConfirmBtn.disabled = true;
+  hpConfirmBtn.classList.remove('confirmed');
+  hpConfirmBtn.textContent = 'Confirm';
+  hpStatusEl.textContent = 'Välj en hjälte';
+  hpOppStatusEl.textContent = (mode === 'solo') ? '' : 'Motståndaren väljer...';
+  hpTimerEl.textContent = '60';
+  hpTimerEl.classList.remove('urgent');
+  renderHeroGrid();
+  lobbyEl.classList.add('hidden');
+  heroPickEl.classList.remove('hidden');
+
+  if (heroPickState.timerHandle) clearInterval(heroPickState.timerHandle);
+  // Solo: lokal timer. MP: server driver timern via state.pT.
+  if (mode === 'solo') {
+    heroPickState.timerHandle = setInterval(() => {
+      heroPickState.timer -= 1;
+      if (heroPickState.timer <= 0) {
+        heroPickState.timer = 0;
+        if (!heroPickState.selected) heroPickState.selected = 'magiker';
+        if (!heroPickState.confirmed) confirmHero();
+      }
+      hpTimerEl.textContent = String(heroPickState.timer);
+      hpTimerEl.classList.toggle('urgent', heroPickState.timer <= 10);
+    }, 1000);
+  }
+}
+
+if (hpConfirmBtn) hpConfirmBtn.addEventListener('click', confirmHero);
+
+// MP: hantera server-state under hero-pick. Synkronisera timer + motståndarens val/confirm + transition.
+function handleRemotePickState(state) {
+  if (!heroPickState.active || heroPickState.mode === 'solo') return;
+  // Server-timer auktoritativ
+  if (state.pT !== undefined) {
+    const t = Math.ceil(state.pT);
+    heroPickState.timer = t;
+    hpTimerEl.textContent = String(t);
+    hpTimerEl.classList.toggle('urgent', t <= 10);
+  }
+  // Motståndarens val + confirm-status
+  const oppIdx = 3 - APP.localSide;
+  const oppData = state.s && state.s[oppIdx];
+  if (oppData) {
+    heroPickState.oppSelected = oppData.hid || null;
+    heroPickState.oppConfirmed = !!oppData.hpc;
+    refreshHeroCardUI();
+    if (heroPickState.oppConfirmed) {
+      const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
+      hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : heroPickState.oppSelected}`;
+    } else if (heroPickState.oppSelected) {
+      const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
+      hpOppStatusEl.textContent = `Motståndaren tittar på: ${oppHero ? oppHero.name : '...'}`;
+    } else {
+      hpOppStatusEl.textContent = 'Motståndaren väljer...';
+    }
+  }
+  // Transition till spel
+  if (state.ph === 'game') {
+    finishHeroPick();
+  }
+}
+
 // ---- Lobby logic ----
 
 const lobbyEl = document.getElementById('lobby');
@@ -4379,12 +4547,12 @@ function onHosted(code) {
 
 function onPeerJoined() {
   if (APP.mode !== 'lobby') return;
-  startMatch('host');
+  showHeroPick('host');
 }
 
 function onJoined(code) {
   if (APP.mode !== 'lobby') return;
-  startMatch('client');
+  showHeroPick('client');
 }
 
 async function hostGame() {
@@ -4425,7 +4593,7 @@ async function joinGame() {
   wsSendEnvelope({ t: 'join', code });
 }
 
-function startMatch(mode) {
+function setupMatch(mode) {
   APP.mode = mode;
   if (mode === 'solo') {
     APP.localSide = 1;
@@ -4442,14 +4610,20 @@ function startMatch(mode) {
     APP.twoSides = true;
     sides[1] = createSide(1);
     sides[2] = createSide(2);
-    // Stoppa lokal simulering — state kommer från host
   }
   matchState.gameOver = false;
   matchState.gameWon = false;
   matchState.winner = 0;
   resetIncomeTickTracking();
   lobbyEl.classList.add('hidden');
+}
+function startMatch(mode) {
+  setupMatch(mode);
+  enterPlayPhase();
+}
+function enterPlayPhase() {
   document.body.classList.add('in-game');
+  if (heroPickEl) heroPickEl.classList.add('hidden');
 }
 
 function returnToLobby() {
@@ -4463,6 +4637,14 @@ function returnToLobby() {
   }
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
+  // Avbryt hero-pick om aktiv
+  if (heroPickEl) heroPickEl.classList.add('hidden');
+  if (heroPickState.timerHandle) {
+    clearInterval(heroPickState.timerHandle);
+    heroPickState.timerHandle = null;
+  }
+  heroPickState.active = false;
+  heroPickState.mode = null;
   lobbyEl.classList.remove('hidden');
   showLobbyPanel('main');
   APP.mode = 'lobby';
@@ -4495,7 +4677,7 @@ lobbyCodeDisplayEl.addEventListener('click', () => {
     });
   }
 });
-document.getElementById('btn-solo').addEventListener('click', () => startMatch('solo'));
+document.getElementById('btn-solo').addEventListener('click', () => showHeroPick('solo'));
 
 // ============================================================
 // HUVUDLOOP
