@@ -163,6 +163,12 @@ const GIMLU_PASSIVE_TIER2_REGEN = 0.05;
 const GIMLU_PASSIVE_TIER3_HP = 0.40;   // <40% → +20% mer DR (40% totalt) + var 3:e dmg immun
 const GIMLU_PASSIVE_TIER3_DR = 0.20;
 const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
+// Gandulf passive (Arcane Convergence)
+const GANDULF_BUFF_DURATION = 3.0;
+const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;  // 5% skill-dmg per enemy hit (3s)
+const GANDULF_BUFF_CDR_PER_STACK = 0.05;        // 5% CDR per enemy hit
+const GANDULF_SHIELD_HITS = 3;
+const GANDULF_SHIELD_PCT = 0.30;                // 30% av maxHP
 // Black Hole (E): target-AoE pull + explosion vid slutet
 const BLACKHOLE_RADIUS = 3.5;
 const BLACKHOLE_PULL_SPEED = 2.5;
@@ -446,6 +452,29 @@ function recomputeSideStats(side) {
   side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
 }
 
+// Gandulf passive-helpers — buff/shield på skill-hit
+function gandulfSkillDmgMul(side) {
+  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
+  return 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_SKILL_DMG_PER_STACK;
+}
+function gandulfCdrMul(side) {
+  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
+  const pct = (side.gandulfBuffStacks || 0) * GANDULF_BUFF_CDR_PER_STACK;
+  return Math.max(0.1, 1 - pct);
+}
+function onGandulfSkillHit(side, target) {
+  if (side.heroId !== 'magiker') return;
+  side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
+  side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
+  if (target && typeof target === 'object') {
+    target.gandulfHits = (target.gandulfHits || 0) + 1;
+    if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
+      const amt = side.hero.maxHp * GANDULF_SHIELD_PCT;
+      side.shield = Math.max(side.shield || 0, amt);
+    }
+  }
+}
+
 function damageHero(side, amount) {
   if (side.hero.dead) return;
   // Gimlu passive Stalwart Resolve — tröskelbaserad DR + var 3:e instance immune vid <40%
@@ -462,7 +491,12 @@ function damageHero(side, amount) {
   const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  // Gandulf shield absorberar först
+  if ((side.shield || 0) > 0 && final > 0) {
+    if (side.shield >= final) { side.shield -= final; final = 0; }
+    else { final -= side.shield; side.shield = 0; }
+  }
   side.hero.hp = Math.max(0, side.hero.hp - final);
   // Titans Taunt: heala tillbaka 20% av tagen skada
   if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
@@ -554,6 +588,9 @@ function createSide(idx) {
     legolusAaCounter: 0,
     legolusSplitPending: false,
     gimluDmgInstanceCount: 0,
+    gandulfBuffStacks: 0,
+    gandulfBuffRemaining: 0,
+    shield: 0,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -1297,10 +1334,11 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
-  side.skills.q.cd = side.skills.q.max;
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
   const opp = state.sides[3 - sideIdx];
-  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
-  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1);
+  const passiveMul = gandulfSkillDmgMul(side);
+  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * passiveMul;
+  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1) * passiveMul;
   // Spawna cone-effekt för klient-visuell (lever 0.6s)
   side.fireWaves = side.fireWaves || [];
   side.fireWaves.push({
@@ -1321,6 +1359,7 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (!inCone(m.x, m.z)) continue;
+    onGandulfSkillHit(side, m);
     applySkillDamageToMonster(state, side, opp, j, directDmg);
     if (m.hp > 0) {
       m.dotRemaining = FIREWAVE_DOT_DURATION;
@@ -1330,6 +1369,7 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
     if (!inCone(c.x, c.z)) continue;
+    onGandulfSkillHit(side, c);
     applySkillDamageToCreep(state, side, opp, c, directDmg);
     if (c.hp > 0) {
       c.dotRemaining = FIREWAVE_DOT_DURATION;
@@ -1341,6 +1381,7 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   }
   // Duel: träffa opp.hero om i cone
   if (state.duelActive && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
+    onGandulfSkillHit(side, opp.hero);
     applySkillDamageToOppHero(state, side, opp, directDmg);
     if (!opp.hero.dead) {
       opp.hero.dotRemaining = FIREWAVE_DOT_DURATION;
@@ -1391,7 +1432,7 @@ function updateFireballs(state, side, opp, dt) {
 function castFrostnova(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
-  side.skills.f.cd = side.skills.f.max;
+  side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
   const opp = state.sides[3 - sideIdx];
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, NOVA_CAST_DISTANCE);
   side.novaEffects.push({
@@ -1399,12 +1440,12 @@ function castFrostnova(state, sideIdx, ev) {
     x: center.x, z: center.z,
     life: 0.6, maxLife: 0.6,
   });
-  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.x - center.x, m.z - center.z) < NOVA_RADIUS) {
-      // Träff: om redan frusen → shatter. Annars: skada + frys.
       const wasFrozen = (m.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, m);
       applySkillDamageToMonster(state, side, opp, j, novaDmg);
       const stillAlive = side.monsters[j] === m && m.hp > 0;
       if (stillAlive && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
@@ -1414,6 +1455,7 @@ function castFrostnova(state, sideIdx, ev) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.x - center.x, c.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (c.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, c);
       applySkillDamageToCreep(state, side, opp, c, novaDmg);
       if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
       else if (c.hp <= 0) {
@@ -1422,10 +1464,10 @@ function castFrostnova(state, sideIdx, ev) {
       }
     }
   }
-  // Duel: nova träffar opp.hero om i radie
   if (state.duelActive && opp && !opp.hero.dead) {
     if (Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (opp.hero.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, opp.hero);
       applySkillDamageToOppHero(state, side, opp, novaDmg);
       if (!opp.hero.dead && !wasFrozen) opp.hero.frozenTime = NOVA_FREEZE_TIME;
     }
@@ -1457,9 +1499,9 @@ function castBlink(state, sideIdx, ev) {
   if (side.hero.dead || side.skills.e.cd > 0) return;
   const opp = state.sides[3 - sideIdx];
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, BLACKHOLE_CAST_DISTANCE);
-  side.skills.e.cd = side.skills.e.max;
+  side.skills.e.cd = side.skills.e.max * gandulfCdrMul(side);
   if (!side.blackHoles) side.blackHoles = [];
-  const skillDmgMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const skillDmgMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   side.blackHoles.push({
     id: state.nextEntityId++,
     x: center.x, z: center.z,
@@ -1507,18 +1549,21 @@ function updateBlackHoles(state, side, opp, dt) {
       for (let j = side.monsters.length - 1; j >= 0; j--) {
         const m = side.monsters[j];
         if (Math.hypot(m.x - bh.x, m.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          onGandulfSkillHit(side, m);
           applySkillDamageToMonster(state, side, opp, j, bh.explosionDmg);
         }
       }
       if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
         const c = opp.playerCreeps[j];
         if (Math.hypot(c.x - bh.x, c.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          onGandulfSkillHit(side, c);
           applySkillDamageToCreep(state, side, opp, c, bh.explosionDmg);
           if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
       if (state.duelActive && opp && !opp.hero.dead) {
         if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+          onGandulfSkillHit(side, opp.hero);
           applySkillDamageToOppHero(state, side, opp, bh.explosionDmg);
         }
       }
@@ -2260,6 +2305,10 @@ function tickGame(state, dt) {
     updateIronWill(state, side, opp, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+    if ((side.gandulfBuffRemaining || 0) > 0) {
+      side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
+      if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0;
+    }
     // Iron will explosion-effects life-tick
     if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
       side.ironWillExplosions[k].life -= dt;
@@ -2338,6 +2387,9 @@ function serializeSide(side) {
     taunt: +(side.titansTauntRemaining || 0).toFixed(2),
     iw: +(side.ironWillRemaining || 0).toFixed(2),
     iwS: +(side.ironWillStored || 0).toFixed(1),
+    gbuf: +(side.gandulfBuffRemaining || 0).toFixed(2),
+    gbStk: side.gandulfBuffStacks || 0,
+    shld: +(side.shield || 0).toFixed(1),
     IWE: (side.ironWillExplosions || []).map(e => ({ id: e.id, x: e.x, z: e.z, life: e.life / e.maxLife })),
   };
 }

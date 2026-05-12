@@ -1296,6 +1296,12 @@ const GIMLU_PASSIVE_TIER2_REGEN = 0.05;
 const GIMLU_PASSIVE_TIER3_HP = 0.40;
 const GIMLU_PASSIVE_TIER3_DR = 0.20;
 const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
+// Gandulf passive
+const GANDULF_BUFF_DURATION = 3.0;
+const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;
+const GANDULF_BUFF_CDR_PER_STACK = 0.05;
+const GANDULF_SHIELD_HITS = 3;
+const GANDULF_SHIELD_PCT = 0.30;
 // Bakåtkompabilitet
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
@@ -2320,6 +2326,9 @@ function createSide(idx) {
     legolusAaCounter: 0,
     legolusSplitPending: false,
     gimluDmgInstanceCount: 0,
+    gandulfBuffStacks: 0,
+    gandulfBuffRemaining: 0,
+    shield: 0,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -3175,10 +3184,11 @@ function hostCastEldklot(side, dirX, dirZ) {
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
-  side.skills.q.cd = side.skills.q.max;
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
   const opp = sides[3 - side.idx];
-  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
-  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1);
+  const passiveMul = gandulfSkillDmgMul(side);
+  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * passiveMul;
+  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1) * passiveMul;
   // Cone-mesh (ConeGeometry) — pekar i dx/dz, fade:as
   const coneMat = new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
   const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE), FIREWAVE_LENGTH, 16, 1, true), coneMat);
@@ -3200,12 +3210,14 @@ function hostCastEldklot(side, dirX, dirZ) {
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
+    onGandulfSkillHit(side, m);
     soloApplySkillDmgToMonster(side, opp, j, directDmg);
     if (m.hp > 0) { m.dotRemaining = FIREWAVE_DOT_DURATION; m.dotPerSec = dotDps; }
   }
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
     if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
+    onGandulfSkillHit(side, c);
     soloApplySkillDmgToCreep(side, opp, c, directDmg);
     if (c.hp > 0) { c.dotRemaining = FIREWAVE_DOT_DURATION; c.dotPerSec = dotDps; }
     else { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
@@ -3251,7 +3263,7 @@ function updateFireballs(side, dt) {
 // Frost Nova (F): target-AoE freeze + shatter.
 function hostCastFrostnova(side, ev) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
-  side.skills.f.cd = side.skills.f.max;
+  side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
   const opp = sides[3 - side.idx];
   const center = soloResolveSkillGroundTarget(side, ev || {}, NOVA_CAST_DISTANCE);
   const ring = new THREE.Mesh(
@@ -3262,13 +3274,13 @@ function hostCastFrostnova(side, ev) {
   ring.position.set(center.x, 0.08, center.z);
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
-  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.mesh.position.x - center.x, m.mesh.position.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (m.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, m);
       soloApplySkillDmgToMonster(side, opp, j, novaDmg);
-      // Om monstret fortfarande lever och inte var fruset — frys
       const stillExists = side.monsters[j] === m;
       if (stillExists && m.hp > 0 && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
     }
@@ -3277,6 +3289,7 @@ function hostCastFrostnova(side, ev) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.mesh.position.x - center.x, c.mesh.position.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (c.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, c);
       soloApplySkillDmgToCreep(side, opp, c, novaDmg);
       if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
       else if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
@@ -3310,7 +3323,7 @@ function updateNovaEffects(side, dt) {
 // Black Hole (E): spawnar black hole vid target. Suger in 3s + explosion vid slut.
 function hostCastBlink(side, ev) {
   if (side.hero.dead || side.skills.e.cd > 0) return;
-  side.skills.e.cd = side.skills.e.max;
+  side.skills.e.cd = side.skills.e.max * gandulfCdrMul(side);
   const center = soloResolveSkillGroundTarget(side, ev || {}, BLACKHOLE_CAST_DISTANCE);
   const sphereMat = new THREE.MeshStandardMaterial({ color: 0x080012, emissive: 0x442288, emissiveIntensity: 0.9, roughness: 0.3, transparent: true, opacity: 0.95 });
   const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.8, 24, 16), sphereMat);
@@ -3367,16 +3380,19 @@ function updateBlackHolesSolo(side, dt) {
     bh.sphere.scale.setScalar(1 + 0.3 * Math.sin(t * 20));
     if (bh.life <= 0) {
       // Explosion
+      const dmgMul = gandulfSkillDmgMul(side);
       for (let j = side.monsters.length - 1; j >= 0; j--) {
         const m = side.monsters[j];
         if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
-          soloApplySkillDmgToMonster(side, opp, j, bh.explosionDmg);
+          soloApplySkillDmgToMonster(side, opp, j, bh.explosionDmg * dmgMul);
+          onGandulfSkillHit(side, m);
         }
       }
       if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
         const c = opp.playerCreeps[j];
         if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
-          soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg);
+          soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg * dmgMul);
+          onGandulfSkillHit(side, c);
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
@@ -3882,9 +3898,30 @@ function recomputeSideStats(side) {
 }
 
 // Skada till hjälten — applicerar dmgReductionMul från items + fontän-aura.
+function gandulfSkillDmgMul(side) {
+  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
+  return 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_SKILL_DMG_PER_STACK;
+}
+function gandulfCdrMul(side) {
+  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
+  const pct = (side.gandulfBuffStacks || 0) * GANDULF_BUFF_CDR_PER_STACK;
+  return Math.max(0.1, 1 - pct);
+}
+function onGandulfSkillHit(side, target) {
+  if (side.heroId !== 'magiker') return;
+  side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
+  side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
+  if (target && typeof target === 'object') {
+    target.gandulfHits = (target.gandulfHits || 0) + 1;
+    if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
+      const amt = side.hero.maxHp * GANDULF_SHIELD_PCT;
+      side.shield = Math.max(side.shield || 0, amt);
+    }
+  }
+}
+
 function damageHero(side, amount) {
   if (side.hero.dead) return;
-  // Gimlu passive — tröskelbaserad DR + var 3:e instance immune vid <40% HP
   let gimluDR = 0;
   if (side.heroId === 'gimlu') {
     const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
@@ -3898,7 +3935,12 @@ function damageHero(side, amount) {
   const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  // Gandulf shield absorberar först
+  if ((side.shield || 0) > 0 && final > 0) {
+    if (side.shield >= final) { side.shield -= final; final = 0; }
+    else { final -= side.shield; side.shield = 0; }
+  }
   side.hero.hp = Math.max(0, side.hero.hp - final);
   if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
     side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
@@ -4373,6 +4415,10 @@ function applyRemoteState(state) {
     side.titansTauntRemaining = sData.taunt || 0;
     side.ironWillRemaining = sData.iw || 0;
     side.ironWillStored = sData.iwS || 0;
+    // Gandulf passive
+    side.gandulfBuffRemaining = sData.gbuf || 0;
+    side.gandulfBuffStacks = sData.gbStk || 0;
+    side.shield = sData.shld || 0;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -5791,7 +5837,7 @@ const HERO_INFO = {
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
-    passive: { name: 'Arcane Echo', icon: '✦', desc: 'Var 4:e auto-attack är en AoE-pulse som skadar fiender runt träffpunkten.' },
+    passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Varje skill-träff på en fiende stackar en 3s buf: +5% skill-skada & +5% CDR per hit. Träffar du SAMMA mål med 3 skills får du en shield på 30% av max HP.' },
   },
   legolas: {
     skills: {
@@ -6521,6 +6567,10 @@ function simulateAll(dt) {
     updateHammersSolo(side, dt);
     updateIronWillSolo(side, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    if ((side.gandulfBuffRemaining || 0) > 0) {
+      side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
+      if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
+    }
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
