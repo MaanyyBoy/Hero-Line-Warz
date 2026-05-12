@@ -70,10 +70,65 @@ function makeNoiseTexture(baseColor, variance = 0.15, opts = {}) {
   return tex;
 }
 
+// Kakelmosaik-textur för lanes — varje tile ~1 m i världen.
+// Palette: mörkblå -> ljusblå -> grå. Fake-bevel via highlight + grout.
+function makeTileLaneTexture(tint = 0) {
+  const tilesX = 16, tilesY = 16, tilePx = 32;
+  const c = document.createElement('canvas');
+  c.width = tilesX * tilePx; c.height = tilesY * tilePx;
+  const ctx = c.getContext('2d');
+  const PALETTE = [
+    [26, 48, 86],     // dark blue
+    [38, 66, 110],    // mid blue
+    [56, 96, 150],    // bright blue
+    [86, 130, 175],   // light blue
+    [78, 100, 122],   // bluish grey
+    [108, 128, 148],  // grey
+  ];
+  for (let ty = 0; ty < tilesY; ty++) {
+    for (let tx = 0; tx < tilesX; tx++) {
+      const base = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+      const v = 0.80 + Math.random() * 0.35;
+      const r = Math.min(255, Math.max(0, Math.floor((base[0] + tint) * v)));
+      const g = Math.min(255, Math.max(0, Math.floor((base[1] + tint * 0.7) * v)));
+      const b = Math.min(255, Math.max(0, Math.floor(base[2] * v)));
+      const x0 = tx * tilePx, y0 = ty * tilePx;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x0, y0, tilePx, tilePx);
+      // Ljusare highlight (övre-vänster inre kant) — fake 3D bevel
+      ctx.strokeStyle = `rgba(${Math.min(255,r+50)},${Math.min(255,g+50)},${Math.min(255,b+55)},0.55)`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 2, y0 + tilePx - 3);
+      ctx.lineTo(x0 + 2, y0 + 2);
+      ctx.lineTo(x0 + tilePx - 3, y0 + 2);
+      ctx.stroke();
+      // Mörk grout (nedre-höger inre kant)
+      ctx.strokeStyle = 'rgba(0, 0, 12, 0.55)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x0 + tilePx - 2, y0 + 2);
+      ctx.lineTo(x0 + tilePx - 2, y0 + tilePx - 2);
+      ctx.lineTo(x0 + 2, y0 + tilePx - 2);
+      ctx.stroke();
+      // Tunn yttre grout-linje
+      ctx.strokeStyle = 'rgba(0, 0, 15, 0.75)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0 + 0.5, y0 + 0.5, tilePx - 1, tilePx - 1);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.NearestFilter;       // crisp tile-kanter
+  tex.minFilter = THREE.LinearMipMapNearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 const TEXTURES = {
   groundGrass: () => makeNoiseTexture([42, 60, 32], 0.2, { repeatX: 14, repeatY: 7, streaks: true }),
-  laneGrassMine: () => makeNoiseTexture([95, 120, 55], 0.18, { repeatX: 10, repeatY: 1.6, streaks: true }),
-  laneGrassOpp: () => makeNoiseTexture([70, 90, 105], 0.18, { repeatX: 10, repeatY: 1.6, streaks: true }),
+  laneTilesMine: () => makeTileLaneTexture(8),     // varmare tint
+  laneTilesOpp: () => makeTileLaneTexture(-6),     // svalare tint
   baseFloor1: () => makeNoiseTexture([130, 120, 100], 0.12, { repeatX: 5, repeatY: 4, speckColor: [180, 165, 140] }),
   baseFloor2: () => makeNoiseTexture([110, 115, 130], 0.12, { repeatX: 5, repeatY: 4, speckColor: [150, 160, 180] }),
   stoneWall: () => makeNoiseTexture([90, 84, 75], 0.18, { repeatX: 8, repeatY: 1.2, speckColor: [50, 45, 40] }),
@@ -105,21 +160,30 @@ const TEXTURES = {
   baseFloor2.receiveShadow = true;
   scene.add(baseFloor2);
 
-  function makeLane(cx, cz, length, width, tex) {
+  function makeLane(cx, cz, length, width, baseTex) {
+    // Klona texturen så varje lane kan ha sina egna repeat-värden
+    const tex = baseTex.clone();
+    tex.needsUpdate = true;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.LinearMipMapNearestFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    // 16 tiles per textur-repetition; vill ha ~1 tile per spelmeter
+    tex.repeat.set(length / 16, width / 16);
     const lane = new THREE.Mesh(
       new THREE.PlaneGeometry(length, width),
-      new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 1.0 })
+      new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.85 })
     );
     lane.rotation.x = -Math.PI / 2; lane.position.set(cx, 0.02, cz);
     lane.receiveShadow = true;
     scene.add(lane);
   }
-  const laneMineTex = TEXTURES.laneGrassMine();
-  const laneOppTex = TEXTURES.laneGrassOpp();
-  makeLane(-8.5, 12, 39, 6, laneMineTex);     // Sida 1 lane 1
-  makeLane(-8.5, 4,  39, 6, laneMineTex);     // Sida 1 lane 2
-  makeLane(-8.5, -4, 39, 6, laneOppTex);      // Sida 2 lane 1
-  makeLane(-8.5, -12, 39, 6, laneOppTex);     // Sida 2 lane 2
+  const laneMineTex = TEXTURES.laneTilesMine();
+  const laneOppTex = TEXTURES.laneTilesOpp();
+  makeLane(-8.5, 12, 39, 6, laneMineTex);
+  makeLane(-8.5, 4,  39, 6, laneMineTex);
+  makeLane(-8.5, -4, 39, 6, laneOppTex);
+  makeLane(-8.5, -12, 39, 6, laneOppTex);
 
   const wallTex = TEXTURES.stoneWall();
   function makeWall(cx, cz, w, d, h = 1.2) {
@@ -545,106 +609,213 @@ function setShadow(obj, cast = true, recv = false) {
   obj.traverse(o => { if (o.isMesh) { o.castShadow = cast; o.receiveShadow = recv; }});
 }
 
+// ---- Humanoid rig: capsule-lemmar med pivot-grupper för animation ----
+// Ben/armar är pivot-Groups vid leden; capsule-meshen hänger som barn nedanför.
+// Att rotera pivoten roterar lemmen kring leden, som anatomi. Pivoter sparas i
+// grp.userData.rig så animation-loopen hittar dem.
+
+function buildHumanoidRig(grp, opts = {}) {
+  const bodyMat = opts.bodyMat || new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.85 });
+  const armorMat = opts.armorMat || bodyMat;
+  const skinMat = opts.skinMat || bodyMat;
+  const limbMat = opts.limbMat || bodyMat;
+  const legMat = opts.legMat || armorMat;
+
+  const legR = opts.legR ?? 0.10;
+  const legH = opts.legH ?? 0.34;        // capsule-cylinderlängd (exklusive cap-rundning)
+  const armR = opts.armR ?? 0.085;
+  const armH = opts.armH ?? 0.36;
+  const torsoR = opts.torsoR ?? 0.21;
+  const torsoH = opts.torsoH ?? 0.46;
+  const headR = opts.headR ?? 0.17;
+  const torsoShape = opts.torsoShape || 'capsule'; // 'capsule' | 'cylinder'
+
+  // Höft-höjd = total ben-längd (cylinder + 2 caps)
+  const hipY = legH + legR * 2;
+  // Torson sitter ovanpå höften
+  const torsoBottom = hipY;
+  const torsoCenterY = torsoBottom + torsoH / 2 + (torsoShape === 'capsule' ? torsoR : 0);
+  const torsoTopY = torsoCenterY + torsoH / 2 + (torsoShape === 'capsule' ? torsoR : 0);
+  const shoulderY = torsoTopY - 0.05;
+  const headY = torsoTopY + headR + 0.04;
+
+  // ----- Ben (pivot vid höft, geometri hänger ned) -----
+  const legGeo = new THREE.CapsuleGeometry(legR, legH, 6, 12);
+
+  function makeLeg(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * (legR + 0.03), hipY, 0);
+    const mesh = new THREE.Mesh(legGeo, legMat);
+    mesh.position.y = -(legH / 2 + legR);   // foten vid pivot-y - hela ben-höjden
+    pivot.add(mesh);
+    grp.add(pivot);
+    return pivot;
+  }
+  const leftLeg = makeLeg(-1);
+  const rightLeg = makeLeg(1);
+
+  // ----- Torso -----
+  let torsoGeo;
+  if (torsoShape === 'capsule') {
+    torsoGeo = new THREE.CapsuleGeometry(torsoR, torsoH, 6, 14);
+  } else {
+    torsoGeo = new THREE.CylinderGeometry(torsoR * 0.92, torsoR, torsoH, 14);
+  }
+  const torso = new THREE.Mesh(torsoGeo, bodyMat);
+  torso.position.y = torsoCenterY;
+  grp.add(torso);
+
+  // ----- Armar (pivot vid axel, geometri hänger ned) -----
+  const armGeo = new THREE.CapsuleGeometry(armR, armH, 6, 10);
+
+  function makeArm(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * (torsoR + armR + 0.02), shoulderY, 0);
+    const mesh = new THREE.Mesh(armGeo, limbMat);
+    mesh.position.y = -(armH / 2 + armR);
+    pivot.add(mesh);
+    grp.add(pivot);
+    return pivot;
+  }
+  const leftArm = makeArm(-1);
+  const rightArm = makeArm(1);
+
+  // ----- Huvud -----
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(headR, 18, 14),
+    skinMat
+  );
+  head.position.y = headY;
+  grp.add(head);
+
+  const rig = { leftLeg, rightLeg, torso, leftArm, rightArm, head,
+                hipY, torsoCenterY, torsoTopY, shoulderY, headY, headR, torsoR,
+                bodyMat, armorMat, skinMat, limbMat };
+  grp.userData.rig = rig;
+  return rig;
+}
+
+function addGlowingEyes(grp, headY, eyeColor, intensity = 1.0) {
+  const mat = new THREE.MeshStandardMaterial({ color: eyeColor, emissive: eyeColor, emissiveIntensity: intensity });
+  const r = 0.04;
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), mat);
+    eye.position.set(side * 0.06, headY + 0.02, 0.14);
+    grp.add(eye);
+  }
+}
+
+function addOwnerPlume(grp, headY, plumeColor) {
+  const plume = new THREE.Mesh(
+    new THREE.ConeGeometry(0.05, 0.16, 8),
+    new THREE.MeshStandardMaterial({ color: plumeColor, emissive: plumeColor, emissiveIntensity: 0.5 })
+  );
+  plume.position.set(0, headY + 0.17, -0.04);
+  grp.add(plume);
+}
+
 function makeHeroMesh(idx) {
   const cfg = SIDE_CFG[idx];
   const grp = new THREE.Group();
 
-  const robeColor = idx === 1 ? 0x2a2456 : 0x3a1f3a;       // mörk lila/blå robe
-  const trimColor = cfg.heroColor;                         // accentkant från side
-  const skinColor = 0xe6c7a5;
+  const robeColor = idx === 1 ? 0x2a2456 : 0x3a1f3a;
+  const trimColor = cfg.heroColor;
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xe6c7a5, roughness: 0.55 });
+  const robeMat = new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.82 });
+  const robeDarkMat = new THREE.MeshStandardMaterial({ color: 0x1a1640, roughness: 0.85 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
 
-  // Robe (kropp)
-  const robe = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.30, 0.58, 1.25, 14),
-    new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.8 })
-  );
-  robe.position.y = 0.63;
-  grp.add(robe);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.10, legH: 0.30, armR: 0.085, armH: 0.34,
+    torsoR: 0.22, torsoH: 0.46, headR: 0.18,
+    torsoShape: 'capsule',
+    bodyMat: robeMat, armorMat: robeMat, skinMat,
+    limbMat: robeMat, legMat: bootMat,
+  });
 
-  // Trim på hem (ljusare ring)
-  const trim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.56, 0.07, 8, 18),
-    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.6, emissive: trimColor, emissiveIntensity: 0.15 })
-  );
-  trim.rotation.x = Math.PI / 2;
-  trim.position.y = 0.05;
-  grp.add(trim);
-
-  // Bälte
+  // Bälte runt torson
   const belt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.42, 0.1, 14),
-    new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.7 })
+    new THREE.TorusGeometry(rig.torsoR * 1.02, 0.045, 10, 22),
+    new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.7, metalness: 0.2 })
   );
-  belt.position.y = 0.95;
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = rig.hipY + 0.08;
   grp.add(belt);
 
-  // Krage (kappans överdel)
-  const collar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.30, 0.18, 12),
-    new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.75 })
+  // Robe-hem (extra "kjol" runt höften så roben hänger ut över byxorna)
+  const skirt = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 1.05, rig.torsoR * 1.45, 0.34, 16, 1, true),
+    robeMat
   );
-  collar.position.y = 1.34;
+  skirt.position.y = rig.hipY + 0.05;
+  grp.add(skirt);
+
+  // Trim på roben (glödande accent-rand)
+  const trim = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.42, 0.045, 10, 22),
+    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.5, emissive: trimColor, emissiveIntensity: 0.4 })
+  );
+  trim.rotation.x = Math.PI / 2;
+  trim.position.y = rig.hipY - 0.10;
+  grp.add(trim);
+
+  // Krage runt nacken
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, rig.torsoR, 0.16, 14),
+    robeMat
+  );
+  collar.position.y = rig.torsoTopY - 0.05;
   grp.add(collar);
 
-  // Huvud
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 16, 12),
-    new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.55 })
-  );
-  head.position.y = 1.55;
-  grp.add(head);
-
-  // Skägg (för stämningens skull)
+  // Skägg
   const beard = new THREE.Mesh(
-    new THREE.ConeGeometry(0.14, 0.22, 10),
-    new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.9 })
+    new THREE.ConeGeometry(0.13, 0.22, 12),
+    new THREE.MeshStandardMaterial({ color: 0xdde2e8, roughness: 0.9 })
   );
-  beard.position.set(0, 1.43, 0.13);
+  beard.position.set(0, rig.headY - 0.13, 0.11);
   beard.rotation.x = Math.PI;
   grp.add(beard);
 
-  // Trollkarlshatt
+  // Trollkarlshatt — brim + cone + stjärna
   const hatBrim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.27, 0.05, 8, 16),
-    new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.8 })
+    new THREE.TorusGeometry(0.26, 0.055, 10, 22),
+    robeMat
   );
   hatBrim.rotation.x = Math.PI / 2;
-  hatBrim.position.y = 1.72;
+  hatBrim.position.y = rig.headY + 0.16;
   grp.add(hatBrim);
   const hatCone = new THREE.Mesh(
-    new THREE.ConeGeometry(0.22, 0.55, 12),
-    new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.8 })
+    new THREE.ConeGeometry(0.21, 0.5, 16),
+    robeMat
   );
-  hatCone.position.y = 2.02;
-  hatCone.rotation.x = -0.12;
+  hatCone.position.y = rig.headY + 0.42;
+  hatCone.rotation.x = -0.10;
   grp.add(hatCone);
-  // Stjärna på hatten
   const hatStar = new THREE.Mesh(
     new THREE.OctahedronGeometry(0.06),
-    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.7, roughness: 0.3 })
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.9, roughness: 0.3 })
   );
-  hatStar.position.set(0, 1.95, 0.20);
+  hatStar.position.set(0, rig.headY + 0.36, 0.18);
   grp.add(hatStar);
 
-  // Stav (lutad något åt sidan)
+  // Stav: fäst som barn på höger arm-pivot så den rör sig med armen
   const staff = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.045, 0.045, 1.7, 8),
+    new THREE.CylinderGeometry(0.04, 0.04, 1.5, 10),
     new THREE.MeshStandardMaterial({ color: 0x2c1d10, roughness: 0.85 })
   );
-  staff.position.set(0.38, 0.95, 0.08);
-  staff.rotation.z = -0.06;
-  grp.add(staff);
+  staff.position.set(0.05, -0.55, 0.05);    // relativt arm-pivot
+  rig.rightArm.add(staff);
 
-  // Stavens kristall (glödande, sidans accent)
+  // Glödande kristall i toppen av staven (fäst på samma arm)
   const orb = new THREE.Mesh(
     new THREE.IcosahedronGeometry(0.13, 0),
     new THREE.MeshStandardMaterial({
-      color: trimColor, emissive: trimColor, emissiveIntensity: 1.2,
-      roughness: 0.2, metalness: 0.0,
+      color: trimColor, emissive: trimColor, emissiveIntensity: 1.4,
+      roughness: 0.2,
     })
   );
-  orb.position.set(0.38, 1.85, 0.08);
-  grp.add(orb);
+  orb.position.set(0.05, -1.25, 0.05);
+  rig.rightArm.add(orb);
 
   setShadow(grp, true, false);
   return grp;
@@ -652,43 +823,37 @@ function makeHeroMesh(idx) {
 
 function makeMonsterMesh() {
   const grp = new THREE.Group();
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1a, roughness: 0.95 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.95 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1a, roughness: 0.9 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.9 });
 
-  // Ben
-  const legGeo = new THREE.BoxGeometry(0.18, 0.42, 0.18);
-  const legL = new THREE.Mesh(legGeo, darkMat); legL.position.set(-0.16, 0.21, 0); grp.add(legL);
-  const legR = new THREE.Mesh(legGeo, darkMat); legR.position.set(0.16, 0.21, 0); grp.add(legR);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.10, legH: 0.30, armR: 0.09, armH: 0.32,
+    torsoR: 0.22, torsoH: 0.40, headR: 0.20,
+    torsoShape: 'capsule',
+    bodyMat: skinMat, armorMat: darkMat, skinMat,
+    limbMat: skinMat, legMat: darkMat,
+  });
 
-  // Torso
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.55, 0.42), skinMat);
-  torso.position.y = 0.72;
-  grp.add(torso);
+  // Glödande röda ögon
+  addGlowingEyes(grp, rig.headY, 0xff4422, 1.3);
 
-  // Armar (lite kortare än ben)
-  const armGeo = new THREE.BoxGeometry(0.16, 0.45, 0.16);
-  const armL = new THREE.Mesh(armGeo, skinMat); armL.position.set(-0.39, 0.75, 0); armL.rotation.z = 0.15; grp.add(armL);
-  const armR = new THREE.Mesh(armGeo, skinMat); armR.position.set(0.39, 0.75, 0); armR.rotation.z = -0.15; grp.add(armR);
-
-  // Huvud
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), skinMat);
-  head.position.y = 1.18;
-  head.scale.set(1, 0.95, 1.05);
-  grp.add(head);
-
-  // Glödande ögon
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3311, emissiveIntensity: 1.3 });
-  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), eyeMat);
-  eyeL.position.set(-0.07, 1.20, 0.20); grp.add(eyeL);
-  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), eyeMat);
-  eyeR.position.set(0.07, 1.20, 0.20); grp.add(eyeR);
-
-  // Små horn
+  // Horn
   const hornMat = new THREE.MeshStandardMaterial({ color: 0x1c130a, roughness: 0.8 });
-  const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.18, 8), hornMat);
-  hornL.position.set(-0.13, 1.40, 0); hornL.rotation.z = 0.25; grp.add(hornL);
-  const hornR = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.18, 8), hornMat);
-  hornR.position.set(0.13, 1.40, 0); hornR.rotation.z = -0.25; grp.add(hornR);
+  for (const side of [-1, 1]) {
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.18, 10), hornMat);
+    horn.position.set(side * 0.12, rig.headY + 0.16, 0);
+    horn.rotation.z = side * 0.30;
+    grp.add(horn);
+  }
+
+  // Hängande klor på högerarmen så monsterets attack känns hotfullt
+  const claw = new THREE.Mesh(
+    new THREE.ConeGeometry(0.04, 0.18, 6),
+    new THREE.MeshStandardMaterial({ color: 0xddd0c0, roughness: 0.5 })
+  );
+  claw.position.set(0, -0.52, 0);
+  claw.rotation.x = Math.PI;
+  rig.rightArm.add(claw);
 
   setShadow(grp, true, false);
   return grp;
@@ -698,272 +863,248 @@ function makeMonsterMesh() {
 // Varje arketyp har en distinkt silhuett. Tier-paletten ger färg/glow.
 // Plym/accent på huvudet använder ägar-sidans färg så det syns vems minion det är.
 
-function buildHumanoidBase(grp, palette, opts = {}) {
+// Material-fabrik för en arketyp + tier-palette
+function makePaletteMats(palette) {
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: palette.body, roughness: 0.85,
+    color: palette.body, roughness: 0.82,
     emissive: palette.glow > 0.6 ? palette.body : 0x000000,
-    emissiveIntensity: palette.glow > 0.6 ? 0.06 : 0,
+    emissiveIntensity: palette.glow > 0.6 ? 0.08 : 0,
   });
   const armorMat = new THREE.MeshStandardMaterial({
-    color: palette.armor, roughness: 0.55, metalness: 0.35,
+    color: palette.armor, roughness: 0.5, metalness: 0.4,
   });
-  const torsoW = opts.torsoW ?? 0.50;
-  const torsoH = opts.torsoH ?? 0.45;
-  const torsoD = opts.torsoD ?? 0.36;
-  const legW = opts.legW ?? 0.14;
-  const legH = opts.legH ?? 0.36;
-  const armW = opts.armW ?? 0.13;
-  const armH = opts.armH ?? 0.40;
-  const headR = opts.headR ?? 0.17;
-
-  // Ben
-  const legGeo = new THREE.BoxGeometry(legW, legH, legW);
-  const legL = new THREE.Mesh(legGeo, armorMat); legL.position.set(-0.13, legH/2, 0); grp.add(legL);
-  const legR = new THREE.Mesh(legGeo, armorMat); legR.position.set(0.13, legH/2, 0); grp.add(legR);
-
-  // Torso
-  const torsoY = legH + torsoH/2;
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(torsoW, torsoH, torsoD), bodyMat);
-  torso.position.y = torsoY; grp.add(torso);
-
-  // Armar
-  const armGeo = new THREE.BoxGeometry(armW, armH, armW);
-  const armY = torsoY - 0.02;
-  const armL = new THREE.Mesh(armGeo, bodyMat); armL.position.set(-(torsoW/2 + armW/2), armY, 0); grp.add(armL);
-  const armR = new THREE.Mesh(armGeo, bodyMat); armR.position.set(torsoW/2 + armW/2, armY, 0); grp.add(armR);
-
-  // Huvud
-  const headY = torsoY + torsoH/2 + headR + 0.04;
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(headR, 14, 10),
-    new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.82 })
-  );
-  head.position.y = headY; grp.add(head);
-
-  // Glödande ögon (för högre tiers)
-  if (palette.glow > 0) {
-    const eyeMat = new THREE.MeshStandardMaterial({
-      color: palette.eye, emissive: palette.eye, emissiveIntensity: palette.glow,
-    });
-    const eyeR = headR * 0.18;
-    const ex = headR * 0.32, ey = headY + 0.01, ez = headR * 0.78;
-    const eL = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 6, 5), eyeMat); eL.position.set(-ex, ey, ez); grp.add(eL);
-    const eRm = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 6, 5), eyeMat); eRm.position.set(ex, ey, ez); grp.add(eRm);
-  }
-
-  return { bodyMat, armorMat, torsoY, headY, headR, armY, torsoW, torsoH };
-}
-
-function addOwnerPlume(grp, headY, plumeColor) {
-  const plume = new THREE.Mesh(
-    new THREE.ConeGeometry(0.05, 0.18, 6),
-    new THREE.MeshStandardMaterial({ color: plumeColor, emissive: plumeColor, emissiveIntensity: 0.45 })
-  );
-  plume.position.set(0, headY + 0.20, -0.04);
-  grp.add(plume);
+  const skinMat = bodyMat;
+  return { bodyMat, armorMat, skinMat };
 }
 
 function buildSlasherBody(grp, palette, plumeColor) {
-  const b = buildHumanoidBase(grp, palette, {
-    torsoW: 0.42, torsoH: 0.40, torsoD: 0.30, legH: 0.32, armH: 0.34, headR: 0.15,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.085, legH: 0.30, armR: 0.07, armH: 0.32,
+    torsoR: 0.17, torsoH: 0.36, headR: 0.15,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Två dolkar
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xccd0d8, roughness: 0.3, metalness: 0.85 });
+  // Två dolkar — en på varje arm
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xcdd0d8, roughness: 0.3, metalness: 0.85 });
   const hiltMat = new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.9 });
-  for (const sign of [-1, 1]) {
-    const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.04), hiltMat);
-    hilt.position.set(sign * 0.30, b.armY - 0.20, 0.08);
-    grp.add(hilt);
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.20, 0.012), bladeMat);
-    blade.position.set(sign * 0.30, b.armY - 0.32, 0.08);
-    grp.add(blade);
+  for (const arm of [rig.leftArm, rig.rightArm]) {
+    const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.08, 8), hiltMat);
+    hilt.position.set(0, -0.50, 0.06);
+    arm.add(hilt);
+    const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.005, 0.18, 6), bladeMat);
+    blade.position.set(0, -0.63, 0.06);
+    arm.add(blade);
   }
-  addOwnerPlume(grp, b.headY, plumeColor);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY, plumeColor);
 }
 
 function buildArcherBody(grp, palette, plumeColor) {
-  const b = buildHumanoidBase(grp, palette, {
-    torsoW: 0.46, torsoH: 0.42, torsoD: 0.32, legH: 0.34, headR: 0.16,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.09, legH: 0.32, armR: 0.075, armH: 0.34,
+    torsoR: 0.19, torsoH: 0.40, headR: 0.16,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Båge — torus-segment (en halv båge)
+  // Båge i vänster hand
+  const bowMat = new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.8 });
   const bow = new THREE.Mesh(
-    new THREE.TorusGeometry(0.30, 0.025, 8, 20, Math.PI),
-    new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.8 })
+    new THREE.TorusGeometry(0.22, 0.022, 8, 20, Math.PI),
+    bowMat
   );
-  bow.position.set(-0.30, b.armY, 0.10);
-  bow.rotation.z = Math.PI / 2;
-  grp.add(bow);
-  // Bågsträng
+  bow.position.set(0.02, -0.50, 0.06);
+  bow.rotation.set(0, 0, -Math.PI / 2);
+  rig.leftArm.add(bow);
   const string = new THREE.Mesh(
-    new THREE.BoxGeometry(0.005, 0.58, 0.005),
-    new THREE.MeshStandardMaterial({ color: 0xddd0b0, roughness: 0.6 })
+    new THREE.CylinderGeometry(0.003, 0.003, 0.44, 4),
+    new THREE.MeshStandardMaterial({ color: 0xddd0b0, roughness: 0.7 })
   );
-  string.position.set(-0.30, b.armY, 0.10);
-  grp.add(string);
+  string.position.set(0.02, -0.50, 0.06);
+  rig.leftArm.add(string);
   // Koger på rygg
   const quiver = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.06, 0.28, 8),
+    new THREE.CylinderGeometry(0.06, 0.05, 0.26, 10),
     new THREE.MeshStandardMaterial({ color: 0x4a2818, roughness: 0.8 })
   );
-  quiver.position.set(0.10, b.torsoY + 0.05, -0.15);
+  quiver.position.set(0.08, rig.torsoCenterY + 0.05, -0.16);
   quiver.rotation.x = -0.3;
   grp.add(quiver);
-  addOwnerPlume(grp, b.headY, plumeColor);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY, plumeColor);
 }
 
 function buildBruiserBody(grp, palette, plumeColor) {
-  const b = buildHumanoidBase(grp, palette, {
-    torsoW: 0.56, torsoH: 0.48, torsoD: 0.40, legH: 0.36, armH: 0.42, headR: 0.18,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.105, legH: 0.34, armR: 0.095, armH: 0.36,
+    torsoR: 0.24, torsoH: 0.48, headR: 0.18,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Yxa: skaft + huvud
+  // Yxa i höger hand (skaft + blad)
   const handle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6),
+    new THREE.CylinderGeometry(0.035, 0.035, 0.55, 8),
     new THREE.MeshStandardMaterial({ color: 0x4a2e1a, roughness: 0.9 })
   );
-  handle.position.set(0.36, b.armY, 0.05);
-  handle.rotation.z = 0.15;
-  grp.add(handle);
+  handle.position.set(0.02, -0.45, 0.06);
+  rig.rightArm.add(handle);
   const axHead = new THREE.Mesh(
-    new THREE.BoxGeometry(0.22, 0.18, 0.05),
+    new THREE.BoxGeometry(0.20, 0.18, 0.045),
     new THREE.MeshStandardMaterial({ color: 0xa0a8b0, roughness: 0.4, metalness: 0.75 })
   );
-  axHead.position.set(0.46, b.armY + 0.22, 0.05);
-  axHead.rotation.z = 0.15;
-  grp.add(axHead);
+  axHead.position.set(0.13, -0.65, 0.06);
+  rig.rightArm.add(axHead);
   // Skulderplåtar
-  const shMat = new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.4, metalness: 0.5 });
-  for (const sign of [-1, 1]) {
-    const sh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), shMat);
-    sh.position.set(sign * 0.34, b.torsoY + b.torsoH/2 - 0.05, 0);
+  const shMat = new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.4, metalness: 0.55 });
+  for (const side of [-1, 1]) {
+    const sh = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), shMat);
+    sh.position.set(side * (rig.torsoR + 0.05), rig.shoulderY + 0.05, 0);
     sh.scale.set(1, 0.55, 1);
     grp.add(sh);
   }
-  addOwnerPlume(grp, b.headY, plumeColor);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY, plumeColor);
 }
 
 function buildMageBody(grp, palette, plumeColor) {
-  const grp2 = grp;
-  const b = buildHumanoidBase(grp2, palette, {
-    torsoW: 0.42, torsoH: 0.44, torsoD: 0.32, legH: 0.30, armH: 0.36, headR: 0.16,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.085, legH: 0.28, armR: 0.075, armH: 0.32,
+    torsoR: 0.18, torsoH: 0.42, headR: 0.16,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Lång hatt/hood (kon)
+  // Lång hood
   const hoodMat = new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.85 });
-  const hood = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.40, 12), hoodMat);
-  hood.position.set(0, b.headY + 0.16, 0);
+  const hood = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.42, 14), hoodMat);
+  hood.position.set(0, rig.headY + 0.12, 0);
   hood.rotation.x = -0.1;
   grp.add(hood);
-  // Stav
+  // Stav i höger hand
   const staff = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.035, 0.035, 0.95, 6),
+    new THREE.CylinderGeometry(0.03, 0.03, 0.95, 10),
     new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 })
   );
-  staff.position.set(0.30, b.torsoY + 0.10, 0.05);
-  grp.add(staff);
-  // Orb (glödande accent)
+  staff.position.set(0.04, -0.40, 0.05);
+  rig.rightArm.add(staff);
+  // Orb på toppen av staven
   const orb = new THREE.Mesh(
     new THREE.IcosahedronGeometry(0.10, 0),
     new THREE.MeshStandardMaterial({
-      color: palette.accent, emissive: palette.accent, emissiveIntensity: 1.0,
+      color: palette.accent, emissive: palette.accent, emissiveIntensity: 1.2,
       roughness: 0.2,
     })
   );
-  orb.position.set(0.30, b.torsoY + 0.62, 0.05);
-  grp.add(orb);
-  addOwnerPlume(grp, b.headY + 0.18, plumeColor);
+  orb.position.set(0.04, -0.92, 0.05);
+  rig.rightArm.add(orb);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY + 0.18, plumeColor);
 }
 
 function buildTankBody(grp, palette, plumeColor) {
-  const b = buildHumanoidBase(grp, palette, {
-    torsoW: 0.60, torsoH: 0.52, torsoD: 0.42, legH: 0.32, armH: 0.38, headR: 0.17,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.11, legH: 0.30, armR: 0.09, armH: 0.32,
+    torsoR: 0.25, torsoH: 0.50, headR: 0.18,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Stor sköld vänster
+  // Stor sköld på vänsterarm
   const shieldMat = new THREE.MeshStandardMaterial({
-    color: palette.accent, roughness: 0.5, metalness: 0.6,
+    color: palette.accent, roughness: 0.45, metalness: 0.6,
     emissive: palette.accent, emissiveIntensity: palette.glow * 0.3,
   });
-  const shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 0.40), shieldMat);
-  shield.position.set(-0.40, b.armY, 0.08);
-  grp.add(shield);
-  // Sköld-mittenboss
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.50, 0.38), shieldMat);
+  shield.position.set(-0.02, -0.45, 0.08);
+  rig.leftArm.add(shield);
+  // Sköldknopp
   const boss = new THREE.Mesh(
-    new THREE.SphereGeometry(0.07, 10, 8),
+    new THREE.SphereGeometry(0.07, 12, 10),
     new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.4, metalness: 0.7 })
   );
-  boss.position.set(-0.43, b.armY, 0.08);
-  grp.add(boss);
-  // Tjock helkroppsrustning på torson
+  boss.position.set(-0.05, -0.45, 0.08);
+  rig.leftArm.add(boss);
+  // Bröstpansar
   const chest = new THREE.Mesh(
-    new THREE.BoxGeometry(0.62, 0.40, 0.18),
-    new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.45, metalness: 0.6 })
+    new THREE.CylinderGeometry(rig.torsoR * 1.05, rig.torsoR * 1.0, 0.42, 16),
+    new THREE.MeshStandardMaterial({ color: palette.armor, roughness: 0.45, metalness: 0.65 })
   );
-  chest.position.set(0, b.torsoY, 0.18);
+  chest.position.y = rig.torsoCenterY;
   grp.add(chest);
-  // Mace till höger
+  // Mace i höger hand
   const maceHandle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 0.45, 6),
+    new THREE.CylinderGeometry(0.035, 0.035, 0.45, 8),
     new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 })
   );
-  maceHandle.position.set(0.38, b.armY - 0.10, 0.05);
-  grp.add(maceHandle);
+  maceHandle.position.set(0.02, -0.42, 0.05);
+  rig.rightArm.add(maceHandle);
   const maceHead = new THREE.Mesh(
     new THREE.IcosahedronGeometry(0.10, 0),
     new THREE.MeshStandardMaterial({ color: 0x666c70, roughness: 0.5, metalness: 0.6 })
   );
-  maceHead.position.set(0.38, b.armY + 0.18, 0.05);
-  grp.add(maceHead);
-  addOwnerPlume(grp, b.headY, plumeColor);
+  maceHead.position.set(0.02, -0.70, 0.05);
+  rig.rightArm.add(maceHead);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY, plumeColor);
 }
 
 function buildChampionBody(grp, palette, plumeColor) {
-  const b = buildHumanoidBase(grp, palette, {
-    torsoW: 0.62, torsoH: 0.55, torsoD: 0.42, legH: 0.38, armH: 0.46, headR: 0.20,
+  const mats = makePaletteMats(palette);
+  const rig = buildHumanoidRig(grp, {
+    legR: 0.11, legH: 0.36, armR: 0.10, armH: 0.40,
+    torsoR: 0.26, torsoH: 0.52, headR: 0.20,
+    bodyMat: mats.bodyMat, armorMat: mats.armorMat, skinMat: mats.skinMat,
+    limbMat: mats.bodyMat, legMat: mats.armorMat,
   });
-  // Helmet med crested top
+  // Hjälm
   const helmMat = new THREE.MeshStandardMaterial({
     color: palette.armor, roughness: 0.35, metalness: 0.7,
     emissive: palette.accent, emissiveIntensity: palette.glow * 0.2,
   });
   const helm = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 14, 8, 0, Math.PI * 2, 0, Math.PI / 1.5),
+    new THREE.SphereGeometry(0.22, 16, 10, 0, Math.PI * 2, 0, Math.PI / 1.5),
     helmMat
   );
-  helm.position.y = b.headY + 0.03;
+  helm.position.y = rig.headY + 0.02;
   grp.add(helm);
-  // Crest
+  // Crest på toppen
   const crest = new THREE.Mesh(
     new THREE.BoxGeometry(0.04, 0.10, 0.30),
-    new THREE.MeshStandardMaterial({ color: palette.accent, emissive: palette.accent, emissiveIntensity: 0.5 })
+    new THREE.MeshStandardMaterial({ color: palette.accent, emissive: palette.accent, emissiveIntensity: 0.6 })
   );
-  crest.position.set(0, b.headY + 0.22, 0);
+  crest.position.set(0, rig.headY + 0.20, 0);
   grp.add(crest);
-  // Stort tvåhandssvärd
+  // Stort tvåhandssvärd i höger arm
   const hilt = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.16, 0.06),
+    new THREE.BoxGeometry(0.055, 0.16, 0.055),
     new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 })
   );
-  hilt.position.set(0.36, b.armY - 0.18, 0.05);
-  grp.add(hilt);
+  hilt.position.set(0.02, -0.42, 0.05);
+  rig.rightArm.add(hilt);
   const crossguard = new THREE.Mesh(
     new THREE.BoxGeometry(0.22, 0.04, 0.06),
     new THREE.MeshStandardMaterial({ color: 0xc0a050, roughness: 0.4, metalness: 0.6 })
   );
-  crossguard.position.set(0.36, b.armY - 0.08, 0.05);
-  grp.add(crossguard);
+  crossguard.position.set(0.02, -0.52, 0.05);
+  rig.rightArm.add(crossguard);
   const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.07, 0.75, 0.018),
+    new THREE.BoxGeometry(0.06, 0.72, 0.018),
     new THREE.MeshStandardMaterial({ color: 0xe0e6ec, roughness: 0.25, metalness: 0.9 })
   );
-  blade.position.set(0.36, b.armY + 0.35, 0.05);
-  grp.add(blade);
-  // Cape bak
+  blade.position.set(0.02, -0.92, 0.05);
+  rig.rightArm.add(blade);
+  // Cape bak (statisk för nu)
   const cape = new THREE.Mesh(
     new THREE.PlaneGeometry(0.55, 0.65),
     new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.7, side: THREE.DoubleSide })
   );
-  cape.position.set(0, b.torsoY - 0.05, -0.22);
+  cape.position.set(0, rig.torsoCenterY - 0.05, -0.22);
   cape.rotation.x = 0.1;
   grp.add(cape);
-  addOwnerPlume(grp, b.headY + 0.22, plumeColor);
+  if (palette.glow > 0) addGlowingEyes(grp, rig.headY, palette.eye, palette.glow);
+  addOwnerPlume(grp, rig.headY + 0.22, plumeColor);
 }
 
 const ARCHETYPE_BUILDERS = {
@@ -2091,36 +2232,118 @@ function smoothMeshToTarget(mesh, k) {
   }
 }
 
-// Subtil "andas"-rörelse på alla karaktärsmeshes så de inte ser frysta ut
-function bobOffsetFor(time, mesh) {
-  if (mesh._bobPhase === undefined) mesh._bobPhase = Math.random() * Math.PI * 2;
-  return (Math.sin(time * 2.4 + mesh._bobPhase) + 1) * 0.5 * 0.04;
-}
+// ============================================================
+// Karaktärsanimation: walk-cykel + hero-attack-thrust
+// Detekterar rörelse via position-delta, driver pivot-rotation
+// på ben/armar i userData.rig. Ersätter den gamla idle-bob:en.
+// ============================================================
 
-function applyIdleBob(time) {
-  if (APP.mode === 'lobby') return;
-  for (const sideIdx of [1, 2]) {
-    const side = sides[sideIdx];
-    if (!side || !side.mesh.visible) continue;
-    side.mesh.position.y = bobOffsetFor(time, side.mesh);
+const WALK_AMPLITUDE = 0.55;     // hur långt benen svingar (radianer)
+const ATTACK_DURATION = 0.4;     // sek per attack-thrust
+const HERO_ATTACK_DURATION = 0.4;
+const CREEP_ATTACK_DURATION = 0.3;
+
+function animateCharacter(mesh, dt, side, type) {
+  const rig = mesh.userData && mesh.userData.rig;
+  if (!rig) return;
+
+  let st = mesh._animState;
+  if (!st) {
+    st = mesh._animState = {
+      lastX: mesh.position.x,
+      lastZ: mesh.position.z,
+      walkPhase: Math.random() * Math.PI * 2,
+      idlePhase: Math.random() * Math.PI * 2,
+      attackTimer: 0,
+      attackTotal: ATTACK_DURATION,
+    };
   }
-  for (const key of ['monsters', 'playerCreeps']) {
-    const tier = clientMeshes[key];
-    if (!tier) continue;
-    for (const map of tier.values()) {
-      for (const mesh of map.values()) {
-        mesh.position.y = bobOffsetFor(time, mesh);
+
+  // Velocity från positionsdelta
+  const dx = mesh.position.x - st.lastX;
+  const dz = mesh.position.z - st.lastZ;
+  const dist = Math.hypot(dx, dz);
+  const vel = dist / Math.max(dt, 0.001);
+  st.lastX = mesh.position.x;
+  st.lastZ = mesh.position.z;
+
+  const moving = vel > 0.4;
+  if (moving) st.walkPhase += dt * Math.min(vel * 2.2, 12);
+
+  // Walk-pose: armar svingar i motsatt fas mot ben
+  const swing = moving ? Math.sin(st.walkPhase) * WALK_AMPLITUDE : 0;
+  if (rig.leftLeg) rig.leftLeg.rotation.x = swing;
+  if (rig.rightLeg) rig.rightLeg.rotation.x = -swing;
+  if (rig.leftArm) rig.leftArm.rotation.x = -swing * 0.55;
+  if (rig.rightArm) rig.rightArm.rotation.x = swing * 0.55;
+
+  // Body-bounce vid gång; idle-breath stilla
+  if (moving) {
+    mesh.position.y = Math.abs(Math.cos(st.walkPhase)) * 0.04;
+  } else {
+    const t = performance.now() / 1000;
+    mesh.position.y = Math.sin(t * 1.6 + st.idlePhase) * 0.012;
+  }
+
+  // Hero-attack-detektion: attackCounter-delta från state + skill-CD-hopp
+  if (side && type === 'hero') {
+    if (side._lastAttackCounter === undefined) side._lastAttackCounter = side.attackCounter || 0;
+    if ((side.attackCounter || 0) > side._lastAttackCounter) {
+      side._lastAttackCounter = side.attackCounter;
+      st.attackTimer = HERO_ATTACK_DURATION;
+      st.attackTotal = HERO_ATTACK_DURATION;
+    }
+    if (!side._lastSkillCd) side._lastSkillCd = { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) {
+      const cur = (side.skills && side.skills[k]) ? side.skills[k].cd : 0;
+      if (cur > side._lastSkillCd[k] + 0.5 && cur > 0.5) {
+        st.attackTimer = HERO_ATTACK_DURATION;
+        st.attackTotal = HERO_ATTACK_DURATION;
       }
+      side._lastSkillCd[k] = cur;
     }
   }
-  // Solo: ingen clientMeshes används, men hero-meshes hanteras ovan
+
+  // Attack-thrust: ersätt höger arm-rotation med framåt-pose
+  if (st.attackTimer > 0) {
+    st.attackTimer -= dt;
+    const total = st.attackTotal || ATTACK_DURATION;
+    const t = Math.max(0, Math.min(1, 1 - st.attackTimer / total));
+    const intensity = Math.sin(t * Math.PI);  // 0 → 1 → 0
+    if (rig.rightArm) {
+      const walkRot = swing * 0.55;
+      rig.rightArm.rotation.x = -1.15 * intensity + walkRot * (1 - intensity);
+    }
+  }
+}
+
+function animateAllCharacters(dt) {
+  if (APP.mode === 'lobby') return;
+  // Hero-meshes (båda sidor om de finns)
+  for (const sideIdx of [1, 2]) {
+    const side = sides[sideIdx];
+    if (!side || !side.mesh) continue;
+    if (!side.mesh.visible) continue;
+    animateCharacter(side.mesh, dt, side, 'hero');
+  }
+  // Solo: monster/creep-meshes ligger på side.monsters/playerCreeps direkt
   if (APP.mode === 'solo') {
-    // Monsters/creeps i solo finns på side.monsters/playerCreeps med eget mesh
     for (const sideIdx of [1, 2]) {
       const side = sides[sideIdx];
       if (!side) continue;
-      for (const m of side.monsters) if (m.mesh) m.mesh.position.y = bobOffsetFor(time, m.mesh);
-      for (const c of side.playerCreeps) if (c.mesh) c.mesh.position.y = bobOffsetFor(time, c.mesh);
+      for (const m of side.monsters) if (m.mesh) animateCharacter(m.mesh, dt, null, 'monster');
+      for (const c of side.playerCreeps) if (c.mesh) animateCharacter(c.mesh, dt, null, 'minion');
+    }
+  }
+  // MP: meshes från clientMeshes
+  if (APP.mode === 'host' || APP.mode === 'client') {
+    for (const key of ['monsters', 'playerCreeps']) {
+      const tier = clientMeshes[key];
+      if (!tier) continue;
+      const type = key === 'monsters' ? 'monster' : 'minion';
+      for (const map of tier.values()) {
+        for (const mesh of map.values()) animateCharacter(mesh, dt, null, type);
+      }
     }
   }
 }
@@ -3502,7 +3725,7 @@ function tick() {
     smoothEntityMeshes(dt);
   }
 
-  applyIdleBob(now);
+  animateAllCharacters(dt);
 
   updateHud();
   updateIncomeDisplay();
