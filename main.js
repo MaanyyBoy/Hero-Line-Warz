@@ -1115,8 +1115,9 @@ const MONSTER_MELEE_DAMAGE = 8;
 const MAX_WAVES = 50;
 const INITIAL_PREP_TIME = 10;
 const WAVE_GAP_TIME = 10;
-const WAVE_COUNT_PER_LANE = 15;
-const WAVE_STAGGER_X = 1.0;
+const WAVE_COUNT_PER_LANE = 10;
+const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5];
+const WAVE_CLUMP_ROW_SPACING = 1.0;
 const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
 const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
 
@@ -2269,23 +2270,38 @@ function updateWaves(side, dt) {
   }
 }
 
+function clumpPositions(spawnX, laneZ, count) {
+  const out = [];
+  let row = 0, col = 0;
+  while (out.length < count) {
+    out.push({
+      x: spawnX - row * WAVE_CLUMP_ROW_SPACING,
+      z: laneZ + WAVE_CLUMP_COLS_Z[col],
+    });
+    col++;
+    if (col >= WAVE_CLUMP_COLS_Z.length) { col = 0; row++; }
+  }
+  return out;
+}
+
 function hostSpawnWaveAtOnce(side, def) {
   if (def.isBoss) {
-    hostSpawnMonsterFromDef(side, 1, 0, def);
+    hostSpawnMonsterFromDef(side, 1, def, null);
     return;
   }
-  for (let i = 0; i < WAVE_COUNT_PER_LANE; i++) {
-    hostSpawnMonsterFromDef(side, 1, i, def);
-    hostSpawnMonsterFromDef(side, 2, i, def);
+  const cfg = SIDE_CFG[side.idx];
+  for (const lane of [1, 2]) {
+    const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
+    for (const p of positions) hostSpawnMonsterFromDef(side, lane, def, p);
   }
 }
 
-function hostSpawnMonsterFromDef(side, lane, idx, def) {
+function hostSpawnMonsterFromDef(side, lane, def, pos) {
   const cfg = SIDE_CFG[side.idx];
-  const z = cfg.laneZ[lane];
-  const x = cfg.spawnX - idx * WAVE_STAGGER_X;
+  const x = pos ? pos.x : cfg.spawnX;
+  const z = pos ? pos.z : cfg.laneZ[lane];
   const mesh = makeMonsterMesh();
-  if (def.isBoss) mesh.scale.set(1.6, 1.7, 1.6); // visuellt större boss
+  if (def.isBoss) mesh.scale.set(1.6, 1.7, 1.6);
   attachHpBar(mesh, def.isBoss ? 2.4 : 1.7);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
@@ -3432,12 +3448,17 @@ function applyRemoteState(state) {
   // Hero pick-fas sync
   if (state.ph !== undefined) handleRemotePickState(state);
   // Duel-state
+  const wasActive = duelState.active;
   duelState.active = !!state.dA;
   duelState.timer = state.dT || 0;
   duelState.matchTimer = state.dM || 0;
   duelState.count = state.dC || 0;
   duelState.lastWinner = state.dW || 0;
   duelState.announceTimer = state.dAn || 0;
+  // Trigga "DUEL!"-bannern i 3s när active går från false → true
+  if (duelState.active && !wasActive) {
+    duelState.startBannerMs = performance.now() + 3000;
+  }
   for (const idx of [1, 2]) {
     const sData = state.s[idx];
     if (!sData) continue;
@@ -3742,11 +3763,16 @@ function updateDuelHud() {
     }
     return;
   }
-  if (duelState.active) {
+  // När duel just startat: visa banner i 3s, sen göm under själva fighten.
+  if (duelState.active && duelState.startBannerMs > performance.now()) {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.remove('hidden');
     duelBannerTitleEl.textContent = `DUEL ${duelState.count + 1}`;
-    duelBannerSubEl.textContent = `Sista mannen kvar vinner — ${fmtMs(duelState.matchTimer)}`;
+    duelBannerSubEl.textContent = 'Sista mannen kvar vinner';
+  } else if (duelState.active) {
+    // Pågående duel: göm banner + info så skärmen är fri
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.add('hidden');
   } else if (duelState.announceTimer > 0) {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.remove('hidden');
@@ -4703,6 +4729,7 @@ function handleNetworkMessage(msg) {
 // Duel-state speglas från server (eller default i solo)
 const duelState = {
   active: false, timer: 0, matchTimer: 0, count: 0, lastWinner: 0, announceTimer: 0,
+  startBannerMs: 0,
 };
 
 const HEROES = [

@@ -52,8 +52,9 @@ const RESPAWN_TIME = 5.0;
 const MAX_WAVES = 50;
 const INITIAL_PREP_TIME = 10;          // sek innan wave 1
 const WAVE_GAP_TIME = 10;              // sek mellan waves
-const WAVE_COUNT_PER_LANE = 15;        // 15 per lane = 30 totalt
-const WAVE_STAGGER_X = 1.0;            // m mellan monster i kolumn
+const WAVE_COUNT_PER_LANE = 10;        // 10 per lane = 20 totalt
+const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5]; // 3 kolumner inom lane-bredden
+const WAVE_CLUMP_ROW_SPACING = 1.0;       // m mellan rader bakåt
 const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
 const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
 
@@ -555,25 +556,39 @@ function updateWaves(state, side, dt) {
   }
 }
 
+function clumpPositions(spawnX, laneZ, count) {
+  const out = [];
+  let row = 0, col = 0;
+  while (out.length < count) {
+    out.push({
+      x: spawnX - row * WAVE_CLUMP_ROW_SPACING,
+      z: laneZ + WAVE_CLUMP_COLS_Z[col],
+    });
+    col++;
+    if (col >= WAVE_CLUMP_COLS_Z.length) { col = 0; row++; }
+  }
+  return out;
+}
+
 function spawnWaveAtOnce(state, side, def) {
   if (def.isBoss) {
-    // Boss spawnar ensam i lane 1
-    spawnMonsterFromDef(state, side, 1, 0, def);
+    spawnMonsterFromDef(state, side, 1, def.isBoss ? null : 0, def, null);
     return;
   }
-  // 15 per lane, kolumnformation bakåt från spawnX
-  for (let i = 0; i < WAVE_COUNT_PER_LANE; i++) {
-    spawnMonsterFromDef(state, side, 1, i, def);
-    spawnMonsterFromDef(state, side, 2, i, def);
+  const cfg = SIDE_CFG[side.idx];
+  for (const lane of [1, 2]) {
+    const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
+    for (const p of positions) spawnMonsterFromDef(state, side, lane, null, def, p);
   }
 }
 
-function spawnMonsterFromDef(state, side, lane, idx, def) {
+function spawnMonsterFromDef(state, side, lane, idx, def, pos) {
   const cfg = SIDE_CFG[side.idx];
+  const x = pos ? pos.x : cfg.spawnX;
+  const z = pos ? pos.z : cfg.laneZ[lane];
   side.monsters.push({
     id: state.nextEntityId++,
-    x: cfg.spawnX - idx * WAVE_STAGGER_X,
-    z: cfg.laneZ[lane],
+    x, z,
     ry: 0,
     lane,
     hp: def.monsterHp,
