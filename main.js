@@ -1595,122 +1595,264 @@ function makeGandulfMesh(idx) {
   const grp = new THREE.Group();
   grp.userData.heroId = 'magiker';
 
-  const robeColor = idx === 1 ? 0x2a2456 : 0x3a1f3a;
+  // Mörk midnattsblå robe (eller djup violett för side 2) — mer "arch-mage"
+  const robeColor = idx === 1 ? 0x1a1450 : 0x2a1238;
+  const robeDeep = idx === 1 ? 0x0a0830 : 0x180624;
   const trimColor = cfg.heroColor;
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xe6c7a5, roughness: 0.55 });
-  const robeMat = new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.82 });
-  const robeDarkMat = new THREE.MeshStandardMaterial({ color: 0x1a1640, roughness: 0.85 });
+  const robeMat = new THREE.MeshStandardMaterial({ color: robeColor, roughness: 0.78 });
+  const robeDarkMat = new THREE.MeshStandardMaterial({ color: robeDeep, roughness: 0.85 });
   const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
 
   const rig = buildHumanoidRig(grp, {
     legR: 0.10, legH: 0.30, armR: 0.085, armH: 0.34,
     torsoR: 0.22, torsoH: 0.46, headR: 0.18,
     torsoShape: 'capsule',
-    bodyMat: robeMat, armorMat: robeMat, skinMat,
+    bodyMat: robeMat, armorMat: robeDarkMat, skinMat,
     limbMat: robeMat, legMat: bootMat,
   });
 
-  // Bälte runt torson
-  const belt = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.02, 0.045, 10, 22),
-    new THREE.MeshStandardMaterial({ color: 0x4a2810, roughness: 0.7, metalness: 0.2 })
-  );
-  belt.rotation.x = Math.PI / 2;
-  belt.position.y = rig.hipY + 0.08;
-  grp.add(belt);
-
-  // Robe-hem (extra "kjol" runt höften så roben hänger ut över byxorna)
+  // Robe-hem (kjol som flarar ut)
   const skirt = new THREE.Mesh(
-    new THREE.CylinderGeometry(rig.torsoR * 1.05, rig.torsoR * 1.45, 0.34, 16, 1, true),
+    new THREE.CylinderGeometry(rig.torsoR * 1.05, rig.torsoR * 1.55, 0.42, 18, 1, true),
     robeMat
   );
-  skirt.position.y = rig.hipY + 0.05;
+  skirt.position.y = rig.hipY + 0.02;
   grp.add(skirt);
 
-  // Trim på roben (glödande accent-rand)
+  // Inre mörkare lager (stjärnig fodrad insida)
+  const skirtInner = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 1.02, rig.torsoR * 1.48, 0.38, 18, 1, true),
+    robeDarkMat
+  );
+  skirtInner.position.y = rig.hipY + 0.04;
+  grp.add(skirtInner);
+
+  // Glödande trim runt hemmet
   const trim = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.42, 0.045, 10, 22),
-    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.5, emissive: trimColor, emissiveIntensity: 0.4 })
+    new THREE.TorusGeometry(rig.torsoR * 1.52, 0.04, 10, 26),
+    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.65 })
   );
   trim.rotation.x = Math.PI / 2;
-  trim.position.y = rig.hipY - 0.10;
+  trim.position.y = rig.hipY - 0.18;
   grp.add(trim);
 
-  // Krage runt nacken
+  // Bälte med spänne
+  const belt = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.torsoR * 1.05, 0.05, 10, 22),
+    new THREE.MeshStandardMaterial({ color: 0x3a2010, roughness: 0.7, metalness: 0.25 })
+  );
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = rig.hipY + 0.10;
+  grp.add(belt);
+  const buckle = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.07),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.85, metalness: 0.6, roughness: 0.3 })
+  );
+  buckle.position.set(0, rig.hipY + 0.10, rig.torsoR * 1.1);
+  grp.add(buckle);
+
+  // Stjärnor på roben — små glödande oktaeder
+  const starMat = new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.8, roughness: 0.3 });
+  const starPositions = [
+    [ 0.12, rig.hipY + 0.30,  0.20],
+    [-0.14, rig.hipY + 0.22,  0.18],
+    [ 0.05, rig.hipY + 0.12,  0.22],
+    [-0.10, rig.hipY - 0.02,  0.20],
+    [ 0.16, rig.hipY - 0.10,  0.16],
+  ];
+  for (const [x, y, z] of starPositions) {
+    const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.028), starMat);
+    star.position.set(x, y, z);
+    grp.add(star);
+  }
+
+  // Krage med "popp" — mörkare yttre lager och en uppåt-cone (lyser kvällsljus)
   const collar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15, rig.torsoR, 0.16, 14),
-    robeMat
+    new THREE.CylinderGeometry(0.13, rig.torsoR * 1.05, 0.18, 14),
+    robeDarkMat
   );
-  collar.position.y = rig.torsoTopY - 0.05;
+  collar.position.y = rig.torsoTopY - 0.04;
   grp.add(collar);
-
-  // Skägg
-  const beard = new THREE.Mesh(
-    new THREE.ConeGeometry(0.13, 0.22, 12),
-    new THREE.MeshStandardMaterial({ color: 0xdde2e8, roughness: 0.9 })
+  const collarRise = new THREE.Mesh(
+    new THREE.ConeGeometry(0.16, 0.20, 14, 1, true),
+    robeDarkMat
   );
-  beard.position.set(0, rig.headY - 0.13, 0.11);
-  beard.rotation.x = Math.PI;
-  grp.add(beard);
+  collarRise.position.y = rig.torsoTopY + 0.08;
+  collarRise.position.z = -0.06;
+  grp.add(collarRise);
 
-  // Trollkarlshatt — brim + cone + stjärna
+  // Skägg — flera lager för flowig look. Huvudkon + tjockare bas + två sidostrips
+  const beardMat = new THREE.MeshStandardMaterial({ color: 0xeef0f4, roughness: 0.92 });
+  const beardCore = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.42, 14), beardMat);
+  beardCore.position.set(0, rig.headY - 0.26, 0.10);
+  beardCore.rotation.x = Math.PI;
+  grp.add(beardCore);
+  const beardWide = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2.4), beardMat);
+  beardWide.rotation.x = Math.PI;
+  beardWide.position.set(0, rig.headY - 0.04, 0.11);
+  grp.add(beardWide);
+  // Två sidostrands
+  for (const sx of [-1, 1]) {
+    const strand = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.30, 8), beardMat);
+    strand.position.set(sx * 0.07, rig.headY - 0.22, 0.13);
+    strand.rotation.x = Math.PI;
+    strand.rotation.z = sx * 0.10;
+    grp.add(strand);
+  }
+  // Mustasch
+  const mustacheMat = beardMat;
+  for (const sx of [-1, 1]) {
+    const mus = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.10, 8), mustacheMat);
+    mus.position.set(sx * 0.04, rig.headY - 0.02, 0.16);
+    mus.rotation.x = Math.PI * 0.55;
+    mus.rotation.z = sx * 0.5;
+    grp.add(mus);
+  }
+  // Mörka buskiga ögonbryn
+  for (const sx of [-1, 1]) {
+    const brow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xcccfd3, roughness: 0.9 })
+    );
+    brow.position.set(sx * 0.06, rig.headY + 0.04, 0.15);
+    brow.scale.set(1.6, 0.7, 0.7);
+    grp.add(brow);
+  }
+
+  // Stor brimmad trollkarlshatt — bred brim, hög svagt böjd cone, stjärnor
+  const hatMat = new THREE.MeshStandardMaterial({ color: robeDeep, roughness: 0.85 });
+  // Brim — flat skiva (tunn cylinder) istället för torus, ger "wide brim"-känsla
   const hatBrim = new THREE.Mesh(
-    new THREE.TorusGeometry(0.26, 0.055, 10, 22),
-    robeMat
+    new THREE.CylinderGeometry(0.34, 0.34, 0.04, 24),
+    hatMat
   );
-  hatBrim.rotation.x = Math.PI / 2;
-  hatBrim.position.y = rig.headY + 0.16;
+  hatBrim.position.y = rig.headY + 0.18;
   grp.add(hatBrim);
+  // Brim trim (lyser)
+  const brimTrim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.34, 0.018, 8, 28),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.55, roughness: 0.5 })
+  );
+  brimTrim.rotation.x = Math.PI / 2;
+  brimTrim.position.y = rig.headY + 0.18;
+  grp.add(brimTrim);
+  // Hög cone som lutar lite framåt
   const hatCone = new THREE.Mesh(
-    new THREE.ConeGeometry(0.21, 0.5, 16),
-    robeMat
+    new THREE.ConeGeometry(0.22, 0.62, 18),
+    hatMat
   );
-  hatCone.position.y = rig.headY + 0.42;
-  hatCone.rotation.x = -0.10;
+  hatCone.position.y = rig.headY + 0.52;
+  hatCone.position.z = -0.02;
+  hatCone.rotation.x = -0.12;
   grp.add(hatCone);
-  const hatStar = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.06),
-    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.9, roughness: 0.3 })
+  // Liten knäck nära toppen (extra mini-cone)
+  const hatTip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.07, 0.16, 12),
+    hatMat
   );
-  hatStar.position.set(0, rig.headY + 0.36, 0.18);
-  grp.add(hatStar);
+  hatTip.position.set(0, rig.headY + 0.86, 0.04);
+  hatTip.rotation.x = 0.35;
+  grp.add(hatTip);
+  // Bandet runt brimmens fot
+  const hatBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.20, 0.22, 0.06, 16),
+    new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.85 })
+  );
+  hatBand.position.y = rig.headY + 0.22;
+  grp.add(hatBand);
+  // Glödande stjärna(or) på conen
+  const starHat1 = new THREE.Mesh(new THREE.OctahedronGeometry(0.055), starMat);
+  starHat1.position.set(0, rig.headY + 0.42, 0.16);
+  grp.add(starHat1);
+  const starHat2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.035), starMat);
+  starHat2.position.set(0.08, rig.headY + 0.58, 0.12);
+  grp.add(starHat2);
+  const starHat3 = new THREE.Mesh(new THREE.OctahedronGeometry(0.030), starMat);
+  starHat3.position.set(-0.07, rig.headY + 0.66, 0.10);
+  grp.add(starHat3);
 
-  // Stav: fäst som barn på höger arm-pivot så den rör sig med armen
+  // Stav: trä-skaft med spiral, fäst på höger arm
+  const staffWoodMat = new THREE.MeshStandardMaterial({ color: 0x2c1d10, roughness: 0.9 });
   const staff = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 1.5, 10),
-    new THREE.MeshStandardMaterial({ color: 0x2c1d10, roughness: 0.85 })
+    new THREE.CylinderGeometry(0.04, 0.05, 1.6, 10),
+    staffWoodMat
   );
-  staff.position.set(0.05, -0.55, 0.05);    // relativt arm-pivot
+  staff.position.set(0.05, -0.55, 0.05);
   rig.rightArm.add(staff);
-
-  // Glödande kristall i toppen av staven (fäst på samma arm)
+  // Tvinningar runt skaftet (3 ringar)
+  for (let i = 0; i < 3; i++) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.055, 0.012, 8, 14),
+      new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.8, metalness: 0.2 })
+    );
+    ring.position.set(0.05, -0.40 + i * 0.22, 0.05);
+    rig.rightArm.add(ring);
+  }
+  // Toppgreppet — gaffelliknande krans som håller kristallen
+  for (let k = 0; k < 4; k++) {
+    const claw = new THREE.Mesh(
+      new THREE.ConeGeometry(0.025, 0.18, 6),
+      new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.8 })
+    );
+    const ang = (k / 4) * Math.PI * 2;
+    claw.position.set(0.05 + Math.cos(ang) * 0.08, -1.20, 0.05 + Math.sin(ang) * 0.08);
+    claw.rotation.x = Math.PI;
+    claw.rotation.z = Math.cos(ang) * 0.3;
+    rig.rightArm.add(claw);
+  }
+  // Stor kristall i toppen — mer detaljerad
   const orb = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.13, 0),
+    new THREE.IcosahedronGeometry(0.16, 0),
     new THREE.MeshStandardMaterial({
-      color: trimColor, emissive: trimColor, emissiveIntensity: 1.4,
-      roughness: 0.2,
+      color: trimColor, emissive: trimColor, emissiveIntensity: 1.8,
+      roughness: 0.15, metalness: 0.1,
     })
   );
-  orb.position.set(0.05, -1.25, 0.05);
+  orb.position.set(0.05, -1.30, 0.05);
   rig.rightArm.add(orb);
+  // Halo-ring runt kristallen
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(0.22, 0.012, 8, 28),
+    new THREE.MeshBasicMaterial({ color: trimColor, transparent: true, opacity: 0.55 })
+  );
+  halo.position.set(0.05, -1.30, 0.05);
+  halo.rotation.x = Math.PI / 2;
+  rig.rightArm.add(halo);
+  // Punktljus i staven så orben kastar arcane-ljus
+  const staffLight = new THREE.PointLight(trimColor, 0.6, 2.5, 2);
+  staffLight.position.set(0.05, -1.30, 0.05);
+  rig.rightArm.add(staffLight);
+
+  // Subtle arcane-aura under fötterna
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.36, 0.55, 28),
+    new THREE.MeshBasicMaterial({ color: trimColor, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.02;
+  grp.add(aura);
 
   setShadow(grp, true, false);
   return grp;
 }
 
-// Legolas — agile archer. Skogsgrön/läder-look, blont hår, pilbåge + koger.
+// Legolus — hooded ranger-assassin. Mörka skogsfärger, hood som skuggar ansiktet,
+// rygg-cape, dolkar i bältet, koger + båge. Hunter-assassin vibe.
 function makeLegolasMesh(idx) {
   const cfg = SIDE_CFG[idx];
   const grp = new THREE.Group();
   grp.userData.heroId = 'legolas';
 
   const trimColor = cfg.heroColor;
-  const tunicColor = 0x3a5028;       // skogsgrön
-  const leatherColor = 0x5a3a1a;     // brun läder
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xefd4b0, roughness: 0.5 });
-  const tunicMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.85 });
-  const leatherMat = new THREE.MeshStandardMaterial({ color: leatherColor, roughness: 0.7 });
-  const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
+  const tunicColor = 0x1f2a18;       // mörk skogsgrön (nästan svart)
+  const cloakColor = 0x121810;       // svart-grön cape
+  const leatherColor = 0x3a2614;     // mörk läder
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd8b88a, roughness: 0.55 });
+  const tunicMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.88 });
+  const cloakMat = new THREE.MeshStandardMaterial({ color: cloakColor, roughness: 0.92 });
+  const leatherMat = new THREE.MeshStandardMaterial({ color: leatherColor, roughness: 0.75 });
+  const bootMat = new THREE.MeshStandardMaterial({ color: 0x1a0e08, roughness: 0.92 });
 
   const rig = buildHumanoidRig(grp, {
     legR: 0.085, legH: 0.32, armR: 0.075, armH: 0.36,
@@ -1720,83 +1862,177 @@ function makeLegolasMesh(idx) {
     limbMat: tunicMat, legMat: bootMat,
   });
 
+  // Brigandine-väst (mörk grön/svart)
+  const vest = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 1.06, rig.torsoR * 1.06, rig.torsoH * 0.78, 14, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x0e1410, roughness: 0.88 })
+  );
+  vest.position.y = rig.hipY + rig.torsoH * 0.4;
+  grp.add(vest);
+
+  // Diagonal läderrem över bröstet (för dolkfäste)
+  const sash = new THREE.Mesh(
+    new THREE.BoxGeometry(rig.torsoR * 2.2, 0.06, 0.04),
+    leatherMat
+  );
+  sash.position.set(0, rig.torsoTopY - 0.10, rig.torsoR * 0.6);
+  sash.rotation.z = -0.35;
+  grp.add(sash);
+
   // Bälte
   const belt = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.03, 0.04, 10, 22),
-    new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.8 })
+    new THREE.TorusGeometry(rig.torsoR * 1.05, 0.045, 10, 22),
+    leatherMat
   );
   belt.rotation.x = Math.PI / 2;
   belt.position.y = rig.hipY + 0.05;
   grp.add(belt);
 
-  // Lätt brigandine-väst ovanpå tunikan (mörkare grön)
-  const vest = new THREE.Mesh(
-    new THREE.CylinderGeometry(rig.torsoR * 1.06, rig.torsoR * 1.06, rig.torsoH * 0.7, 12, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0x223a18, roughness: 0.8 })
-  );
-  vest.position.y = rig.hipY + rig.torsoH * 0.35;
-  grp.add(vest);
-
-  // Trim (lyser i sidans färg) — diskret rand över bröstet
+  // Bröst-trim (glödande accent)
   const trim = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.07, 0.025, 8, 22),
-    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.5, emissive: trimColor, emissiveIntensity: 0.4 })
+    new THREE.TorusGeometry(rig.torsoR * 1.07, 0.02, 8, 22),
+    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.45, emissive: trimColor, emissiveIntensity: 0.5 })
   );
   trim.rotation.x = Math.PI / 2;
   trim.position.y = rig.torsoTopY - 0.05;
   grp.add(trim);
 
-  // Långt hår — bakåt-hängande, blont
-  const hairColor = 0xeed8a8;
-  const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.7 });
-  // Hjälmkapsel ovanpå huvudet (hair-shell)
-  const hairTop = new THREE.Mesh(new THREE.SphereGeometry(rig.headR * 1.06, 14, 12, 0, Math.PI * 2, 0, Math.PI / 2.2), hairMat);
-  hairTop.position.y = rig.headY + rig.headR * 0.05;
-  grp.add(hairTop);
-  // Långt hår bak (cylindrar)
-  const hairBack = new THREE.Mesh(new THREE.CylinderGeometry(rig.headR * 0.7, rig.headR * 0.45, 0.32, 10), hairMat);
-  hairBack.position.set(0, rig.headY - 0.08, -rig.headR * 0.55);
-  hairBack.rotation.x = 0.15;
-  grp.add(hairBack);
+  // Bracers — läder runt underarmarna
+  for (const arm of [rig.leftArm, rig.rightArm]) {
+    const bracer = new THREE.Mesh(
+      new THREE.CylinderGeometry(rig.armR * 1.25, rig.armR * 1.15, 0.16, 10),
+      leatherMat
+    );
+    bracer.position.set(0, -0.26, 0);
+    arm.add(bracer);
+    const bracerTrim = new THREE.Mesh(
+      new THREE.TorusGeometry(rig.armR * 1.28, 0.01, 6, 16),
+      new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.55, roughness: 0.5 })
+    );
+    bracerTrim.position.set(0, -0.20, 0);
+    bracerTrim.rotation.x = Math.PI / 2;
+    arm.add(bracerTrim);
+  }
 
-  // Båge — TorusGeometry halv-cirkel i höger hand
-  const bowMat = new THREE.MeshStandardMaterial({ color: 0x6b4a20, roughness: 0.7, metalness: 0.05 });
-  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.025, 8, 18, Math.PI), bowMat);
+  // HOOD — sphere cap som täcker huvudet och kastar shadow
+  // Innre del (mörk skugga inuti hooden)
+  const hoodInner = new THREE.Mesh(
+    new THREE.SphereGeometry(rig.headR * 1.18, 14, 10, 0, Math.PI * 2, 0, Math.PI / 1.6),
+    new THREE.MeshStandardMaterial({ color: 0x06080a, roughness: 0.95 })
+  );
+  hoodInner.position.set(0, rig.headY - 0.04, -0.02);
+  grp.add(hoodInner);
+  // Yttre hooden — något större cap, framskjuten lite så ansiktet är skuggat
+  const hood = new THREE.Mesh(
+    new THREE.SphereGeometry(rig.headR * 1.32, 16, 12, 0, Math.PI * 2, 0, Math.PI / 1.55),
+    cloakMat
+  );
+  hood.position.set(0, rig.headY - 0.02, -0.02);
+  grp.add(hood);
+  // "Spets" på hooden bak — liten cone som hänger
+  const hoodTip = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.22, 10), cloakMat);
+  hoodTip.position.set(0, rig.headY + 0.10, -rig.headR * 1.0);
+  hoodTip.rotation.x = -0.6;
+  grp.add(hoodTip);
+  // Främre kant av hooden (mörkare ring som ramar in ansiktet)
+  const hoodEdge = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.headR * 1.12, 0.025, 8, 20, Math.PI),
+    cloakMat
+  );
+  hoodEdge.position.set(0, rig.headY + 0.02, rig.headR * 0.35);
+  hoodEdge.rotation.x = -0.2;
+  hoodEdge.rotation.y = Math.PI;
+  grp.add(hoodEdge);
+
+  // Glödande ögon (subtle) inuti hooden
+  for (const sx of [-1, 1]) {
+    const eye = new THREE.Mesh(
+      new THREE.SphereGeometry(0.018, 6, 6),
+      new THREE.MeshBasicMaterial({ color: trimColor })
+    );
+    eye.position.set(sx * 0.045, rig.headY + 0.02, rig.headR * 0.85);
+    grp.add(eye);
+  }
+
+  // Mantel/cape på ryggen — PlaneGeometry (eller curved cylinder) som hänger
+  const cape = new THREE.Mesh(
+    new THREE.CylinderGeometry(rig.torsoR * 0.5, rig.torsoR * 1.3, rig.torsoH + 0.35, 14, 1, true, -Math.PI * 0.7, Math.PI * 1.4),
+    cloakMat
+  );
+  cape.position.set(0, rig.hipY + rig.torsoH * 0.30, -rig.torsoR * 0.7);
+  grp.add(cape);
+
+  // Två dolkar korsade på baksidan (X-form)
+  const daggerMat = new THREE.MeshStandardMaterial({ color: 0xa8acb0, metalness: 0.6, roughness: 0.3 });
+  const daggerHandleMat = new THREE.MeshStandardMaterial({ color: 0x1a0e08, roughness: 0.9 });
+  for (const sx of [-1, 1]) {
+    // Blad
+    const dagger = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.22, 8), daggerMat);
+    dagger.position.set(sx * 0.10, rig.hipY + 0.04, rig.torsoR * 1.0);
+    dagger.rotation.z = sx * 0.4;
+    dagger.rotation.x = Math.PI / 2;
+    grp.add(dagger);
+    // Handtag
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.08, 8), daggerHandleMat);
+    handle.position.set(sx * 0.04, rig.hipY + 0.16, rig.torsoR * 1.0);
+    handle.rotation.z = sx * 0.4;
+    grp.add(handle);
+  }
+
+  // Båge — TorusGeometry halv-cirkel i höger hand, mörk + recurve-känsla
+  const bowMat = new THREE.MeshStandardMaterial({ color: 0x2e1d0c, roughness: 0.85 });
+  const bowAccent = new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.4, roughness: 0.5 });
+  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.022, 8, 20, Math.PI), bowMat);
   bow.position.set(0.08, -0.40, 0.08);
   bow.rotation.set(0, Math.PI / 2, Math.PI / 2);
   rig.rightArm.add(bow);
-  // Bågsträng (tunn linje)
+  // Accent-tips på bågen
+  for (const ty of [-0.72, -0.08]) {
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 8), bowAccent);
+    tip.position.set(0.08, ty, 0.08);
+    rig.rightArm.add(tip);
+  }
+  // Bågsträng
   const stringMat = new THREE.MeshStandardMaterial({ color: 0xeeeacf, roughness: 0.6 });
-  const string = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.64, 6), stringMat);
+  const string = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.68, 6), stringMat);
   string.position.set(0.08, -0.40, 0.08);
   string.rotation.set(0, 0, Math.PI / 2);
   rig.rightArm.add(string);
 
-  // Koger på rygg (med pilar)
+  // Koger på rygg (mörkt läder, syns över axeln)
   const quiver = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.06, 0.34, 10),
-    new THREE.MeshStandardMaterial({ color: 0x4a2818, roughness: 0.8 })
+    new THREE.CylinderGeometry(0.08, 0.07, 0.36, 12),
+    new THREE.MeshStandardMaterial({ color: 0x2a1810, roughness: 0.82 })
   );
-  quiver.position.set(-0.10, rig.torsoTopY - 0.18, -0.18);
+  quiver.position.set(-0.12, rig.torsoTopY - 0.16, -0.20);
   quiver.rotation.x = -0.4;
   quiver.rotation.z = -0.25;
   grp.add(quiver);
-  // Pilar i kogret (några ConeGeometry-toppar som syns över skuldran)
-  for (let i = 0; i < 4; i++) {
+  // Koger-trim
+  const quiverTrim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.08, 0.012, 8, 16),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.45, roughness: 0.5 })
+  );
+  quiverTrim.position.set(-0.12, rig.torsoTopY - 0.02, -0.16);
+  quiverTrim.rotation.x = Math.PI / 2 - 0.4;
+  quiverTrim.rotation.z = -0.25;
+  grp.add(quiverTrim);
+  // Pilar
+  for (let i = 0; i < 5; i++) {
     const arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.012, 0.18, 6),
-      new THREE.MeshStandardMaterial({ color: 0xddc680, roughness: 0.6 })
+      new THREE.ConeGeometry(0.012, 0.20, 6),
+      new THREE.MeshStandardMaterial({ color: 0xccc080, roughness: 0.6 })
     );
-    arrow.position.set(-0.07 - i * 0.022, rig.torsoTopY + 0.05, -0.18);
+    arrow.position.set(-0.085 - i * 0.022, rig.torsoTopY + 0.06, -0.18);
     arrow.rotation.x = -0.4;
     arrow.rotation.z = -0.25;
     grp.add(arrow);
   }
 
-  // Diskret aura under fötterna (visuell agility-feel)
+  // Aura under fötterna — mörkare grön
   const aura = new THREE.Mesh(
-    new THREE.RingGeometry(0.32, 0.46, 24),
-    new THREE.MeshBasicMaterial({ color: 0x66ff88, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+    new THREE.RingGeometry(0.32, 0.48, 28),
+    new THREE.MeshBasicMaterial({ color: 0x3aa055, transparent: true, opacity: 0.20, side: THREE.DoubleSide })
   );
   aura.rotation.x = -Math.PI / 2;
   aura.position.y = 0.02;
@@ -1806,8 +2042,8 @@ function makeLegolasMesh(idx) {
   return grp;
 }
 
-// Gimlu — stor tjock dvärg. Bred rig, kort men inte kortare än andra heroes
-// (kompenseras med längre torso). Järnhjälm, lång brun beard, plåtrustning, yxa.
+// Gimlu — STOR stout dvärg. Bredare och tyngre än andra heroes, massivt
+// flätat skägg, hornhjälm, plåtrustning, krigshammare med rune-glow.
 function makeGimluMesh(idx) {
   const cfg = SIDE_CFG[idx];
   const grp = new THREE.Group();
@@ -1815,15 +2051,15 @@ function makeGimluMesh(idx) {
 
   const trimColor = cfg.heroColor;
   const skinMat = new THREE.MeshStandardMaterial({ color: 0xd9a878, roughness: 0.55 });
-  const armorMat = new THREE.MeshStandardMaterial({ color: 0x6a6e72, roughness: 0.55, metalness: 0.35 });
-  const armorDarkMat = new THREE.MeshStandardMaterial({ color: 0x4a4e54, roughness: 0.6, metalness: 0.4 });
+  const armorMat = new THREE.MeshStandardMaterial({ color: 0x7a7e84, roughness: 0.5, metalness: 0.4 });
+  const armorDarkMat = new THREE.MeshStandardMaterial({ color: 0x4a4e54, roughness: 0.6, metalness: 0.45 });
   const beltMat = new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.8 });
   const bootMat = new THREE.MeshStandardMaterial({ color: 0x2a1a0d, roughness: 0.9 });
 
-  // Bredare rig + kortare lemmar, men torso lite längre för att kompensera höjden.
+  // BREDARE rig + kortare/tjockare lemmar för riktig dvärg-känsla.
   const rig = buildHumanoidRig(grp, {
-    legR: 0.115, legH: 0.26, armR: 0.10, armH: 0.30,
-    torsoR: 0.30, torsoH: 0.52, headR: 0.20,
+    legR: 0.135, legH: 0.26, armR: 0.115, armH: 0.30,
+    torsoR: 0.34, torsoH: 0.56, headR: 0.22,
     torsoShape: 'capsule',
     bodyMat: armorMat, armorMat: armorDarkMat, skinMat,
     limbMat: armorMat, legMat: bootMat,
@@ -1831,94 +2067,203 @@ function makeGimluMesh(idx) {
 
   // Bred bälte
   const belt = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.04, 0.08, 12, 26),
+    new THREE.TorusGeometry(rig.torsoR * 1.05, 0.10, 12, 28),
     beltMat
   );
   belt.rotation.x = Math.PI / 2;
-  belt.position.y = rig.hipY + 0.05;
+  belt.position.y = rig.hipY + 0.06;
   grp.add(belt);
-  // Bälte-spänne (i sidans färg)
+  // Spänne — stor stjärna
   const buckle = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.10, 0.06),
-    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.6, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.25 })
+    new THREE.OctahedronGeometry(0.10),
+    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.7, roughness: 0.35, emissive: trimColor, emissiveIntensity: 0.5 })
   );
-  buckle.position.set(0, rig.hipY + 0.05, rig.torsoR * 1.05);
+  buckle.position.set(0, rig.hipY + 0.06, rig.torsoR * 1.10);
   grp.add(buckle);
 
-  // Bröstplåt (en aning större än torso, lyser i sidans accent)
+  // Bröstplåt — bredare och tyngre
   const chest = new THREE.Mesh(
-    new THREE.CylinderGeometry(rig.torsoR * 1.04, rig.torsoR * 1.04, rig.torsoH * 0.65, 14, 1, true),
+    new THREE.CylinderGeometry(rig.torsoR * 1.08, rig.torsoR * 1.05, rig.torsoH * 0.72, 16, 1, true),
     armorDarkMat
   );
   chest.position.y = rig.hipY + rig.torsoH * 0.4;
   grp.add(chest);
+  // Vertikala plåt-paneler (subtle ridges)
+  for (const sx of [-1, 1]) {
+    const ridge = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, rig.torsoH * 0.6, 0.03),
+      armorMat
+    );
+    ridge.position.set(sx * rig.torsoR * 0.55, rig.hipY + rig.torsoH * 0.4, rig.torsoR * 1.0);
+    grp.add(ridge);
+  }
+  // Bröst-trim
   const chestTrim = new THREE.Mesh(
-    new THREE.TorusGeometry(rig.torsoR * 1.05, 0.04, 10, 22),
-    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.5, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.35 })
+    new THREE.TorusGeometry(rig.torsoR * 1.07, 0.05, 12, 26),
+    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.55, roughness: 0.35, emissive: trimColor, emissiveIntensity: 0.5 })
   );
   chestTrim.rotation.x = Math.PI / 2;
   chestTrim.position.y = rig.torsoTopY - 0.08;
   grp.add(chestTrim);
+  // Centralt emblem på bröstet — rune-octahedron
+  const emblem = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.09),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.7, metalness: 0.6, roughness: 0.3 })
+  );
+  emblem.position.set(0, rig.hipY + rig.torsoH * 0.55, rig.torsoR * 1.08);
+  grp.add(emblem);
 
-  // Axel-pauldrons (klotformade)
+  // Stora pauldrons med spikar
   for (const sx of [-1, 1]) {
     const pauld = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.SphereGeometry(0.20, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
       armorDarkMat
     );
-    pauld.position.set(sx * (rig.torsoR + 0.05), rig.torsoTopY - 0.02, 0);
+    pauld.position.set(sx * (rig.torsoR + 0.07), rig.torsoTopY - 0.02, 0);
     grp.add(pauld);
+    // Spikar på pauldron
+    for (let k = 0; k < 3; k++) {
+      const spike = new THREE.Mesh(
+        new THREE.ConeGeometry(0.025, 0.10, 8),
+        new THREE.MeshStandardMaterial({ color: 0xa8acb0, metalness: 0.7, roughness: 0.3 })
+      );
+      const ang = (k / 3) * Math.PI - Math.PI / 2;
+      spike.position.set(sx * (rig.torsoR + 0.07) + Math.cos(ang) * 0.16, rig.torsoTopY + 0.04, Math.sin(ang) * 0.16);
+      spike.rotation.x = Math.sin(ang) * 0.6;
+      spike.rotation.z = -Math.cos(ang) * 0.6;
+      grp.add(spike);
+    }
   }
 
-  // Stort skägg (chestnut brown) — hänger ner från ansiktet, längre än Gandulfs
-  const beardMat = new THREE.MeshStandardMaterial({ color: 0x6e3a18, roughness: 0.85 });
-  const beard = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.45, 14), beardMat);
-  beard.position.set(0, rig.headY - 0.20, 0.10);
-  beard.rotation.x = Math.PI;
-  grp.add(beard);
-  // Mustasch-cylinder under näsan
-  const mustache = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.20, 10), beardMat);
-  mustache.rotation.z = Math.PI / 2;
-  mustache.position.set(0, rig.headY - 0.02, 0.16);
-  grp.add(mustache);
+  // MASSIVT skägg — huvudkon + bredd-sphere + 2 flätade tails
+  const beardMat = new THREE.MeshStandardMaterial({ color: 0x5a2e10, roughness: 0.88 });
+  const beardBraidMat = new THREE.MeshStandardMaterial({ color: 0x4a2410, roughness: 0.88 });
+  // Bred bas
+  const beardBase = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2.3), beardMat);
+  beardBase.rotation.x = Math.PI;
+  beardBase.position.set(0, rig.headY - 0.04, 0.12);
+  grp.add(beardBase);
+  // Huvudkon (längre)
+  const beardCore = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.65, 16), beardMat);
+  beardCore.position.set(0, rig.headY - 0.32, 0.08);
+  beardCore.rotation.x = Math.PI;
+  grp.add(beardCore);
+  // Två flätade braids
+  for (const sx of [-1, 1]) {
+    const braid = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.025, 0.50, 8), beardBraidMat);
+    braid.position.set(sx * 0.13, rig.headY - 0.40, 0.10);
+    braid.rotation.z = sx * -0.10;
+    grp.add(braid);
+    // Liten ring runt braiden
+    const braidRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.04, 0.012, 6, 14),
+      new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.5, metalness: 0.6, roughness: 0.3 })
+    );
+    braidRing.position.set(sx * 0.13, rig.headY - 0.58, 0.10);
+    braidRing.rotation.x = Math.PI / 2;
+    grp.add(braidRing);
+  }
+  // Mustasch — stor, böjda spetsar
+  for (const sx of [-1, 1]) {
+    const mustacheCurl = new THREE.Mesh(
+      new THREE.TorusGeometry(0.07, 0.022, 8, 14, Math.PI),
+      beardMat
+    );
+    mustacheCurl.position.set(sx * 0.08, rig.headY - 0.02, 0.18);
+    mustacheCurl.rotation.y = sx * Math.PI / 2;
+    mustacheCurl.rotation.z = sx * -0.3;
+    grp.add(mustacheCurl);
+  }
 
-  // Järnhjälm — kort cylinder + dome ovanpå + näspar (kort cylinder framåt)
-  const helmMat = new THREE.MeshStandardMaterial({ color: 0x686c70, metalness: 0.45, roughness: 0.5 });
-  const helmRing = new THREE.Mesh(new THREE.CylinderGeometry(rig.headR * 1.05, rig.headR * 1.05, 0.16, 16), helmMat);
+  // HORNHJÄLM — bredare cylinder + dome + 2 stora horn ut till sidorna
+  const helmMat = new THREE.MeshStandardMaterial({ color: 0x787c80, metalness: 0.5, roughness: 0.45 });
+  const hornMat = new THREE.MeshStandardMaterial({ color: 0xddc080, metalness: 0.4, roughness: 0.5 });
+  const helmRing = new THREE.Mesh(new THREE.CylinderGeometry(rig.headR * 1.10, rig.headR * 1.10, 0.18, 18), helmMat);
   helmRing.position.y = rig.headY + 0.04;
   grp.add(helmRing);
-  const helmDome = new THREE.Mesh(new THREE.SphereGeometry(rig.headR * 1.05, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2.1), helmMat);
-  helmDome.position.y = rig.headY + 0.12;
+  const helmDome = new THREE.Mesh(new THREE.SphereGeometry(rig.headR * 1.10, 18, 14, 0, Math.PI * 2, 0, Math.PI / 2.1), helmMat);
+  helmDome.position.y = rig.headY + 0.13;
   grp.add(helmDome);
-  // Spik/horn på toppen
-  const helmSpike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.18, 8), new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.6, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.4 }));
-  helmSpike.position.y = rig.headY + 0.32;
+  // STORA horn — torus-halvor ut från sidorna
+  for (const sx of [-1, 1]) {
+    const horn = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.040, 10, 16, Math.PI),
+      hornMat
+    );
+    horn.position.set(sx * (rig.headR * 1.05), rig.headY + 0.10, 0);
+    horn.rotation.y = sx * Math.PI / 2;
+    horn.rotation.z = sx * Math.PI / 2;
+    grp.add(horn);
+    // Spets-detalj på hornen
+    const hornTip = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.10, 8), hornMat);
+    hornTip.position.set(sx * (rig.headR * 1.05 + 0.16), rig.headY + 0.22, 0);
+    hornTip.rotation.z = sx * Math.PI / 2;
+    grp.add(hornTip);
+  }
+  // Mittspik på toppen
+  const helmSpike = new THREE.Mesh(
+    new THREE.ConeGeometry(0.07, 0.22, 10),
+    new THREE.MeshStandardMaterial({ color: trimColor, metalness: 0.6, roughness: 0.4, emissive: trimColor, emissiveIntensity: 0.55 })
+  );
+  helmSpike.position.y = rig.headY + 0.36;
   grp.add(helmSpike);
-  // Näspar (vertikal strip ner i pannan)
-  const nasal = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.04), helmMat);
-  nasal.position.set(0, rig.headY - 0.02, rig.headR * 0.95);
+  // Näspar
+  const nasal = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.18, 0.04), helmMat);
+  nasal.position.set(0, rig.headY - 0.02, rig.headR * 1.00);
   grp.add(nasal);
+  // Rune-band runt hjälmen
+  const helmBand = new THREE.Mesh(
+    new THREE.TorusGeometry(rig.headR * 1.11, 0.02, 8, 22),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.5, roughness: 0.5 })
+  );
+  helmBand.rotation.x = Math.PI / 2;
+  helmBand.position.y = rig.headY + 0.10;
+  grp.add(helmBand);
 
-  // Yxa i höger hand — skaft + dubbel-egg blade
+  // STOR krigshammare i höger hand
   const haftMat = new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 });
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x9da0a4, metalness: 0.55, roughness: 0.35 });
-  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.70, 10), haftMat);
-  haft.position.set(0.05, -0.30, 0.05);
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x6a6e72, metalness: 0.55, roughness: 0.35 });
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.80, 12), haftMat);
+  haft.position.set(0.05, -0.32, 0.05);
   rig.rightArm.add(haft);
-  // Blade huvud (box som vänder ut från skaftet)
-  const bladeHead = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.26, 0.04), bladeMat);
-  bladeHead.position.set(0.05, -0.55, 0.05);
-  bladeHead.rotation.z = Math.PI / 2;
-  rig.rightArm.add(bladeHead);
+  // Skaft-wrap (ring)
+  for (let i = 0; i < 2; i++) {
+    const wrap = new THREE.Mesh(
+      new THREE.TorusGeometry(0.055, 0.012, 8, 14),
+      new THREE.MeshStandardMaterial({ color: 0x1a0e08, roughness: 0.9 })
+    );
+    wrap.position.set(0.05, -0.20 + i * 0.20, 0.05);
+    rig.rightArm.add(wrap);
+  }
+  // Hammarhuvud — stor box
+  const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.32, 0.28), headMat);
+  hammerHead.position.set(0.05, -0.74, 0.05);
+  hammerHead.rotation.z = Math.PI / 2;
+  rig.rightArm.add(hammerHead);
+  // Hammarhuvud trim — rune-emissive linje
+  const hammerRune = new THREE.Mesh(
+    new THREE.BoxGeometry(0.04, 0.34, 0.30),
+    new THREE.MeshStandardMaterial({ color: trimColor, emissive: trimColor, emissiveIntensity: 0.8, roughness: 0.4 })
+  );
+  hammerRune.position.set(0.05, -0.74, 0.05);
+  hammerRune.rotation.z = Math.PI / 2;
+  rig.rightArm.add(hammerRune);
+  // Spike på hammarhuvudet
+  const hammerSpike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 10), headMat);
+  hammerSpike.position.set(0.05, -0.88, 0.05);
+  rig.rightArm.add(hammerSpike);
 
-  // Liten subtil tank-aura (gråblå glow vid fötterna)
+  // Tank-aura (lila/orange beroende på side)
   const aura = new THREE.Mesh(
-    new THREE.RingGeometry(0.36, 0.52, 24),
-    new THREE.MeshBasicMaterial({ color: 0x8fa0b5, transparent: true, opacity: 0.20, side: THREE.DoubleSide })
+    new THREE.RingGeometry(0.42, 0.62, 28),
+    new THREE.MeshBasicMaterial({ color: trimColor, transparent: true, opacity: 0.22, side: THREE.DoubleSide })
   );
   aura.rotation.x = -Math.PI / 2;
   aura.position.y = 0.02;
   grp.add(aura);
+
+  // SKALA UPP HELA RIGGEN ~1.15x för "större än andra heroes"-känsla
+  grp.scale.set(1.15, 1.15, 1.15);
 
   setShadow(grp, true, false);
   return grp;
@@ -5929,6 +6274,7 @@ const heroPickState = {
 // === Heroes-browser (huvudmenyn) ===
 const heroesBrowserContent = document.getElementById('heroes-browser-content');
 const itemsBrowserContent = document.getElementById('items-browser-content');
+const howtoContent = document.getElementById('howto-content');
 const heroDetailModal = document.getElementById('hero-detail-modal');
 const heroDetailBody = document.getElementById('hero-detail-body');
 const itemDetailModal = document.getElementById('item-detail-modal');
@@ -6067,6 +6413,99 @@ function renderItemsBrowser() {
     grid.appendChild(card);
   }
   itemsBrowserContent.appendChild(grid);
+}
+
+// === How to Play-rendering ===
+function howtoSvg(kind) {
+  const stroke = '#dbe2ef';
+  const accent = '#ffd34a';
+  const blue = '#6ab0ff';
+  const red = '#ff7766';
+  const green = '#5cc66c';
+  const violet = '#b58cff';
+  switch (kind) {
+    case 'overview': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect x="6" y="6" width="88" height="88" rx="10" fill="none" stroke="${stroke}" stroke-width="2"/><line x1="50" y1="10" x2="50" y2="90" stroke="${stroke}" stroke-width="2" stroke-dasharray="3 3"/><circle cx="28" cy="30" r="8" fill="${blue}"/><rect x="22" y="38" width="12" height="14" rx="3" fill="${blue}"/><circle cx="72" cy="70" r="8" fill="${red}"/><rect x="66" y="78" width="12" height="14" rx="3" fill="${red}"/><path d="M28 60 L72 40" stroke="${accent}" stroke-width="2" stroke-dasharray="2 3"/></svg>`;
+    case 'controls': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="26" cy="68" r="20" fill="none" stroke="${stroke}" stroke-width="2"/><circle cx="26" cy="68" r="8" fill="${blue}"/><circle cx="74" cy="68" r="14" fill="${red}" opacity="0.85"/><text x="74" y="73" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">AA</text><circle cx="58" cy="36" r="10" fill="${violet}" opacity="0.9"/><text x="58" y="40" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">Q</text><circle cx="80" cy="44" r="10" fill="${violet}" opacity="0.9"/><text x="80" y="48" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">F</text><circle cx="86" cy="22" r="10" fill="${violet}" opacity="0.9"/><text x="86" y="26" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">E</text></svg>`;
+    case 'lanes': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="6" width="92" height="40" rx="4" fill="rgba(106,176,255,0.10)" stroke="${blue}" stroke-width="1.5"/><rect x="4" y="54" width="92" height="40" rx="4" fill="rgba(255,119,102,0.10)" stroke="${red}" stroke-width="1.5"/><line x1="4" y1="50" x2="96" y2="50" stroke="${stroke}" stroke-width="2"/><rect x="6" y="10" width="92" height="14" fill="none" stroke="${stroke}" stroke-width="0.6"/><rect x="6" y="28" width="92" height="14" fill="none" stroke="${stroke}" stroke-width="0.6"/><rect x="6" y="58" width="92" height="14" fill="none" stroke="${stroke}" stroke-width="0.6"/><rect x="6" y="76" width="92" height="14" fill="none" stroke="${stroke}" stroke-width="0.6"/><circle cx="88" cy="26" r="4" fill="${accent}"/><circle cx="88" cy="74" r="4" fill="${accent}"/></svg>`;
+    case 'waves': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><g>${[0,1,2,3,4].map(r => [0,1,2].map(c => `<rect x="${10 + c*22}" y="${14 + r*14}" width="14" height="10" rx="2" fill="${r===2?red:blue}" opacity="${0.45 + r*0.10}"/>`).join('')).join('')}</g><path d="M82 50 L82 86" stroke="${accent}" stroke-width="3"/><polygon points="76,80 88,80 82,92" fill="${accent}"/></svg>`;
+    case 'income': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="56" r="26" fill="${accent}" stroke="#a87a00" stroke-width="2"/><text x="50" y="63" text-anchor="middle" fill="#5a3e00" font-size="22" font-weight="800">G</text><path d="M50 28 L50 8" stroke="${green}" stroke-width="3"/><polygon points="42,14 58,14 50,4" fill="${green}"/><text x="84" y="20" text-anchor="middle" fill="${green}" font-size="11" font-weight="700">+</text></svg>`;
+    case 'shop': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect x="14" y="22" width="72" height="58" rx="6" fill="rgba(70,120,200,0.18)" stroke="${stroke}" stroke-width="1.5"/><rect x="20" y="30" width="60" height="10" fill="${blue}" opacity="0.5"/><text x="50" y="38" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">SHOP</text><rect x="22" y="44" width="22" height="14" rx="2" fill="${violet}" opacity="0.7"/><rect x="56" y="44" width="22" height="14" rx="2" fill="${green}" opacity="0.7"/><rect x="22" y="62" width="22" height="14" rx="2" fill="${red}" opacity="0.7"/><rect x="56" y="62" width="22" height="14" rx="2" fill="${accent}" opacity="0.7"/></svg>`;
+    case 'minions': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><g>${[0,1,2].map(i => `<circle cx="${20 + i*16}" cy="${48 + i*4}" r="5" fill="${blue}"/><rect x="${15 + i*16}" y="${54 + i*4}" width="10" height="10" rx="2" fill="${blue}"/>`).join('')}</g><path d="M70 60 L92 50" stroke="${accent}" stroke-width="2"/><polygon points="86,46 96,48 90,54" fill="${accent}"/><text x="50" y="22" text-anchor="middle" fill="${accent}" font-size="9" font-weight="700">DIN ARMÉ</text></svg>`;
+    case 'items': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect x="20" y="20" width="26" height="26" rx="4" fill="${violet}" opacity="0.7"/><text x="33" y="38" text-anchor="middle" fill="#fff" font-size="14">👢</text><rect x="54" y="20" width="26" height="26" rx="4" fill="${green}" opacity="0.7"/><text x="67" y="38" text-anchor="middle" fill="#fff" font-size="14">🧤</text><rect x="20" y="54" width="26" height="26" rx="4" fill="${blue}" opacity="0.7"/><text x="33" y="72" text-anchor="middle" fill="#fff" font-size="14">🛡</text><rect x="54" y="54" width="26" height="26" rx="4" fill="${red}" opacity="0.7"/><text x="67" y="72" text-anchor="middle" fill="#fff" font-size="14">⚔</text></svg>`;
+    case 'heroes': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="22" cy="40" r="14" fill="${violet}"/><polygon points="14,28 30,28 22,16" fill="${violet}"/><circle cx="50" cy="40" r="14" fill="${green}"/><path d="M40 30 Q50 24 60 30 L60 38 Q50 34 40 38 Z" fill="#234"/><circle cx="78" cy="40" r="14" fill="${red}"/><rect x="68" y="28" width="20" height="6" fill="#888"/><path d="M22 60 L22 80" stroke="${stroke}" stroke-width="2"/><path d="M50 60 L50 80" stroke="${stroke}" stroke-width="2"/><path d="M78 60 L78 80" stroke="${stroke}" stroke-width="2"/></svg>`;
+    case 'fountain': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><ellipse cx="50" cy="80" rx="32" ry="6" fill="none" stroke="${blue}" stroke-width="1.5" opacity="0.6"/><ellipse cx="50" cy="80" rx="22" ry="4" fill="${blue}" opacity="0.35"/><rect x="44" y="40" width="12" height="38" fill="#aab4c8"/><circle cx="50" cy="36" r="10" fill="${blue}" opacity="0.8"/><polygon points="50,18 58,32 42,32" fill="${accent}"/><circle cx="50" cy="48" r="38" fill="none" stroke="${blue}" stroke-width="1" stroke-dasharray="2 2" opacity="0.5"/></svg>`;
+    case 'duel': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="38" fill="rgba(255,119,102,0.10)" stroke="${red}" stroke-width="2"/><line x1="22" y1="22" x2="78" y2="78" stroke="${stroke}" stroke-width="4"/><line x1="78" y1="22" x2="22" y2="78" stroke="${stroke}" stroke-width="4"/><circle cx="50" cy="50" r="6" fill="${accent}"/><text x="50" y="92" text-anchor="middle" fill="${red}" font-size="10" font-weight="700">DUEL</text></svg>`;
+    case 'copy': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="32" cy="46" r="12" fill="${accent}"/><rect x="24" y="56" width="16" height="20" rx="3" fill="${accent}"/><circle cx="68" cy="46" r="12" fill="${red}" opacity="0.7"/><rect x="60" y="56" width="16" height="20" rx="3" fill="${red}" opacity="0.7"/><text x="50" y="20" text-anchor="middle" fill="${accent}" font-size="11" font-weight="700">LV 30</text><path d="M44 50 L56 50" stroke="${stroke}" stroke-width="2" stroke-dasharray="2 2"/></svg>`;
+    case 'goal': return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect x="44" y="32" width="12" height="46" fill="#aab4c8"/><circle cx="50" cy="28" r="12" fill="${red}"/><polygon points="50,12 60,26 40,26" fill="${red}" opacity="0.7"/><path d="M30 70 L40 78 M70 70 L60 78" stroke="${accent}" stroke-width="2"/><path d="M28 86 L72 86" stroke="${red}" stroke-width="3"/><text x="50" y="98" text-anchor="middle" fill="${accent}" font-size="9" font-weight="700">VINST</text></svg>`;
+  }
+  return '';
+}
+
+function renderHowto() {
+  if (!howtoContent) return;
+  const sections = [
+    {
+      icon: 'overview', title: 'Översikt',
+      html: `<p>Hero Line Wars är en <strong>1v1 MOBA-light</strong>. Ni har varsin arena. Var 10:e sekund spawnar en wave av fiender i din arena — du måste döda dem innan de når din <strong>fontän</strong>. När fontänen är död förlorar du.</p><p>Vid sidan dödar du fiender för guld och XP, köper items till din hjälte och <strong>minions till motståndarens lane</strong> så hens wave blir tuffare.</p>`
+    },
+    {
+      icon: 'controls', title: 'Kontroller',
+      html: `<ul><li><strong>Vänster joystick</strong> — flytta hjälten.</li><li><strong>AA-knapp (stor, hörnet)</strong> — toggle auto-attack på närmaste fiende. Hjälten attackerar bara när AA är på.</li><li><strong>Skills (Q / F / E)</strong> — tap för att casta mot AA-target. Håll och dra för att aim:a manuellt.</li><li><strong>Desktop:</strong> WASD/piltangenter + Q/F/E + Space = AA. Mus aim:ar skills.</li></ul>`
+    },
+    {
+      icon: 'lanes', title: 'Lanes & arenor',
+      html: `<p>Du har <strong>2 lanes</strong> (övre + nedre) i din arena. Vägg-barriärer skiljer dem så fiender stannar i sin lane. Du kan röra dig fritt mellan dem.</p><p>Motståndarens arena är spegelvänt nedanför (för host). Joinern ser den uppochnedvänd så hens arena är "nere".</p>`
+    },
+    {
+      icon: 'waves', title: 'Waves (50 totalt)',
+      html: `<p><strong>10s prep</strong> i början, sedan kommer en ny wave var 10:e sekund. 30 fiender per wave (15 per lane), alla spawnar samtidigt i kolumn.</p><ul><li><strong>5 tiers:</strong> Soldiers → Knights → Berserkers → Demons → Drakätt.</li><li><strong>Boss var 10:e wave</strong> (10, 20, 30, 40, 50) — enorm HP, hård dmg.</li><li>Wave-banner längst upp visar nästa wave.</li></ul>`
+    },
+    {
+      icon: 'income', title: 'Income (passive + boost)',
+      html: `<p>Du får <strong>passivt guld var 15:e sekund</strong>. Starten är låg — boosta den genom att <strong>köpa minions</strong> till hens lane.</p><ul><li>Varje minion-köp ger dig <strong>+20% av minions kostnad som permanent income-boost</strong>.</li><li>Köp dyrare minions ⇒ mer income snabbare.</li><li>Income-display visas top center: "Income: Xg/15s".</li></ul>`
+    },
+    {
+      icon: 'shop', title: 'Shop (höger sida)',
+      html: `<p>Shoppen är delad i två paneler på höger sida:</p><ul><li><strong>Hjälte-items (ovan):</strong> Boots, Glove of Haste osv — flat stat-boost för din hjälte. Upp till level 10 per item, dyrare per level.</li><li><strong>Minion-shop (under):</strong> 30 olika minions (5 tiers × 6 arketyper). Köp så spawnar de i hens lane som "din armé". De drar income, gör skada på hens torn/hero.</li></ul>`
+    },
+    {
+      icon: 'minions', title: 'Minions du köper',
+      html: `<p>När du köper en minion <strong>spawnar den i motståndarens lane</strong> tillsammans med hens nuvarande wave. Den marscherar mot hens fontän.</p><ul><li>5 tier-nivåer låses upp vid <strong>200g / 500g / 1000g / 2000g</strong> guld du tjänat.</li><li>Minions kan attackera motståndarens hjälte också.</li><li>Att skicka många minions trycker hens wave-defense — och boostar din income.</li></ul>`
+    },
+    {
+      icon: 'items', title: 'Hjälte-items',
+      html: `<p>Items har <strong>10 levels</strong>. Köp första gången för 200g, sedan dyrare per level (500 × 2^(lvl-1)).</p><ul><li><strong>Boots</strong> — 3 varianter: Speed / Magic / Tank. Vid lvl 10 unlock active: +50% buff i 5s, 30s CD.</li><li><strong>Glove of Haste</strong> — attack-speed/skill-dmg fokus.</li><li>Max 4 items i inventoryn längst ner i mitten. Tap/hover för tooltip.</li></ul>`
+    },
+    {
+      icon: 'heroes', title: 'Heroes',
+      html: `<p>3 hjältar valbara (fler kommer):</p><ul><li><strong>Gandulf</strong> — magiker, 100 HP, 5 AA, AoE skills (Fire Wave / Frost Nova / Black Hole). Passive: skill-hits ger shield + skill-dmg-stacks.</li><li><strong>Legolus</strong> — archer-assassin, 85 HP, 6 AA, längre range + snabb AA. Var 3:e AA = buff.</li><li><strong>Gimlu</strong> — dvärg-tank, hög HP, hammar-skills. Passive: under 80% HP får han DR-tier.</li></ul>`
+    },
+    {
+      icon: 'fountain', title: 'Fontän-aura',
+      html: `<p>Din fontän är inte bara mål — den <strong>healar och boostar dig</strong> när du är nära.</p><ul><li>Inom ~4.5m radie: <strong>+2% av maxHP/s heal</strong>, +10% skada, -10% inkommande skada, +10% CDR, +10% attack speed.</li><li>Stå nära fontänen mellan waves för att returna full HP gratis.</li></ul>`
+    },
+    {
+      icon: 'duel', title: 'Duel (var 5:e min)',
+      html: `<p>Var 5:e minut teleporteras båda hjältar till en <strong>cirkulär stenarena</strong>. 90-sekunder deathmatch — sista mannen kvar (eller högsta HP% vid timeout) vinner.</p><ul><li>Vinst: <strong>500 / 1500 / 5000 / 10000g</strong> + 1 level (skalar med duel-nummer).</li><li>Max 4 dueler per match. Lanes är pausade under duel.</li></ul>`
+    },
+    {
+      icon: 'copy', title: 'Lvl 30 hero-copy (belöning)',
+      html: `<p>Om du når <strong>level 30</strong> och vinner en duel spawnar en <strong>bot-styrd kopia av din hjälte</strong> i motståndarens lane.</p><ul><li>Kopian har 70% av dina stats och marscherar mot hens fontän.</li><li>Gör 10 skada på fontänen vid kontakt och aggro:ar hens hjälte.</li><li>Game-changing — pressar matchen mot vinst.</li></ul>`
+    },
+    {
+      icon: 'goal', title: 'Hur du vinner',
+      html: `<p>Förstör <strong>motståndarens fontän</strong>. Båda fontäner har 50 HP. Skada kommer från:</p><ul><li>Dina <strong>minions</strong> som når hens fontän (största källan).</li><li>Din <strong>hero-copy</strong> på lvl 30.</li><li>Indirekt: hens hjälte dör → 5s respawn → 5g till dig per kill.</li></ul>`
+    },
+  ];
+  howtoContent.innerHTML = sections.map(s => `
+    <div class="howto-section">
+      <div class="howto-icon">${howtoSvg(s.icon)}</div>
+      <div class="howto-body">
+        <h3>${s.title}</h3>
+        ${s.html}
+      </div>
+    </div>
+  `).join('');
 }
 
 function renderHeroGrid() {
@@ -6214,8 +6653,9 @@ const lobbyCodeInputEl = document.getElementById('lobby-code-input');
 
 const lobbyHeroesEl = document.getElementById('lobby-heroes');
 const lobbyItemsEl = document.getElementById('lobby-items');
+const lobbyHowtoEl = document.getElementById('lobby-howto');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -6223,6 +6663,7 @@ function showLobbyPanel(which) {
   else if (which === 'joining') lobbyJoiningEl.classList.add('visible');
   else if (which === 'heroes') lobbyHeroesEl.classList.add('visible');
   else if (which === 'items') lobbyItemsEl.classList.add('visible');
+  else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -6488,8 +6929,10 @@ lobbyCodeDisplayEl.addEventListener('click', () => {
 document.getElementById('btn-solo').addEventListener('click', () => showHeroPick('solo'));
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
+document.getElementById('btn-howto').addEventListener('click', () => { renderHowto(); showLobbyPanel('howto'); });
 document.getElementById('btn-heroes-back').addEventListener('click', () => showLobbyPanel('main'));
 document.getElementById('btn-items-back').addEventListener('click', () => showLobbyPanel('main'));
+document.getElementById('btn-howto-back').addEventListener('click', () => showLobbyPanel('main'));
 const btnHeroDetailBack = document.getElementById('btn-hero-detail-back');
 if (btnHeroDetailBack) btnHeroDetailBack.addEventListener('click', closeHeroDetailModal);
 const btnItemDetailBack = document.getElementById('btn-item-detail-back');
