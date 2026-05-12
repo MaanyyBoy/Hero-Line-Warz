@@ -103,7 +103,7 @@ const TOWER_MAX_HP = 50;
 // Fontän-aura: hero inom radius av egen fontän får regen + buff på output/defense/CDR/AS
 const FOUNTAIN_AURA_RADIUS = 4.5;
 const FOUNTAIN_AURA_RADIUS_SQ = FOUNTAIN_AURA_RADIUS * FOUNTAIN_AURA_RADIUS;
-const FOUNTAIN_AURA_REGEN = 2;       // hp/s
+const FOUNTAIN_AURA_REGEN_PCT = 0.02; // 2% av maxHp per sekund
 const FOUNTAIN_AURA_PCT = 0.10;      // 10% till varje stat
 const FOUNTAIN_DMG_MUL = 1 + FOUNTAIN_AURA_PCT;
 const FOUNTAIN_DMG_REDUCTION_MUL = 1 - FOUNTAIN_AURA_PCT;
@@ -1471,7 +1471,7 @@ function tickGame(state, dt) {
       const dz = side.hero.z - cfg.tower.z;
       side.heroFountainAura = (dx * dx + dz * dz) < FOUNTAIN_AURA_RADIUS_SQ;
       if (side.heroFountainAura && side.hero.hp < side.hero.maxHp) {
-        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + FOUNTAIN_AURA_REGEN * dt);
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * FOUNTAIN_AURA_REGEN_PCT * dt);
       }
     }
   }
