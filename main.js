@@ -2233,9 +2233,25 @@ window.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
 // ---- Shop (lokal UI-state + populate + refresh) ----
 
+const shopContainerEl = document.getElementById('shop-container');
 const shopHeroEl = document.getElementById('shop-hero');
 const shopMinionEl = document.getElementById('shop-minion');
 const shopState = { selectedTier: 1, selectedLane: 1 };
+
+// Rollup-knapparna: klick på header togglar expanded på sin panel.
+// Klick på själva body/innehåll bubblar inte upp (header är syskon till body),
+// så köp/tier-klick stänger inte panelen.
+document.querySelectorAll('.shop-header').forEach((h) => {
+  h.addEventListener('click', () => {
+    const panel = h.closest('.shop-panel');
+    if (panel) panel.classList.toggle('expanded');
+  });
+});
+
+function collapseShopPanels() {
+  if (shopHeroEl) shopHeroEl.classList.remove('expanded');
+  if (shopMinionEl) shopMinionEl.classList.remove('expanded');
+}
 const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
 function getNextLockedTier(side) {
@@ -2381,8 +2397,8 @@ function refreshShopUI() {
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
   }
 
-  if (shopHeroEl) shopHeroEl.classList.toggle('visible', inBase);
-  if (shopMinionEl) shopMinionEl.classList.toggle('visible', inBase);
+  if (shopContainerEl) shopContainerEl.classList.toggle('visible', inBase);
+  if (!inBase) collapseShopPanels();
 }
 
 populateShop();

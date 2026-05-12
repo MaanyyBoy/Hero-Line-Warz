@@ -26,8 +26,7 @@
     body:not(.in-game) #hud,
     body:not(.in-game) #touch-ui,
     body:not(.in-game) #income-display,
-    body:not(.in-game) #shop-hero,
-    body:not(.in-game) #shop-minion { display: none !important; }
+    body:not(.in-game) #shop-container { display: none !important; }
 
     /* HUD */
     #hud {
@@ -105,27 +104,57 @@
     #skill-e { right: calc(var(--skill-size) * 0.4); bottom: calc(var(--skill-size) * 1.35); background: rgba(130,90,200,0.65); border-color: rgba(200,160,255,0.8); }
     #skill-e.cooling { background: rgba(25,20,40,0.7); }
 
-    /* Shop-paneler (höger sida, två separata paneler) — endast synliga när hjälten är i basen */
-    .shop-panel {
+    /* Shop-paneler (höger sida) — rollup: header är alltid synlig, body expanderar vid klick */
+    #shop-container {
       position: fixed;
+      top: max(16px, env(safe-area-inset-top));
       right: max(16px, env(safe-area-inset-right));
-      background: rgba(15,25,40,0.92);
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      align-items: flex-end;
+      z-index: 50;
+      max-width: 60vw;
+    }
+    #shop-container.visible { display: flex; }
+    .shop-panel { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+    .shop-header {
+      background: rgba(20,30,55,0.92);
+      color: #fff;
       border: 2px solid rgba(180,200,255,0.55);
-      border-radius: 12px;
-      padding: 8px 10px;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font: 700 12px/1 system-ui, sans-serif;
+      letter-spacing: 1.3px;
+      cursor: pointer;
+      touch-action: manipulation;
+      min-width: 140px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      backdrop-filter: blur(2px);
+    }
+    .shop-header:active { transform: scale(0.97); }
+    .shop-header .chevron {
+      font-size: 11px;
+      opacity: 0.75;
+      transition: transform 0.18s ease-out;
+      display: inline-block;
+    }
+    .shop-panel.expanded .shop-header .chevron { transform: rotate(180deg); }
+    .shop-body {
       display: none;
       flex-direction: column;
       gap: 5px;
-      z-index: 50;
+      background: rgba(15,25,40,0.94);
+      border: 2px solid rgba(180,200,255,0.55);
+      border-radius: 12px;
+      padding: 8px 10px;
       backdrop-filter: blur(2px);
-      max-width: 44vw;
     }
-    .shop-panel.visible { display: flex; }
-    #shop-hero { top: max(16px, env(safe-area-inset-top)); }
-    #shop-minion {
-      /* Manuell positionering under hero-panelen. Ungefärlig höjd på hero ~76px + gap. */
-      top: calc(max(16px, env(safe-area-inset-top)) + 92px);
-    }
+    .shop-panel.expanded .shop-body { display: flex; }
     .shop-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-start; }
     .shop-section-label {
       color: #cfd8ec; font: 700 10px/1 system-ui, sans-serif;
@@ -377,16 +406,28 @@
     </div>
   </div>
 
-  <div id="shop-hero" class="shop-panel">
-    <div class="shop-section-label">HJÄLTE</div>
-    <div class="shop-row" id="shop-hero-row"></div>
-  </div>
+  <div id="shop-container">
+    <div id="shop-hero" class="shop-panel">
+      <button class="shop-header" data-shop="hero">
+        <span>HJÄLTE</span>
+        <span class="chevron">▾</span>
+      </button>
+      <div class="shop-body">
+        <div class="shop-row" id="shop-hero-row"></div>
+      </div>
+    </div>
 
-  <div id="shop-minion" class="shop-panel">
-    <div class="shop-section-label">MINIONS</div>
-    <div class="shop-row" id="shop-lane-row"></div>
-    <div class="shop-row" id="shop-tier-row"></div>
-    <div class="shop-row" id="shop-minion-grid"></div>
+    <div id="shop-minion" class="shop-panel">
+      <button class="shop-header" data-shop="minion">
+        <span>MINIONS</span>
+        <span class="chevron">▾</span>
+      </button>
+      <div class="shop-body">
+        <div class="shop-row" id="shop-lane-row"></div>
+        <div class="shop-row" id="shop-tier-row"></div>
+        <div class="shop-row" id="shop-minion-grid"></div>
+      </div>
+    </div>
   </div>
 
   <div id="endgame">
