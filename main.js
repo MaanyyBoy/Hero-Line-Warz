@@ -2708,10 +2708,12 @@ function updateHeroAttack(side, dt) {
   scene.add(mesh);
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
+  const isCrit = (side.critChancePct || 0) > 0 && Math.random() < side.critChancePct;
+  const critMul = isCrit ? 2 : 1;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
-    damage: side.attackDmg * auraDmg, isAoE,
+    damage: side.attackDmg * auraDmg * critMul, isAoE, isCrit,
   });
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
@@ -2920,6 +2922,8 @@ function updateSkillCooldowns(side, dt) {
 
 // Per-level-scaling-formel: 10% * 1.2^(level-1). Lvl1=10%, lvl2=12%, ..., lvl10=51.6%.
 const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveBigPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveHealPct = (level) => 0.01 * Math.pow(1.2, level - 1);
 
 const ITEM_TYPES = {
   item1: {
@@ -2969,7 +2973,54 @@ const ITEM_TYPES = {
       },
     },
   },
-  item2: { id: 'item2', name: 'Item 2', icon: '②', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item2: {
+    id: 'item2',
+    name: 'Glove of Haste',
+    icon: '🧤',
+    description: '3 stilar att välja mellan',
+    variants: {
+      haste: {
+        id: 'haste', parentId: 'item2', name: 'Glove of Haste', icon: '⚡',
+        description: 'Snabbare AA + chans till crit',
+        statsAtLevel: (level) => {
+          const v = gloveBigPct(level);
+          return { attackSpeedPct: v, critChancePct: v };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% attackfart och crit chans i 5s',
+          stats: { attackSpeedPct: 0.5, critChancePct: 0.5 },
+        },
+      },
+      spell: {
+        id: 'spell', parentId: 'item2', name: 'Glove of Spell', icon: '🔮',
+        description: 'Mer skill-skada och CDR',
+        statsAtLevel: (level) => {
+          const v = gloveBigPct(level);
+          return { skillDmgPct: v, cdrPct: v };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% skill-skada och CDR i 5s',
+          stats: { skillDmgPct: 0.5, cdrPct: 0.5 },
+        },
+      },
+      tank: {
+        id: 'tank', parentId: 'item2', name: 'Glove of Tank', icon: '🛡',
+        description: 'Skadereduktion + passiv HP-regen',
+        statsAtLevel: (level) => {
+          const v = gloveBigPct(level);
+          const h = gloveHealPct(level);
+          return { dmgReductionPct: v, healPerSecPct: h };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% skadereduktion och 5%/s heal i 5s',
+          stats: { dmgReductionPct: 0.5, healPerSecPct: 0.05 },
+        },
+      },
+    },
+  },
   item3: { id: 'item3', name: 'Item 3', icon: '③', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
   item4: { id: 'item4', name: 'Item 4', icon: '④', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
   item5: { id: 'item5', name: 'Item 5', icon: '⑤', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
@@ -3016,6 +3067,8 @@ function recomputeSideStats(side) {
   let cdrPct = 0;
   let dmgReductionPct = 0;
   let maxHpPct = 0;
+  let critChancePct = 0;
+  let healPerSecPct = 0;
 
   const addStats = (stats) => {
     if (!stats) return;
@@ -3028,6 +3081,8 @@ function recomputeSideStats(side) {
     cdrPct += stats.cdrPct || 0;
     dmgReductionPct += stats.dmgReductionPct || 0;
     maxHpPct += stats.maxHpPct || 0;
+    critChancePct += stats.critChancePct || 0;
+    healPerSecPct += stats.healPerSecPct || 0;
   };
 
   for (const entry of side.inventory) {
@@ -3051,6 +3106,8 @@ function recomputeSideStats(side) {
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
   side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
+  side.critChancePct = Math.min(1, critChancePct);
+  side.healPerSecPct = Math.max(0, healPerSecPct);
 
   // Max HP — räkna ny topp, behåll relativ HP vid förändring
   const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
@@ -4399,6 +4456,8 @@ const STAT_LABELS = {
   cdrPct: 'cooldown reduction',
   dmgReductionPct: 'skadereduktion',
   maxHpPct: 'max HP',
+  critChancePct: 'crit chans',
+  healPerSecPct: 'HP regen/s',
 };
 
 function formatStat(key, val) {
@@ -5210,6 +5269,9 @@ function simulateAll(dt) {
       side.heroFountainAura = (dx * dx + dz * dz) < FOUNTAIN_AURA_RADIUS_SQ;
       if (side.heroFountainAura && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * FOUNTAIN_AURA_REGEN_PCT * dt);
+      }
+      if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
       }
     }
   }

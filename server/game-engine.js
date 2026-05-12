@@ -192,6 +192,9 @@ const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
 const ACTIVE_DURATION = 5;
 const ACTIVE_COOLDOWN = 30;
 const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+// Glove of Haste: huvud-stats start på 10%, heal start på 1%. Båda växer +20% per level.
+const gloveBigPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveHealPct = (level) => 0.01 * Math.pow(1.2, level - 1);
 
 const ITEM_TYPES = {
   item1: {
@@ -214,7 +217,26 @@ const ITEM_TYPES = {
       },
     },
   },
-  item2: { id: 'item2', name: 'Item 2', statsAtLevel: () => ({}) },
+  item2: {
+    id: 'item2', name: 'Glove of Haste',
+    variants: {
+      haste: {
+        id: 'haste', name: 'Glove of Haste',
+        statsAtLevel: (level) => { const v = gloveBigPct(level); return { attackSpeedPct: v, critChancePct: v }; },
+        activeAtMax: { duration: 5, cooldown: 30, stats: { attackSpeedPct: 0.5, critChancePct: 0.5 } },
+      },
+      spell: {
+        id: 'spell', name: 'Glove of Spell',
+        statsAtLevel: (level) => { const v = gloveBigPct(level); return { skillDmgPct: v, cdrPct: v }; },
+        activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, cdrPct: 0.5 } },
+      },
+      tank: {
+        id: 'tank', name: 'Glove of Tank',
+        statsAtLevel: (level) => { const v = gloveBigPct(level); const h = gloveHealPct(level); return { dmgReductionPct: v, healPerSecPct: h }; },
+        activeAtMax: { duration: 5, cooldown: 30, stats: { dmgReductionPct: 0.5, healPerSecPct: 0.05 } },
+      },
+    },
+  },
   item3: { id: 'item3', name: 'Item 3', statsAtLevel: () => ({}) },
   item4: { id: 'item4', name: 'Item 4', statsAtLevel: () => ({}) },
   item5: { id: 'item5', name: 'Item 5', statsAtLevel: () => ({}) },
@@ -297,6 +319,7 @@ function recomputeSideStats(side) {
   let moveSpeedFlat = def.baseMoveSpeed;
   let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0, dmgReductionPct = 0, maxHpPct = 0;
+  let critChancePct = 0, healPerSecPct = 0;
   const addStats = (s) => {
     if (!s) return;
     attackDmg += s.attackDmg || 0;
@@ -308,6 +331,8 @@ function recomputeSideStats(side) {
     cdrPct += s.cdrPct || 0;
     dmgReductionPct += s.dmgReductionPct || 0;
     maxHpPct += s.maxHpPct || 0;
+    critChancePct += s.critChancePct || 0;
+    healPerSecPct += s.healPerSecPct || 0;
   };
   for (const entry of side.inventory) {
     const def = itemDefForEntry(entry);
@@ -328,6 +353,8 @@ function recomputeSideStats(side) {
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
   side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
+  side.critChancePct = Math.min(1, critChancePct);
+  side.healPerSecPct = Math.max(0, healPerSecPct);
   const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
   if (newMaxHp !== side.hero.maxHp) {
     const delta = newMaxHp - side.hero.maxHp;
@@ -854,6 +881,8 @@ function updateHeroAttack(state, side, opp, dt) {
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
+  const isCrit = (side.critChancePct || 0) > 0 && Math.random() < side.critChancePct;
+  const critMul = isCrit ? 2 : 1;
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -861,7 +890,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsMonster: !!target.isMonster,
     targetIsHero: !!target.isHero,
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
-    damage: side.attackDmg * auraDmg, isAoE,
+    damage: side.attackDmg * auraDmg * critMul, isAoE, isCrit,
   });
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
@@ -1472,6 +1501,10 @@ function tickGame(state, dt) {
       side.heroFountainAura = (dx * dx + dz * dz) < FOUNTAIN_AURA_RADIUS_SQ;
       if (side.heroFountainAura && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * FOUNTAIN_AURA_REGEN_PCT * dt);
+      }
+      // Passiv heal från Glove of Tank-stack (oavsett position)
+      if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
       }
     }
   }
