@@ -41,6 +41,16 @@ const NOVA_SLOW_TIME = 2.0;
 const BLINK_RANGE = 6.0;
 const TOWER_MAX_HP = 50;
 
+// Fontän-aura: hero inom radius av egen fontän får regen + buff på output/defense/CDR/AS
+const FOUNTAIN_AURA_RADIUS = 4.5;
+const FOUNTAIN_AURA_RADIUS_SQ = FOUNTAIN_AURA_RADIUS * FOUNTAIN_AURA_RADIUS;
+const FOUNTAIN_AURA_REGEN = 2;       // hp/s
+const FOUNTAIN_AURA_PCT = 0.10;      // 10% till varje stat
+const FOUNTAIN_DMG_MUL = 1 + FOUNTAIN_AURA_PCT;
+const FOUNTAIN_DMG_REDUCTION_MUL = 1 - FOUNTAIN_AURA_PCT;
+const FOUNTAIN_CDR_MUL = 1 + FOUNTAIN_AURA_PCT;       // snabbare cd-decrement
+const FOUNTAIN_AS_MUL = 1 + FOUNTAIN_AURA_PCT;         // snabbare attack-interval
+
 const INCOME_BASE = 2;
 const INCOME_INTERVAL = 15.0;
 const INCOME_MINION_RATIO = 0.2;
@@ -205,7 +215,8 @@ function recomputeSideStats(side) {
 
 function damageHero(side, amount) {
   if (side.hero.dead) return;
-  const final = amount * (side.dmgReductionMul ?? 1);
+  const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
+  const final = amount * (side.dmgReductionMul ?? 1) * auraMul;
   side.hero.hp = Math.max(0, side.hero.hp - final);
   if (side.hero.hp <= 0) killHero(side);
 }
@@ -266,6 +277,7 @@ function createSide(idx) {
     attackCd: 0,
     attackCounter: 0,
     attackSpeedMul: 1, skillDmgMul: 1, cdrMul: 1, dmgReductionMul: 1,
+    heroFountainAura: false,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -360,9 +372,11 @@ function killMonster(arenaSide, idx, byPlayerSide) {
 
 // === Update ===
 function updateSkillCooldowns(side, dt) {
-  side.skills.q.cd = Math.max(0, side.skills.q.cd - dt);
-  side.skills.f.cd = Math.max(0, side.skills.f.cd - dt);
-  side.skills.e.cd = Math.max(0, side.skills.e.cd - dt);
+  // Fontän-aura accelererar cd-decrement med +10%
+  const eff = dt * (side.heroFountainAura ? FOUNTAIN_CDR_MUL : 1);
+  side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
+  side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
+  side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
 }
 
 function updateWaves(state, side, dt) {
@@ -576,13 +590,15 @@ function updateHeroAttack(state, side, opp, dt) {
   if (!target) return;
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
+  const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
+  const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
     target: target.entity, targetIsMonster: target.isMonster,
-    damage: side.attackDmg, isAoE,
+    damage: side.attackDmg * auraDmg, isAoE,
   });
-  side.attackCd = HERO_ATTACK_INTERVAL / (side.attackSpeedMul || 1);
+  side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -648,7 +664,7 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
     dx: dirX, dz: dirZ,
     hit: new Set(),
     traveled: 0,
-    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1),
+    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
   });
 }
 
@@ -691,7 +707,7 @@ function castFrostnova(state, sideIdx) {
     x: side.hero.x, z: side.hero.z,
     life: 0.6, maxLife: 0.6,
   });
-  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1);
+  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.x - side.hero.x, m.z - side.hero.z) < NOVA_RADIUS) {
@@ -838,6 +854,21 @@ function tickGame(state, dt) {
     const j = state.lastInputs[sideIdx].j;
     if (j) applyMovement(side, j.x, j.z, dt);
   }
+  // Fontän-aura: räkna ut per sida innan andra updates (så regen + buff appliceras hela ticket)
+  for (const sideIdx of [1, 2]) {
+    const side = state.sides[sideIdx];
+    const cfg = SIDE_CFG[sideIdx];
+    if (side.hero.dead) {
+      side.heroFountainAura = false;
+    } else {
+      const dx = side.hero.x - cfg.tower.x;
+      const dz = side.hero.z - cfg.tower.z;
+      side.heroFountainAura = (dx * dx + dz * dz) < FOUNTAIN_AURA_RADIUS_SQ;
+      if (side.heroFountainAura && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + FOUNTAIN_AURA_REGEN * dt);
+      }
+    }
+  }
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     const opp = state.sides[3 - sideIdx];
@@ -880,6 +911,7 @@ function serializeSide(side) {
     ad: side.attackDmg,
     ac: side.attackCounter,
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
+    fa: side.heroFountainAura ? 1 : 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
     M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry })),

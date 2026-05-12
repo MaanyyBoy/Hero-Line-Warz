@@ -35,7 +35,16 @@ window.addEventListener('resize', () => {
 // STATIC SCENE (mark, väggar, lanes, baser, torn, ljus)
 // ============================================================
 
-const towerMeshes = {};
+const towerMeshes = {};         // mappar sida → fontän-rig (kvar i gamla namnet pga refs i renderloop)
+const campfires = {};           // sida → lägereld-rig (för flame-animation)
+const FOUNTAIN_AURA_RADIUS = 4.5; // meter — närhet till egen fontän för aura
+const FOUNTAIN_AURA_RADIUS_SQ = FOUNTAIN_AURA_RADIUS * FOUNTAIN_AURA_RADIUS;
+const FOUNTAIN_AURA_REGEN = 2;       // hp/s
+const FOUNTAIN_AURA_PCT = 0.10;
+const FOUNTAIN_DMG_MUL = 1 + FOUNTAIN_AURA_PCT;
+const FOUNTAIN_DMG_REDUCTION_MUL = 1 - FOUNTAIN_AURA_PCT;
+const FOUNTAIN_CDR_MUL = 1 + FOUNTAIN_AURA_PCT;
+const FOUNTAIN_AS_MUL = 1 + FOUNTAIN_AURA_PCT;
 
 // ---- Procedurella canvas-texturer ----
 
@@ -70,67 +79,400 @@ function makeNoiseTexture(baseColor, variance = 0.15, opts = {}) {
   return tex;
 }
 
-// Kakelmosaik-textur för lanes — varje tile ~1 m i världen.
-// Palette: mörkblå -> ljusblå -> grå. Fake-bevel via highlight + grout.
-function makeTileLaneTexture(tint = 0) {
-  const tilesX = 16, tilesY = 16, tilePx = 32;
+// Öken-lane med trampad stig i mitten — sandbas, mörkare dirt-band, stenar, gräs, hovmärken.
+// Tecknas i lane-aspekt (long×wide). Används med repeat=(1,1) per lane så ingen synlig kakling.
+function makeDesertLaneTexture(seed = 1) {
+  // Pseudo-random med deterministisk seed så varje lane ser likadan ut mellan reloads
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 2048, H = 384;
   const c = document.createElement('canvas');
-  c.width = tilesX * tilePx; c.height = tilesY * tilePx;
+  c.width = W; c.height = H;
   const ctx = c.getContext('2d');
-  const PALETTE = [
-    [26, 48, 86],     // dark blue
-    [38, 66, 110],    // mid blue
-    [56, 96, 150],    // bright blue
-    [86, 130, 175],   // light blue
-    [78, 100, 122],   // bluish grey
-    [108, 128, 148],  // grey
-  ];
-  for (let ty = 0; ty < tilesY; ty++) {
-    for (let tx = 0; tx < tilesX; tx++) {
-      const base = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-      const v = 0.80 + Math.random() * 0.35;
-      const r = Math.min(255, Math.max(0, Math.floor((base[0] + tint) * v)));
-      const g = Math.min(255, Math.max(0, Math.floor((base[1] + tint * 0.7) * v)));
-      const b = Math.min(255, Math.max(0, Math.floor(base[2] * v)));
-      const x0 = tx * tilePx, y0 = ty * tilePx;
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(x0, y0, tilePx, tilePx);
-      // Ljusare highlight (övre-vänster inre kant) — fake 3D bevel
-      ctx.strokeStyle = `rgba(${Math.min(255,r+50)},${Math.min(255,g+50)},${Math.min(255,b+55)},0.55)`;
-      ctx.lineWidth = 1.6;
+
+  // 1) Sandbas — varm tan med gradient + noise
+  const sandGrad = ctx.createLinearGradient(0, 0, 0, H);
+  sandGrad.addColorStop(0, '#c9a872');
+  sandGrad.addColorStop(0.5, '#d4b682');
+  sandGrad.addColorStop(1, '#c9a872');
+  ctx.fillStyle = sandGrad;
+  ctx.fillRect(0, 0, W, H);
+  // Sand-noise (små prickar)
+  for (let i = 0; i < 6000; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const a = 0.04 + rnd() * 0.10;
+    const tone = rnd() < 0.5 ? '255, 240, 200' : '120, 90, 50';
+    ctx.fillStyle = `rgba(${tone}, ${a})`;
+    ctx.fillRect(x, y, 1 + rnd() * 1.5, 1 + rnd() * 1.5);
+  }
+
+  // 2) Trampad stig — mörkare dirt-band genom mitten, oregelbundna kanter
+  const pathCenterY = H * 0.5;
+  const pathHalfH = H * 0.18; // ca 36% av höjden = ~2.2m bred stig på 6m lane
+  // Rita med segment där kanten "wobblar" lite
+  ctx.save();
+  ctx.beginPath();
+  const segments = 80;
+  ctx.moveTo(0, pathCenterY - pathHalfH);
+  for (let i = 0; i <= segments; i++) {
+    const x = (i / segments) * W;
+    const wob = (rnd() - 0.5) * H * 0.06;
+    ctx.lineTo(x, pathCenterY - pathHalfH + wob);
+  }
+  for (let i = segments; i >= 0; i--) {
+    const x = (i / segments) * W;
+    const wob = (rnd() - 0.5) * H * 0.06;
+    ctx.lineTo(x, pathCenterY + pathHalfH + wob);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#7a5a36';
+  ctx.fill();
+  // Inre tonvariation på stigen
+  ctx.clip();
+  for (let i = 0; i < 800; i++) {
+    const x = rnd() * W, y = pathCenterY + (rnd() - 0.5) * pathHalfH * 2.2;
+    const a = 0.10 + rnd() * 0.20;
+    const dark = rnd() < 0.4;
+    ctx.fillStyle = dark ? `rgba(45, 28, 12, ${a})` : `rgba(180, 140, 90, ${a * 0.6})`;
+    const r = 1 + rnd() * 3;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // Hovmärken — små mörka ellipser, oftast i par längs stigen
+  for (let i = 0; i < 120; i++) {
+    const x = rnd() * W;
+    const y = pathCenterY + (rnd() - 0.5) * pathHalfH * 1.6;
+    const rot = (rnd() - 0.5) * 0.6;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.fillStyle = `rgba(30, 18, 8, ${0.35 + rnd() * 0.25})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4 + rnd() * 2, 2.5 + rnd() * 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Liten "U-form" som hov-tryck
+    ctx.fillStyle = `rgba(20, 12, 5, ${0.45})`;
+    ctx.beginPath();
+    ctx.ellipse(0, -1, 3, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // 3) Stenar — spridda över hela lane med fler vid stigens kant
+  for (let i = 0; i < 90; i++) {
+    const x = rnd() * W;
+    // Bias mot kanterna men tillåt överallt
+    const yRand = rnd();
+    const y = yRand * H;
+    const r = 2 + rnd() * 5;
+    const grey = 90 + Math.floor(rnd() * 70);
+    // Stenkropp
+    ctx.fillStyle = `rgb(${grey}, ${grey - 5}, ${grey - 15})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * (0.7 + rnd() * 0.4), rnd() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+    // Highlight ovanpå
+    ctx.fillStyle = `rgba(255, 250, 230, 0.25)`;
+    ctx.beginPath();
+    ctx.ellipse(x - r * 0.3, y - r * 0.3, r * 0.5, r * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Skugga
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(x + r * 0.2, y + r * 0.5, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 4) Gräs-tofsar — slumpvis, mest vid kanterna (utanför stigen)
+  for (let i = 0; i < 70; i++) {
+    const x = rnd() * W;
+    // Bias mot top/bottom-kanterna
+    const edge = rnd() < 0.5 ? rnd() * (pathCenterY - pathHalfH - 4) : (pathCenterY + pathHalfH + 4) + rnd() * (H - (pathCenterY + pathHalfH + 4));
+    const y = edge;
+    // Liten klump av gräsblad
+    const blades = 4 + Math.floor(rnd() * 5);
+    for (let b = 0; b < blades; b++) {
+      const bx = x + (rnd() - 0.5) * 6;
+      const by = y + (rnd() - 0.5) * 3;
+      const len = 3 + rnd() * 5;
+      const sway = (rnd() - 0.5) * 1.5;
+      const green = 80 + Math.floor(rnd() * 70);
+      ctx.strokeStyle = `rgb(${60 + Math.floor(rnd()*30)}, ${green}, ${40 + Math.floor(rnd()*20)})`;
+      ctx.lineWidth = 1 + rnd();
       ctx.beginPath();
-      ctx.moveTo(x0 + 2, y0 + tilePx - 3);
-      ctx.lineTo(x0 + 2, y0 + 2);
-      ctx.lineTo(x0 + tilePx - 3, y0 + 2);
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + sway, by - len);
       ctx.stroke();
-      // Mörk grout (nedre-höger inre kant)
-      ctx.strokeStyle = 'rgba(0, 0, 12, 0.55)';
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.moveTo(x0 + tilePx - 2, y0 + 2);
-      ctx.lineTo(x0 + tilePx - 2, y0 + tilePx - 2);
-      ctx.lineTo(x0 + 2, y0 + tilePx - 2);
-      ctx.stroke();
-      // Tunn yttre grout-linje
-      ctx.strokeStyle = 'rgba(0, 0, 15, 0.75)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x0 + 0.5, y0 + 0.5, tilePx - 1, tilePx - 1);
     }
   }
+
+  // 5) Lite ljust damm/dust kvar på sanden runt stigen
+  for (let i = 0; i < 200; i++) {
+    const x = rnd() * W;
+    const y = pathCenterY + (rnd() < 0.5 ? -1 : 1) * (pathHalfH + rnd() * H * 0.12);
+    const a = 0.06 + rnd() * 0.10;
+    ctx.fillStyle = `rgba(160, 130, 90, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 2 + rnd() * 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Bas-camp golv — mörk packad jord matchande stig-färgen, med grus och slitage
+function makeCampGroundTexture(seed = 99) {
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 1024, H = 768;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Mörk dirt-bas (matchar stigen) — radial fade till lite ljusare vid ytterkanten
+  const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H));
+  grad.addColorStop(0, '#6b4d2c');
+  grad.addColorStop(0.5, '#7a5a36');
+  grad.addColorStop(1, '#8a6840');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Tonvariation — fläckar i ljusare/mörkare nyanser
+  for (let i = 0; i < 90; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const r = 10 + rnd() * 40;
+    const dark = rnd() < 0.5;
+    ctx.fillStyle = dark
+      ? `rgba(40, 26, 12, ${0.15 + rnd() * 0.15})`
+      : `rgba(180, 140, 90, ${0.06 + rnd() * 0.08})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Grus & småsten
+  for (let i = 0; i < 280; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const r = 1.5 + rnd() * 3;
+    const grey = 90 + Math.floor(rnd() * 70);
+    ctx.fillStyle = `rgb(${grey}, ${grey - 5}, ${grey - 12})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255, 250, 230, 0.22)';
+    ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Noise
+  for (let i = 0; i < 4000; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    ctx.fillStyle = `rgba(${rnd() < 0.5 ? '255, 230, 180' : '30, 18, 8'}, ${0.04 + rnd() * 0.08})`;
+    ctx.fillRect(x, y, 1.2, 1.2);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Trail-extension med alpha-fade — placeras ovanpå basgolvet där stigen kommer ut ur en lane
+function makeTrailFadeTexture(seed = 7) {
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 512, H = 192;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Bas: stigens dirt-färg
+  ctx.fillStyle = '#7a5a36';
+  ctx.fillRect(0, 0, W, H);
+
+  // Lite tonvariation
+  for (let i = 0; i < 200; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const r = 2 + rnd() * 6;
+    const dark = rnd() < 0.5;
+    ctx.fillStyle = dark
+      ? `rgba(35, 20, 8, ${0.2 + rnd() * 0.25})`
+      : `rgba(170, 130, 80, ${0.1 + rnd() * 0.15})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Hovmärken — tunnare och mer utspridda mot slutet
+  for (let i = 0; i < 30; i++) {
+    const x = rnd() * W;
+    const y = H * 0.5 + (rnd() - 0.5) * H * 0.6;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((rnd() - 0.5) * 0.6);
+    ctx.fillStyle = `rgba(25, 14, 5, ${0.4 + rnd() * 0.25})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4 + rnd() * 2, 2.5 + rnd() * 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ALPHA FADE — opaque vänster (mot lanen), helt transparent höger (in i basen)
+  // Använder destination-out så vi raderar enligt alpha-gradient
+  const fade = ctx.createLinearGradient(0, 0, W, 0);
+  fade.addColorStop(0.0, 'rgba(0,0,0,0.0)');   // ingen radering vänster (full opacity)
+  fade.addColorStop(0.4, 'rgba(0,0,0,0.2)');   // börjar fade:a
+  fade.addColorStop(0.8, 'rgba(0,0,0,0.85)');  // nästan borta
+  fade.addColorStop(1.0, 'rgba(0,0,0,1.0)');   // helt transparent höger
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Mjuka även top/bottom-kanten lite (så stigens kant smälter)
+  const vfade = ctx.createLinearGradient(0, 0, 0, H);
+  vfade.addColorStop(0.0, 'rgba(0,0,0,0.6)');
+  vfade.addColorStop(0.15, 'rgba(0,0,0,0.0)');
+  vfade.addColorStop(0.85, 'rgba(0,0,0,0.0)');
+  vfade.addColorStop(1.0, 'rgba(0,0,0,0.6)');
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = vfade;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Elven sten-textur med flowing leaf/swirl-etsningar — för Rivendell-fontänen
+function makeElvenStoneTexture(seed = 33) {
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 512, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Bas: kall ljus sten (silver/blå-vit)
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#d8dde5');
+  grad.addColorStop(0.5, '#c0c8d2');
+  grad.addColorStop(1, '#a8b3c0');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtil marmor-ådring
+  for (let i = 0; i < 12; i++) {
+    ctx.strokeStyle = `rgba(180, 190, 205, ${0.18 + rnd() * 0.12})`;
+    ctx.lineWidth = 1 + rnd() * 1.5;
+    ctx.beginPath();
+    let x = rnd() * W, y = rnd() * H;
+    ctx.moveTo(x, y);
+    for (let k = 0; k < 8; k++) {
+      x += (rnd() - 0.5) * 80;
+      y += (rnd() - 0.5) * 80;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Subtil noise
+  for (let i = 0; i < 3000; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    ctx.fillStyle = `rgba(${rnd() < 0.5 ? '255, 255, 255' : '90, 100, 120'}, ${0.05 + rnd() * 0.09})`;
+    ctx.fillRect(x, y, 1.4, 1.4);
+  }
+
+  // Etsade flowing swirl/leaf-mönster — tunna mörkblå linjer
+  ctx.strokeStyle = 'rgba(60, 90, 140, 0.55)';
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = 'round';
+
+  // Tre stora vågor av mönster (kommer från olika hörn)
+  function drawSwirl(cx, cy, scale, rotation) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+    ctx.scale(scale, scale);
+
+    // Huvudkurva (S-form)
+    ctx.beginPath();
+    ctx.moveTo(-40, -30);
+    ctx.bezierCurveTo(-20, -60, 20, -40, 30, -10);
+    ctx.bezierCurveTo(35, 10, 20, 20, 0, 25);
+    ctx.bezierCurveTo(-20, 30, -30, 15, -20, 0);
+    ctx.stroke();
+
+    // Bladdetalj
+    ctx.beginPath();
+    ctx.moveTo(20, -15);
+    ctx.quadraticCurveTo(35, -20, 40, -5);
+    ctx.quadraticCurveTo(30, 0, 20, -15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-5, 18);
+    ctx.quadraticCurveTo(-15, 25, -22, 14);
+    ctx.quadraticCurveTo(-12, 10, -5, 18);
+    ctx.stroke();
+
+    // Liten kvist
+    ctx.beginPath();
+    ctx.moveTo(30, -10);
+    ctx.lineTo(45, -18);
+    ctx.moveTo(28, -8);
+    ctx.lineTo(36, 4);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+  // Sprid swirls med olika rotation/scale
+  for (let i = 0; i < 8; i++) {
+    const cx = rnd() * W;
+    const cy = rnd() * H;
+    const sc = 0.7 + rnd() * 1.2;
+    drawSwirl(cx, cy, sc, rnd() * Math.PI * 2);
+  }
+
+  // Liten star/sparkle ovanpå mönstret för Elven-feel
+  ctx.fillStyle = 'rgba(180, 210, 240, 0.6)';
+  for (let i = 0; i < 18; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const sz = 1.5 + rnd() * 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y - sz * 2);
+    ctx.lineTo(x + sz * 0.4, y - sz * 0.4);
+    ctx.lineTo(x + sz * 2, y);
+    ctx.lineTo(x + sz * 0.4, y + sz * 0.4);
+    ctx.lineTo(x, y + sz * 2);
+    ctx.lineTo(x - sz * 0.4, y + sz * 0.4);
+    ctx.lineTo(x - sz * 2, y);
+    ctx.lineTo(x - sz * 0.4, y - sz * 0.4);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.magFilter = THREE.NearestFilter;       // crisp tile-kanter
-  tex.minFilter = THREE.LinearMipMapNearestFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
 const TEXTURES = {
   groundGrass: () => makeNoiseTexture([42, 60, 32], 0.2, { repeatX: 14, repeatY: 7, streaks: true }),
-  laneTilesMine: () => makeTileLaneTexture(8),     // varmare tint
-  laneTilesOpp: () => makeTileLaneTexture(-6),     // svalare tint
-  baseFloor1: () => makeNoiseTexture([130, 120, 100], 0.12, { repeatX: 5, repeatY: 4, speckColor: [180, 165, 140] }),
-  baseFloor2: () => makeNoiseTexture([110, 115, 130], 0.12, { repeatX: 5, repeatY: 4, speckColor: [150, 160, 180] }),
+  desertLane: (seed) => makeDesertLaneTexture(seed),
+  campGround: (seed) => makeCampGroundTexture(seed),
+  trailFade: (seed) => makeTrailFadeTexture(seed),
+  elvenStone: (seed) => makeElvenStoneTexture(seed),
   stoneWall: () => makeNoiseTexture([90, 84, 75], 0.18, { repeatX: 8, repeatY: 1.2, speckColor: [50, 45, 40] }),
   stoneTower: () => makeNoiseTexture([135, 130, 120], 0.14, { repeatX: 3, repeatY: 2, speckColor: [180, 175, 165] }),
 };
@@ -144,46 +486,34 @@ const TEXTURES = {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Bas-golv (övre = sida 1, nedre = sida 2)
-  const baseFloor1 = new THREE.Mesh(
-    new THREE.PlaneGeometry(18, 14),
-    new THREE.MeshStandardMaterial({ map: TEXTURES.baseFloor1(), color: 0xffffff, roughness: 0.9 })
-  );
-  baseFloor1.rotation.x = -Math.PI / 2; baseFloor1.position.set(19, 0.02, 7.5);
-  baseFloor1.receiveShadow = true;
-  scene.add(baseFloor1);
-  const baseFloor2 = new THREE.Mesh(
-    new THREE.PlaneGeometry(18, 14),
-    new THREE.MeshStandardMaterial({ map: TEXTURES.baseFloor2(), color: 0xffffff, roughness: 0.9 })
-  );
-  baseFloor2.rotation.x = -Math.PI / 2; baseFloor2.position.set(19, 0.02, -7.5);
-  baseFloor2.receiveShadow = true;
-  scene.add(baseFloor2);
+  // Bas-camp: packad sandig jord runt fontänen
+  function makeBaseFloor(cz, seed) {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 14),
+      new THREE.MeshStandardMaterial({ map: TEXTURES.campGround(seed), color: 0xffffff, roughness: 0.95 })
+    );
+    mesh.rotation.x = -Math.PI / 2; mesh.position.set(19, 0.02, cz);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+  makeBaseFloor(7.5, 11);
+  makeBaseFloor(-7.5, 23);
 
-  function makeLane(cx, cz, length, width, baseTex) {
-    // Klona texturen så varje lane kan ha sina egna repeat-värden
-    const tex = baseTex.clone();
-    tex.needsUpdate = true;
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.LinearMipMapNearestFilter;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    // 16 tiles per textur-repetition; vill ha ~1 tile per spelmeter
-    tex.repeat.set(length / 16, width / 16);
+  // Lane: öken med trampad stig. Unik seed per lane så de skiljer sig något.
+  function makeLane(cx, cz, length, width, seed) {
     const lane = new THREE.Mesh(
       new THREE.PlaneGeometry(length, width),
-      new THREE.MeshStandardMaterial({ map: tex, color: 0xffffff, roughness: 0.85 })
+      new THREE.MeshStandardMaterial({ map: TEXTURES.desertLane(seed), color: 0xffffff, roughness: 0.95 })
     );
     lane.rotation.x = -Math.PI / 2; lane.position.set(cx, 0.02, cz);
     lane.receiveShadow = true;
     scene.add(lane);
   }
-  const laneMineTex = TEXTURES.laneTilesMine();
-  const laneOppTex = TEXTURES.laneTilesOpp();
-  makeLane(-8.5, 12, 39, 6, laneMineTex);
-  makeLane(-8.5, 4,  39, 6, laneMineTex);
-  makeLane(-8.5, -4, 39, 6, laneOppTex);
-  makeLane(-8.5, -12, 39, 6, laneOppTex);
+  // Lane-mesh slutar exakt vid bas-golvets västkant (x=10) — undviker z-fight i overlappet
+  makeLane(-9, 12, 38, 6, 1);
+  makeLane(-9, 4,  38, 6, 2);
+  makeLane(-9, -4, 38, 6, 3);
+  makeLane(-9, -12, 38, 6, 4);
 
   const wallTex = TEXTURES.stoneWall();
   function makeWall(cx, cz, w, d, h = 1.2) {
@@ -204,75 +534,297 @@ const TEXTURES = {
   makeWall(-8.5, 8, 39, 0.3);       // Skiljevägg sida 1
   makeWall(-8.5, -8, 39, 0.3);      // Skiljevägg sida 2
 
-  // Torn — flerlager: sten-bas → mur → battlements → flaggstång + flagga
+  // Sten-textur för dekor (lägereld, portaler) — varmare sten-look
   const towerStoneTex = TEXTURES.stoneTower();
-  function makeTower(x, z, flagColor) {
+  // Rivendell-fontän — bredare basin, slanka kolonner, central spira med band, översta skål med kristall.
+  // Eleven sten-textur med ranka/leaf-etsningar.
+  const elvenStoneTex = TEXTURES.elvenStone(33);
+  const elvenStoneTexDark = TEXTURES.elvenStone(58);
+  function makeFountain(x, z, glowColor) {
     const grp = new THREE.Group();
     grp.position.set(x, 0, z);
 
-    const stoneMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xffffff, roughness: 0.7 });
-    const stoneDark = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xaaaaaa, roughness: 0.8 });
+    const stoneLight = new THREE.MeshStandardMaterial({ map: elvenStoneTex, color: 0xffffff, roughness: 0.55, metalness: 0.05 });
+    const stoneMid = new THREE.MeshStandardMaterial({ map: elvenStoneTex, color: 0xd0d8e2, roughness: 0.65, metalness: 0.05 });
+    const stoneDeep = new THREE.MeshStandardMaterial({ map: elvenStoneTexDark, color: 0xa8b3c4, roughness: 0.7 });
+    const silver = new THREE.MeshStandardMaterial({ color: 0xe2e8ef, metalness: 0.6, roughness: 0.3 });
 
-    // Bred bas (sokkel)
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.1, 0.6, 20), stoneDark);
-    base.position.y = 0.3; base.castShadow = true; base.receiveShadow = true;
-    grp.add(base);
+    // === BASIN ===
+    // Sokkel (steg)
+    const step = new THREE.Mesh(new THREE.CylinderGeometry(2.35, 2.55, 0.18, 32), stoneDeep);
+    step.position.y = 0.09; step.castShadow = true; step.receiveShadow = true;
+    grp.add(step);
+    // Yttre basin-vägg
+    const basinOuter = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.15, 0.55, 32), stoneLight);
+    basinOuter.position.y = 0.455; basinOuter.castShadow = true; basinOuter.receiveShadow = true;
+    grp.add(basinOuter);
+    // Inre rim (något smalare så vattnet ligger i en "skål")
+    const basinRim = new THREE.Mesh(new THREE.CylinderGeometry(1.95, 1.95, 0.22, 32), stoneMid);
+    basinRim.position.y = 0.83; basinRim.castShadow = true; basinRim.receiveShadow = true;
+    grp.add(basinRim);
+    // Dekorativ kant ovanpå rim
+    const cornice = new THREE.Mesh(new THREE.CylinderGeometry(2.02, 1.96, 0.08, 32), silver);
+    cornice.position.y = 0.94;
+    grp.add(cornice);
 
-    // Mur (huvudkropp)
-    const wall = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.75, 3.2, 20), stoneMat);
-    wall.position.y = 2.2; wall.castShadow = true; wall.receiveShadow = true;
-    grp.add(wall);
-
-    // Skiva precis under battlements
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.55, 0.25, 20), stoneDark);
-    cap.position.y = 3.95; cap.castShadow = true; cap.receiveShadow = true;
-    grp.add(cap);
-
-    // Battlements — 12 små klossar runt kanten
-    const cren = 12;
-    for (let i = 0; i < cren; i++) {
-      const ang = (i / cren) * Math.PI * 2;
-      const r = 1.55;
-      const b = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.35), stoneMat);
-      b.position.set(Math.cos(ang) * r, 4.35, Math.sin(ang) * r);
-      b.rotation.y = -ang;
-      b.castShadow = true; b.receiveShadow = true;
-      grp.add(b);
+    // 8 små dekor-knoppar runt rim (silver) — som elven-detaljer
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2;
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), silver);
+      knob.position.set(Math.cos(ang) * 1.98, 0.98, Math.sin(ang) * 1.98);
+      knob.castShadow = true;
+      grp.add(knob);
     }
 
-    // Innertopp (något insatt)
-    const innerTop = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.2, 20), stoneDark);
-    innerTop.position.y = 4.25; innerTop.receiveShadow = true;
-    grp.add(innerTop);
+    // Vatten i basin — emissive
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x4a9ee0, emissive: glowColor, emissiveIntensity: 0.55,
+      roughness: 0.2, metalness: 0.15, transparent: true, opacity: 0.92,
+    });
+    const water = new THREE.Mesh(new THREE.CircleGeometry(1.88, 40), waterMat);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0.93;
+    grp.add(water);
 
-    // Flaggstång
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.06, 2.2, 8),
-      new THREE.MeshStandardMaterial({ color: 0x2a1a10, roughness: 0.9 })
+    // === KOLONNER (4 slanka pelare runt central pillar) ===
+    const colMat = stoneMid;
+    const colCapMat = silver;
+    for (let i = 0; i < 4; i++) {
+      const ang = (i / 4) * Math.PI * 2 + Math.PI / 4; // diagonalt mot kameran
+      const r = 1.05;
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.085, 1.6, 12), colMat);
+      col.position.set(Math.cos(ang) * r, 1.8, Math.sin(ang) * r);
+      col.castShadow = true; col.receiveShadow = true;
+      grp.add(col);
+      // Kapitäl (toppdel)
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.09, 0.12, 12), colCapMat);
+      cap.position.set(Math.cos(ang) * r, 2.65, Math.sin(ang) * r);
+      grp.add(cap);
+      // Bas
+      const baseCap = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.1, 12), colCapMat);
+      baseCap.position.set(Math.cos(ang) * r, 1.05, Math.sin(ang) * r);
+      grp.add(baseCap);
+    }
+
+    // === CENTRAL SPIRA ===
+    // Bred sockel kring spirans bas (under vattnet, sticker upp över)
+    const spireBase = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 0.4, 16), stoneLight);
+    spireBase.position.y = 1.18; spireBase.castShadow = true;
+    grp.add(spireBase);
+    // Smal kolumn upp
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 1.6, 16), stoneMid);
+    spire.position.y = 2.2; spire.castShadow = true; spire.receiveShadow = true;
+    grp.add(spire);
+    // Dekor-band mitt på spiran (silver)
+    const band1 = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.06, 16), silver);
+    band1.position.y = 2.2;
+    grp.add(band1);
+    const band2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.04, 16), silver);
+    band2.position.y = 1.6;
+    grp.add(band2);
+    const band3 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.04, 16), silver);
+    band3.position.y = 2.8;
+    grp.add(band3);
+
+    // === ÖVRE SKÅL (mellan-tier) ===
+    const midBowl = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.6, 0.18, 24), stoneLight);
+    midBowl.position.y = 3.05; midBowl.castShadow = true; midBowl.receiveShadow = true;
+    grp.add(midBowl);
+    const midBowlInner = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.55, 0.08, 24), stoneMid);
+    midBowlInner.position.y = 3.13;
+    grp.add(midBowlInner);
+    // Vatten i mid-bowl
+    const midWaterMat = new THREE.MeshStandardMaterial({
+      color: 0x6abae8, emissive: glowColor, emissiveIntensity: 0.7,
+      roughness: 0.15, transparent: true, opacity: 0.95,
+    });
+    const topWater = new THREE.Mesh(new THREE.CircleGeometry(0.78, 28), midWaterMat);
+    topWater.rotation.x = -Math.PI / 2;
+    topWater.position.y = 3.19;
+    grp.add(topWater);
+
+    // === KRISTALL/STJÄRNA PÅ TOPPEN ===
+    const finialStem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.4, 10), silver);
+    finialStem.position.y = 3.4;
+    grp.add(finialStem);
+    const crystal = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.18, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0xb8e4ff, emissive: glowColor, emissiveIntensity: 1.2,
+        metalness: 0.4, roughness: 0.15, transparent: true, opacity: 0.92,
+      })
     );
-    pole.position.y = 5.45; pole.castShadow = true;
-    grp.add(pole);
+    crystal.position.y = 3.78;
+    grp.add(crystal);
 
-    // Flagga (rektangel) — sidans färg
-    const flagMat = new THREE.MeshStandardMaterial({ color: flagColor, roughness: 0.7, side: THREE.DoubleSide });
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.7), flagMat);
-    flag.position.set(0.6, 6.0, 0);
-    flag.castShadow = true;
-    grp.add(flag);
+    // === VATTENSTRÅLAR ===
+    // Från mid-bowl ner till basin (4 trådar)
+    const streamMat = new THREE.MeshStandardMaterial({
+      color: 0xa8dcf6, emissive: glowColor, emissiveIntensity: 0.55,
+      transparent: true, opacity: 0.6,
+    });
+    for (let i = 0; i < 4; i++) {
+      const ang = (i / 4) * Math.PI * 2;
+      const r = 0.7;
+      const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 2.1, 6), streamMat);
+      stream.position.set(Math.cos(ang) * r, 2.0, Math.sin(ang) * r);
+      grp.add(stream);
+    }
 
-    // Knopp på toppen av stång
-    const finial = new THREE.Mesh(
-      new THREE.SphereGeometry(0.1, 12, 8),
-      new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.5, roughness: 0.4 })
+    // === LJUS ===
+    const light = new THREE.PointLight(glowColor, 1.0, 7, 2);
+    light.position.set(0, 3.0, 0);
+    grp.add(light);
+
+    // === AURA-RING ===
+    const auraRing = new THREE.Mesh(
+      new THREE.RingGeometry(FOUNTAIN_AURA_RADIUS - 0.08, FOUNTAIN_AURA_RADIUS, 56),
+      new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
     );
-    finial.position.y = 6.6; finial.castShadow = true;
-    grp.add(finial);
+    auraRing.rotation.x = -Math.PI / 2;
+    auraRing.position.y = 0.03;
+    grp.add(auraRing);
+
+    scene.add(grp);
+    return { group: grp, water, topWater, light, auraRing, crystal };
+  }
+  towerMeshes[1] = makeFountain(24, 8,  0x4aa0ff);   // sida 1 = blå glöd
+  towerMeshes[2] = makeFountain(24, -8, 0xff5a4a);   // sida 2 = varm glöd
+
+  // === TRAIL-FADE — stigar som fortsätter in i basen ===
+  function makeTrailExtension(cx, cz, len = 5, w = 2.4, seed = 1) {
+    const tex = TEXTURES.trailFade(seed);
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(len, w),
+      new THREE.MeshStandardMaterial({
+        map: tex, color: 0xffffff, roughness: 0.95,
+        transparent: true, depthWrite: false,
+      })
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(cx, 0.025, cz); // strax över basgolvet (0.02) för att undvika z-fight
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+  // Stigar in i sida 1:s bas vid z=12 och z=4 (lane-mittpunkterna)
+  makeTrailExtension(12.5, 12, 5, 2.4, 11);
+  makeTrailExtension(12.5,  4, 5, 2.4, 12);
+  // Sida 2 mirror
+  makeTrailExtension(12.5, -4, 5, 2.4, 13);
+  makeTrailExtension(12.5, -12, 5, 2.4, 14);
+
+  // Lägereld — stenring + loggar + flame-cones + varm punktljus
+  function makeCampfire(x, z) {
+    const grp = new THREE.Group();
+    grp.position.set(x, 0, z);
+    // Stenring
+    const stoneMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0x888888, roughness: 0.9 });
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2 + 0.2;
+      const r = 0.6;
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.18 + Math.random() * 0.07, 8, 6), stoneMat);
+      s.position.set(Math.cos(ang) * r, 0.12, Math.sin(ang) * r);
+      s.castShadow = true; s.receiveShadow = true;
+      grp.add(s);
+    }
+    // Loggar — 3 cylindrar som korsar
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x4a2e15, roughness: 0.95 });
+    const woodMatDark = new THREE.MeshStandardMaterial({ color: 0x2a1808, roughness: 0.95 });
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI;
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.0, 8), i % 2 === 0 ? woodMat : woodMatDark);
+      log.rotation.z = Math.PI / 2;
+      log.rotation.y = ang;
+      log.position.y = 0.12;
+      log.castShadow = true; log.receiveShadow = true;
+      grp.add(log);
+    }
+    // Glöd-bädd
+    const ember = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38, 16),
+      new THREE.MeshStandardMaterial({ color: 0xff3a0a, emissive: 0xff5012, emissiveIntensity: 1.2, transparent: true, opacity: 0.9 })
+    );
+    ember.rotation.x = -Math.PI / 2;
+    ember.position.y = 0.21;
+    grp.add(ember);
+    // Lågor — 3 koner
+    const flameMatOuter = new THREE.MeshStandardMaterial({ color: 0xff7a1a, emissive: 0xff6010, emissiveIntensity: 1.3, transparent: true, opacity: 0.85 });
+    const flameMatInner = new THREE.MeshStandardMaterial({ color: 0xffd84a, emissive: 0xffb020, emissiveIntensity: 1.5, transparent: true, opacity: 0.9 });
+    const flames = [];
+    for (let i = 0; i < 3; i++) {
+      const outer = new THREE.Mesh(new THREE.ConeGeometry(0.22 - i * 0.04, 0.55 - i * 0.1, 8), i === 0 ? flameMatOuter : flameMatInner);
+      outer.position.set((Math.random() - 0.5) * 0.15, 0.4 + i * 0.1, (Math.random() - 0.5) * 0.15);
+      grp.add(outer);
+      flames.push(outer);
+    }
+    // Varm pointlight
+    const fireLight = new THREE.PointLight(0xff7a2a, 0.7, 5, 2);
+    fireLight.position.set(0, 0.6, 0);
+    grp.add(fireLight);
+    scene.add(grp);
+    return { group: grp, flames, light: fireLight };
+  }
+
+  // Halv-trasigt tält — två sluttande paneler med en pol i mitten, ena sidan lutar/saggar
+  function makeBrokenTent(x, z, rotY = 0) {
+    const grp = new THREE.Group();
+    grp.position.set(x, 0, z);
+    grp.rotation.y = rotY;
+
+    const canvasMat = new THREE.MeshStandardMaterial({ color: 0x8a5a36, roughness: 0.95, side: THREE.DoubleSide });
+    const canvasDark = new THREE.MeshStandardMaterial({ color: 0x6a4226, roughness: 0.95, side: THREE.DoubleSide });
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.9 });
+
+    // Vänster panel — står upp normalt
+    const left = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.3), canvasMat);
+    left.rotation.y = Math.PI / 2;
+    left.rotation.z = Math.PI / 7; // sluttar inåt
+    left.position.set(-0.45, 0.55, 0);
+    left.castShadow = true; left.receiveShadow = true;
+    grp.add(left);
+
+    // Höger panel — kollapsad, ligger mer plant
+    const right = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.1), canvasDark);
+    right.rotation.y = Math.PI / 2;
+    right.rotation.z = -Math.PI / 2.4; // nästan flat
+    right.position.set(0.55, 0.35, 0);
+    right.castShadow = true; right.receiveShadow = true;
+    grp.add(right);
+
+    // Stödpåle (vänster sida står)
+    const poleL = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 8), poleMat);
+    poleL.position.set(-0.7, 0.55, -0.65);
+    poleL.castShadow = true;
+    grp.add(poleL);
+    const poleL2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 8), poleMat);
+    poleL2.position.set(-0.7, 0.55, 0.65);
+    poleL2.castShadow = true;
+    grp.add(poleL2);
+
+    // Trasig påle på höger sida (kortare och lutar)
+    const poleR = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 8), poleMat);
+    poleR.position.set(0.6, 0.22, 0.65);
+    poleR.rotation.z = -0.4;
+    poleR.castShadow = true;
+    grp.add(poleR);
+
+    // Spill av canvas på marken
+    const debris = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.45), canvasDark);
+    debris.rotation.x = -Math.PI / 2;
+    debris.position.set(0.9, 0.03, -0.4);
+    grp.add(debris);
 
     scene.add(grp);
     return { group: grp };
   }
-  towerMeshes[1] = makeTower(24, 8,  0x4477dd);   // sida 1 = blå flagga
-  towerMeshes[2] = makeTower(24, -8, 0xdd4444);   // sida 2 = röd flagga
+
+  // Camp-dekor: lägereld i NE-hörnet, tält i SE-hörnet (mot östra bakväggen + norra/södra ytterväggen).
+  // Bas-bounds: x∈[10,28], z∈[0.5,14.5] (sida 1), spegelvänt för sida 2.
+  // Östra bakväggen x≈28 och ytterväggarna z≈±15.15 bildar riktiga hörn att tucka in props i.
+  campfires[1] = makeCampfire(26.7, 13.5);
+  campfires[2] = makeCampfire(26.7, -13.5);
+  makeBrokenTent(26.7, 2.0, Math.PI);   // tält i SE-hörnet, vänd så standing-sidan pekar in mot campen
+  makeBrokenTent(26.7, -2.0, Math.PI);  // sida 2 mirror
 
   // Spawn-portaler — stenring med glödande runa-mitt
   function makePortal(x, z) {
@@ -1201,6 +1753,7 @@ function createSide(idx) {
     skillDmgMul: 1,
     cdrMul: 1,
     dmgReductionMul: 1,
+    heroFountainAura: false,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -1665,11 +2218,13 @@ function updateHeroAttack(side, dt) {
   );
   mesh.position.set(side.hero.x, 1.5, side.hero.z);
   scene.add(mesh);
+  const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
+  const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
-    ownerSide: target.ownerSide || side, damage: side.attackDmg, isAoE,
+    ownerSide: target.ownerSide || side, damage: side.attackDmg * auraDmg, isAoE,
   });
-  side.attackCd = HERO_ATTACK_INTERVAL / (side.attackSpeedMul || 1);
+  side.attackCd = HERO_ATTACK_INTERVAL / ((side.attackSpeedMul || 1) * auraAs);
 }
 
 function updateProjectiles(side, dt) {
@@ -1746,7 +2301,7 @@ function hostCastEldklot(side, dirX, dirZ) {
   scene.add(mesh);
   side.fireballs.push({
     mesh, dx: dirX, dz: dirZ, hit: new Set(), traveled: 0,
-    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1),
+    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
   });
 }
 
@@ -1797,7 +2352,7 @@ function hostCastFrostnova(side) {
   ring.position.set(side.hero.x, 0.08, side.hero.z);
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
-  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1);
+  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   // Skada/slow på alla fientliga i radien (egna monsters + opp's creeps)
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
@@ -1849,9 +2404,10 @@ function hostCastBlink(side, dirX, dirZ) {
 }
 
 function updateSkillCooldowns(side, dt) {
-  side.skills.q.cd = Math.max(0, side.skills.q.cd - dt);
-  side.skills.f.cd = Math.max(0, side.skills.f.cd - dt);
-  side.skills.e.cd = Math.max(0, side.skills.e.cd - dt);
+  const eff = dt * (side.heroFountainAura ? FOUNTAIN_CDR_MUL : 1);
+  side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
+  side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
+  side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
 }
 
 // ============================================================
@@ -2013,10 +2569,11 @@ function recomputeSideStats(side) {
   side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
 }
 
-// Skada till hjälten — applicerar dmgReductionMul från items.
+// Skada till hjälten — applicerar dmgReductionMul från items + fontän-aura.
 function damageHero(side, amount) {
   if (side.hero.dead) return;
-  const final = amount * (side.dmgReductionMul ?? 1);
+  const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
+  const final = amount * (side.dmgReductionMul ?? 1) * auraMul;
   side.hero.hp = Math.max(0, side.hero.hp - final);
   if (side.hero.hp <= 0) killHero(side);
 }
@@ -2391,6 +2948,8 @@ function applyRemoteState(state) {
     // Torn
     side.tower.hp = sData.tw.hp;
     side.tower.maxHp = sData.tw.mh;
+    // Fontän-aura (för HUD-indikator)
+    side.heroFountainAura = !!sData.fa;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -3649,6 +4208,21 @@ function simulateAll(dt) {
   }
   // (Multiplayer-fjärrsidans input hanteras av servern numera — denna funktion
   // kör bara i solo-mode där sides[2] inte existerar.)
+  // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
+  for (const side of [sides[1], sides[2]]) {
+    if (!side) continue;
+    const cfg = SIDE_CFG[side.idx];
+    if (side.hero.dead) {
+      side.heroFountainAura = false;
+    } else {
+      const dx = side.hero.x - cfg.tower.x;
+      const dz = side.hero.z - cfg.tower.z;
+      side.heroFountainAura = (dx * dx + dz * dz) < FOUNTAIN_AURA_RADIUS_SQ;
+      if (side.heroFountainAura && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + FOUNTAIN_AURA_REGEN * dt);
+      }
+    }
+  }
   // Per-sida simulering
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
@@ -3713,6 +4287,49 @@ function checkIncomeTickNotifications() {
   }
 }
 
+function animateSceneProps(dt, now) {
+  // Fontäner: pulsera emissive på vattnet, bobba övre skålens vattenyta
+  for (const idx of [1, 2]) {
+    const f = towerMeshes[idx];
+    if (!f) continue;
+    const pulse = 0.5 + 0.18 * Math.sin(now * 1.6 + idx);
+    if (f.water && f.water.material) {
+      f.water.material.emissiveIntensity = pulse;
+    }
+    if (f.topWater) {
+      f.topWater.position.y = 2.14 + Math.sin(now * 2.2 + idx) * 0.012;
+      if (f.topWater.material) f.topWater.material.emissiveIntensity = 0.65 + 0.2 * Math.sin(now * 2.4 + idx * 0.7);
+    }
+    if (f.light) f.light.intensity = 0.85 + 0.25 * Math.sin(now * 1.3 + idx);
+    if (f.crystal) {
+      f.crystal.rotation.y = now * 0.6 + idx;
+      f.crystal.position.y = 3.78 + Math.sin(now * 1.4 + idx) * 0.04;
+      if (f.crystal.material) f.crystal.material.emissiveIntensity = 1.0 + 0.35 * Math.sin(now * 1.7 + idx * 0.6);
+    }
+    if (f.auraRing) {
+      const inAura = !!(sides[idx] && sides[idx].heroFountainAura);
+      const base = inAura ? 0.55 : 0.18;
+      const amp = inAura ? 0.20 : 0.07;
+      f.auraRing.material.opacity = base + amp * Math.sin(now * (inAura ? 3.4 : 1.8) + idx);
+    }
+  }
+  // Lägereld: flammor flickrar i höjd och belysning
+  for (const idx of [1, 2]) {
+    const c = campfires[idx];
+    if (!c) continue;
+    if (c.flames) {
+      for (let i = 0; i < c.flames.length; i++) {
+        const fl = c.flames[i];
+        const k = 0.9 + 0.18 * Math.sin(now * (7 + i * 1.4) + idx);
+        fl.scale.set(1, k, 1);
+        fl.position.x = (Math.sin(now * (5 + i) + i) * 0.05);
+        fl.position.z = (Math.cos(now * (4.2 + i) + i) * 0.05);
+      }
+    }
+    if (c.light) c.light.intensity = 0.55 + 0.25 * Math.sin(now * 9.0 + idx * 1.7) + 0.1 * Math.sin(now * 17 + idx);
+  }
+}
+
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
@@ -3726,6 +4343,7 @@ function tick() {
   }
 
   animateAllCharacters(dt);
+  animateSceneProps(dt, now);
 
   updateHud();
   updateIncomeDisplay();
