@@ -1323,6 +1323,12 @@ function tickAllHpBars() {
         const mh = mesh.userData?.maxHp ?? 1;
         updateEntityHpBar(mesh, hp, mh, now);
       }
+      const hcMap = clientMeshes.heroCopies && clientMeshes.heroCopies.get(idx);
+      if (hcMap) for (const mesh of hcMap.values()) {
+        const hp = mesh.userData?.curHp ?? 0;
+        const mh = mesh.userData?.maxHp ?? 1;
+        updateEntityHpBar(mesh, hp, mh, now);
+      }
     }
   }
 }
@@ -1430,6 +1436,33 @@ function addOwnerPlume(grp, headY, plumeColor) {
   );
   plume.position.set(0, headY + 0.17, -0.04);
   grp.add(plume);
+}
+
+// Hero-kopia: klon av hero-mesh + glödande röd aura/halo så den syns som "fiendens dubbelgångare".
+function makeHeroCopyMesh(ownerSideIdx) {
+  const grp = makeHeroMesh(ownerSideIdx);
+  // Lägg på en glödande aura runt fötterna
+  const aura = new THREE.Mesh(
+    new THREE.RingGeometry(0.42, 0.62, 24),
+    new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.05;
+  grp.add(aura);
+  // Glow-bal i bröstet
+  const heart = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0xff5533, emissive: 0xff2211, emissiveIntensity: 1.5, transparent: true, opacity: 0.85 })
+  );
+  heart.position.y = 1.15;
+  grp.add(heart);
+  // Pointlight ovanför
+  const light = new THREE.PointLight(0xff4422, 0.7, 4, 2);
+  light.position.y = 1.6;
+  grp.add(light);
+  grp.userData.copyAura = aura;
+  grp.userData.copyHeart = heart;
+  return grp;
 }
 
 function makeHeroMesh(idx) {
@@ -2990,10 +3023,12 @@ const clientMeshes = {
   projectiles: new Map(),
   novaEffects: new Map(),
   creepProjectiles: new Map(),
+  heroCopies: new Map(),
+  heroCopyFireballs: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
-const INTERPOLATED_KEYS = new Set(['monsters', 'playerCreeps']);
+const INTERPOLATED_KEYS = new Set(['monsters', 'playerCreeps', 'heroCopies']);
 
 function clientReconcileEntities(sideIdx, key, list, makeMesh) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
@@ -3310,6 +3345,15 @@ function applyRemoteState(state) {
         new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.7 })
       );
     });
+    clientReconcileEntities(idx, 'heroCopies', sData.HC || [], (e) => {
+      const m = makeHeroCopyMesh(e.owner || idx);
+      attachHpBar(m, 2.0);
+      return m;
+    });
+    clientReconcileEntities(idx, 'heroCopyFireballs', sData.HCF || [], () => new THREE.Mesh(
+      new THREE.SphereGeometry(0.35, 14, 10),
+      new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xff3010, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 })
+    ));
   }
   matchState.gameOver = !!state.m.o;
   matchState.gameWon = !!state.m.w;

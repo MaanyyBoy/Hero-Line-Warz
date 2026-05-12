@@ -76,7 +76,16 @@ const DUEL_ANNOUNCE_TIME = 4;   // sek att visa vinnare efter duel
 // Arena ligger separat från huvudkartan (centrum z=35)
 const ARENA_CX = 0;
 const ARENA_CZ = 35;
-const ARENA_RADIUS = 9;   // XP = creep.cost * 0.6
+const ARENA_RADIUS = 9;
+
+// Hero-kopia (Fas 5): duel-belöning för max-level vinnare istället för level-up
+const HERO_COPY_STAT_RATIO = 0.7;
+const HERO_COPY_TOWER_DAMAGE = 10;
+const HERO_COPY_ATTACK_RANGE = 4.0;
+const HERO_COPY_ATTACK_INTERVAL = 1.2;
+const HERO_COPY_SKILL_INTERVAL = 6.0; // hur ofta boten castar Eldklot
+const HERO_COPY_AGGRO_RANGE = 5.5;
+const HERO_COPY_RADIUS = 0.45;   // XP = creep.cost * 0.6
 
 const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
 
@@ -357,6 +366,7 @@ function createSide(idx) {
     novaEffects: [],
     creepProjectiles: [],
     wave: { current: 0, toSpawn: 0, spawnTimer: 0, spawnInterval: 1.0, betweenTimer: 3.0, active: false },
+    heroCopies: [],
   };
   recomputeSideStats(side);
   return side;
@@ -1051,6 +1061,128 @@ function applyEvent(state, sideIdx, ev) {
   }
 }
 
+// === Hero-kopia (Fas 5) ===
+// Spawnar en bot-styrd hero-kopia i fiendens lane som duel-belöning
+// för max-level-vinnare. Lagras på MOTSTÅNDARENS sida (i deras arena).
+function spawnHeroCopy(state, winnerSide) {
+  const winnerIdx = winnerSide.idx;
+  const oppIdx = 3 - winnerIdx;
+  const oppCfg = SIDE_CFG[oppIdx];
+  const oppSide = state.sides[oppIdx];
+  if (!oppSide) return;
+  const lane = (state.duelCount % 2 === 1) ? 1 : 2; // alternera mellan lanes
+  const z = oppCfg.laneZ[lane];
+  const stat = HERO_COPY_STAT_RATIO;
+  const maxHp = Math.round(winnerSide.hero.maxHp * stat);
+  oppSide.heroCopies.push({
+    id: state.nextEntityId++,
+    ownerSideIdx: winnerIdx,
+    x: oppCfg.spawnX, z, ry: 0,
+    lane,
+    hp: maxHp, maxHp,
+    attackDmg: winnerSide.attackDmg * stat,
+    moveSpeed: winnerSide.moveSpeed * stat,
+    skillDmg: ELDKLOT_DAMAGE * (winnerSide.skillDmgMul || 1) * stat,
+    attackCd: 0,
+    skillCd: 0,
+    chasing: false,
+    facingX: 1, facingZ: 0,
+    pathIndex: 0,
+  });
+}
+
+function updateHeroCopies(state, arenaSide, dt) {
+  // arenaSide är den sida vars arena bot:en är i (= motståndaren till owner)
+  if (!arenaSide.heroCopies) return;
+  const oppCfg = SIDE_CFG[arenaSide.idx]; // det är arenaSide's torn boten attackerar
+  const towerPos = oppCfg.tower;
+  for (let i = arenaSide.heroCopies.length - 1; i >= 0; i--) {
+    const hc = arenaSide.heroCopies[i];
+    hc.attackCd = Math.max(0, hc.attackCd - dt);
+    hc.skillCd = Math.max(0, hc.skillCd - dt);
+    // Nått tornet?
+    const dxT = towerPos.x - hc.x, dzT = towerPos.z - hc.z;
+    if (dxT * dxT + dzT * dzT < (TOWER_REACH + HERO_COPY_RADIUS) * (TOWER_REACH + HERO_COPY_RADIUS)) {
+      arenaSide.tower.hp = Math.max(0, arenaSide.tower.hp - HERO_COPY_TOWER_DAMAGE);
+      arenaSide.heroCopies.splice(i, 1);
+      continue;
+    }
+    // HP nere?
+    if (hc.hp <= 0) {
+      arenaSide.heroCopies.splice(i, 1);
+      continue;
+    }
+    // Aggro mot arenaSide:s hero (motståndaren till owner)
+    const heroAlive = !arenaSide.hero.dead;
+    let aggro = false;
+    if (heroAlive) {
+      const d = Math.hypot(arenaSide.hero.x - hc.x, arenaSide.hero.z - hc.z);
+      if (!hc.chasing && d < HERO_COPY_AGGRO_RANGE) hc.chasing = true;
+      else if (hc.chasing && d > HERO_COPY_AGGRO_RANGE * 1.5) hc.chasing = false;
+      aggro = hc.chasing && d < HERO_COPY_AGGRO_RANGE * 1.5;
+      // Skill: cast Eldklot mot hero om i range och CD redo
+      if (heroAlive && d < ELDKLOT_RANGE && hc.skillCd <= 0) {
+        const dx = arenaSide.hero.x - hc.x, dz = arenaSide.hero.z - hc.z;
+        const m = Math.hypot(dx, dz) || 1;
+        state.sides[hc.ownerSideIdx]; // bara reference för läsbarhet
+        // Skapa fireball — lagras på arenaSide.heroCopies[i] men vi använder en separat fält
+        if (!arenaSide.heroCopyFireballs) arenaSide.heroCopyFireballs = [];
+        arenaSide.heroCopyFireballs.push({
+          id: state.nextEntityId++,
+          ownerSideIdx: hc.ownerSideIdx,
+          x: hc.x, y: 1.0, z: hc.z,
+          dx: dx / m, dz: dz / m,
+          hit: new Set(),
+          traveled: 0,
+          damage: hc.skillDmg,
+        });
+        hc.skillCd = HERO_COPY_SKILL_INTERVAL;
+      }
+      // AA mot hero om nära nog
+      if (aggro && d < HERO_COPY_ATTACK_RANGE && hc.attackCd <= 0) {
+        damageHero(arenaSide, hc.attackDmg);
+        hc.attackCd = HERO_COPY_ATTACK_INTERVAL;
+      }
+    }
+    // Rörelse: chasa hero om aggro, annars mot tornet
+    let tx, tz;
+    if (aggro) { tx = arenaSide.hero.x; tz = arenaSide.hero.z; }
+    else { tx = towerPos.x; tz = towerPos.z; }
+    const dx = tx - hc.x, dz = tz - hc.z;
+    const m = Math.hypot(dx, dz);
+    if (m > 0.1) {
+      const stop = aggro ? HERO_COPY_ATTACK_RANGE - 0.4 : TOWER_REACH;
+      if (m > stop) {
+        const step = hc.moveSpeed * dt;
+        hc.x += (dx / m) * step;
+        hc.z += (dz / m) * step;
+        hc.ry = Math.atan2(-dz, dx);
+        hc.facingX = dx / m; hc.facingZ = dz / m;
+      }
+    }
+  }
+  // Tickea hero-copy-fireballs separat
+  if (arenaSide.heroCopyFireballs && arenaSide.heroCopyFireballs.length) {
+    for (let i = arenaSide.heroCopyFireballs.length - 1; i >= 0; i--) {
+      const f = arenaSide.heroCopyFireballs[i];
+      const step = ELDKLOT_SPEED * dt;
+      f.x += f.dx * step; f.z += f.dz * step;
+      f.traveled += step;
+      // Träffa motståndar-hero (arenaSide hero)
+      if (!arenaSide.hero.dead && !f.hit.has('h')) {
+        const d = Math.hypot(arenaSide.hero.x - f.x, arenaSide.hero.z - f.z);
+        if (d < ELDKLOT_RADIUS + 0.5) {
+          f.hit.add('h');
+          damageHero(arenaSide, f.damage);
+        }
+      }
+      if (f.traveled > ELDKLOT_RANGE) {
+        arenaSide.heroCopyFireballs.splice(i, 1);
+      }
+    }
+  }
+}
+
 // === Duel-system ===
 function startDuel(state) {
   state.duelActive = true;
@@ -1115,8 +1247,10 @@ function endDuel(state) {
       winner.xp = 0;
       winner.xpToNext = winner.level >= MAX_LEVEL ? 0 : xpForLevel(winner.level);
       recomputeSideStats(winner);
+    } else {
+      // Max level — kan inte levla mer. Spawna en hero-kopia på fiendens lane istället.
+      spawnHeroCopy(state, winner);
     }
-    // TODO Fas 5: om winner.level >= MAX_LEVEL, spawna hero-kopia på fiendens lane
   }
   // Teleportera tillbaka till baserna, full HP, rensa allt duel-rest
   for (const idx of [1, 2]) {
@@ -1228,6 +1362,7 @@ function tickGame(state, dt) {
     updateWaves(state, side, dt);
     updateMonsters(state, side, opp, dt);
     updatePlayerCreeps(state, side, opp, dt);
+    updateHeroCopies(state, side, dt);
     updateCreepProjectiles(state, side, opp, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -1282,6 +1417,8 @@ function serializeSide(side) {
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
     N: side.novaEffects.map(n => ({ id: n.id, x: n.x, z: n.z, life: n.life / n.maxLife })),
     CP: side.creepProjectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, kind: p.kind })),
+    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
+    HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
   };
 }
 
