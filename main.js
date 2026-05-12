@@ -1269,6 +1269,11 @@ const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
+const LEGOLUS_PASSIVE_EVERY = 3;
+const LEGOLUS_SPLIT_EXTRAS = 2;
+const LEGOLUS_SPLIT_RANGE = 6;
+const POISON_DURATION = 4.0;
+const POISON_BASE_DPS = 5;
 // Gimlu
 const TAUNT_RADIUS = 5.5;
 const TAUNT_DURATION = 3.0;
@@ -2304,6 +2309,8 @@ function createSide(idx) {
     ironWillStored: 0,
     hammers: [],
     ironWillExplosions: [],
+    legolusAaCounter: 0,
+    legolusSplitPending: false,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -2538,6 +2545,14 @@ function updateMonsters(side, dt) {
       m.hp -= (m.dotPerSec || 0) * dt;
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
+    // Poison-stack-tick
+    if ((m.poisonRemaining || 0) > 0 && (m.poisonStacks || 0) > 0) {
+      m.poisonRemaining -= dt;
+      const s = m.poisonStacks;
+      m.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
+      if (m.poisonRemaining <= 0) m.poisonStacks = 0;
+      if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
+    }
     // Frusen: hoppa över movement + attack
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -2644,6 +2659,14 @@ function updatePlayerCreeps(side, dt) {
     if ((c.dotRemaining || 0) > 0) {
       c.dotRemaining -= dt;
       c.hp -= (c.dotPerSec || 0) * dt;
+      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Poison-stack-tick
+    if ((c.poisonRemaining || 0) > 0 && (c.poisonStacks || 0) > 0) {
+      c.poisonRemaining -= dt;
+      const s = c.poisonStacks;
+      c.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
+      if (c.poisonRemaining <= 0) c.poisonStacks = 0;
       if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
     }
     // Frusen — hoppa över
@@ -2949,13 +2972,56 @@ function updateHeroAttack(side, dt) {
   if (dashBuffed) { critChance = 1.0; side.legolusDashBuffPending = false; }
   const isCrit = critChance > 0 && Math.random() < critChance;
   const critMul = isCrit ? critMulBase : 1;
+  const isLegolusHero = side.heroId === 'legolas';
+  const splitNow = isLegolusHero && !!side.legolusSplitPending;
+  if (splitNow) side.legolusSplitPending = false;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
     damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
     lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
     legolusBuffed: dashBuffed,
+    appliesPoison: splitNow,
   });
+  if (splitNow) {
+    const opp = sides[3 - side.idx];
+    const extras = [];
+    const seen = new Set([target.entity]);
+    function tryAdd(list, isMonster) {
+      const candidates = [];
+      for (const e of list) {
+        if (seen.has(e)) continue;
+        const d = Math.hypot(e.mesh.position.x - side.hero.x, e.mesh.position.z - side.hero.z);
+        if (d > LEGOLUS_SPLIT_RANGE) continue;
+        candidates.push({ e, d, isMonster });
+      }
+      candidates.sort((a, b) => a.d - b.d);
+      for (const c of candidates) {
+        if (extras.length >= LEGOLUS_SPLIT_EXTRAS) break;
+        extras.push(c); seen.add(c.e);
+      }
+    }
+    tryAdd(side.monsters, true);
+    if (extras.length < LEGOLUS_SPLIT_EXTRAS && opp) tryAdd(opp.playerCreeps, false);
+    for (const ex of extras) {
+      const m2 = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 12, 8),
+        new THREE.MeshStandardMaterial({ color: 0xa8e060, emissive: 0x66aa30, emissiveIntensity: 1.0 })
+      );
+      m2.position.set(side.hero.x, 1.5, side.hero.z);
+      scene.add(m2);
+      side.projectiles.push({
+        mesh: m2, target: ex.e, targetIsMonster: ex.isMonster,
+        ownerSide: ex.isMonster ? side : (sides[3 - side.idx] || side),
+        damage: side.attackDmg * auraDmg * buffDmgMul, isAoE: false, isCrit: false,
+        lifestealRatio: 0, legolusBuffed: false, appliesPoison: true,
+      });
+    }
+  }
+  if (isLegolusHero) {
+    side.legolusAaCounter = (side.legolusAaCounter || 0) + 1;
+    if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) side.legolusSplitPending = true;
+  }
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
 }
@@ -2978,6 +3044,11 @@ function updateProjectiles(side, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
+      // Applicera poison-stack INNAN damage
+      if (p.appliesPoison) {
+        p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
+        p.target.poisonRemaining = POISON_DURATION;
+      }
       p.target.hp -= p.damage;
       let killedTarget = false;
       if (p.target.hp <= 0) {
@@ -5707,7 +5778,7 @@ const HERO_INFO = {
       f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5 sekunders self-buff: +10% auto-attack damage, +10% crit chans, +30% crit damage.' },
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
     },
-    passive: null,
+    passive: { name: 'Toxic Volley', icon: '☣', desc: 'Var 3:e auto-attack blir splittad: huvudtarget + 2 närmaste extra fiender inom 6 m. Alla 3 träffar applicerar en poison-stack som tickar damage i 4 sekunder. Stackar refreshar duration. Damage per sekund = 5 × stacks × (1 + 10% × (stacks − 1)), så varje stack gör 10% mer skada än föregående.' },
   },
   gimlu: {
     skills: {

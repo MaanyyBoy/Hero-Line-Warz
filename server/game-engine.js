@@ -135,6 +135,12 @@ const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
+// Passive: var 3:e AA → nästa AA är split + poison
+const LEGOLUS_PASSIVE_EVERY = 3;
+const LEGOLUS_SPLIT_EXTRAS = 2;
+const LEGOLUS_SPLIT_RANGE = 6;     // hur långt extra targets kan vara från hero
+const POISON_DURATION = 4.0;
+const POISON_BASE_DPS = 5;         // per stack baseline
 // Gimlu
 const TAUNT_RADIUS = 5.5;
 const TAUNT_DURATION = 3.0;
@@ -525,6 +531,8 @@ function createSide(idx) {
     ironWillStored: 0,
     hammers: [],
     ironWillExplosions: [],
+    legolusAaCounter: 0,
+    legolusSplitPending: false,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -735,6 +743,14 @@ function updateMonsters(state, side, opp, dt) {
       m.hp -= (m.dotPerSec || 0) * dt;
       if (m.hp <= 0) { killMonster(side, i, side); continue; }
     }
+    // Poison-stack-tick (Legolus passive)
+    if ((m.poisonRemaining || 0) > 0 && (m.poisonStacks || 0) > 0) {
+      m.poisonRemaining -= dt;
+      const s = m.poisonStacks;
+      m.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
+      if (m.poisonRemaining <= 0) m.poisonStacks = 0;
+      if (m.hp <= 0) { killMonster(side, i, side); continue; }
+    }
     // Frusen: hoppa över movement + attack-cooldown
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -820,6 +836,14 @@ function updatePlayerCreeps(state, side, opp, dt) {
     if ((c.dotRemaining || 0) > 0) {
       c.dotRemaining -= dt;
       c.hp -= (c.dotPerSec || 0) * dt;
+      if (c.hp <= 0) { side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Poison-stack-tick
+    if ((c.poisonRemaining || 0) > 0 && (c.poisonStacks || 0) > 0) {
+      c.poisonRemaining -= dt;
+      const s = c.poisonStacks;
+      c.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
+      if (c.poisonRemaining <= 0) c.poisonStacks = 0;
       if (c.hp <= 0) { side.playerCreeps.splice(i, 1); continue; }
     }
     // Frusen: hoppa över movement/attack
@@ -1099,6 +1123,10 @@ function updateHeroAttack(state, side, opp, dt) {
   }
   const isCrit = critChance > 0 && Math.random() < critChance;
   const critMul = isCrit ? critMulBase : 1;
+  // Legolus passive: var 3:e AA ger split-buff till nästa AA
+  const isLegolusHero = side.heroId === 'legolas';
+  const splitNow = isLegolusHero && !!side.legolusSplitPending;
+  if (splitNow) side.legolusSplitPending = false;
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -1109,7 +1137,50 @@ function updateHeroAttack(state, side, opp, dt) {
     damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
     lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
     legolusBuffed: dashBuffed,
+    appliesPoison: splitNow,
   });
+  // Split: skjut 2 extra projektiler mot närmaste andra fiender
+  if (splitNow) {
+    const extras = [];
+    const seen = new Set([target.entity]);
+    function tryAddNearest(list, isMonster) {
+      const best = []; // upp till 2, sorterat efter dist
+      for (const e of list) {
+        if (seen.has(e)) continue;
+        const d = Math.hypot(e.x - side.hero.x, e.z - side.hero.z);
+        if (d > LEGOLUS_SPLIT_RANGE) continue;
+        best.push({ e, d, isMonster });
+      }
+      best.sort((a, b) => a.d - b.d);
+      for (const b of best) {
+        if (extras.length >= LEGOLUS_SPLIT_EXTRAS) break;
+        extras.push(b); seen.add(b.e);
+      }
+    }
+    tryAddNearest(side.monsters, true);
+    if (extras.length < LEGOLUS_SPLIT_EXTRAS && opp) tryAddNearest(opp.playerCreeps, false);
+    for (const ex of extras) {
+      side.projectiles.push({
+        id: state.nextEntityId++,
+        x: side.hero.x, y: 1.5, z: side.hero.z,
+        target: ex.e,
+        targetIsMonster: ex.isMonster,
+        targetIsHero: false,
+        targetSideIdx: 0,
+        damage: side.attackDmg * auraDmg * buffDmgMul, isAoE: false, isCrit: false,
+        lifestealRatio: 0,
+        legolusBuffed: false,
+        appliesPoison: true,
+      });
+    }
+  }
+  // Stega passive-räknaren efter att split konsumerats. Var 3:e AA → split-buff till nästa.
+  if (isLegolusHero) {
+    side.legolusAaCounter = (side.legolusAaCounter || 0) + 1;
+    if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) {
+      side.legolusSplitPending = true;
+    }
+  }
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
 }
@@ -1136,6 +1207,17 @@ function updateProjectiles(state, side, opp, dt) {
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
       let killedTarget = false;
+      // Applicera poison-stack INNAN damage (om target dör räknas stacken inte)
+      if (p.appliesPoison && !p.targetIsHero) {
+        p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
+        p.target.poisonRemaining = POISON_DURATION;
+      } else if (p.appliesPoison && p.targetIsHero) {
+        const ts = state.sides[p.targetSideIdx];
+        if (ts && !ts.hero.dead) {
+          ts.hero.poisonStacks = (ts.hero.poisonStacks || 0) + 1;
+          ts.hero.poisonRemaining = POISON_DURATION;
+        }
+      }
       if (p.targetIsHero) {
         damageHero(state.sides[p.targetSideIdx], p.damage);
         if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
