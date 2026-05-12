@@ -3522,10 +3522,21 @@ function fmtMs(sec) {
 
 function updateDuelHud() {
   if (!duelInfoEl || !duelBannerEl) return;
-  // Solo eller utanför match: dölj
-  if (APP.mode === 'solo' || APP.mode === 'lobby') {
+  if (APP.mode === 'lobby') {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.add('hidden');
+    return;
+  }
+  // Solo: duel triggas inte men timern kör ändå (atmosfärisk countdown)
+  if (APP.mode === 'solo') {
+    duelBannerEl.classList.add('hidden');
+    if (duelState.timer > 0) {
+      duelInfoEl.classList.remove('hidden');
+      duelInfoTimerEl.textContent = fmtMs(duelState.timer);
+      duelInfoEl.classList.toggle('urgent', duelState.timer <= 10);
+    } else {
+      duelInfoEl.classList.add('hidden');
+    }
     return;
   }
   if (duelState.active) {
@@ -4795,6 +4806,14 @@ function startMatch(mode) {
 function enterPlayPhase() {
   document.body.classList.add('in-game');
   if (heroPickEl) heroPickEl.classList.add('hidden');
+  // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
+  // i solo tickas den lokalt via simulateAll/tick.
+  duelState.timer = 300;
+  duelState.count = 0;
+  duelState.active = false;
+  duelState.matchTimer = 0;
+  duelState.announceTimer = 0;
+  duelState.lastWinner = 0;
 }
 
 function returnToLobby() {
@@ -4857,6 +4876,8 @@ document.getElementById('btn-solo').addEventListener('click', () => showHeroPick
 const clock = new THREE.Clock();
 
 function simulateAll(dt) {
+  // Lokal duel-timer (bara HUD, ingen duel triggas i solo). Stannar vid 0.
+  if (duelState.timer > 0) duelState.timer = Math.max(0, duelState.timer - dt);
   // Hjälte-respawn
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
