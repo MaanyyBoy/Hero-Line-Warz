@@ -135,6 +135,19 @@ const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
+// Gimlu
+const TAUNT_RADIUS = 5.5;
+const TAUNT_DURATION = 3.0;
+const TAUNT_DMG_REDUCTION = 0.30;       // 30% mindre skada
+const TAUNT_HEAL_PCT = 0.20;            // 20% av skada som tas tillbaka
+const IRON_WILL_DURATION = 3.0;
+const IRON_WILL_EXPLOSION_RADIUS = 6.0;
+const HAMMER_SPEED = 12;
+const HAMMER_RANGE = 9;
+const HAMMER_RADIUS = 0.8;
+const HAMMER_DAMAGE = 25;
+const HAMMER_LIFESTEAL = 0.50;
+const HAMMER_RETURN_DMG_MUL = 0.5;
 // Black Hole (E): target-AoE pull + explosion vid slutet
 const BLACKHOLE_RADIUS = 3.5;
 const BLACKHOLE_PULL_SPEED = 2.5;
@@ -421,8 +434,17 @@ function recomputeSideStats(side) {
 function damageHero(side, amount) {
   if (side.hero.dead) return;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
-  const final = amount * (side.dmgReductionMul ?? 1) * auraMul;
+  const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
+  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul;
   side.hero.hp = Math.max(0, side.hero.hp - final);
+  // Titans Taunt: heala tillbaka 20% av tagen skada
+  if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
+  }
+  // Iron Will: stacka tagen skada för senare explosion
+  if ((side.ironWillRemaining || 0) > 0) {
+    side.ironWillStored = (side.ironWillStored || 0) + final;
+  }
   if (side.hero.hp <= 0) killHero(side);
 }
 
@@ -497,6 +519,11 @@ function createSide(idx) {
     legolusBuffRemaining: 0,
     legolusDashBuffPending: false,
     critDmgMul: 2.0,         // base crit-multiplikator (kan justeras av buff)
+    titansTauntRemaining: 0,
+    ironWillRemaining: 0,
+    ironWillStored: 0,
+    hammers: [],
+    ironWillExplosions: [],
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -712,6 +739,11 @@ function updateMonsters(state, side, opp, dt) {
       m.frozenTime -= dt;
       continue;
     }
+    // Taunt: tvinga chase mot hero
+    if ((m.tauntedTime || 0) > 0) {
+      m.tauntedTime -= dt;
+      m.chasing = true;
+    }
     const dxT = towerPos.x - m.x, dzT = towerPos.z - m.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       side.tower.hp = Math.max(0, side.tower.hp - 1);
@@ -794,6 +826,9 @@ function updatePlayerCreeps(state, side, opp, dt) {
       c.frozenTime -= dt;
       continue;
     }
+    // Taunt-tick: tvingar target = opp.hero (Gimlu)
+    if ((c.tauntedTime || 0) > 0) c.tauntedTime -= dt;
+    const tauntActive = (c.tauntedTime || 0) > 0;
     const dxT = oppCfg.tower.x - c.x, dzT = oppCfg.tower.z - c.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       if (opp) opp.tower.hp = Math.max(0, opp.tower.hp - 1);
@@ -802,13 +837,19 @@ function updatePlayerCreeps(state, side, opp, dt) {
     }
     c.atkCd = Math.max(0, c.atkCd - dt);
     let target = null, targetType = null, bestDist = c.range;
-    if (opp && !opp.hero.dead) {
-      const d = Math.hypot(opp.hero.x - c.x, opp.hero.z - c.z);
-      if (d < bestDist) { bestDist = d; target = opp.hero; targetType = 'hero'; }
-    }
-    if (opp) for (const m of opp.monsters) {
-      const d = Math.hypot(m.x - c.x, m.z - c.z);
-      if (d < bestDist) { bestDist = d; target = m; targetType = 'monster'; }
+    if (tauntActive && opp && !opp.hero.dead) {
+      // Tauntad: lås till opp.hero (Gimlu) oavsett avstånd
+      target = opp.hero; targetType = 'hero';
+      bestDist = Math.hypot(opp.hero.x - c.x, opp.hero.z - c.z);
+    } else {
+      if (opp && !opp.hero.dead) {
+        const d = Math.hypot(opp.hero.x - c.x, opp.hero.z - c.z);
+        if (d < bestDist) { bestDist = d; target = opp.hero; targetType = 'hero'; }
+      }
+      if (opp) for (const m of opp.monsters) {
+        const d = Math.hypot(m.x - c.x, m.z - c.z);
+        if (d < bestDist) { bestDist = d; target = m; targetType = 'monster'; }
+      }
     }
     if (target) {
       const tx = target.x, tz = target.z;
@@ -1466,6 +1507,168 @@ function castLegolusDash(state, sideIdx, ev) {
   side.legolusDashBuffPending = true;
 }
 
+// === Gimlu-skills ===
+// Q: Titan's Taunt — AoE-skrik. Fiender i radien blir tauntade 3s; Gimlu får 30% DR + 20% heal.
+function castGimluTaunt(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  side.titansTauntRemaining = TAUNT_DURATION;
+  const r2 = TAUNT_RADIUS * TAUNT_RADIUS;
+  // Tauntar alla monsters i radien
+  for (const m of side.monsters) {
+    const dx = m.x - side.hero.x, dz = m.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      m.tauntedTime = TAUNT_DURATION;
+      m.chasing = true;
+    }
+  }
+  // Tauntar opp:s playerCreeps som invaderar Gimlus arena
+  const opp = state.sides[3 - sideIdx];
+  if (opp) for (const c of opp.playerCreeps) {
+    const dx = c.x - side.hero.x, dz = c.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      c.tauntedTime = TAUNT_DURATION;
+      c.tauntTargetSide = sideIdx;
+    }
+  }
+  // Duel: tauntar opp.hero
+  if (state.duelActive && opp && !opp.hero.dead) {
+    const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) opp.hero.tauntedTime = TAUNT_DURATION;
+  }
+}
+
+// F: Iron Will — 3s aktivt fönster. Alla dmg taken stackas. Vid slut: AoE explosion runt hero.
+function castGimluIronWill(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.ironWillRemaining = IRON_WILL_DURATION;
+  side.ironWillStored = 0;
+}
+
+function updateIronWill(state, side, opp, dt) {
+  if (!side.ironWillRemaining || side.ironWillRemaining <= 0) return;
+  side.ironWillRemaining -= dt;
+  if (side.ironWillRemaining <= 0) {
+    const dmg = side.ironWillStored || 0;
+    side.ironWillStored = 0;
+    side.ironWillRemaining = 0;
+    if (dmg > 0) {
+      const r2 = IRON_WILL_EXPLOSION_RADIUS * IRON_WILL_EXPLOSION_RADIUS;
+      for (let i = side.monsters.length - 1; i >= 0; i--) {
+        const m = side.monsters[i];
+        const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
+        if (ddx * ddx + ddz * ddz < r2) {
+          m.hp -= dmg;
+          if (m.hp <= 0) killMonster(side, i, side);
+        }
+      }
+      if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+        const c = opp.playerCreeps[i];
+        const ddx = c.x - side.hero.x, ddz = c.z - side.hero.z;
+        if (ddx * ddx + ddz * ddz < r2) {
+          c.hp -= dmg;
+          if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      if (state.duelActive && opp && !opp.hero.dead) {
+        const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
+        if (ddx * ddx + ddz * ddz < r2) damageHero(opp, dmg);
+      }
+      side.ironWillExplosions = side.ironWillExplosions || [];
+      side.ironWillExplosions.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 0.7, maxLife: 0.7 });
+    }
+  }
+}
+
+// E: Hammer Throw — kastar hammar rakt fram + tillbaka. Vid andra tryck: teleport.
+function castGimluHammer(state, sideIdx, dirX, dirZ) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead) return;
+  // Om hammer redan ute → teleport till den och despawn
+  if (side.hammers && side.hammers.length > 0) {
+    const h = side.hammers[0];
+    if (isHeroWalkable(side.idx, h.x, h.z)) {
+      side.hero.x = h.x;
+      side.hero.z = h.z;
+    }
+    side.hammers.splice(0, 1);
+    return;
+  }
+  if (side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  side.hammers = side.hammers || [];
+  side.hammers.push({
+    id: state.nextEntityId++,
+    x: side.hero.x, z: side.hero.z,
+    dx: dirX, dz: dirZ,
+    traveled: 0,
+    returning: false,
+    hit: new Set(),
+    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+  });
+}
+
+function updateHammers(state, side, opp, dt) {
+  if (!side.hammers || side.hammers.length === 0) return;
+  for (let i = side.hammers.length - 1; i >= 0; i--) {
+    const h = side.hammers[i];
+    const step = HAMMER_SPEED * dt;
+    if (!h.returning) {
+      h.x += h.dx * step;
+      h.z += h.dz * step;
+      h.traveled += step;
+      if (h.traveled >= HAMMER_RANGE) {
+        h.returning = true;
+        h.hit = new Set(); // ny set så enemies kan träffas igen vid retur
+      }
+    } else {
+      const ddx = side.hero.x - h.x, ddz = side.hero.z - h.z;
+      const d = Math.hypot(ddx, ddz);
+      if (d < 0.6) { side.hammers.splice(i, 1); continue; }
+      h.x += (ddx / d) * step;
+      h.z += (ddz / d) * step;
+    }
+    const dmgMul = h.returning ? HAMMER_RETURN_DMG_MUL : 1;
+    const dmg = h.damage * dmgMul;
+    // Träff på monsters
+    for (let j = side.monsters.length - 1; j >= 0; j--) {
+      const m = side.monsters[j];
+      if (h.hit.has(m.id)) continue;
+      if (Math.hypot(m.x - h.x, m.z - h.z) < HAMMER_RADIUS) {
+        h.hit.add(m.id);
+        m.hp -= dmg;
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (m.hp <= 0) killMonster(side, j, side);
+      }
+    }
+    // Träff på opp's playerCreeps
+    if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+      const c = opp.playerCreeps[j];
+      if (h.hit.has(c.id)) continue;
+      if (Math.hypot(c.x - h.x, c.z - h.z) < HAMMER_RADIUS) {
+        h.hit.add(c.id);
+        c.hp -= dmg;
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    // Duel: träffa opp.hero
+    if (state.duelActive && opp && !opp.hero.dead && !h.hit.has('opp-hero')) {
+      if (Math.hypot(opp.hero.x - h.x, opp.hero.z - h.z) < HAMMER_RADIUS + 0.4) {
+        h.hit.add('opp-hero');
+        damageHero(opp, dmg);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+      }
+    }
+  }
+}
+
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
   const mag = Math.hypot(joyX, joyZ);
@@ -1549,14 +1752,18 @@ function applyEvent(state, sideIdx, ev) {
       }
     }
     const isLegolus = side.heroId === 'legolas';
+    const isGimlu = side.heroId === 'gimlu';
     if (ev.key === 'q') {
       if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
+      else if (isGimlu) castGimluTaunt(state, sideIdx);
       else castEldklot(state, sideIdx, dx, dz);
     } else if (ev.key === 'f') {
       if (isLegolus) castLegolusBuff(state, sideIdx);
+      else if (isGimlu) castGimluIronWill(state, sideIdx);
       else castFrostnova(state, sideIdx, ev);
     } else if (ev.key === 'e') {
       if (isLegolus) castLegolusDash(state, sideIdx, ev);
+      else if (isGimlu) castGimluHammer(state, sideIdx, dx, dz);
       else castBlink(state, sideIdx, ev);
     }
     return;
@@ -1860,7 +2067,14 @@ function tickGame(state, dt) {
       updateFireballs(state, side, opp, dt);
       updateBlackHoles(state, side, opp, dt);
       updateVineTraps(state, side, opp, dt);
+      updateHammers(state, side, opp, dt);
+      updateIronWill(state, side, opp, dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+      if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+      if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
+        side.ironWillExplosions[k].life -= dt;
+        if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
+      }
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
     }
@@ -1927,7 +2141,15 @@ function tickGame(state, dt) {
     updateHeroCopies(state, side, dt);
     updateBlackHoles(state, side, opp, dt);
     updateVineTraps(state, side, opp, dt);
+    updateHammers(state, side, opp, dt);
+    updateIronWill(state, side, opp, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+    // Iron will explosion-effects life-tick
+    if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
+      side.ironWillExplosions[k].life -= dt;
+      if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
+    }
     updateCreepProjectiles(state, side, opp, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -1997,6 +2219,11 @@ function serializeSide(side) {
     VT: (side.vineTraps || []).map(v => ({ id: v.id, x: v.x, z: v.z, life: v.life / v.maxLife })),
     lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
     ldash: side.legolusDashBuffPending ? 1 : 0,
+    HM: (side.hammers || []).map(h => ({ id: h.id, x: h.x, z: h.z, ret: h.returning ? 1 : 0 })),
+    taunt: +(side.titansTauntRemaining || 0).toFixed(2),
+    iw: +(side.ironWillRemaining || 0).toFixed(2),
+    iwS: +(side.ironWillStored || 0).toFixed(1),
+    IWE: (side.ironWillExplosions || []).map(e => ({ id: e.id, x: e.x, z: e.z, life: e.life / e.maxLife })),
   };
 }
 

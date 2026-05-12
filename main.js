@@ -1269,6 +1269,19 @@ const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
+// Gimlu
+const TAUNT_RADIUS = 5.5;
+const TAUNT_DURATION = 3.0;
+const TAUNT_DMG_REDUCTION = 0.30;
+const TAUNT_HEAL_PCT = 0.20;
+const IRON_WILL_DURATION = 3.0;
+const IRON_WILL_EXPLOSION_RADIUS = 6.0;
+const HAMMER_SPEED = 12;
+const HAMMER_RANGE = 9;
+const HAMMER_RADIUS = 0.8;
+const HAMMER_DAMAGE = 25;
+const HAMMER_LIFESTEAL = 0.50;
+const HAMMER_RETURN_DMG_MUL = 0.5;
 // Bakåtkompabilitet
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
@@ -2285,6 +2298,11 @@ function createSide(idx) {
     legolusBuffRemaining: 0,
     legolusDashBuffPending: false,
     critDmgMul: 2.0,
+    titansTauntRemaining: 0,
+    ironWillRemaining: 0,
+    ironWillStored: 0,
+    hammers: [],
+    ironWillExplosions: [],
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -2524,6 +2542,8 @@ function updateMonsters(side, dt) {
       m.frozenTime -= dt;
       continue;
     }
+    // Taunted: tvinga chase
+    if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
 
     // Nått tornet?
     const dxT = towerPos.x - m.mesh.position.x;
@@ -2630,6 +2650,9 @@ function updatePlayerCreeps(side, dt) {
       c.frozenTime -= dt;
       continue;
     }
+    // Taunt-tick (förändrar inte movement-logiken här i solo,
+    // men i solo finns ingen opp-hero så creeps anfaller monsters som vanligt)
+    if ((c.tauntedTime || 0) > 0) c.tauntedTime -= dt;
 
     // Nått opp's torn?
     const dxT = oppCfg.tower.x - c.mesh.position.x;
@@ -3381,6 +3404,173 @@ function updateVineTrapsSolo(side, dt) {
   }
 }
 
+// === Gimlu skills (solo) ===
+function hostCastGimluTaunt(side) {
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  side.titansTauntRemaining = TAUNT_DURATION;
+  const r2 = TAUNT_RADIUS * TAUNT_RADIUS;
+  for (const m of side.monsters) {
+    const dx = m.mesh.position.x - side.hero.x, dz = m.mesh.position.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      m.tauntedTime = TAUNT_DURATION;
+      m.chasing = true;
+    }
+  }
+  const opp = sides[3 - side.idx];
+  if (opp) for (const c of opp.playerCreeps) {
+    const dx = c.mesh.position.x - side.hero.x, dz = c.mesh.position.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) c.tauntedTime = TAUNT_DURATION;
+  }
+  // Visuell taunt-ring
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(TAUNT_RADIUS - 0.4, TAUNT_RADIUS, 48),
+    new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(side.hero.x, 0.1, side.hero.z);
+  scene.add(ring);
+  side.novaEffects.push({ mesh: ring, life: 0.7, maxLife: 0.7 });
+}
+
+function hostCastGimluIronWill(side) {
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.ironWillRemaining = IRON_WILL_DURATION;
+  side.ironWillStored = 0;
+}
+
+function updateIronWillSolo(side, dt) {
+  if (!side.ironWillRemaining || side.ironWillRemaining <= 0) return;
+  side.ironWillRemaining -= dt;
+  if (side.ironWillRemaining <= 0) {
+    const dmg = side.ironWillStored || 0;
+    side.ironWillStored = 0;
+    side.ironWillRemaining = 0;
+    if (dmg > 0) {
+      const r2 = IRON_WILL_EXPLOSION_RADIUS * IRON_WILL_EXPLOSION_RADIUS;
+      const opp = sides[3 - side.idx];
+      for (let i = side.monsters.length - 1; i >= 0; i--) {
+        const m = side.monsters[i];
+        const ddx = m.mesh.position.x - side.hero.x, ddz = m.mesh.position.z - side.hero.z;
+        if (ddx * ddx + ddz * ddz < r2) {
+          m.hp -= dmg;
+          if (m.hp <= 0) hostKillMonster(side, i, side);
+        }
+      }
+      if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+        const c = opp.playerCreeps[i];
+        const ddx = c.mesh.position.x - side.hero.x, ddz = c.mesh.position.z - side.hero.z;
+        if (ddx * ddx + ddz * ddz < r2) {
+          c.hp -= dmg;
+          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      // Stor explosion-ring
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.5, IRON_WILL_EXPLOSION_RADIUS, 56),
+        new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(side.hero.x, 0.12, side.hero.z);
+      scene.add(ring);
+      side.novaEffects.push({ mesh: ring, life: 0.8, maxLife: 0.8 });
+    }
+  }
+}
+
+function hostCastGimluHammer(side, dirX, dirZ) {
+  if (side.hero.dead) return;
+  // Teleport om hammer redan ute
+  if (side.hammers && side.hammers.length > 0) {
+    const h = side.hammers[0];
+    if (isHeroWalkable(side.idx, h.mesh.position.x, h.mesh.position.z)) {
+      side.hero.x = h.mesh.position.x;
+      side.hero.z = h.mesh.position.z;
+      side.mesh.position.x = side.hero.x;
+      side.mesh.position.z = side.hero.z;
+    }
+    scene.remove(h.mesh);
+    side.hammers.splice(0, 1);
+    return;
+  }
+  if (side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  // Hammar-mesh: cylinder skaft + box huvud
+  const grp = new THREE.Group();
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 }));
+  haft.rotation.z = Math.PI / 2;
+  grp.add(haft);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.22), new THREE.MeshStandardMaterial({ color: 0x808488, metalness: 0.55, roughness: 0.35 }));
+  head.position.x = 0.3;
+  grp.add(head);
+  grp.position.set(side.hero.x, 1.0, side.hero.z);
+  scene.add(grp);
+  side.hammers = side.hammers || [];
+  side.hammers.push({
+    mesh: grp,
+    dx: dirX, dz: dirZ,
+    traveled: 0,
+    returning: false,
+    hit: new Set(),
+    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+  });
+}
+
+function updateHammersSolo(side, dt) {
+  if (!side.hammers || side.hammers.length === 0) return;
+  const opp = sides[3 - side.idx];
+  for (let i = side.hammers.length - 1; i >= 0; i--) {
+    const h = side.hammers[i];
+    const step = HAMMER_SPEED * dt;
+    if (!h.returning) {
+      h.mesh.position.x += h.dx * step;
+      h.mesh.position.z += h.dz * step;
+      h.traveled += step;
+      if (h.traveled >= HAMMER_RANGE) {
+        h.returning = true;
+        h.hit = new Set();
+      }
+    } else {
+      const ddx = side.hero.x - h.mesh.position.x, ddz = side.hero.z - h.mesh.position.z;
+      const d = Math.hypot(ddx, ddz);
+      if (d < 0.6) {
+        scene.remove(h.mesh);
+        side.hammers.splice(i, 1);
+        continue;
+      }
+      h.mesh.position.x += (ddx / d) * step;
+      h.mesh.position.z += (ddz / d) * step;
+    }
+    h.mesh.rotation.y += dt * 12; // spinn
+    const dmgMul = h.returning ? HAMMER_RETURN_DMG_MUL : 1;
+    const dmg = h.damage * dmgMul;
+    for (let j = side.monsters.length - 1; j >= 0; j--) {
+      const m = side.monsters[j];
+      if (h.hit.has(m.id)) continue;
+      if (Math.hypot(m.mesh.position.x - h.mesh.position.x, m.mesh.position.z - h.mesh.position.z) < HAMMER_RADIUS) {
+        h.hit.add(m.id);
+        m.hp -= dmg;
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (m.hp <= 0) hostKillMonster(side, j, side);
+      }
+    }
+    if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+      const c = opp.playerCreeps[j];
+      if (h.hit.has(c.id)) continue;
+      if (Math.hypot(c.mesh.position.x - h.mesh.position.x, c.mesh.position.z - h.mesh.position.z) < HAMMER_RADIUS) {
+        h.hit.add(c.id);
+        c.hp -= dmg;
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+  }
+}
+
 function updateSkillCooldowns(side, dt) {
   const eff = dt * (side.heroFountainAura ? FOUNTAIN_CDR_MUL : 1);
   side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
@@ -3614,8 +3804,15 @@ function recomputeSideStats(side) {
 function damageHero(side, amount) {
   if (side.hero.dead) return;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
-  const final = amount * (side.dmgReductionMul ?? 1) * auraMul;
+  const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
+  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul;
   side.hero.hp = Math.max(0, side.hero.hp - final);
+  if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
+  }
+  if ((side.ironWillRemaining || 0) > 0) {
+    side.ironWillStored = (side.ironWillStored || 0) + final;
+  }
   if (side.hero.hp <= 0) killHero(side);
 }
 
@@ -3709,14 +3906,18 @@ function applyEvent(side, ev) {
       }
     }
     const isLegolus = side.heroId === 'legolas';
+    const isGimlu = side.heroId === 'gimlu';
     if (ev.key === 'q') {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
+      else if (isGimlu) hostCastGimluTaunt(side);
       else hostCastEldklot(side, dx, dz);
     } else if (ev.key === 'f') {
       if (isLegolus) hostCastLegolusBuff(side);
+      else if (isGimlu) hostCastGimluIronWill(side);
       else hostCastFrostnova(side, ev);
     } else if (ev.key === 'e') {
       if (isLegolus) hostCastLegolusDash(side, ev);
+      else if (isGimlu) hostCastGimluHammer(side, dx, dz);
       else hostCastBlink(side, ev);
     }
     return;
@@ -3796,6 +3997,8 @@ const clientMeshes = {
   blackHoles: new Map(),
   shatters: new Map(),
   vineTraps: new Map(),
+  hammers: new Map(),
+  ironWillExplosions: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -4073,6 +4276,10 @@ function applyRemoteState(state) {
     // Legolus buff-status
     side.legolusBuffRemaining = sData.lbuf || 0;
     side.legolusDashBuffPending = !!sData.ldash;
+    // Gimlu buff-status
+    side.titansTauntRemaining = sData.taunt || 0;
+    side.ironWillRemaining = sData.iw || 0;
+    side.ironWillStored = sData.iwS || 0;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -4210,6 +4417,35 @@ function applyRemoteState(state) {
     if (vtMap && sData.VT) for (const vt of sData.VT) {
       const m = vtMap.get(vt.id);
       if (m && m.userData.vtRing) m.userData.vtRing.material.opacity = 0.65 * vt.life;
+    }
+    // Gimlu Hammers
+    clientReconcileEntities(idx, 'hammers', sData.HM || [], () => {
+      const grp = new THREE.Group();
+      const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 }));
+      haft.rotation.z = Math.PI / 2;
+      grp.add(haft);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.22), new THREE.MeshStandardMaterial({ color: 0x808488, metalness: 0.55, roughness: 0.35 }));
+      head.position.x = 0.3;
+      grp.add(head);
+      grp.position.y = 1.0;
+      return grp;
+    });
+    const hmMap = clientMeshes.hammers && clientMeshes.hammers.get(idx);
+    if (hmMap) for (const mesh of hmMap.values()) mesh.rotation.y += 0.2;
+    // Iron Will Explosions
+    clientReconcileEntities(idx, 'ironWillExplosions', sData.IWE || [], () => {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.5, IRON_WILL_EXPLOSION_RADIUS, 56),
+        new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.12;
+      return ring;
+    });
+    const iweMap = clientMeshes.ironWillExplosions && clientMeshes.ironWillExplosions.get(idx);
+    if (iweMap && sData.IWE) for (const ie of sData.IWE) {
+      const m = iweMap.get(ie.id);
+      if (m && m.material) m.material.opacity = 0.85 * ie.life;
     }
     // Shatter-ringar
     clientReconcileEntities(idx, 'shatters', sData.SH || [], () => {
@@ -5879,7 +6115,10 @@ function simulateAll(dt) {
     updateFireballs(side, dt);
     updateBlackHolesSolo(side, dt);
     updateVineTrapsSolo(side, dt);
+    updateHammersSolo(side, dt);
+    updateIronWillSolo(side, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
     tickIncome(side, dt);
