@@ -28,7 +28,7 @@ const HERO_DEFS = {
     baseMoveSpeed: 6.0,
   },
   legolas: {
-    name: 'Legolas',
+    name: 'Legolus',
     baseHp: 85,           // glass-cannon
     baseDmg: 6,           // mer per AA
     attackRange: 6.0,     // längre räckvidd än Gandulf (4.0)

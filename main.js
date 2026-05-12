@@ -1099,7 +1099,7 @@ const HERO_ATTACK_INTERVAL = 1.0;
 // Per-hero baseline stats (matchar server/game-engine.js HERO_DEFS).
 const HERO_DEFS = {
   magiker: { name: 'Gandulf', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
-  legolas: { name: 'Legolas', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
+  legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -4705,7 +4705,7 @@ const duelState = {
 
 const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
-  { id: 'legolas',   name: 'Legolas',     role: 'Archer',       initial: 'L',   available: true  },
+  { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
   { id: 'hero-3',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
