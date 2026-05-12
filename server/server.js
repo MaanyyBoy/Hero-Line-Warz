@@ -1,22 +1,25 @@
-// Mini WebSocket-relay för Hero Line Warz multiplayer.
-// Host kör sin lobby med kod, client ansluter med kod, servern relayar
-// alla speldata-meddelanden mellan dem. Inget statslager — servern bryr sig
-// inte om innehållet, bara om vem som är i vilket rum.
+// Server-auktoritativ Hero Line Warz multiplayer-server.
+// Hostar två-spelarsessioner och kör hela simuleringen själv via game-engine.
+// Klienterna skickar bara inputs och renderar mottagen state.
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const engine = require('./game-engine.js');
 
 const PORT = process.env.PORT || 3000;
+const TICK_RATE = 30;                       // simuleringssteg per sekund
+const STATE_RATE = 20;                      // state-broadcasts per sekund
+const TICK_INTERVAL_MS = 1000 / TICK_RATE;
+const STATE_INTERVAL_MS = 1000 / STATE_RATE;
 
 const server = http.createServer((req, res) => {
-  // Wake-up / health check
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Spel relay running. Rooms: ' + rooms.size);
+  res.end(`Spel server running. Rooms: ${rooms.size}`);
 });
 
 const wss = new WebSocketServer({ server });
 
-// roomCode -> { host: ws, client: ws | null }
+// roomCode -> { host, client, game, tickHandle, lastStateMs }
 const rooms = new Map();
 
 function genCode() {
@@ -38,6 +41,62 @@ function send(ws, obj) {
   }
 }
 
+function startGame(room) {
+  if (room.tickHandle || room.game) return;
+  room.game = engine.createGameState();
+  room.lastStateMs = 0;
+  room.lastTickMs = Date.now();
+  room.tickHandle = setInterval(() => gameLoopTick(room), TICK_INTERVAL_MS);
+  console.log(`[${room.code}] game started`);
+}
+
+function stopGame(room) {
+  if (room.tickHandle) {
+    clearInterval(room.tickHandle);
+    room.tickHandle = null;
+  }
+  room.game = null;
+}
+
+function gameLoopTick(room) {
+  if (!room.game) return;
+  const now = Date.now();
+  const dt = Math.min(0.1, Math.max(0.001, (now - room.lastTickMs) / 1000));
+  room.lastTickMs = now;
+  engine.tickGame(room.game, dt);
+  if (now - room.lastStateMs >= STATE_INTERVAL_MS) {
+    room.lastStateMs = now;
+    const stateMsg = engine.serializeState(room.game);
+    const envelope = { t: 'msg', d: stateMsg };
+    send(room.host, envelope);
+    send(room.client, envelope);
+  }
+}
+
+function handleGameInput(room, ws, payload) {
+  if (!room.game || !payload || payload.t !== 'in') return;
+  const sideIdx = (ws.role === 'host') ? 1 : 2;
+  if (payload.j) {
+    const j = payload.j;
+    // Sanitize: numeric, clamp magnitude <= 1
+    const jx = Number(j.x) || 0;
+    const jz = Number(j.z) || 0;
+    const mag = Math.hypot(jx, jz);
+    if (mag > 1) {
+      room.game.lastInputs[sideIdx].j = { x: jx / mag, z: jz / mag };
+    } else {
+      room.game.lastInputs[sideIdx].j = { x: jx, z: jz };
+    }
+  }
+  if (Array.isArray(payload.ev) && payload.ev.length) {
+    for (const ev of payload.ev) {
+      if (!ev || typeof ev !== 'object') continue;
+      try { engine.applyEvent(room.game, sideIdx, ev); }
+      catch (e) { console.warn('applyEvent error', e); }
+    }
+  }
+}
+
 wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
@@ -49,10 +108,10 @@ wss.on('connection', (ws) => {
     try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
 
     if (msg.t === 'host') {
-      // Ignorera om redan i ett rum
       if (ws.roomCode) return;
       const code = genCode();
-      rooms.set(code, { host: ws, client: null });
+      const room = { code, host: ws, client: null, game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0 };
+      rooms.set(code, room);
       ws.role = 'host';
       ws.roomCode = code;
       send(ws, { t: 'hosted', code });
@@ -61,36 +120,26 @@ wss.on('connection', (ws) => {
       if (ws.roomCode) return;
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
-      if (!room) {
-        send(ws, { t: 'join-error', msg: 'Rummet finns inte.' });
-        return;
-      }
-      if (room.client) {
-        send(ws, { t: 'join-error', msg: 'Rummet är fullt.' });
-        return;
-      }
+      if (!room) { send(ws, { t: 'join-error', msg: 'Rummet finns inte.' }); return; }
+      if (room.client) { send(ws, { t: 'join-error', msg: 'Rummet är fullt.' }); return; }
       room.client = ws;
       ws.role = 'client';
       ws.roomCode = code;
       send(ws, { t: 'joined', code });
       send(room.host, { t: 'peer-joined' });
       console.log(`[${code}] client joined`);
+      // Båda inne — starta simulation
+      startGame(room);
     } else if (msg.t === 'msg') {
-      // Relay speldata till motparten
       const room = rooms.get(ws.roomCode);
       if (!room) return;
-      const target = ws.role === 'host' ? room.client : room.host;
-      send(target, { t: 'msg', d: msg.d });
+      handleGameInput(room, ws, msg.d);
     } else if (msg.t === 'leave') {
-      // Frivilligt lämna rummet (utan att stänga websocket)
       closeRoom(ws);
     }
   });
 
-  ws.on('close', () => {
-    closeRoom(ws);
-  });
-
+  ws.on('close', () => { closeRoom(ws); });
   ws.on('error', () => {});
 });
 
@@ -103,10 +152,8 @@ function closeRoom(ws) {
   if (!room) return;
   const other = (room.host === ws) ? room.client : room.host;
   send(other, { t: 'peer-left' });
-  if (other) {
-    other.roomCode = null;
-    other.role = null;
-  }
+  if (other) { other.roomCode = null; other.role = null; }
+  stopGame(room);
   rooms.delete(code);
   console.log(`[${code}] closed (rooms=${rooms.size})`);
 }
@@ -121,5 +168,5 @@ setInterval(() => {
 }, 30000);
 
 server.listen(PORT, () => {
-  console.log(`Relay listening on :${PORT}`);
+  console.log(`Spel server listening on :${PORT}`);
 });

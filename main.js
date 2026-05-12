@@ -1,4 +1,8 @@
 import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+import { EffectComposer } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'https://unpkg.com/three@0.170.0/examples/jsm/postprocessing/OutputPass.js';
 
 // ============================================================
 // THREE.JS GRUND-SETUP
@@ -20,10 +24,31 @@ document.body.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
 
+// Bloom-postprocess via EffectComposer — bara emissiva ytor (skill-orbs, runor) bloomar.
+let bloomComposer = null;
+try {
+  bloomComposer = new EffectComposer(renderer);
+  bloomComposer.setSize(window.innerWidth, window.innerHeight);
+  bloomComposer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  bloomComposer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.55,  // strength
+    0.7,   // radius
+    0.72   // threshold — bara klart upplysta pixlar bloomar
+  );
+  bloomComposer.addPass(bloomPass);
+  bloomComposer.addPass(new OutputPass());
+} catch (e) {
+  console.warn('Bloom composer setup failed, faller tillbaka till direkt rendering', e);
+  bloomComposer = null;
+}
+
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (bloomComposer) bloomComposer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // ============================================================
@@ -2010,22 +2035,38 @@ const clientMeshes = {
   creepProjectiles: new Map(),
 };
 
+// Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
+const INTERPOLATED_KEYS = new Set(['monsters', 'playerCreeps']);
+
 function clientReconcileEntities(sideIdx, key, list, makeMesh) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
   const seen = new Set();
+  const interpolate = INTERPOLATED_KEYS.has(key);
   for (const e of list) {
     seen.add(e.id);
     let mesh = map.get(e.id);
-    if (!mesh) {
+    const fresh = !mesh;
+    if (fresh) {
       mesh = makeMesh(e);
       scene.add(mesh);
       map.set(e.id, mesh);
+      // Initial snap
+      mesh.position.x = e.x;
+      mesh.position.z = e.z;
+      if (e.y !== undefined) mesh.position.y = e.y;
+      if (e.ry !== undefined) mesh.rotation.y = e.ry;
     }
-    mesh.position.x = e.x;
-    mesh.position.z = e.z;
-    if (e.y !== undefined) mesh.position.y = e.y;
-    if (e.ry !== undefined) mesh.rotation.y = e.ry;
+    if (interpolate) {
+      mesh._target = { x: e.x, z: e.z };
+      if (e.ry !== undefined) mesh._target.ry = e.ry;
+    } else {
+      // Snap (projektiler/effekter)
+      mesh.position.x = e.x;
+      mesh.position.z = e.z;
+      if (e.y !== undefined) mesh.position.y = e.y;
+      if (e.ry !== undefined) mesh.rotation.y = e.ry;
+    }
     if (e.life !== undefined && mesh.material && mesh.material.opacity !== undefined) {
       mesh.material.opacity = 0.7 * Math.max(0, e.life);
     }
@@ -2034,6 +2075,72 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
     if (!seen.has(id)) {
       scene.remove(mesh);
       map.delete(id);
+    }
+  }
+}
+
+// Lerpar interpolerande meshes mot sitt _target varje frame.
+function smoothEntityMeshes(dt) {
+  const k = 1 - Math.pow(0.5, dt / 0.06);  // ~60 ms halflife
+  // Hero-meshes (båda sidor)
+  for (const sideIdx of [1, 2]) {
+    const side = sides[sideIdx];
+    if (!side || !side.mesh._target) continue;
+    smoothMeshToTarget(side.mesh, k);
+  }
+  // Karaktär-meshes (monsters + creeps) på båda sidor
+  for (const key of INTERPOLATED_KEYS) {
+    const tier = clientMeshes[key];
+    if (!tier) continue;
+    for (const map of tier.values()) {
+      for (const mesh of map.values()) smoothMeshToTarget(mesh, k);
+    }
+  }
+}
+
+function smoothMeshToTarget(mesh, k) {
+  const t = mesh._target;
+  if (!t) return;
+  mesh.position.x += (t.x - mesh.position.x) * k;
+  mesh.position.z += (t.z - mesh.position.z) * k;
+  if (t.ry !== undefined) {
+    let d = t.ry - mesh.rotation.y;
+    if (d > Math.PI) d -= 2 * Math.PI;
+    else if (d < -Math.PI) d += 2 * Math.PI;
+    mesh.rotation.y += d * k;
+  }
+}
+
+// Subtil "andas"-rörelse på alla karaktärsmeshes så de inte ser frysta ut
+function bobOffsetFor(time, mesh) {
+  if (mesh._bobPhase === undefined) mesh._bobPhase = Math.random() * Math.PI * 2;
+  return (Math.sin(time * 2.4 + mesh._bobPhase) + 1) * 0.5 * 0.04;
+}
+
+function applyIdleBob(time) {
+  if (APP.mode === 'lobby') return;
+  for (const sideIdx of [1, 2]) {
+    const side = sides[sideIdx];
+    if (!side || !side.mesh.visible) continue;
+    side.mesh.position.y = bobOffsetFor(time, side.mesh);
+  }
+  for (const key of ['monsters', 'playerCreeps']) {
+    const tier = clientMeshes[key];
+    if (!tier) continue;
+    for (const map of tier.values()) {
+      for (const mesh of map.values()) {
+        mesh.position.y = bobOffsetFor(time, mesh);
+      }
+    }
+  }
+  // Solo: ingen clientMeshes används, men hero-meshes hanteras ovan
+  if (APP.mode === 'solo') {
+    // Monsters/creeps i solo finns på side.monsters/playerCreeps med eget mesh
+    for (const sideIdx of [1, 2]) {
+      const side = sides[sideIdx];
+      if (!side) continue;
+      for (const m of side.monsters) if (m.mesh) m.mesh.position.y = bobOffsetFor(time, m.mesh);
+      for (const c of side.playerCreeps) if (c.mesh) c.mesh.position.y = bobOffsetFor(time, c.mesh);
     }
   }
 }
@@ -2054,8 +2161,13 @@ function applyRemoteState(state) {
     side.hero.facingZ = sData.h.fz;
     side.hero.dead = !!sData.h.d;
     side.hero.respawnTimer = sData.h.rt;
-    side.mesh.position.set(sData.h.x, 0, sData.h.z);
-    side.mesh.rotation.y = Math.atan2(sData.h.fx, sData.h.fz);
+    const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
+    if (!side.mesh._target) {
+      side.mesh.position.x = sData.h.x;
+      side.mesh.position.z = sData.h.z;
+      side.mesh.rotation.y = heroRy;
+    }
+    side.mesh._target = { x: sData.h.x, z: sData.h.z, ry: heroRy };
     side.mesh.visible = !sData.h.d;
     // Resurser
     side.gold = sData.g;
@@ -2209,7 +2321,8 @@ function updateCamera(dt) {
   const desiredX = hero.x + cameraOffset.x * sign;
   const desiredY = cameraOffset.y;
   const desiredZ = hero.z + cameraOffset.z * sign;
-  const lerpK = 1 - Math.pow(0.001, dt);
+  // ~50 ms halflife — kameran följer responsivt men utan ryck
+  const lerpK = 1 - Math.pow(0.5, dt / 0.05);
   camera.position.x += (desiredX - camera.position.x) * lerpK;
   camera.position.y += (desiredY - camera.position.y) * lerpK;
   camera.position.z += (desiredZ - camera.position.z) * lerpK;
@@ -3028,9 +3141,10 @@ function castLocalSkill(key, worldDx, worldDz) {
 }
 
 function sendOrApplyEvent(ev) {
-  if (APP.mode === 'host' || APP.mode === 'solo') {
+  if (APP.mode === 'solo') {
     applyEvent(sides[APP.localSide], ev);
-  } else if (APP.mode === 'client') {
+  } else if (APP.mode === 'host' || APP.mode === 'client') {
+    // Server är auktoritativ i multiplayer — alla events går via relay
     APP.pendingEvents.push(ev);
     flushClientInput();
   }
@@ -3059,8 +3173,10 @@ let lastInputJoy = { x: 0, z: 0 };
 const INPUT_SEND_INTERVAL = 1 / 30;   // 30 Hz input
 const STATE_SEND_INTERVAL = 1 / 20;   // 20 Hz state
 
+function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
+
 function flushClientInput() {
-  if (APP.mode !== 'client' || !wsOpen()) return;
+  if (!isMpMode() || !wsOpen()) return;
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = APP.pendingEvents;
@@ -3070,28 +3186,16 @@ function flushClientInput() {
 }
 
 function maybeSendClientInput(now) {
-  if (APP.mode !== 'client' || !wsOpen()) return;
+  if (!isMpMode() || !wsOpen()) return;
   if (now - APP.lastInputSent < INPUT_SEND_INTERVAL && APP.pendingEvents.length === 0) return;
   APP.lastInputSent = now;
   flushClientInput();
 }
 
-function maybeSendHostState(now) {
-  if (APP.mode !== 'host' || !wsOpen()) return;
-  if (now - APP.lastStateSent < STATE_SEND_INTERVAL) return;
-  APP.lastStateSent = now;
-  sendGameMsg(serializeState());
-}
-
 function handleNetworkMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
-  if (msg.t === 'st' && APP.mode === 'client') {
+  if (msg.t === 'st' && isMpMode()) {
     applyRemoteState(msg);
-  } else if (msg.t === 'in' && APP.mode === 'host') {
-    APP.remoteInputs = msg;
-    if (msg.ev && msg.ev.length && sides[2]) {
-      for (const ev of msg.ev) applyEvent(sides[2], ev);
-    }
   }
 }
 
@@ -3340,10 +3444,8 @@ function simulateAll(dt) {
     const dir = screenToWorld(raw.x, raw.z);
     applyMovement(sides[APP.localSide], dir.x, dir.z, dt);
   }
-  // Applicera input för fjärr-sida (host bara)
-  if (APP.mode === 'host' && sides[2] && APP.remoteInputs && APP.remoteInputs.j) {
-    applyMovement(sides[2], APP.remoteInputs.j.x, APP.remoteInputs.j.z, dt);
-  }
+  // (Multiplayer-fjärrsidans input hanteras av servern numera — denna funktion
+  // kör bara i solo-mode där sides[2] inte existerar.)
   // Per-sida simulering
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
@@ -3412,15 +3514,15 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
 
-  if (APP.mode === 'solo' || APP.mode === 'host') {
+  if (APP.mode === 'solo') {
     if (!matchState.gameOver) simulateAll(dt);
-  } else if (APP.mode === 'client') {
-    // Klient simulerar inte — applyRemoteState() sköter allt via data-events.
-    // Skicka input.
+  } else if (isMpMode()) {
+    // Servern simulerar — klienten skickar bara input och renderar mottagen state
     maybeSendClientInput(now);
+    smoothEntityMeshes(dt);
   }
 
-  if (APP.mode === 'host') maybeSendHostState(now);
+  applyIdleBob(now);
 
   updateHud();
   updateIncomeDisplay();
@@ -3431,7 +3533,8 @@ function tick() {
   updateInventoryDisplay();
   updateCamera(dt);
 
-  renderer.render(scene, camera);
+  if (bloomComposer) bloomComposer.render();
+  else renderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
 
