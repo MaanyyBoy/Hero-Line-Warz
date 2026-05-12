@@ -1288,6 +1288,14 @@ const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
 const HAMMER_LIFESTEAL = 0.50;
 const HAMMER_RETURN_DMG_MUL = 0.5;
+// Gimlu passive (Stalwart Resolve)
+const GIMLU_PASSIVE_TIER1_HP = 0.80;
+const GIMLU_PASSIVE_TIER1_DR = 0.20;
+const GIMLU_PASSIVE_TIER2_HP = 0.60;
+const GIMLU_PASSIVE_TIER2_REGEN = 0.05;
+const GIMLU_PASSIVE_TIER3_HP = 0.40;
+const GIMLU_PASSIVE_TIER3_DR = 0.20;
+const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
 // Bakåtkompabilitet
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
@@ -2311,6 +2319,7 @@ function createSide(idx) {
     ironWillExplosions: [],
     legolusAaCounter: 0,
     legolusSplitPending: false,
+    gimluDmgInstanceCount: 0,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -3875,9 +3884,21 @@ function recomputeSideStats(side) {
 // Skada till hjälten — applicerar dmgReductionMul från items + fontän-aura.
 function damageHero(side, amount) {
   if (side.hero.dead) return;
+  // Gimlu passive — tröskelbaserad DR + var 3:e instance immune vid <40% HP
+  let gimluDR = 0;
+  if (side.heroId === 'gimlu') {
+    const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
+    if (ratio < GIMLU_PASSIVE_TIER1_HP) gimluDR += GIMLU_PASSIVE_TIER1_DR;
+    if (ratio < GIMLU_PASSIVE_TIER3_HP) {
+      gimluDR += GIMLU_PASSIVE_TIER3_DR;
+      side.gimluDmgInstanceCount = (side.gimluDmgInstanceCount || 0) + 1;
+      if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) return;
+    }
+  }
+  const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul;
+  const final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
   side.hero.hp = Math.max(0, side.hero.hp - final);
   if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
     side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
@@ -5782,11 +5803,11 @@ const HERO_INFO = {
   },
   gimlu: {
     skills: {
-      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction och healas 20% av all skada han tar.' },
+      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction, healas 20% av all skada han tar och 10% av maxHP per halv sekund.' },
       f: { name: 'Iron Will', icon: '🛡', desc: '3 sekunders aktiveringsfönster. All damage Gimlu tar lagras i en mätare. Vid slutet exploderar han i AoE (6 m radie) och gör damage = den lagrade summan till alla fiender runt.' },
-      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att teleportera till den.' },
+      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
     },
-    passive: null,
+    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 20% damage reduction (alltid på).\n• Under 60% HP: + 5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 20% mer damage reduction (40% totalt) och var 3:e inkommande damage-instance blockas helt.' },
   },
 };
 
@@ -6474,6 +6495,13 @@ function simulateAll(dt) {
       // Titans Taunt passive heal: 20% av maxHP per sek medan tauntet är aktivt
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);
+      }
+      // Gimlu Stalwart Resolve regen: 5%/s när <60% HP
+      if (side.heroId === 'gimlu' && side.hero.hp < side.hero.maxHp) {
+        const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
+        if (ratio < GIMLU_PASSIVE_TIER2_HP) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * GIMLU_PASSIVE_TIER2_REGEN * dt);
+        }
       }
     }
   }
