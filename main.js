@@ -1239,7 +1239,7 @@ const ARROW_SPEED = 14;
 const MAGIC_PROJ_SPEED = 10;
 
 // Gandulf-skills omskrivna — Fire Wave / Frost Nova target / Black Hole
-const FIREWAVE_LENGTH = 10;
+const FIREWAVE_LENGTH = 5;
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;
 const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
@@ -4593,7 +4593,7 @@ function updateHud() {
   const opp = sides[3 - APP.localSide];
   const heroLine = side.hero.dead
     ? `<span style="color:#ff6666">DÖD — respawn om ${side.hero.respawnTimer.toFixed(1)}s</span>`
-    : `HP: ${side.hero.hp}/${side.hero.maxHp}`;
+    : `HP: ${Math.round(side.hero.hp)}/${Math.round(side.hero.maxHp)}`;
   const top = [
     heroLine,
     `Guld: ${side.gold}`,

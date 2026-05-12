@@ -110,7 +110,7 @@ const CREEP_VS_CREEP_INTERVAL = 1.5;
 
 // Gandulf-skills (omgjorda)
 // Fire Wave (Q): triangulär cone framför hero. Direkt dmg + 3s DoT.
-const FIREWAVE_LENGTH = 10;
+const FIREWAVE_LENGTH = 5;                 // halverad räckvidd
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;   // 45° → 90° total cone
 const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
