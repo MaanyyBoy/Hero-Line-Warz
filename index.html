@@ -204,7 +204,7 @@
 
     /* Items-knappar (utility / upgrade-stil) */
     .shop-btn.item-btn {
-      min-width: 110px;
+      min-width: 120px;
       background: rgba(70,95,140,0.7);
       border-color: rgba(200,220,255,0.5);
       padding: 7px 9px;
@@ -216,6 +216,33 @@
     .shop-btn.item-btn.maxlvl {
       background: rgba(80,130,80,0.72);
       border-color: rgba(180,220,180,0.7);
+    }
+
+    /* Item-cell wrap + variant-picker (för items med varianter, t.ex. Boots) */
+    .item-cell { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+    .item-cell .variant-picker {
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      padding: 5px;
+      background: rgba(50,40,80,0.6);
+      border-radius: 8px;
+      border: 1px dashed rgba(180,160,240,0.5);
+    }
+    .item-cell.picker-open .primary { display: none; }
+    .item-cell.picker-open .variant-picker { display: flex; }
+    .shop-btn.item-btn.variant {
+      min-width: 130px;
+      background: rgba(80,70,140,0.75);
+      border-color: rgba(200,180,255,0.55);
+    }
+    .shop-btn.item-btn.variant-cancel {
+      align-self: flex-end;
+      min-width: 36px;
+      padding: 4px 8px;
+      font: 700 13px/1 system-ui, sans-serif;
+      background: rgba(120,60,60,0.7);
+      border-color: rgba(220,150,150,0.5);
     }
 
     /* Inventory längst ner i mitten — 4 slots */
@@ -264,6 +291,33 @@
       letter-spacing: 0.2px;
     }
     .inventory-slot.owned:active { transform: scale(0.96); }
+    /* Active-ability visual states */
+    .inventory-slot.active-ready {
+      border-color: #ffe060;
+      box-shadow: 0 0 12px rgba(255,224,96,0.5), 0 2px 6px rgba(0,0,0,0.35);
+      animation: slot-ready-glow 1.8s ease-in-out infinite;
+    }
+    @keyframes slot-ready-glow {
+      0%, 100% { box-shadow: 0 0 6px rgba(255,224,96,0.45), 0 2px 6px rgba(0,0,0,0.35); }
+      50%      { box-shadow: 0 0 16px rgba(255,224,96,0.85), 0 2px 6px rgba(0,0,0,0.35); }
+    }
+    .inventory-slot.active-running {
+      border-color: #66ffaa;
+      box-shadow: 0 0 16px rgba(102,255,170,0.7), 0 2px 6px rgba(0,0,0,0.35);
+    }
+    .inventory-slot.active-cooldown {
+      border-color: rgba(160,160,180,0.55);
+      filter: grayscale(0.4) brightness(0.85);
+    }
+    .inventory-slot .cd-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.55);
+      color: #fff; font: 700 14px/1 system-ui, sans-serif;
+      border-radius: 6px;
+      pointer-events: none;
+    }
+    .inventory-slot .cd-overlay.hidden { display: none; }
 
     /* Tooltip för items i inventory */
     #item-tooltip {
@@ -287,6 +341,17 @@
     #item-tooltip .tt-stats .stat.empty { opacity: 0.55; font-style: italic; }
     #item-tooltip .tt-cost { font-size: 11px; opacity: 0.85; color: #aae0ff; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.12); }
     #item-tooltip .tt-cost.max { color: #aaffaa; }
+    #item-tooltip .tt-active {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255,224,96,0.3);
+      font-size: 11px;
+      color: #ffe39c;
+    }
+    #item-tooltip .tt-active.hidden { display: none; }
+    #item-tooltip .tt-active .ttl { font-weight: 700; letter-spacing: 0.5px; margin-bottom: 3px; color: #ffd34a; }
+    #item-tooltip .tt-active .ready { color: #aaffaa; }
+    #item-tooltip .tt-active .cd { color: #ffaa88; }
 
     body:not(.in-game) #inventory,
     body:not(.in-game) #item-tooltip { display: none !important; }
@@ -530,6 +595,11 @@
     <div class="tt-name"></div>
     <div class="tt-level"></div>
     <div class="tt-stats"></div>
+    <div class="tt-active hidden">
+      <div class="ttl">Active</div>
+      <div class="desc"></div>
+      <div class="status"></div>
+    </div>
     <div class="tt-cost"></div>
   </div>
 

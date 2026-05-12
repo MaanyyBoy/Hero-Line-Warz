@@ -1035,7 +1035,7 @@ function createSide(idx) {
   heroMesh.position.set(cfg.heroSpawn.x, 0, cfg.heroSpawn.z);
   scene.add(heroMesh);
 
-  return {
+  const side = {
     idx,
     mesh: heroMesh,
     // Hjälte
@@ -1050,18 +1050,23 @@ function createSide(idx) {
     attackDmg: HERO_BASE_ATTACK_DMG,
     attackCd: 0,
     attackCounter: 0,
+    // Multiplikatorer från items + active buffar (sätts av recomputeSideStats)
+    attackSpeedMul: 1,
+    skillDmgMul: 1,
+    cdrMul: 1,
+    dmgReductionMul: 1,
     // Resurser
     gold: 0,
     income: INCOME_BASE,
     incomeTimer: 0,
     incomeTickCount: 0,
-    inventory: [],   // [{ itemId, level }] max 4
+    inventory: [],   // [{ itemId, variantId?, level, activeRemaining, activeCd }] max 4
     tierUnlocks: { 1: true, 2: false, 3: false, 4: false, 5: false },
     // Skills
     skills: {
-      q: { cd: 0, max: 4.0 },
-      f: { cd: 0, max: 8.0 },
-      e: { cd: 0, max: 10.0 },
+      q: { cd: 0, max: SKILL_BASE_CD.q },
+      f: { cd: 0, max: SKILL_BASE_CD.f },
+      e: { cd: 0, max: SKILL_BASE_CD.e },
     },
     // Torn
     tower: { hp: TOWER_MAX_HP, maxHp: TOWER_MAX_HP },
@@ -1078,6 +1083,8 @@ function createSide(idx) {
       spawnInterval: 1.0, betweenTimer: 3.0, active: false,
     },
   };
+  recomputeSideStats(side);
+  return side;
 }
 
 function removeSide(side) {
@@ -1224,9 +1231,8 @@ function updateMonsters(side, dt) {
 
     m.atkCd = Math.max(0, m.atkCd - dt);
     if (heroAlive && distHero < 1.2 && m.atkCd <= 0) {
-      side.hero.hp = Math.max(0, side.hero.hp - MONSTER_MELEE_DAMAGE);
+      damageHero(side, MONSTER_MELEE_DAMAGE);
       m.atkCd = MONSTER_MELEE_INTERVAL;
-      if (side.hero.hp <= 0) killHero(side);
     }
 
     // Om inte jagar hjälten — leta efter opp's playerCreeps i samma arena
@@ -1338,8 +1344,7 @@ function updatePlayerCreeps(side, dt) {
         if (c.attackType === 'melee') {
           // Direkt skada
           if (targetType === 'hero') {
-            opp.hero.hp = Math.max(0, opp.hero.hp - c.damage);
-            if (opp.hero.hp <= 0) killHero(opp);
+            damageHero(opp, c.damage);
           } else {
             target.hp -= c.damage;
             if (target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(target), side);
@@ -1399,8 +1404,7 @@ function updateCreepProjectiles(side, dt) {
     if (dist < 0.4) {
       // Träff
       if (p.targetType === 'hero') {
-        opp.hero.hp = Math.max(0, opp.hero.hp - p.damage);
-        if (opp.hero.hp <= 0) killHero(opp);
+        damageHero(opp, p.damage);
       } else {
         p.target.hp -= p.damage;
         if (p.target.hp <= 0) hostKillMonster(opp, opp.monsters.indexOf(p.target), side);
@@ -1411,8 +1415,7 @@ function updateCreepProjectiles(side, dt) {
         // Hjälten också om i radien
         if (opp && !opp.hero.dead) {
           if (Math.hypot(opp.hero.x - ix, opp.hero.z - iz) < p.aoeRadius) {
-            opp.hero.hp = Math.max(0, opp.hero.hp - p.damage);
-            if (opp.hero.hp <= 0) killHero(opp);
+            damageHero(opp, p.damage);
           }
         }
         if (opp) for (let k = opp.monsters.length - 1; k >= 0; k--) {
@@ -1520,7 +1523,7 @@ function updateHeroAttack(side, dt) {
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.ownerSide || side, damage: side.attackDmg, isAoE,
   });
-  side.attackCd = HERO_ATTACK_INTERVAL;
+  side.attackCd = HERO_ATTACK_INTERVAL / (side.attackSpeedMul || 1);
 }
 
 function updateProjectiles(side, dt) {
@@ -1595,7 +1598,10 @@ function hostCastEldklot(side, dirX, dirZ) {
   );
   mesh.position.set(side.hero.x, 1.0, side.hero.z);
   scene.add(mesh);
-  side.fireballs.push({ mesh, dx: dirX, dz: dirZ, hit: new Set(), traveled: 0 });
+  side.fireballs.push({
+    mesh, dx: dirX, dz: dirZ, hit: new Set(), traveled: 0,
+    damage: ELDKLOT_DAMAGE * (side.skillDmgMul || 1),
+  });
 }
 
 function updateFireballs(side, dt) {
@@ -1613,7 +1619,7 @@ function updateFireballs(side, dt) {
       const d = Math.hypot(m.mesh.position.x - f.mesh.position.x, m.mesh.position.z - f.mesh.position.z);
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(m);
-        m.hp -= ELDKLOT_DAMAGE;
+        m.hp -= f.damage;
         if (m.hp <= 0) hostKillMonster(side, j, side);
       }
     }
@@ -1624,7 +1630,7 @@ function updateFireballs(side, dt) {
       const d = Math.hypot(c.mesh.position.x - f.mesh.position.x, c.mesh.position.z - f.mesh.position.z);
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(c);
-        c.hp -= ELDKLOT_DAMAGE;
+        c.hp -= f.damage;
         if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
       }
     }
@@ -1645,11 +1651,12 @@ function hostCastFrostnova(side) {
   ring.position.set(side.hero.x, 0.08, side.hero.z);
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
+  const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1);
   // Skada/slow på alla fientliga i radien (egna monsters + opp's creeps)
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
-      m.hp -= NOVA_DAMAGE;
+      m.hp -= novaDmg;
       m.slowMul = NOVA_SLOW_MUL;
       m.slowTime = NOVA_SLOW_TIME;
       if (m.hp <= 0) hostKillMonster(side, j, side);
@@ -1659,7 +1666,7 @@ function hostCastFrostnova(side) {
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
-      c.hp -= NOVA_DAMAGE;
+      c.hp -= novaDmg;
       if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
     }
   }
@@ -1719,8 +1726,57 @@ function updateSkillCooldowns(side, dt) {
 //   → Level 3 ger då +9 skada och +45 max HP
 // ============================================================
 
+// Per-level-scaling-formel: 10% * 1.2^(level-1). Lvl1=10%, lvl2=12%, ..., lvl10=51.6%.
+const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+
 const ITEM_TYPES = {
-  item1: { id: 'item1', name: 'Item 1', icon: '①', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item1: {
+    id: 'item1',
+    name: 'Boots',
+    icon: '👢',
+    description: '3 stilar att välja mellan',
+    variants: {
+      speed: {
+        id: 'speed', parentId: 'item1', name: 'Boots of Speed', icon: '⚡',
+        description: 'Snabbare rörelse och attacker',
+        statsAtLevel: (level) => {
+          const v = bootsPct(level);
+          return { moveSpeedPct: v, attackSpeedPct: v };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% rörelse och attackfart i 5s',
+          stats: { moveSpeedPct: 0.5, attackSpeedPct: 0.5 },
+        },
+      },
+      magic: {
+        id: 'magic', parentId: 'item1', name: 'Boots of Magic', icon: '✨',
+        description: 'Förstärker skills och kortar cooldowns',
+        statsAtLevel: (level) => {
+          const v = bootsPct(level);
+          return { skillDmgPct: v, cdrPct: v };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% skill-skada och CDR i 5s',
+          stats: { skillDmgPct: 0.5, cdrPct: 0.5 },
+        },
+      },
+      tank: {
+        id: 'tank', parentId: 'item1', name: 'Boots of Tank', icon: '🛡',
+        description: 'Mer HP och mindre inkommande skada',
+        statsAtLevel: (level) => {
+          const v = bootsPct(level);
+          return { dmgReductionPct: v, maxHpPct: v };
+        },
+        activeAtMax: {
+          duration: 5, cooldown: 30,
+          description: '+50% skadereduktion och max HP i 5s',
+          stats: { dmgReductionPct: 0.5, maxHpPct: 0.5 },
+        },
+      },
+    },
+  },
   item2: { id: 'item2', name: 'Item 2', icon: '②', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
   item3: { id: 'item3', name: 'Item 3', icon: '③', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
   item4: { id: 'item4', name: 'Item 4', icon: '④', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
@@ -1737,27 +1793,118 @@ function itemUpgradeCost(currentLevel) {
   return 500 * Math.pow(2, currentLevel - 1);
 }
 
-// Räknar om hjältens stats från bas + alla items i inventoryn.
+// Bas-cooldowns per skill (modifieras av CDR i recompute)
+const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
+
+// Active-buff-parametrar
+const ACTIVE_DURATION = 5;       // sek
+const ACTIVE_COOLDOWN = 30;      // sek mellan aktiveringar
+
+// Hämtar item-definitionen för en inventory-rad — variant prioriteras
+function itemDefForEntry(entry) {
+  const root = ITEM_TYPES[entry.itemId];
+  if (!root) return null;
+  if (entry.variantId && root.variants && root.variants[entry.variantId]) {
+    return root.variants[entry.variantId];
+  }
+  return root;
+}
+
+// Räknar om hjältens stats från bas + alla items i inventoryn + aktiva buffar.
 function recomputeSideStats(side) {
   let attackDmg = HERO_BASE_ATTACK_DMG;
-  let moveSpeed = HERO_BASE_MOVE_SPEED;
-  let maxHp = HERO_MAX_HP;
-  for (const it of side.inventory) {
-    const def = ITEM_TYPES[it.itemId];
-    if (!def || !def.statsAtLevel) continue;
-    const s = def.statsAtLevel(it.level) || {};
-    if (s.attackDmg) attackDmg += s.attackDmg;
-    if (s.moveSpeed) moveSpeed += s.moveSpeed;
-    if (s.maxHp) maxHp += s.maxHp;
+  let moveSpeedFlat = HERO_BASE_MOVE_SPEED;
+  let maxHpFlat = HERO_MAX_HP;
+  let attackSpeedPct = 0;
+  let moveSpeedPct = 0;
+  let skillDmgPct = 0;
+  let cdrPct = 0;
+  let dmgReductionPct = 0;
+  let maxHpPct = 0;
+
+  const addStats = (stats) => {
+    if (!stats) return;
+    attackDmg += stats.attackDmg || 0;
+    moveSpeedFlat += stats.moveSpeed || 0;
+    maxHpFlat += stats.maxHp || 0;
+    attackSpeedPct += stats.attackSpeedPct || 0;
+    moveSpeedPct += stats.moveSpeedPct || 0;
+    skillDmgPct += stats.skillDmgPct || 0;
+    cdrPct += stats.cdrPct || 0;
+    dmgReductionPct += stats.dmgReductionPct || 0;
+    maxHpPct += stats.maxHpPct || 0;
+  };
+
+  for (const entry of side.inventory) {
+    const def = itemDefForEntry(entry);
+    if (!def) continue;
+    if (def.statsAtLevel) addStats(def.statsAtLevel(entry.level));
+    // Active buff aktiv just nu? Lägg på dess stats också.
+    if ((entry.activeRemaining || 0) > 0 && def.activeAtMax && def.activeAtMax.stats) {
+      addStats(def.activeAtMax.stats);
+    }
   }
+
   side.attackDmg = attackDmg;
-  side.moveSpeed = moveSpeed;
-  if (maxHp !== side.hero.maxHp) {
-    const delta = maxHp - side.hero.maxHp;
-    side.hero.maxHp = maxHp;
-    if (delta > 0) side.hero.hp = Math.min(maxHp, side.hero.hp + delta);
-    else if (side.hero.hp > maxHp) side.hero.hp = maxHp;
+  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct);
+  side.attackSpeedMul = 1 + attackSpeedPct;
+  side.skillDmgMul = 1 + skillDmgPct;
+  side.cdrMul = Math.max(0.1, 1 - cdrPct);
+  side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
+
+  // Max HP — räkna ny topp, behåll relativ HP vid förändring
+  const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct));
+  if (newMaxHp !== side.hero.maxHp) {
+    const delta = newMaxHp - side.hero.maxHp;
+    side.hero.maxHp = newMaxHp;
+    if (delta > 0) side.hero.hp = Math.min(newMaxHp, side.hero.hp + delta);
+    else if (side.hero.hp > newMaxHp) side.hero.hp = newMaxHp;
   }
+
+  // Skill-cooldown-cap räknas via CDR (max-värdet sätts om så castcd sätter rätt)
+  side.skills.q.max = SKILL_BASE_CD.q * side.cdrMul;
+  side.skills.f.max = SKILL_BASE_CD.f * side.cdrMul;
+  side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
+}
+
+// Skada till hjälten — applicerar dmgReductionMul från items.
+function damageHero(side, amount) {
+  if (side.hero.dead) return;
+  const final = amount * (side.dmgReductionMul ?? 1);
+  side.hero.hp = Math.max(0, side.hero.hp - final);
+  if (side.hero.hp <= 0) killHero(side);
+}
+
+// Tickar aktiv-buf och cooldown per item i inventoryn. Triggar recompute vid expire.
+function updateActiveBuffs(side, dt) {
+  let buffEnded = false;
+  for (const entry of side.inventory) {
+    if ((entry.activeRemaining || 0) > 0) {
+      entry.activeRemaining -= dt;
+      if (entry.activeRemaining <= 0) {
+        entry.activeRemaining = 0;
+        buffEnded = true;
+      }
+    }
+    if ((entry.activeCd || 0) > 0) {
+      entry.activeCd -= dt;
+      if (entry.activeCd < 0) entry.activeCd = 0;
+    }
+  }
+  if (buffEnded) recomputeSideStats(side);
+}
+
+function activateInventoryItem(side, slotIdx) {
+  const entry = side.inventory[slotIdx];
+  if (!entry) return;
+  const def = itemDefForEntry(entry);
+  if (!def || !def.activeAtMax) return;
+  if (entry.level < ITEM_MAX_LEVEL) return;
+  if ((entry.activeCd || 0) > 0) return;
+  if ((entry.activeRemaining || 0) > 0) return;
+  entry.activeRemaining = def.activeAtMax.duration ?? ACTIVE_DURATION;
+  entry.activeCd = def.activeAtMax.cooldown ?? ACTIVE_COOLDOWN;
+  recomputeSideStats(side);
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
@@ -1785,6 +1932,11 @@ function applyEvent(side, ev) {
     else if (ev.key === 'e') hostCastBlink(side, ev.dx, ev.dz);
     return;
   }
+  if (ev.type === 'activate') {
+    if (side.hero.dead) return;
+    activateInventoryItem(side, ev.slot);
+    return;
+  }
   if (ev.type !== 'shop') return;
   if (side.hero.dead) return;
   if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
@@ -1794,11 +1946,21 @@ function applyEvent(side, ev) {
     if (!def) return;
     const existing = side.inventory.find(it => it.itemId === ev.item);
     if (!existing) {
-      // Köp lvl 1
+      // Köp lvl 1 — om itemet har varianter måste en variant väljas
+      if (def.variants) {
+        if (!ev.variant || !def.variants[ev.variant]) return;
+      }
       if (side.inventory.length >= INVENTORY_SLOTS) return;
       if (side.gold < ITEM_BUY_COST) return;
       side.gold -= ITEM_BUY_COST;
-      side.inventory.push({ itemId: ev.item, level: 1 });
+      const entry = {
+        itemId: ev.item,
+        level: 1,
+        activeRemaining: 0,
+        activeCd: 0,
+      };
+      if (def.variants && ev.variant) entry.variantId = ev.variant;
+      side.inventory.push(entry);
     } else {
       // Uppgradera till nästa level
       if (existing.level >= ITEM_MAX_LEVEL) return;
@@ -1894,7 +2056,13 @@ function applyRemoteState(state) {
     side.incomeTimer = sData.incT ?? side.incomeTimer;
     if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
     if (sData.tu) side.tierUnlocks = sData.tu;
-    if (sData.inv) side.inventory = sData.inv.map(e => ({ itemId: e.id, level: e.lv }));
+    if (sData.inv) side.inventory = sData.inv.map(e => ({
+      itemId: e.id,
+      variantId: e.vt || null,
+      level: e.lv,
+      activeRemaining: e.ar || 0,
+      activeCd: e.ac || 0,
+    }));
     side.moveSpeed = sData.ms;
     side.attackDmg = sData.ad;
     side.attackCounter = sData.ac;
@@ -1967,7 +2135,13 @@ function serializeSide(side) {
     incT: +side.incomeTimer.toFixed(2),
     incC: side.incomeTickCount || 0,
     tu: side.tierUnlocks,
-    inv: side.inventory.map(it => ({ id: it.itemId, lv: it.level })),
+    inv: side.inventory.map(it => ({
+      id: it.itemId,
+      vt: it.variantId || null,
+      lv: it.level,
+      ar: +(it.activeRemaining || 0).toFixed(2),
+      ac: +(it.activeCd || 0).toFixed(2),
+    })),
     ms: side.moveSpeed,
     ad: side.attackDmg,
     ac: side.attackCounter,
@@ -2297,7 +2471,7 @@ window.addEventListener('touchcancel', onTouchEnd, { passive: false });
 const shopContainerEl = document.getElementById('shop-container');
 const shopHeroEl = document.getElementById('shop-hero');
 const shopMinionEl = document.getElementById('shop-minion');
-const shopState = { selectedTier: 1, selectedLane: 1 };
+const shopState = { selectedTier: 1, selectedLane: 1, variantPickerOpenFor: null };
 
 // Rollup-knapparna: klick på header togglar expanded på sin panel.
 // Klick på själva body/innehåll bubblar inte upp (header är syskon till body),
@@ -2312,6 +2486,7 @@ document.querySelectorAll('.shop-header').forEach((h) => {
 function collapseShopPanels() {
   if (shopHeroEl) shopHeroEl.classList.remove('expanded');
   if (shopMinionEl) shopMinionEl.classList.remove('expanded');
+  shopState.variantPickerOpenFor = null;
 }
 const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
@@ -2321,18 +2496,47 @@ function getNextLockedTier(side) {
 }
 
 function populateShop() {
-  // ITEMS (6 st, samma knapp = köp om ej ägd, uppgradera om ägd)
+  // ITEMS (6 st). Items med varianter får en inline variant-picker.
   const heroRow = document.getElementById('shop-hero-row');
   heroRow.innerHTML = '';
   shopRefs.heroBtns = [];
+  shopRefs.heroCells = [];
+  shopRefs.heroVariantBtns = [];
   for (const itemId of ITEM_ORDER) {
     const def = ITEM_TYPES[itemId];
-    const btn = document.createElement('button');
-    btn.className = 'shop-btn item-btn';
-    btn.dataset.item = itemId;
-    btn.addEventListener('click', () => sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId }));
-    heroRow.appendChild(btn);
-    shopRefs.heroBtns.push(btn);
+    const cell = document.createElement('div');
+    cell.className = 'item-cell';
+    cell.dataset.item = itemId;
+
+    const primary = document.createElement('button');
+    primary.className = 'shop-btn item-btn primary';
+    primary.dataset.item = itemId;
+    primary.addEventListener('click', () => onItemPrimaryClick(itemId));
+    cell.appendChild(primary);
+
+    if (def.variants) {
+      const picker = document.createElement('div');
+      picker.className = 'variant-picker';
+      for (const [vid] of Object.entries(def.variants)) {
+        const vb = document.createElement('button');
+        vb.className = 'shop-btn item-btn variant';
+        vb.dataset.item = itemId;
+        vb.dataset.variant = vid;
+        vb.addEventListener('click', () => onVariantClick(itemId, vid));
+        picker.appendChild(vb);
+        shopRefs.heroVariantBtns.push(vb);
+      }
+      const cancel = document.createElement('button');
+      cancel.className = 'shop-btn item-btn variant-cancel';
+      cancel.textContent = '×';
+      cancel.addEventListener('click', closeVariantPicker);
+      picker.appendChild(cancel);
+      cell.appendChild(picker);
+    }
+
+    heroRow.appendChild(cell);
+    shopRefs.heroBtns.push(primary);
+    shopRefs.heroCells.push(cell);
   }
 
   // Lane-toggle
@@ -2376,6 +2580,33 @@ function populateShop() {
   }
 }
 
+function onItemPrimaryClick(itemId) {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const def = ITEM_TYPES[itemId];
+  if (!def) return;
+  const existing = side.inventory.find(it => it.itemId === itemId);
+  if (!existing && def.variants) {
+    // Öppna variant-picker
+    shopState.variantPickerOpenFor = itemId;
+    refreshShopUI();
+    return;
+  }
+  // Ej variant-item, eller redan ägt → buy/upgrade direkt
+  sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
+}
+
+function onVariantClick(itemId, variantId) {
+  sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId, variant: variantId });
+  shopState.variantPickerOpenFor = null;
+  refreshShopUI();
+}
+
+function closeVariantPicker() {
+  shopState.variantPickerOpenFor = null;
+  refreshShopUI();
+}
+
 function onTierClick(tier) {
   const side = sides[APP.localSide];
   if (!side) return;
@@ -2411,27 +2642,47 @@ function refreshShopUI() {
     for (let t = 5; t >= 1; t--) if (side.tierUnlocks[t]) { shopState.selectedTier = t; break; }
   }
 
-  // Item-knappar (köp eller uppgradera samma knapp)
-  for (const btn of shopRefs.heroBtns) {
-    const itemId = btn.dataset.item;
+  // Item-knappar + variant-picker + cells
+  const invFull = side.inventory.length >= INVENTORY_SLOTS;
+  for (const cell of shopRefs.heroCells) {
+    const itemId = cell.dataset.item;
     const def = ITEM_TYPES[itemId];
     if (!def) continue;
     const existing = side.inventory.find(it => it.itemId === itemId);
-    btn.classList.remove('owned', 'maxlvl');
+    const subDef = existing ? itemDefForEntry(existing) : null;
+    const pickerOpen = !existing && shopState.variantPickerOpenFor === itemId;
+    cell.classList.toggle('picker-open', pickerOpen);
+
+    const primary = cell.querySelector('.primary');
+    primary.classList.remove('owned', 'maxlvl');
     if (!existing) {
-      const invFull = side.inventory.length >= INVENTORY_SLOTS;
-      btn.innerHTML = `${def.icon} ${def.name}<small>${invFull ? 'Inventory full' : 'Köp ' + ITEM_BUY_COST + 'g'}</small>`;
-      btn.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
+      // Visa generisk knapp; klick öppnar picker (om varianter), annars köper direkt
+      primary.innerHTML = `${def.icon} ${def.name}<small>${invFull ? 'Inventory full' : (def.variants ? 'Välj — köp ' + ITEM_BUY_COST + 'g' : 'Köp ' + ITEM_BUY_COST + 'g')}</small>`;
+      primary.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
     } else if (existing.level >= ITEM_MAX_LEVEL) {
-      btn.classList.add('owned', 'maxlvl');
-      btn.innerHTML = `${def.icon} ${def.name}<small>MAX (lvl ${existing.level})</small>`;
-      btn.disabled = true;
+      primary.classList.add('owned', 'maxlvl');
+      const name = subDef ? subDef.name : def.name;
+      const icon = subDef ? subDef.icon : def.icon;
+      primary.innerHTML = `${icon} ${name}<small>MAX (lvl ${existing.level})</small>`;
+      primary.disabled = true;
     } else {
-      btn.classList.add('owned');
+      primary.classList.add('owned');
       const cost = itemUpgradeCost(existing.level);
-      btn.innerHTML = `${def.icon} ${def.name}<small>Lvl ${existing.level} → ${existing.level+1} · ${cost}g</small>`;
-      btn.disabled = side.hero.dead || side.gold < cost;
+      const name = subDef ? subDef.name : def.name;
+      const icon = subDef ? subDef.icon : def.icon;
+      primary.innerHTML = `${icon} ${name}<small>Lvl ${existing.level} → ${existing.level+1} · ${cost}g</small>`;
+      primary.disabled = side.hero.dead || side.gold < cost;
     }
+  }
+  // Variant-knapparna (samma data hela tiden, men disable beror på gold/full)
+  for (const vb of shopRefs.heroVariantBtns) {
+    const itemId = vb.dataset.item;
+    const variantId = vb.dataset.variant;
+    const def = ITEM_TYPES[itemId];
+    const vdef = def && def.variants && def.variants[variantId];
+    if (!vdef) continue;
+    vb.innerHTML = `${vdef.icon} ${vdef.name}<small>${ITEM_BUY_COST}g</small>`;
+    vb.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
   }
 
   // Lane-knappar
@@ -2492,26 +2743,50 @@ const tooltipNameEl = tooltipEl ? tooltipEl.querySelector('.tt-name') : null;
 const tooltipLevelEl = tooltipEl ? tooltipEl.querySelector('.tt-level') : null;
 const tooltipStatsEl = tooltipEl ? tooltipEl.querySelector('.tt-stats') : null;
 const tooltipCostEl = tooltipEl ? tooltipEl.querySelector('.tt-cost') : null;
+const tooltipActiveEl = tooltipEl ? tooltipEl.querySelector('.tt-active') : null;
+const tooltipActiveDescEl = tooltipActiveEl ? tooltipActiveEl.querySelector('.desc') : null;
+const tooltipActiveStatusEl = tooltipActiveEl ? tooltipActiveEl.querySelector('.status') : null;
 
 const STAT_LABELS = {
   attackDmg: 'skada',
   moveSpeed: 'rörelsehastighet',
   maxHp: 'max HP',
+  attackSpeedPct: 'attackfart',
+  moveSpeedPct: 'rörelsehastighet',
+  skillDmgPct: 'skill-skada',
+  cdrPct: 'cooldown reduction',
+  dmgReductionPct: 'skadereduktion',
+  maxHpPct: 'max HP',
 };
+
+function formatStat(key, val) {
+  if (!val) return '';
+  if (key.endsWith('Pct')) {
+    const pct = Math.round(val * 1000) / 10;  // 1 decimal
+    const sign = val > 0 ? '+' : '';
+    return `${sign}${pct}% ${STAT_LABELS[key] || key}`;
+  }
+  const sign = val > 0 ? '+' : '';
+  return `${sign}${val} ${STAT_LABELS[key] || key}`;
+}
 
 function showItemTooltipForSlot(slotEl) {
   if (!tooltipEl) return;
-  const itemId = slotEl.dataset.itemId;
-  const level = +(slotEl.dataset.level || 0);
-  const def = ITEM_TYPES[itemId];
-  if (!def || !level) return;
-  // Name + level
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const slotIdx = +slotEl.dataset.slot;
+  const entry = side.inventory[slotIdx];
+  if (!entry) return;
+  const def = itemDefForEntry(entry);
+  if (!def) return;
+  const level = entry.level;
+  // Namn + level
   tooltipNameEl.textContent = def.name;
   tooltipLevelEl.textContent = `Level ${level} / ${ITEM_MAX_LEVEL}`;
   // Stats
   const stats = def.statsAtLevel ? (def.statsAtLevel(level) || {}) : {};
   tooltipStatsEl.innerHTML = '';
-  const keys = Object.keys(stats);
+  const keys = Object.keys(stats).filter(k => stats[k]);
   if (keys.length === 0) {
     const d = document.createElement('div');
     d.className = 'stat empty';
@@ -2519,16 +2794,29 @@ function showItemTooltipForSlot(slotEl) {
     tooltipStatsEl.appendChild(d);
   } else {
     for (const k of keys) {
-      const v = stats[k];
-      if (!v) continue;
       const d = document.createElement('div');
       d.className = 'stat';
-      const sign = v > 0 ? '+' : '';
-      d.textContent = `${sign}${v} ${STAT_LABELS[k] || k}`;
+      d.textContent = formatStat(k, stats[k]);
       tooltipStatsEl.appendChild(d);
     }
   }
-  // Cost-line
+  // Active-sektion (om def.activeAtMax finns)
+  if (def.activeAtMax && tooltipActiveEl) {
+    tooltipActiveEl.classList.remove('hidden');
+    tooltipActiveDescEl.textContent = def.activeAtMax.description || '';
+    if (level < ITEM_MAX_LEVEL) {
+      tooltipActiveStatusEl.innerHTML = `<span>Låses upp vid level ${ITEM_MAX_LEVEL}</span>`;
+    } else if ((entry.activeRemaining || 0) > 0) {
+      tooltipActiveStatusEl.innerHTML = `<span class="ready">AKTIV: ${entry.activeRemaining.toFixed(1)}s</span>`;
+    } else if ((entry.activeCd || 0) > 0) {
+      tooltipActiveStatusEl.innerHTML = `<span class="cd">Klar om ${entry.activeCd.toFixed(1)}s</span>`;
+    } else {
+      tooltipActiveStatusEl.innerHTML = `<span class="ready">Tap för att aktivera</span>`;
+    }
+  } else if (tooltipActiveEl) {
+    tooltipActiveEl.classList.add('hidden');
+  }
+  // Cost-rad
   if (level >= ITEM_MAX_LEVEL) {
     tooltipCostEl.textContent = 'MAX LEVEL';
     tooltipCostEl.classList.add('max');
@@ -2539,11 +2827,9 @@ function showItemTooltipForSlot(slotEl) {
   // Position ovanför slot
   tooltipEl.classList.remove('hidden');
   const rect = slotEl.getBoundingClientRect();
-  // Mät tooltip-storlek efter att den är synlig
   const ttRect = tooltipEl.getBoundingClientRect();
   let left = rect.left + rect.width / 2 - ttRect.width / 2;
   let top = rect.top - ttRect.height - 8;
-  // Klampa till skärmen
   left = Math.max(8, Math.min(window.innerWidth - ttRect.width - 8, left));
   if (top < 8) top = rect.bottom + 8;
   tooltipEl.style.left = left + 'px';
@@ -2566,10 +2852,24 @@ for (const slotEl of inventorySlotEls) {
     if (tooltipPinnedSlot) return;
     hideItemTooltip();
   });
-  // Tap-toggle (mobil)
+  // Tap: aktivera om max-level + active ready, annars toggla tooltip
   slotEl.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!slotEl.dataset.itemId) return;
+    const side = sides[APP.localSide];
+    if (!side) return;
+    const slotIdx = +slotEl.dataset.slot;
+    const entry = side.inventory[slotIdx];
+    if (!entry) return;
+    const def = itemDefForEntry(entry);
+    if (def && def.activeAtMax && entry.level >= ITEM_MAX_LEVEL && (entry.activeRemaining || 0) <= 0 && (entry.activeCd || 0) <= 0 && !side.hero.dead) {
+      // Trigga active
+      sendOrApplyEvent({ type: 'activate', slot: slotIdx });
+      hideItemTooltip();
+      tooltipPinnedSlot = null;
+      return;
+    }
+    // Annars: toggle tooltip
     if (tooltipPinnedSlot === slotEl) {
       tooltipPinnedSlot = null;
       hideItemTooltip();
@@ -2592,7 +2892,7 @@ function updateInventoryDisplay() {
   if (!side) {
     for (const slotEl of inventorySlotEls) {
       slotEl.classList.add('empty');
-      slotEl.classList.remove('owned');
+      slotEl.classList.remove('owned', 'active-ready', 'active-running', 'active-cooldown');
       slotEl.innerHTML = '';
       slotEl.dataset.itemId = '';
       slotEl.dataset.level = '';
@@ -2602,19 +2902,31 @@ function updateInventoryDisplay() {
   for (let i = 0; i < INVENTORY_SLOTS; i++) {
     const slotEl = inventorySlotEls[i];
     if (!slotEl) continue;
-    const item = side.inventory[i];
-    if (item) {
-      const def = ITEM_TYPES[item.itemId];
+    const entry = side.inventory[i];
+    if (entry) {
+      const def = itemDefForEntry(entry);
+      const icon = def ? def.icon : '?';
       slotEl.classList.remove('empty');
       slotEl.classList.add('owned');
-      slotEl.dataset.itemId = item.itemId;
-      slotEl.dataset.level = String(item.level);
-      slotEl.innerHTML = `${def ? def.icon : '?'}<span class="level-badge">${item.level}</span>`;
-      // Om pinned + uppdaterad data, uppdatera tooltip
+      slotEl.dataset.itemId = entry.itemId;
+      slotEl.dataset.level = String(entry.level);
+      // Active-state-flaggor
+      const hasActive = def && def.activeAtMax && entry.level >= ITEM_MAX_LEVEL;
+      const running = (entry.activeRemaining || 0) > 0;
+      const onCd = (entry.activeCd || 0) > 0;
+      slotEl.classList.toggle('active-running', !!running);
+      slotEl.classList.toggle('active-cooldown', !!(hasActive && !running && onCd));
+      slotEl.classList.toggle('active-ready', !!(hasActive && !running && !onCd));
+      // CD-overlay (visar siffror när active är på cooldown)
+      let overlayHtml = '';
+      if (hasActive && !running && onCd) {
+        overlayHtml = `<div class="cd-overlay">${Math.ceil(entry.activeCd)}</div>`;
+      }
+      slotEl.innerHTML = `${icon}<span class="level-badge">${entry.level}</span>${overlayHtml}`;
       if (tooltipPinnedSlot === slotEl) showItemTooltipForSlot(slotEl);
     } else {
       slotEl.classList.add('empty');
-      slotEl.classList.remove('owned');
+      slotEl.classList.remove('owned', 'active-ready', 'active-running', 'active-cooldown');
       slotEl.innerHTML = '';
       slotEl.dataset.itemId = '';
       slotEl.dataset.level = '';
@@ -2989,6 +3301,7 @@ function simulateAll(dt) {
     updateProjectiles(side, dt);
     updateFireballs(side, dt);
     updateNovaEffects(side, dt);
+    updateActiveBuffs(side, dt);
     tickIncome(side, dt);
   }
   checkMatchEnd();
