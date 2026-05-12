@@ -38,6 +38,41 @@
       max-width: 38vw;
     }
     #hud .hint { opacity: 0.55; font-size: 11px; margin-top: 4px; }
+    #level-row {
+      display: flex; align-items: center; gap: 6px; margin-top: 5px;
+    }
+    #level-badge {
+      background: linear-gradient(135deg, #d4af37 0%, #b8941f 100%);
+      color: #1a1408;
+      font: 700 11px/1 system-ui, sans-serif;
+      padding: 3px 7px;
+      border-radius: 5px;
+      letter-spacing: 0.4px;
+      min-width: 30px;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    }
+    #xp-bar {
+      flex: 1;
+      height: 7px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 4px;
+      overflow: hidden;
+      min-width: 60px;
+    }
+    #xp-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #5ab4ff 0%, #88d6ff 100%);
+      width: 0%;
+      transition: width 0.18s ease-out;
+    }
+    #xp-text {
+      font: 600 10px/1 system-ui, sans-serif;
+      opacity: 0.75;
+      min-width: 56px;
+      text-align: right;
+    }
 
     /* Touch-UI – syns på touch-enheter, alltid synlig (även på desktop går det att tappa med mus om man vill) */
     #touch-ui {
@@ -572,7 +607,12 @@
 
   <div id="hud">
     <div id="status">Förbereder...</div>
-    <div class="hint">vänster: rörelse · höger: tap eller drag-sikta</div>
+    <div id="level-row">
+      <span id="level-badge">Lv 1</span>
+      <div id="xp-bar"><div id="xp-fill"></div></div>
+      <span id="xp-text">0 / 50</span>
+    </div>
+    <div class="hint">vänster: rörelse · höger: tap eller drag-sikta · AA: Space/A</div>
   </div>
 
   <div id="income-display">Income: 2g / 15s</div>

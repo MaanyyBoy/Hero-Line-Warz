@@ -1109,6 +1109,15 @@ for (const tier of [1, 2, 3, 4, 5]) {
 // Kill-bounty för opp's minion = 20% av dess kostnad
 const MINION_KILL_RATIO = 0.2;
 
+// Level-system 1–30 (matchar server/game-engine.js)
+const MAX_LEVEL = 30;
+const LEVEL_DMG_PCT = 0.04;
+const LEVEL_HP_PCT = 0.04;
+const LEVEL_MS_PCT = 0.01;
+function xpForLevel(level) { return 50 * level; }
+const MONSTER_XP_REWARD = 10;
+const CREEP_XP_RATIO = 0.6;
+
 // Creep-projektil-hastigheter
 const ARROW_SPEED = 14;
 const MAGIC_PROJ_SPEED = 10;
@@ -1854,6 +1863,9 @@ function createSide(idx) {
     targetType: '',
     targetX: 0,
     targetZ: 0,
+    level: 1,
+    xp: 0,
+    xpToNext: xpForLevel(1),
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -2051,7 +2063,7 @@ function updateMonsters(side, dt) {
           m.atkCd = CREEP_VS_CREEP_INTERVAL;
           if (nearest.hp <= 0) {
             const idx2 = opp.playerCreeps.indexOf(nearest);
-            if (idx2 >= 0) { scene.remove(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); }
+            if (idx2 >= 0) { scene.remove(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); gainXp(side, minionXp(nearest)); }
           }
         }
         const dx = nearest.mesh.position.x - m.mesh.position.x;
@@ -2251,16 +2263,34 @@ function hostKillMonster(side, idx, byPlayerSide) {
   if (!m) return;
   scene.remove(m.mesh);
   side.monsters.splice(idx, 1);
-  // Guld går till spelaren vars hjälte/creep slog ihjäl monstret.
-  // byPlayerSide kan vara side själv (hjälten i samma arena dödade sitt monster)
-  // eller opp (opp's creep dödade monstret).
-  if (byPlayerSide) byPlayerSide.gold += GOLD_PER_KILL;
-  else side.gold += GOLD_PER_KILL;
+  if (byPlayerSide) { byPlayerSide.gold += GOLD_PER_KILL; gainXp(byPlayerSide, MONSTER_XP_REWARD); }
+  else { side.gold += GOLD_PER_KILL; gainXp(side, MONSTER_XP_REWARD); }
 }
 
-// Bounty för att döda en opp:s minion = 20% av dess kostnad (min 1g).
 function minionBounty(creep) {
   return Math.max(1, Math.floor((creep.cost || 10) * MINION_KILL_RATIO));
+}
+function minionXp(creep) {
+  return Math.max(1, Math.floor((creep.cost || 10) * CREEP_XP_RATIO));
+}
+
+// Lägg XP, level-up om threshold nås. Stannar vid MAX_LEVEL.
+function gainXp(side, amount) {
+  if (!side || amount <= 0) return;
+  if (side.level >= MAX_LEVEL) return;
+  side.xp += amount;
+  let leveled = false;
+  while (side.level < MAX_LEVEL && side.xp >= side.xpToNext) {
+    side.xp -= side.xpToNext;
+    side.level += 1;
+    side.xpToNext = xpForLevel(side.level);
+    leveled = true;
+  }
+  if (side.level >= MAX_LEVEL) {
+    side.xp = 0;
+    side.xpToNext = 0;
+  }
+  if (leveled) recomputeSideStats(side);
 }
 
 function killHero(side) {
@@ -2403,7 +2433,7 @@ function updateProjectiles(side, dt) {
           if (k >= 0) hostKillMonster(side, k, side); // hjälten dödade — guld till sidan
         } else {
           const k = opp.playerCreeps.indexOf(p.target);
-          if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); }
+          if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
         }
       }
       if (p.isAoE) {
@@ -2421,7 +2451,7 @@ function updateProjectiles(side, dt) {
           if (c === p.target) continue;
           if (Math.hypot(c.mesh.position.x - ix, c.mesh.position.z - iz) < PASSIVE_AOE_RADIUS) {
             c.hp -= p.damage;
-            if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); }
+            if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
           }
         }
       }
@@ -2483,7 +2513,7 @@ function updateFireballs(side, dt) {
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(c);
         c.hp -= f.damage;
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
+        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     if (f.traveled > ELDKLOT_RANGE) {
@@ -2519,7 +2549,7 @@ function hostCastFrostnova(side) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < NOVA_RADIUS) {
       c.hp -= novaDmg;
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
 }
@@ -2698,15 +2728,20 @@ function recomputeSideStats(side) {
     }
   }
 
-  side.attackDmg = attackDmg;
-  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct);
+  // Level-skalning ovanpå items (matchar server-engine)
+  const lvl = (side.level || 1) - 1;
+  const levelDmgMul = 1 + LEVEL_DMG_PCT * lvl;
+  const levelHpMul = 1 + LEVEL_HP_PCT * lvl;
+  const levelMsMul = 1 + LEVEL_MS_PCT * lvl;
+  side.attackDmg = attackDmg * levelDmgMul;
+  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul;
   side.attackSpeedMul = 1 + attackSpeedPct;
-  side.skillDmgMul = 1 + skillDmgPct;
+  side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
   side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
 
   // Max HP — räkna ny topp, behåll relativ HP vid förändring
-  const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct));
+  const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
   if (newMaxHp !== side.hero.maxHp) {
     const delta = newMaxHp - side.hero.maxHp;
     side.hero.maxHp = newMaxHp;
@@ -3145,6 +3180,10 @@ function applyRemoteState(state) {
     side.targetType = sData.tt || '';
     side.targetX = sData.tx || 0;
     side.targetZ = sData.tz || 0;
+    // Level + XP
+    side.level = sData.lv || 1;
+    side.xp = sData.xp || 0;
+    side.xpToNext = sData.xpN || 0;
     // Skills
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
@@ -3346,6 +3385,24 @@ function updateHud() {
   if (APP.mode === 'host') bottom.push('HOST');
   else if (APP.mode === 'client') bottom.push('CLIENT');
   statusEl.innerHTML = top.join(' | ') + '<br>' + bottom.join(' | ');
+  updateLevelUI(side);
+}
+
+const levelBadgeEl = document.getElementById('level-badge');
+const xpFillEl = document.getElementById('xp-fill');
+const xpTextEl = document.getElementById('xp-text');
+function updateLevelUI(side) {
+  if (!levelBadgeEl) return;
+  const lv = side.level || 1;
+  levelBadgeEl.textContent = 'Lv ' + lv;
+  if (lv >= MAX_LEVEL) {
+    xpFillEl.style.width = '100%';
+    xpTextEl.textContent = 'MAX';
+  } else {
+    const pct = side.xpToNext > 0 ? Math.min(100, (side.xp / side.xpToNext) * 100) : 0;
+    xpFillEl.style.width = pct.toFixed(1) + '%';
+    xpTextEl.textContent = `${side.xp} / ${side.xpToNext}`;
+  }
 }
 
 // ============================================================

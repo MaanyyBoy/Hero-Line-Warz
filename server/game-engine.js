@@ -55,6 +55,15 @@ const INCOME_BASE = 2;
 const INCOME_INTERVAL = 15.0;
 const INCOME_MINION_RATIO = 0.2;
 
+// Level-system 1–30
+const MAX_LEVEL = 30;
+const LEVEL_DMG_PCT = 0.04;   // +4% dmg + skill-dmg per level
+const LEVEL_HP_PCT = 0.04;    // +4% max HP per level
+const LEVEL_MS_PCT = 0.01;    // +1% move-speed per level
+function xpForLevel(level) { return 50 * level; } // XP behövs för att gå från `level` → `level+1`
+const MONSTER_XP_REWARD = 10;
+const CREEP_XP_RATIO = 0.6;   // XP = creep.cost * 0.6
+
 const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
 
 // === Minion-data ===
@@ -169,6 +178,26 @@ function itemDefForEntry(entry) {
 }
 function itemUpgradeCost(currentLevel) { return 500 * Math.pow(2, currentLevel - 1); }
 function minionBounty(creep) { return Math.max(1, Math.floor((creep.cost || 10) * MINION_KILL_RATIO)); }
+function minionXp(creep) { return Math.max(1, Math.floor((creep.cost || 10) * CREEP_XP_RATIO)); }
+
+// Lägg XP på sida och hantera level-up. Stoppar vid MAX_LEVEL.
+function gainXp(side, amount) {
+  if (!side || amount <= 0) return;
+  if (side.level >= MAX_LEVEL) return;
+  side.xp += amount;
+  let leveled = false;
+  while (side.level < MAX_LEVEL && side.xp >= side.xpToNext) {
+    side.xp -= side.xpToNext;
+    side.level += 1;
+    side.xpToNext = xpForLevel(side.level);
+    leveled = true;
+  }
+  if (side.level >= MAX_LEVEL) {
+    side.xp = 0;
+    side.xpToNext = 0;
+  }
+  if (leveled) recomputeSideStats(side);
+}
 
 function recomputeSideStats(side) {
   let attackDmg = HERO_BASE_ATTACK_DMG;
@@ -195,13 +224,18 @@ function recomputeSideStats(side) {
       addStats(def.activeAtMax.stats);
     }
   }
-  side.attackDmg = attackDmg;
-  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct);
+  // Level-skalning ovanpå items: +4% dmg/HP/skill-dmg, +1% movespeed per level (utöver lvl 1)
+  const lvl = (side.level || 1) - 1;
+  const levelDmgMul = 1 + LEVEL_DMG_PCT * lvl;
+  const levelHpMul = 1 + LEVEL_HP_PCT * lvl;
+  const levelMsMul = 1 + LEVEL_MS_PCT * lvl;
+  side.attackDmg = attackDmg * levelDmgMul;
+  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul;
   side.attackSpeedMul = 1 + attackSpeedPct;
-  side.skillDmgMul = 1 + skillDmgPct;
+  side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
   side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
-  const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct));
+  const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
   if (newMaxHp !== side.hero.maxHp) {
     const delta = newMaxHp - side.hero.maxHp;
     side.hero.maxHp = newMaxHp;
@@ -283,6 +317,9 @@ function createSide(idx) {
     targetType: '',
     targetX: 0,
     targetZ: 0,
+    level: 1,
+    xp: 0,
+    xpToNext: xpForLevel(1),
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -371,8 +408,8 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   const m = arenaSide.monsters[idx];
   if (!m) return;
   arenaSide.monsters.splice(idx, 1);
-  if (byPlayerSide) byPlayerSide.gold += GOLD_PER_KILL;
-  else arenaSide.gold += GOLD_PER_KILL;
+  if (byPlayerSide) { byPlayerSide.gold += GOLD_PER_KILL; gainXp(byPlayerSide, MONSTER_XP_REWARD); }
+  else { arenaSide.gold += GOLD_PER_KILL; gainXp(arenaSide, MONSTER_XP_REWARD); }
 }
 
 // === Update ===
@@ -444,7 +481,7 @@ function updateMonsters(state, side, opp, dt) {
           m.atkCd = CREEP_VS_CREEP_INTERVAL;
           if (nearest.hp <= 0) {
             const idx2 = opp.playerCreeps.indexOf(nearest);
-            if (idx2 >= 0) { opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); }
+            if (idx2 >= 0) { opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); gainXp(side, minionXp(nearest)); }
           }
         }
         m.ry = Math.atan2(nearest.x - m.x, nearest.z - m.z);
@@ -672,7 +709,7 @@ function updateProjectiles(state, side, opp, dt) {
           if (k >= 0) killMonster(side, k, side);
         } else {
           const k = opp.playerCreeps.indexOf(p.target);
-          if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); }
+          if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
         }
       }
       if (p.isAoE) {
@@ -689,7 +726,7 @@ function updateProjectiles(state, side, opp, dt) {
           if (c === p.target) continue;
           if (Math.hypot(c.x - ix, c.z - iz) < PASSIVE_AOE_RADIUS) {
             c.hp -= p.damage;
-            if (c.hp <= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); }
+            if (c.hp <= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
           }
         }
       }
@@ -743,7 +780,7 @@ function updateFireballs(state, side, opp, dt) {
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(c);
         c.hp -= f.damage;
-        if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
+        if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     if (f.traveled > ELDKLOT_RANGE) side.fireballs.splice(i, 1);
@@ -774,7 +811,7 @@ function castFrostnova(state, sideIdx) {
     const c = opp.playerCreeps[j];
     if (Math.hypot(c.x - side.hero.x, c.z - side.hero.z) < NOVA_RADIUS) {
       c.hp -= novaDmg;
-      if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); }
+      if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
 }
@@ -1002,6 +1039,9 @@ function serializeSide(side) {
     tt: side.targetType || '',
     tx: side.targetX || 0,
     tz: side.targetZ || 0,
+    lv: side.level || 1,
+    xp: side.xp || 0,
+    xpN: side.xpToNext || 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
     M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: 10 })),
