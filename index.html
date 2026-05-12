@@ -666,10 +666,14 @@
     .browser-back { padding: 8px 16px !important; font-size: 13px !important; min-width: auto !important; }
     .browser-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      grid-template-columns: repeat(5, 1fr);
       gap: 10px;
       width: 100%;
       margin-bottom: 18px;
+    }
+    /* Items-browsern (30 items) får kvarstå med auto-fill */
+    #items-browser-content .browser-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
     .browser-card {
       background: rgba(20,30,55,0.75);
