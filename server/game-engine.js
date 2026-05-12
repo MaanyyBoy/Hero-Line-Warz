@@ -140,6 +140,7 @@ const TAUNT_RADIUS = 5.5;
 const TAUNT_DURATION = 3.0;
 const TAUNT_DMG_REDUCTION = 0.30;       // 30% mindre skada
 const TAUNT_HEAL_PCT = 0.20;            // 20% av skada som tas tillbaka
+const TAUNT_HEAL_PER_SEC = 0.20;        // 10% maxHP per 0.5s = 20%/sek passiv heal
 const IRON_WILL_DURATION = 3.0;
 const IRON_WILL_EXPLOSION_RADIUS = 6.0;
 const HAMMER_SPEED = 12;
@@ -2129,6 +2130,10 @@ function tickGame(state, dt) {
       }
       // Tick freeze på hero (om frusen, hjälten kan inte använda skills/AA — för enkelhet bara dekrementera)
       if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime -= dt;
+      // Titans Taunt passive heal: 20% av maxHP per sek (= 10% per halvsek) medan tauntet är aktivt
+      if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);
+      }
     }
   }
   for (const sideIdx of [1, 2]) {

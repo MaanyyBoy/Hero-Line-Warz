@@ -1274,6 +1274,7 @@ const TAUNT_RADIUS = 5.5;
 const TAUNT_DURATION = 3.0;
 const TAUNT_DMG_REDUCTION = 0.30;
 const TAUNT_HEAL_PCT = 0.20;
+const TAUNT_HEAL_PER_SEC = 0.20;
 const IRON_WILL_DURATION = 3.0;
 const IRON_WILL_EXPLOSION_RADIUS = 6.0;
 const HAMMER_SPEED = 12;
@@ -5603,7 +5604,10 @@ function screenToWorld(sx, sz) {
 // castLocalSkill tar EMOT world-koord-riktning. tap=true betyder "ingen drag — använd target som aim om finns".
 function castLocalSkill(key, worldDx, worldDz, tap = false) {
   const side = sides[APP.localSide];
-  if (!side || side.skills[key].cd > 0 || side.hero.dead) return;
+  if (!side || side.hero.dead) return;
+  // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
+  const isGimluE = side.heroId === 'gimlu' && key === 'e';
+  if (!isGimluE && side.skills[key].cd > 0) return;
   sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap });
 }
 
@@ -6395,6 +6399,10 @@ function simulateAll(dt) {
       }
       if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
+      }
+      // Titans Taunt passive heal: 20% av maxHP per sek medan tauntet är aktivt
+      if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);
       }
     }
   }
