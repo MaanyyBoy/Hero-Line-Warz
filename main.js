@@ -4760,6 +4760,15 @@ aimDot.rotation.x = -Math.PI / 2;
 aimDot.visible = false;
 scene.add(aimDot);
 
+// Generic AoE-aim-ring (skalas + tintas per skill)
+const aimCircle = new THREE.Mesh(
+  new THREE.RingGeometry(0.85, 1.0, 48),
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+);
+aimCircle.rotation.x = -Math.PI / 2;
+aimCircle.visible = false;
+scene.add(aimCircle);
+
 // Target-ring under låst fiende — pulserar lätt
 const targetRing = new THREE.Mesh(
   new THREE.RingGeometry(0.55, 0.7, 32),
@@ -4792,32 +4801,79 @@ function updateTargetIndicator() {
 
 function updateAimIndicators() {
   const side = sides[APP.localSide];
-  if (!side) { aimLine.visible = false; aimDot.visible = false; return; }
-  // aimState dx/dz är screen-relativa — konvertera till world för att rita indikator i scenen
+  aimLine.visible = false;
+  aimDot.visible = false;
+  aimCircle.visible = false;
+  if (!side || !aimState.key || !aimState.active) return;
+
   const w = screenToWorld(aimState.dx, aimState.dz);
-  if (aimState.key === 'q' && aimState.active) {
-    aimLine.visible = true;
-    const cx = side.hero.x + w.x * (ELDKLOT_RANGE / 2);
-    const cz = side.hero.z + w.z * (ELDKLOT_RANGE / 2);
-    aimLine.position.set(cx, 0.06, cz);
-    aimLine.rotation.y = -Math.atan2(w.z, w.x);
-  } else {
-    aimLine.visible = false;
-  }
-  if (aimState.key === 'e' && aimState.active) {
-    aimDot.visible = true;
-    let dist = BLINK_RANGE;
-    let nx, nz;
-    while (dist >= 0.5) {
-      nx = side.hero.x + w.x * dist;
-      nz = side.hero.z + w.z * dist;
-      if (isHeroWalkable(side.idx, nx, nz)) break;
-      dist -= 0.5;
+  const dragging = aimState.dragMag > AIM_THRESHOLD;
+
+  // Returnerar cast-position för en target-baserad skill given drag-distance.
+  // Drag: hero + drag-dir × dist. Tap-on-target: target's position. Annars: hero + facing × dist.
+  function castGround(dist) {
+    if (dragging) return { x: side.hero.x + w.x * dist, z: side.hero.z + w.z * dist };
+    if (side.targetId && side.targetType) {
+      if (APP.mode === 'solo') {
+        const opp = sides[3 - side.idx];
+        const t = resolveTargetEntity(side, opp);
+        if (t && t.mesh) return { x: t.mesh.position.x, z: t.mesh.position.z };
+      } else if (side.targetX || side.targetZ) {
+        return { x: side.targetX, z: side.targetZ };
+      }
     }
-    if (dist >= 0.5) aimDot.position.set(nx, 0.06, nz);
-    else aimDot.position.set(side.hero.x, 0.06, side.hero.z);
-  } else {
-    aimDot.visible = false;
+    return { x: side.hero.x + side.hero.facingX * dist, z: side.hero.z + side.hero.facingZ * dist };
+  }
+  function showCircle(x, z, radius, color) {
+    aimCircle.visible = true;
+    aimCircle.position.set(x, 0.06, z);
+    aimCircle.scale.set(radius, radius, 1);
+    aimCircle.material.color.setHex(color);
+  }
+  function showLine(dirX, dirZ, length) {
+    aimLine.visible = true;
+    aimLine.position.set(side.hero.x + dirX * (length / 2), 0.06, side.hero.z + dirZ * (length / 2));
+    aimLine.rotation.y = -Math.atan2(dirZ, dirX);
+  }
+
+  const heroId = side.heroId || 'magiker';
+  const dirX = dragging ? w.x : side.hero.facingX;
+  const dirZ = dragging ? w.z : side.hero.facingZ;
+
+  if (aimState.key === 'q') {
+    if (heroId === 'legolas') {
+      const p = castGround(VINE_TRAP_CAST_DISTANCE);
+      showCircle(p.x, p.z, VINE_TRAP_RADIUS, 0x4a8030);
+    } else if (heroId === 'gimlu') {
+      showCircle(side.hero.x, side.hero.z, TAUNT_RADIUS, 0xffaa55);
+    } else {
+      showLine(dirX, dirZ, ELDKLOT_RANGE);
+    }
+  } else if (aimState.key === 'f') {
+    if (heroId === 'legolas') {
+      // Self-buff — visa ring runt hero
+      showCircle(side.hero.x, side.hero.z, 1.2, 0xddff55);
+    } else if (heroId === 'gimlu') {
+      // Iron Will — visa explosionsradien runt hero
+      showCircle(side.hero.x, side.hero.z, IRON_WILL_EXPLOSION_RADIUS, 0xff7733);
+    } else {
+      // Gandulf Frost Nova — cirkel där novan kastas
+      const p = castGround(NOVA_CAST_DISTANCE);
+      showCircle(p.x, p.z, NOVA_RADIUS, 0x88ddff);
+    }
+  } else if (aimState.key === 'e') {
+    if (heroId === 'legolas') {
+      // Dash — liten dot på destinationen
+      const p = castGround(LEGOLUS_DASH_DISTANCE);
+      showCircle(p.x, p.z, 0.6, 0xddc680);
+    } else if (heroId === 'gimlu') {
+      // Hammer — line längs banan
+      showLine(dirX, dirZ, HAMMER_RANGE);
+    } else {
+      // Gandulf Black Hole — cirkel med blackhole-radien
+      const p = castGround(BLACKHOLE_CAST_DISTANCE);
+      showCircle(p.x, p.z, BLACKHOLE_RADIUS, 0x9966ff);
+    }
   }
 }
 
