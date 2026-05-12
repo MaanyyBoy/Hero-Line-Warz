@@ -1926,6 +1926,13 @@ function applyMovement(side, joyX, joyZ, dt) {
 }
 
 function applyEvent(side, ev) {
+  if (ev.type === 'cheat') {
+    if (ev.cmd === 'gold' && typeof ev.amount === 'number') {
+      const amt = Math.max(0, Math.min(10_000_000, Math.floor(ev.amount)));
+      side.gold += amt;
+    }
+    return;
+  }
   if (ev.type === 'skill') {
     if (ev.key === 'q') hostCastEldklot(side, ev.dx, ev.dz);
     else if (ev.key === 'f') hostCastFrostnova(side);
@@ -2937,6 +2944,54 @@ function updateInventoryDisplay() {
     }
   }
 }
+
+// ============================================================
+// CHEAT-KOD: skriv "guld+N" och tryck Enter
+// ============================================================
+let cheatBuffer = '';
+let cheatBufferTimer = null;
+
+function showCheatNotification(text) {
+  const el = document.createElement('div');
+  el.className = 'income-popup';
+  el.style.color = '#ff66ff';
+  el.style.top = '92px';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => { try { el.remove(); } catch (_) {} }, 1700);
+}
+
+window.addEventListener('keydown', (e) => {
+  if (APP.mode === 'lobby') return;
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+
+  if (e.key === 'Enter') {
+    const m = cheatBuffer.match(/guld\s*\+\s*(\d+)\s*$/i);
+    if (m) {
+      const amount = Math.max(0, Math.min(10_000_000, parseInt(m[1], 10)));
+      if (amount > 0) {
+        sendOrApplyEvent({ type: 'cheat', cmd: 'gold', amount });
+        showCheatNotification(`Cheat +${amount}g`);
+      }
+    }
+    cheatBuffer = '';
+    return;
+  }
+
+  if (e.key === 'Backspace') {
+    cheatBuffer = cheatBuffer.slice(0, -1);
+    return;
+  }
+
+  if (e.key.length === 1) {
+    cheatBuffer += e.key;
+    if (cheatBuffer.length > 40) cheatBuffer = cheatBuffer.slice(-40);
+  }
+
+  if (cheatBufferTimer) clearTimeout(cheatBufferTimer);
+  cheatBufferTimer = setTimeout(() => { cheatBuffer = ''; }, 3000);
+});
 
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
