@@ -9445,6 +9445,32 @@ function handleNetworkMessage(msg) {
     if (msg.side === 1 || msg.side === 2) arenaState.ready[msg.side] = !!msg.value;
     return;
   }
+  // Hero-pick i arena MP (peer-to-peer, server bypassad)
+  if (msg.t === 'a-pick' && isArenaMp()) {
+    if (heroPickState.active && heroPickState.mode !== 'solo') {
+      heroPickState.oppSelected = msg.heroId || null;
+      const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
+      if (heroPickState.oppConfirmed) {
+        hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : msg.heroId}`;
+      } else {
+        hpOppStatusEl.textContent = `Motståndaren tittar på: ${oppHero ? oppHero.name : '...'}`;
+      }
+      refreshHeroCardUI();
+    }
+    return;
+  }
+  if (msg.t === 'a-pick-confirm' && isArenaMp()) {
+    if (heroPickState.active && heroPickState.mode !== 'solo') {
+      heroPickState.oppSelected = msg.heroId || heroPickState.oppSelected;
+      heroPickState.oppConfirmed = true;
+      const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
+      hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : '?'}`;
+      refreshHeroCardUI();
+      // Om vi också är confirm:ade → starta direkt
+      if (heroPickState.confirmed) finishHeroPick();
+    }
+    return;
+  }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
     const t = arenaState.talents[msg.side];
     if (t && t.points > 0 && !t.chosen.includes(msg.talentId)) {
@@ -10092,7 +10118,12 @@ function selectHero(heroId) {
   hpConfirmBtn.disabled = false;
   hpStatusEl.textContent = `Vald: ${hero.name}`;
   if (heroPickState.mode === 'host' || heroPickState.mode === 'client') {
-    sendOrApplyEvent({ type: 'hero-pick', heroId });
+    // Arena-MP: peer-to-peer (server bypassad). Classic-MP: via server.
+    if (isArenaMp()) {
+      sendGameMsg({ t: 'a-pick', heroId });
+    } else {
+      sendOrApplyEvent({ type: 'hero-pick', heroId });
+    }
   }
 }
 
@@ -10112,6 +10143,11 @@ function confirmHero() {
   if (heroPickState.mode === 'solo') {
     hpConfirmBtn.textContent = 'Startar...';
     finishHeroPick();
+  } else if (isArenaMp()) {
+    hpConfirmBtn.textContent = 'Väntar på motståndaren...';
+    sendGameMsg({ t: 'a-pick-confirm', heroId: heroPickState.selected });
+    // Om motståndaren redan confirm:at → starta nu
+    if (heroPickState.oppConfirmed) finishHeroPick();
   } else {
     hpConfirmBtn.textContent = 'Väntar på motståndaren...';
     sendOrApplyEvent({ type: 'hero-confirm' });
@@ -10119,6 +10155,9 @@ function confirmHero() {
 }
 
 function finishHeroPick() {
+  // Idempotens-guard: race-condition där båda spelare confirm:ar samtidigt
+  // kan annars trigga enterPlayPhase två gånger.
+  if (!heroPickState.active) return;
   if (heroPickState.timerHandle) {
     clearInterval(heroPickState.timerHandle);
     heroPickState.timerHandle = null;
@@ -10149,17 +10188,31 @@ function showHeroPick(mode) {
   heroPickEl.classList.remove('hidden');
 
   if (heroPickState.timerHandle) clearInterval(heroPickState.timerHandle);
-  // Solo: lokal timer. MP: server driver timern via state.pT.
-  if (mode === 'solo') {
+  // Solo eller arena-MP: lokal timer (vi bypassar server).
+  // Classic-MP: server driver timern via state.pT.
+  const useLocalTimer = mode === 'solo' || isArenaMp();
+  if (useLocalTimer) {
     heroPickState.timerHandle = setInterval(() => {
+      if (!heroPickState.active) return;  // skydd om finishHeroPick redan körts
       heroPickState.timer -= 1;
       if (heroPickState.timer <= 0) {
         heroPickState.timer = 0;
         if (!heroPickState.selected) heroPickState.selected = 'magiker';
+        // Arena-MP watchdog: motspelaren kanske disconnect:ade —
+        // forcera oppConfirmed med default-hjälte så transition kan ske
+        if (isArenaMp() && !heroPickState.oppConfirmed) {
+          if (!heroPickState.oppSelected) heroPickState.oppSelected = 'magiker';
+          heroPickState.oppConfirmed = true;
+        }
         if (!heroPickState.confirmed) confirmHero();
+        return; // confirmHero kan ha triggat finishHeroPick — undvik dubbel-call
       }
       hpTimerEl.textContent = String(heroPickState.timer);
       hpTimerEl.classList.toggle('urgent', heroPickState.timer <= 10);
+      // Arena-MP: check om båda confirm:at → transitionera lokalt
+      if (isArenaMp() && heroPickState.confirmed && heroPickState.oppConfirmed) {
+        finishHeroPick();
+      }
     }, 1000);
   }
 }
@@ -10419,13 +10472,22 @@ function enterPlayPhase() {
   waveBannerState.lastSeenPulse = 0;
   if (waveBannerState.hideTimeout) { clearTimeout(waveBannerState.hideTimeout); waveBannerState.hideTimeout = null; }
   if (waveBannerEl) waveBannerEl.classList.add('hidden');
-  // Sätt heroId och byt mesh om hjälten skiljer från default.
-  // Solo: läs från heroPickState.selected. MP: side.heroId är redan satt via clientReconcileSide.
+  // Sätt heroId och byt mesh.
+  // Solo: läs från heroPickState.selected.
+  // Arena-MP: peer-to-peer pick (selected = lokal, oppSelected = motståndare).
+  // Classic-MP: side.heroId är redan satt via clientReconcileSide.
   for (const idx of [1, 2]) {
     const s = sides[idx];
     if (!s) continue;
     if (APP.mode === 'solo' && idx === APP.localSide && heroPickState.selected) {
       s.heroId = heroPickState.selected;
+    }
+    if (isArenaMp()) {
+      if (idx === APP.localSide && heroPickState.selected) {
+        s.heroId = heroPickState.selected;
+      } else if (heroPickState.oppSelected) {
+        s.heroId = heroPickState.oppSelected;
+      }
     }
     swapHeroMeshIfNeeded(s);
   }
