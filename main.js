@@ -3612,6 +3612,15 @@ function startArenaRound(roundNum) {
     if (s.mesh) {
       s.mesh.position.set(spawn.x, 0, spawn.z);
       s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+      s.mesh.visible = true;  // återställ (death i förra rundan kunde lämnat den dold)
+    }
+    // Reset GLTF-animation-state så Death-clipen inte hänger kvar
+    if (s.mesh && s.mesh._gltfState) {
+      s.mesh._gltfState.attackTimer = 0;
+    }
+    if (s.mesh && s.mesh.userData.currentClipName &&
+        s.mesh.userData.currentClipName.toLowerCase().includes('death')) {
+      s.mesh.userData.currentClipName = null;  // tvinga animateGltfCharacter att välja om
     }
     recomputeArenaSideStats(s);
     s.hero.hp = s.hero.maxHp;
@@ -3757,9 +3766,10 @@ function damageArenaOrb(amount, byIdx) {
     orb.alive = false;
     orb.spawnTimer = ARENA_ORB_RESPAWN_DELAY;
     if (arenaOrbMesh) arenaOrbMesh.visible = false;
-    // Stor explosion vid orb-position
+    // Stor explosion vid orb-position + camera-shake
     spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x88ffdd);
     spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0xaaffee, 2.0);
+    triggerCameraShake(0.4, 0.45);
     // Dödaren får heal + shield
     const winner = sides[byIdx];
     if (winner) {
@@ -4523,7 +4533,10 @@ function killHero(side) {
   if (side.hero.dead) return;
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
-  side.mesh.visible = false;
+  // I arena: behåll mesh synlig så GLTF death-animationen syns
+  if (APP.gameMode !== 'arena1v1') {
+    side.mesh.visible = false;
+  }
 }
 
 function respawnHero(side) {
@@ -5154,13 +5167,14 @@ function updateBlackHolesSolo(side, dt) {
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      // Arena: orb + opp hero-damage från black hole-explosion
+      // Arena: orb + opp hero-damage från black hole-explosion + shake
       applyAoEDamageInArena(bh.x, bh.z, expR, bh.explosionDmg * dmgMul, side.idx);
       if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
         if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < expR) {
           damageHero(opp, bh.explosionDmg * dmgMul);
         }
       }
+      if (APP.gameMode === 'arena1v1') triggerCameraShake(0.30, 0.35);
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
       side.blackHoles.splice(i, 1);
@@ -5343,12 +5357,13 @@ function updateIronWillSolo(side, dt) {
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      // Arena: Iron Will-explosion mot orb + opp hero
+      // Arena: Iron Will-explosion mot orb + opp hero + camera-shake för lokala
       applyAoEDamageInArena(side.hero.x, side.hero.z, radius, dmg, side.idx);
       if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
         const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
         if (dx * dx + dz * dz < r2) damageHero(opp, dmg);
       }
+      if (APP.gameMode === 'arena1v1') triggerCameraShake(0.35, 0.4);
       // Stor explosion-ring
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.5, radius, 56),
@@ -6633,6 +6648,17 @@ const cameraTarget = new THREE.Vector3();
 // (30% inzoomad från tidigare 32/26 → 22/18)
 const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 22, 18);
 
+// Camera-shake: triggas av stora effekter (orb-död, AoE-explosioner)
+const cameraShake = { magnitude: 0, duration: 0, elapsed: 0 };
+function triggerCameraShake(magnitude, duration) {
+  // Använd den största pågående shaken (override om ny är starkare)
+  if (magnitude > cameraShake.magnitude || cameraShake.elapsed > cameraShake.duration * 0.5) {
+    cameraShake.magnitude = magnitude;
+    cameraShake.duration = duration;
+    cameraShake.elapsed = 0;
+  }
+}
+
 function updateCamera(dt) {
   if (!sides[APP.localSide]) return;
   const hero = sides[APP.localSide].hero;
@@ -6650,6 +6676,21 @@ function updateCamera(dt) {
   cameraTarget.x += (hero.x - cameraTarget.x) * lerpK;
   cameraTarget.y += (0.8 - cameraTarget.y) * lerpK;
   cameraTarget.z += (hero.z - cameraTarget.z) * lerpK;
+  // Camera-shake: random offset som fade:as ut över duration
+  if (cameraShake.duration > 0) {
+    cameraShake.elapsed += dt;
+    if (cameraShake.elapsed >= cameraShake.duration) {
+      cameraShake.magnitude = 0;
+      cameraShake.duration = 0;
+      cameraShake.elapsed = 0;
+    } else {
+      const fade = 1 - cameraShake.elapsed / cameraShake.duration;
+      const m = cameraShake.magnitude * fade;
+      camera.position.x += (Math.random() - 0.5) * m * 2;
+      camera.position.y += (Math.random() - 0.5) * m;
+      camera.position.z += (Math.random() - 0.5) * m * 2;
+    }
+  }
   camera.lookAt(cameraTarget);
 }
 
