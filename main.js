@@ -8949,27 +8949,47 @@ function updateLevelUI(side) {
 // SIKT-INDIKATORER
 // ============================================================
 
-const aimLine = new THREE.Mesh(
-  new THREE.PlaneGeometry(ELDKLOT_RANGE, 0.45),
-  new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+// Aim-line — Group med fyllning + bred glow, tydligare än tidigare smala plan
+const aimLine = new THREE.Group();
+const aimLineCore = new THREE.Mesh(
+  new THREE.PlaneGeometry(ELDKLOT_RANGE, 1.0),
+  new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
 );
+aimLine.add(aimLineCore);
+const aimLineGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(ELDKLOT_RANGE, 1.8),
+  new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false })
+);
+aimLine.add(aimLineGlow);
 aimLine.rotation.x = -Math.PI / 2;
 aimLine.visible = false;
 scene.add(aimLine);
 
 const aimDot = new THREE.Mesh(
   new THREE.CircleGeometry(0.9, 24),
-  new THREE.MeshBasicMaterial({ color: 0xaa88ff, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+  new THREE.MeshBasicMaterial({ color: 0xaa88ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
 );
 aimDot.rotation.x = -Math.PI / 2;
 aimDot.visible = false;
 scene.add(aimDot);
 
-// Generic AoE-aim-ring (skalas + tintas per skill)
-const aimCircle = new THREE.Mesh(
-  new THREE.RingGeometry(0.85, 1.0, 48),
-  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+// Generic AoE-aim-ring (skalas + tintas per skill) — Group med fyllning + tjock kant
+const aimCircle = new THREE.Group();
+const aimCircleFill = new THREE.Mesh(
+  new THREE.CircleGeometry(1.0, 40),
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false })
 );
+aimCircle.add(aimCircleFill);
+const aimCircleRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.86, 1.0, 48),
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
+);
+aimCircle.add(aimCircleRing);
+const aimCircleInner = new THREE.Mesh(
+  new THREE.RingGeometry(0.75, 0.86, 48),
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+);
+aimCircle.add(aimCircleInner);
 aimCircle.rotation.x = -Math.PI / 2;
 aimCircle.visible = false;
 scene.add(aimCircle);
@@ -9042,14 +9062,19 @@ function updateAimIndicators() {
   }
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
-    aimCircle.position.set(x, 0.06, z);
-    aimCircle.scale.set(radius, radius, 1);
-    aimCircle.material.color.setHex(color);
+    aimCircle.position.set(x, 0.07, z);
+    // Pulsande skala för synlighet
+    const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
+    aimCircle.scale.set(radius * pulse, radius * pulse, 1);
+    aimCircle.traverse(o => { if (o.material && o.material.color) o.material.color.setHex(color); });
   }
   function showLine(dirX, dirZ, length) {
     aimLine.visible = true;
-    aimLine.position.set(side.hero.x + dirX * (length / 2), 0.06, side.hero.z + dirZ * (length / 2));
+    aimLine.position.set(side.hero.x + dirX * (length / 2), 0.07, side.hero.z + dirZ * (length / 2));
     aimLine.rotation.y = -Math.atan2(dirZ, dirX);
+    // Skala längden + lite pulserande bredd
+    const pulse = 1 + 0.10 * Math.sin(performance.now() * 0.009);
+    aimLine.scale.set(length / ELDKLOT_RANGE, pulse, 1);
   }
 
   const heroId = side.heroId || 'magiker';
@@ -9063,7 +9088,8 @@ function updateAimIndicators() {
     } else if (heroId === 'gimlu') {
       showCircle(side.hero.x, side.hero.z, TAUNT_RADIUS, 0xffaa55);
     } else {
-      showLine(dirX, dirZ, ELDKLOT_RANGE);
+      // Gandulf Soul Drain — target-baserad, visa max-range som cirkel runt hero
+      showCircle(side.hero.x, side.hero.z, SOULDRAIN_RANGE, 0x66ff66);
     }
   } else if (aimState.key === 'f') {
     if (heroId === 'legolas') {
@@ -9534,6 +9560,7 @@ function tickUltimates(side, dt) {
 
 // === Magiker ult: Laser Beam ===
 const LASER_DURATION = 3.0;
+const LASER_TURN_RATE = 4.5;       // rad/s — hur snabbt strålen kan svänga med facing
 const LASER_TICK_INTERVAL = 0.5;
 const LASER_TICK_DMG_PCT = 0.15;    // 15% av target maxHP per tick = 90% över 3s
 const LASER_RANGE = 60;             // jätte långt
@@ -9591,12 +9618,25 @@ function tickMagikerLaser(side, dt) {
   if (!lb) return;
   lb.remaining -= dt;
   lb.tickAccum += dt;
-  // Synka beam-position med hero (hero kan röra sig fritt under cast)
+  // Styrning: laser-riktningen svänger mot hero-facing med LASER_TURN_RATE rad/s
+  const desiredAng = Math.atan2(side.hero.facingX, side.hero.facingZ);
+  const curAng = Math.atan2(lb.dx, lb.dz);
+  let delta = desiredAng - curAng;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  const maxStep = LASER_TURN_RATE * dt;
+  const step = Math.max(-maxStep, Math.min(maxStep, delta));
+  const newAng = curAng + step;
+  lb.dx = Math.sin(newAng);
+  lb.dz = Math.cos(newAng);
+  // Synka beam-position + rotation med hero (hero kan röra sig fritt under cast + styra)
   const cx = side.hero.x + lb.dx * LASER_RANGE / 2;
   const cz = side.hero.z + lb.dz * LASER_RANGE / 2;
-  if (lb.mesh) lb.mesh.position.set(cx, 1.0, cz);
-  if (lb.core) lb.core.position.set(cx, 1.0, cz);
-  if (lb.halo) lb.halo.position.set(cx, 1.0, cz);
+  for (const m of [lb.mesh, lb.core, lb.halo]) {
+    if (!m) continue;
+    m.position.set(cx, 1.0, cz);
+    m.rotation.y = newAng;
+  }
   // CC-immunitet: nollställ alla cc-tillstånd varje frame
   side.hero.frozenTime = 0;
   side.hero.tauntedTime = 0;
@@ -9634,24 +9674,22 @@ function applyLaserBeamTick(side) {
     const perp = Math.abs(ddx * (-dz) + ddz * dx);
     return perp < LASER_WIDTH;
   };
-  // Monsters
+  // Monsters (ult-damage ger INTE ult-energy)
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (inBeam(m.mesh.position.x, m.mesh.position.z)) {
       const dmg = (m.maxHp || m.hp) * LASER_TICK_DMG_PCT;
       m.hp -= dmg;
-      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
       spawnHitSparkFx(m.mesh.position.x, 1.2, m.mesh.position.z, 0xaaddff);
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
   }
-  // Opp creeps
+  // Opp creeps (ult-damage ger INTE ult-energy)
   if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
     const c = opp.playerCreeps[i];
     if (inBeam(c.mesh.position.x, c.mesh.position.z)) {
       const dmg = (c.maxHp || c.hp) * LASER_TICK_DMG_PCT;
       c.hp -= dmg;
-      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
       spawnHitSparkFx(c.mesh.position.x, 1.2, c.mesh.position.z, 0xaaddff);
       if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
     }
@@ -9895,7 +9933,7 @@ function applyRagePulse(side) {
       const dealt = Math.min(dmg, m.hp);
       m.hp -= dmg;
       applyRageLifesteal(side, dealt);
-      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+      // Ult-damage ger INTE ult-energy
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
   }
