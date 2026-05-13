@@ -3342,6 +3342,9 @@ function resetArenaState() {
   arenaState.endTimer = 0;
   arenaState.roundWinner = 0;
   arenaState.matchWinner = 0;
+  // Rensa virtual-target-cacher (recreate on demand i findClosestHostile)
+  arenaState.orbTarget = null;
+  arenaState.heroTargets = { 1: null, 2: null };
 }
 
 function startArenaRound(roundNum) {
@@ -3457,6 +3460,26 @@ function updateArenaOrb(dt) {
       arenaOrbMesh.userData.light.intensity = 1.0 + Math.sin(t * 2.6) * 0.4;
     }
   }
+}
+
+// Helpers för att applicera AoE/cone-skills mot arena-orben.
+// Heroes-vs-heroes-damage handlas separat (TODO i nästa pass).
+function applyAoEDamageInArena(centerX, centerZ, radius, damage, byIdx) {
+  if (APP.gameMode !== 'arena1v1' || arenaState.phase !== 'fight') return;
+  if (!arenaState.orb.alive) return;
+  const d = Math.hypot(ARENA_CFG.orb.x - centerX, ARENA_CFG.orb.z - centerZ);
+  if (d < radius) damageArenaOrb(damage, byIdx);
+}
+function applyConeDamageInArena(originX, originZ, dirX, dirZ, length, halfAngle, damage, byIdx) {
+  if (APP.gameMode !== 'arena1v1' || arenaState.phase !== 'fight') return;
+  if (!arenaState.orb.alive) return;
+  const ox = ARENA_CFG.orb.x, oz = ARENA_CFG.orb.z;
+  const dx = ox - originX, dz = oz - originZ;
+  const dist = Math.hypot(dx, dz);
+  if (dist > length || dist < 0.01) return;
+  const dot = (dx * dirX + dz * dirZ) / dist;  // cos av vinkel mellan cone-riktning och orb-riktning
+  if (dot < Math.cos(halfAngle)) return;
+  damageArenaOrb(damage, byIdx);
 }
 
 function damageArenaOrb(amount, byIdx) {
@@ -4187,6 +4210,7 @@ function findClosestHostile(side, x, z, maxDist) {
   // Hjälten attackerar fientliga entiteter i sin egen arena:
   // - side.monsters (egen inkommande wave)
   // - opp.playerCreeps (motståndarens skickade grunts som är i denna arena)
+  // - arena: special orb i mitten + opposing hero
   let best = null, bestDist = maxDist;
   for (const m of side.monsters) {
     const d = Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z);
@@ -4197,6 +4221,38 @@ function findClosestHostile(side, x, z, maxDist) {
     for (const c of opp.playerCreeps) {
       const d = Math.hypot(c.mesh.position.x - x, c.mesh.position.z - z);
       if (d < bestDist) { bestDist = d; best = { entity: c, isMonster: false, ownerSide: opp }; }
+    }
+  }
+  if (APP.gameMode === 'arena1v1' && arenaState.phase === 'fight') {
+    if (arenaState.orb.alive && arenaOrbMesh) {
+      const ox = ARENA_CFG.orb.x, oz = ARENA_CFG.orb.z;
+      const d = Math.hypot(ox - x, oz - z);
+      if (d < bestDist) {
+        if (!arenaState.orbTarget) {
+          // Använd getter för mesh så vi alltid har current referens
+          arenaState.orbTarget = {
+            id: -100, isArenaOrb: true,
+            get mesh() { return arenaOrbMesh; },
+          };
+        }
+        bestDist = d;
+        best = { entity: arenaState.orbTarget, isMonster: false, targetType: 'arena-orb' };
+      }
+    }
+    if (opp && !opp.hero.dead) {
+      const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
+      if (d < bestDist) {
+        if (!arenaState.heroTargets) arenaState.heroTargets = {};
+        if (!arenaState.heroTargets[opp.idx]) {
+          arenaState.heroTargets[opp.idx] = {
+            id: -200 + opp.idx, isArenaHero: true, sideIdx: opp.idx,
+            // Getter så stale mesh-pekare aldrig läses (mesh kan bytas via swapHeroMeshIfNeeded)
+            get mesh() { return sides[this.sideIdx]?.mesh; },
+          };
+        }
+        bestDist = d;
+        best = { entity: arenaState.heroTargets[opp.idx], isMonster: false, targetType: 'arena-hero' };
+      }
     }
   }
   return best;
@@ -4212,6 +4268,15 @@ function resolveTargetEntity(side, opp) {
   if (side.targetType === 'creep' && opp) {
     for (const c of opp.playerCreeps) if (c.id === side.targetId) return c;
     return null;
+  }
+  if (side.targetType === 'arena-orb') {
+    return (arenaState.orb.alive && arenaState.orbTarget) ? arenaState.orbTarget : null;
+  }
+  if (side.targetType === 'arena-hero') {
+    const oppIdx = 3 - side.idx;
+    const oppSide = sides[oppIdx];
+    if (!oppSide || oppSide.hero.dead) return null;
+    return (arenaState.heroTargets && arenaState.heroTargets[oppIdx]) || null;
   }
   return null;
 }
@@ -4239,7 +4304,7 @@ function maintainTargetLock(side) {
       target = t.entity;
       isMonster = t.isMonster;
       side.targetId = target.id;
-      side.targetType = isMonster ? 'monster' : 'creep';
+      side.targetType = t.targetType || (isMonster ? 'monster' : 'creep');
     } else {
       side.targetId = 0; side.targetType = '';
       // Behåll aaActive — väntar tills fiende dyker upp
@@ -4337,19 +4402,46 @@ function updateProjectiles(side, dt) {
   for (let i = side.projectiles.length - 1; i >= 0; i--) {
     const p = side.projectiles[i];
     // Target lever?
-    const targetAlive = p.targetIsMonster
-      ? side.monsters.includes(p.target)
-      : (opp && opp.playerCreeps.includes(p.target));
+    const isArenaOrbT = !!p.target?.isArenaOrb;
+    const isArenaHeroT = !!p.target?.isArenaHero;
+    const targetAlive = isArenaOrbT
+      ? arenaState.orb.alive
+      : isArenaHeroT
+        ? (sides[p.target.sideIdx] && !sides[p.target.sideIdx].hero.dead)
+        : p.targetIsMonster
+          ? side.monsters.includes(p.target)
+          : (opp && opp.playerCreeps.includes(p.target));
     if (!targetAlive) {
       scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
     }
-    const tp = p.target.mesh.position;
+    // Hämta target-position (orb sitter still vid ARENA_CFG.orb)
+    const tp = isArenaOrbT
+      ? { x: ARENA_CFG.orb.x, y: 1.3, z: ARENA_CFG.orb.z }
+      : isArenaHeroT
+        ? { x: sides[p.target.sideIdx].hero.x, y: 0.9, z: sides[p.target.sideIdx].hero.z }
+        : p.target.mesh.position;
     const dx = tp.x - p.mesh.position.x;
-    const dy = (tp.y + 0.9) - p.mesh.position.y;
+    const dy = ((tp.y || 0) + 0.9) - p.mesh.position.y;
     const dz = tp.z - p.mesh.position.z;
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
+      // Arena-orb / arena-hero hit → applicera special damage och hoppa över monster-logiken
+      if (isArenaOrbT) {
+        damageArenaOrb(p.damage, side.idx);
+        if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+        }
+        scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
+      }
+      if (isArenaHeroT) {
+        const targetSide = sides[p.target.sideIdx];
+        if (targetSide) damageHero(targetSide, p.damage);
+        if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+        }
+        scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
+      }
       // Applicera poison-stack INNAN damage
       if (p.appliesPoison) {
         p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
@@ -4510,6 +4602,8 @@ function hostCastEldklot(side, dirX, dirZ) {
     if (c.hp > 0) { c.dotRemaining = FIREWAVE_DOT_DURATION; c.dotPerSec = dotDps; }
     else { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
   }
+  // Arena: cone-damage mot orb om i kon
+  applyConeDamageInArena(side.hero.x, side.hero.z, dirX, dirZ, FIREWAVE_LENGTH, FIREWAVE_HALF_ANGLE, directDmg, side.idx);
 }
 
 function updateFireballs(side, dt) {
@@ -4583,6 +4677,8 @@ function hostCastFrostnova(side, ev) {
       else if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
+  // Arena: orb-damage om i radius
+  applyAoEDamageInArena(center.x, center.z, NOVA_RADIUS, novaDmg, side.idx);
 }
 
 function updateNovaEffects(side, dt) {
@@ -4684,6 +4780,8 @@ function updateBlackHolesSolo(side, dt) {
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
+      // Arena: orb-damage från black hole-explosion
+      applyAoEDamageInArena(bh.x, bh.z, BLACKHOLE_EXPLOSION_RADIUS, bh.explosionDmg * dmgMul, side.idx);
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
       side.blackHoles.splice(i, 1);
@@ -4784,6 +4882,8 @@ function updateVineTrapsSolo(side, dt) {
         if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
+    // Arena: vine-trap DoT mot orb
+    applyAoEDamageInArena(vt.x, vt.z, vt.radius, vt.dotPerSec * dt, side.idx);
     // Fade ring + spikar
     if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * (vt.life / vt.maxLife);
     if (vt.life <= 0) {
@@ -4858,6 +4958,8 @@ function updateIronWillSolo(side, dt) {
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
+      // Arena: Iron Will-explosion mot orb
+      applyAoEDamageInArena(side.hero.x, side.hero.z, IRON_WILL_EXPLOSION_RADIUS, dmg, side.idx);
       // Stor explosion-ring
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.5, IRON_WILL_EXPLOSION_RADIUS, 56),
@@ -4958,6 +5060,19 @@ function updateHammersSolo(side, dt) {
         c.hp -= dmg;
         if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
         if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    // Arena: hammer-hit på orb (use mesh-position som "center")
+    const orbKey = 'orb_' + (h.returning ? 'r' : 'o');
+    if (!h.hit.has(orbKey)) {
+      const beforeHp = arenaState.orb.hp;
+      applyAoEDamageInArena(h.mesh.position.x, h.mesh.position.z, HAMMER_RADIUS, dmg, side.idx);
+      if (arenaState.orb.hp < beforeHp) {
+        h.hit.add(orbKey);
+        const lifesteal = (beforeHp - Math.max(0, arenaState.orb.hp)) * HAMMER_LIFESTEAL;
+        if (!side.hero.dead && lifesteal > 0) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + lifesteal);
+        }
       }
     }
   }
