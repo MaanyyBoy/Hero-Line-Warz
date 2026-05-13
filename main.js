@@ -1496,10 +1496,12 @@ function inSideBase(idx, x, z) {
   return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
 }
 function isHeroWalkable(idx, x, z) {
-  // Arena: hero rör sig fritt inom arena-bounds (utanför är vägg)
+  // Arena: hero rör sig fritt inom arena-bounds men inte genom cover-props
   if (APP.gameMode === 'arena1v1') {
     const b = ARENA_CFG.bounds;
-    return x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
+    if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
+    if (isArenaCoverAt(x, z)) return false;
+    return true;
   }
   const cfg = SIDE_CFG[idx];
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
@@ -3056,23 +3058,53 @@ const sides = { 1: null, 2: null };
 // ============================================================
 
 // Arena ligger förskjuten z=80 från classic-scenen.
-// Heroes spawnar på motsatta sidor, orb i mitten, cover-props i mellanrummen.
+// Stor öppen arena (~88x56) med varierat cover som blockerar projektiler.
+// Heroes spawnar på motsatta östra/västra sidor. Orb alltid mittpunkten.
 const ARENA_Z_OFFSET = 80;
 const ARENA_CFG = {
-  spawn1: { x: -16, z: ARENA_Z_OFFSET },
-  spawn2: { x:  16, z: ARENA_Z_OFFSET },
+  spawn1: { x: -32, z: ARENA_Z_OFFSET },
+  spawn2: { x:  32, z: ARENA_Z_OFFSET },
   orb:    { x: 0,   z: ARENA_Z_OFFSET },
-  bounds: { minX: -22, maxX: 22, minZ: ARENA_Z_OFFSET - 14, maxZ: ARENA_Z_OFFSET + 14 },
+  bounds: { minX: -44, maxX: 44, minZ: ARENA_Z_OFFSET - 28, maxZ: ARENA_Z_OFFSET + 28 },
+  // Cover-props: x/z är relativt arena-mitten. collision = AABB/cirkel som
+  // blockar hero-rörelse + projektiler. Rotation påverkar utseendet men
+  // collision-formen är axis-aligned (close enough för gameplay).
   props: [
-    { type: 'rock',    x: -8, z: -6, rot: 0.3 },
-    { type: 'rock',    x:  8, z:  5, rot: -0.7 },
-    { type: 'rock',    x:  0, z: -10, rot: 0.5 },
-    { type: 'wall',    x: -5, z:  6, rot: 0.1 },
-    { type: 'wall',    x:  6, z: -7, rot: -0.4 },
-    { type: 'pillar',  x: 12, z: -2, rot: 0 },
-    { type: 'pillar',  x: -12, z:  3, rot: 0 },
-    { type: 'wagon',   x: -10, z: -3, rot: 0.8 },
-    { type: 'wagon',   x: 10, z:  8, rot: -1.2 },
+    // Stenar — små punkt-cover spridda över banan
+    { type: 'rock', x: -14, z:  -9, rot: 0.3, collision: { shape: 'circle', radius: 1.1 } },
+    { type: 'rock', x: -12, z: -11, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
+    { type: 'rock', x:  14, z:   9, rot: -0.7, collision: { shape: 'circle', radius: 1.1 } },
+    { type: 'rock', x:  12, z:  11, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
+    { type: 'rock', x:  -4, z:  22, rot: 0.2, collision: { shape: 'circle', radius: 1.1 } },
+    { type: 'rock', x:   5, z: -23, rot: 0.9, collision: { shape: 'circle', radius: 1.1 } },
+    { type: 'rock', x:  18, z: -20, rot: 1.4, collision: { shape: 'circle', radius: 1.0 } },
+    { type: 'rock', x: -19, z:  19, rot: 0.6, collision: { shape: 'circle', radius: 1.0 } },
+
+    // Trasiga stenmurar — långa rektangulära block
+    { type: 'wall', x: -18, z:  15, rot: 0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+    { type: 'wall', x:  18, z: -15, rot: -0.10, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+    { type: 'wall', x: -26, z:  -3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+    { type: 'wall', x:  26, z:   3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+    { type: 'wall', x:   2, z: -16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+    { type: 'wall', x:  -2, z:  16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+
+    // Brutna pelare — punkt-cover
+    { type: 'pillar', x: -20, z: -16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+    { type: 'pillar', x:  20, z:  16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+    { type: 'pillar', x: -10, z:  22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+    { type: 'pillar', x:  10, z: -22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+    { type: 'pillar', x: -34, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+    { type: 'pillar', x:  34, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+
+    // Trasiga hästvagnar — stort cover
+    { type: 'wagon', x: -22, z:   8, rot: 0.7, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+    { type: 'wagon', x:  22, z:  -8, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+    { type: 'wagon', x:  -8, z: -24, rot: 1.8, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+
+    // Fallna torn — dramatiskt långt cover (~6 m, ligger ner)
+    { type: 'fallenTower', x:  -5, z:  -3, rot: 0.25, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+    { type: 'fallenTower', x:   5, z:   3, rot: 2.85, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+    { type: 'fallenTower', x:   8, z:  24, rot: 1.6, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
   ],
 };
 
@@ -3191,35 +3223,103 @@ function makeArenaProp(type) {
   } else if (type === 'wagon') {
     // Övergiven krachad vagn
     const wood = new THREE.MeshStandardMaterial({ color: 0x6a4022, roughness: 0.88 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 0.9, 1.4), wood);
-    body.position.y = 0.6;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.0, 1.6), wood);
+    body.position.y = 0.65;
     body.rotation.z = 0.35;
     body.castShadow = true;
     g.add(body);
-    // Sidor
+    // Sidor — ger högre profile för bättre cover
     for (const dx of [-1, 1]) {
-      const side = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 1.3), wood);
-      side.position.set(dx * 1.45, 0.95, 0);
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.8, 1.5), wood);
+      side.position.set(dx * 1.65, 1.1, 0);
       side.rotation.z = 0.35;
       side.castShadow = true;
       g.add(side);
     }
+    // Bak-/framstycke
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.8, 1.5), wood);
+    back.position.set(-1.65, 1.1, 0);
+    back.rotation.z = 0.35;
+    g.add(back);
     // Hjul
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x2a1a08, roughness: 0.85 });
-    for (const [dx, dz] of [[-0.9, 0.85], [0.9, 0.85], [-0.9, -0.85]]) {
-      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.11, 8, 18), wheelMat);
-      wheel.position.set(dx, 0.45, dz);
+    for (const [dx, dz] of [[-1.0, 0.95], [1.0, 0.95], [-1.0, -0.95]]) {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.13, 8, 20), wheelMat);
+      wheel.position.set(dx, 0.5, dz);
       wheel.rotation.y = Math.PI / 2;
       wheel.castShadow = true;
       g.add(wheel);
     }
-    // Vält "axe" sticker ut
-    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.4, 8), wheelMat);
-    axle.position.set(0.9, 0.45, 0);
+    // Brutet hjul som ligger bredvid
+    const brokenWheel = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.13, 8, 20), wheelMat);
+    brokenWheel.position.set(1.4, 0.13, -0.95);
+    brokenWheel.rotation.set(Math.PI / 2, 0, 0.2);
+    brokenWheel.castShadow = true;
+    g.add(brokenWheel);
+    // Vält axel sticker ut
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.10, 1.6, 8), wheelMat);
+    axle.position.set(1.0, 0.5, 0);
     axle.rotation.x = Math.PI / 2;
     g.add(axle);
+  } else if (type === 'fallenTower') {
+    // Fallet torn: lång stencylinder liggande på sidan + topp + spillrar
+    const stone = new THREE.MeshStandardMaterial({ color: 0x8a7e6c, roughness: 0.88 });
+    const stoneCrack = new THREE.MeshStandardMaterial({ color: 0x6e6354, roughness: 0.92 });
+    // Huvud-cylinder (sektion 1)
+    const sect1 = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 3.0, 14), stone);
+    sect1.rotation.z = Math.PI / 2;
+    sect1.position.set(-1.7, 1.0, 0);
+    sect1.castShadow = true;
+    sect1.receiveShadow = true;
+    g.add(sect1);
+    // Sektion 2 — något fristående, lite roterad
+    const sect2 = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.0, 2.0, 14), stoneCrack);
+    sect2.rotation.set(0, 0.08, Math.PI / 2 + 0.08);
+    sect2.position.set(1.0, 0.95, 0.15);
+    sect2.castShadow = true;
+    g.add(sect2);
+    // Sektion 3 — sista biten med taggig topp
+    const sect3 = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.95, 1.2, 12), stone);
+    sect3.rotation.set(0, -0.05, Math.PI / 2 - 0.12);
+    sect3.position.set(2.7, 0.85, -0.10);
+    sect3.castShadow = true;
+    g.add(sect3);
+    // Topp (krenelering — små block)
+    const battleMat = new THREE.MeshStandardMaterial({ color: 0xa89e8a, roughness: 0.85 });
+    for (let i = 0; i < 4; i++) {
+      const block = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), battleMat);
+      block.position.set(3.25 + i * 0.05, 1.2 + (i % 2) * 0.1, -0.5 + i * 0.35);
+      block.rotation.y = i * 0.4;
+      block.castShadow = true;
+      g.add(block);
+    }
+    // Spillror runt foten
+    const rubMat = new THREE.MeshStandardMaterial({ color: 0x6a6258, roughness: 0.92 });
+    for (let i = 0; i < 5; i++) {
+      const r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.25 + Math.random() * 0.15, 0), rubMat);
+      r.position.set(-2.5 + i * 1.3 + (Math.random() - 0.5) * 0.4, 0.15, 0.95 + (Math.random() - 0.5) * 0.3);
+      r.castShadow = true;
+      g.add(r);
+    }
   }
   return g;
+}
+
+// Är (x,z) inuti någon arena-cover-prop? Används för rörelse- och projektil-blocking.
+function isArenaCoverAt(x, z) {
+  if (APP.gameMode !== 'arena1v1') return false;
+  for (const p of ARENA_CFG.props) {
+    if (!p.collision) continue;
+    const dx = x - p.x;
+    const dz = z - (ARENA_Z_OFFSET + p.z);
+    if (p.collision.shape === 'circle') {
+      const r = p.collision.radius;
+      if (dx * dx + dz * dz < r * r) return true;
+    } else if (p.collision.shape === 'box') {
+      if (Math.abs(dx) < p.collision.halfX && Math.abs(dz) < p.collision.halfZ) return true;
+    }
+  }
+  return false;
 }
 
 function makeArenaOrbMesh() {
@@ -3264,9 +3364,9 @@ function makeArenaOrbMesh() {
 
 function buildArenaScene() {
   if (arenaSceneGroup.children.length) return;  // bara en gång
-  // Golv (mörkare än classic)
+  // Golv — dubbel storlek (100x70)
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(50, 35),
+    new THREE.PlaneGeometry(100, 70),
     new THREE.MeshStandardMaterial({ color: 0x3a2e22, roughness: 0.95 })
   );
   floor.rotation.x = -Math.PI / 2;
@@ -3277,8 +3377,8 @@ function buildArenaScene() {
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a4030, roughness: 0.9 });
   const wallTop = 1.2;
   const wallThickness = 1;
-  const wallH = 1.6;
-  const aLen = 50, aDep = 35;
+  const wallH = 1.8;
+  const aLen = 100, aDep = 70;
   // Lång murbit norr och söder
   for (const dz of [-aDep / 2, aDep / 2]) {
     const w = new THREE.Mesh(new THREE.BoxGeometry(aLen, wallH, wallThickness), wallMat);
@@ -4545,6 +4645,12 @@ function updateProjectiles(side, dt) {
     p.mesh.position.x += (dx / dist) * step;
     p.mesh.position.y += (dy / dist) * step;
     p.mesh.position.z += (dz / dist) * step;
+    // Arena: blockas av cover-props på vägen
+    if (APP.gameMode === 'arena1v1' && isArenaCoverAt(p.mesh.position.x, p.mesh.position.z)) {
+      // Sprid en liten gnista vid träffen
+      spawnHitSparkFx(p.mesh.position.x, p.mesh.position.y, p.mesh.position.z, 0xaaaaaa);
+      scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
+    }
   }
 }
 
