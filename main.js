@@ -4556,6 +4556,16 @@ function killHero(side) {
   if (side.hero.dead) return;
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
+  // Avbryt pågående ultimates vid död
+  if (side.rageRemaining > 0) {
+    side.rageRemaining = 0;
+    if (side.mesh) side.mesh.scale.set(1, 1, 1);
+  }
+  if (side.laserBeam) {
+    if (side.laserBeam.mesh) scene.remove(side.laserBeam.mesh);
+    if (side.laserBeam.core) scene.remove(side.laserBeam.core);
+    side.laserBeam = null;
+  }
   // I arena: behåll mesh synlig så GLTF death-animationen syns
   if (APP.gameMode !== 'arena1v1') {
     side.mesh.visible = false;
@@ -4796,8 +4806,10 @@ function updateHeroAttack(side, dt) {
     side.legolusAaCounter = (side.legolusAaCounter || 0) + 1;
     if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) side.legolusSplitPending = true;
   }
+  // Legolas ult-buff: +30% AS efter teleport-träff
+  const ultAsMul = (side.legolusUltBuff || 0) > 0 ? (1 + LEGOLUS_ULT_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul);
 }
 
 function updateProjectiles(side, dt) {
@@ -4829,8 +4841,9 @@ function updateProjectiles(side, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
-      // AA-träff → ult-energy gain
+      // AA-träff → ult-energy gain + rage-lifesteal om aktiv
       gainUltEnergy(side, ULT_GAIN_AA_HIT);
+      applyRageLifesteal(side, p.damage);
       // Arena-orb / arena-hero hit → applicera special damage och hoppa över monster-logiken
       if (isArenaOrbT) {
         damageArenaOrb(p.damage, side.idx);
@@ -4961,6 +4974,7 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
   const actual = Math.min(dmg, m.hp);
   m.hp -= dmg;
   applySkillLifesteal(side, actual);
+  applyRageLifesteal(side, actual);
   gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
   if (m.hp <= 0) hostKillMonster(side, mIdx, side);
 }
@@ -4972,6 +4986,7 @@ function soloApplySkillDmgToCreep(side, opp, c, dmg) {
   const actual = Math.min(dmg, c.hp);
   c.hp -= dmg;
   applySkillLifesteal(side, actual);
+  applyRageLifesteal(side, actual);
   gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
 }
 
@@ -5997,7 +6012,9 @@ function damageHero(side, amount) {
   const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
   // Magiker laser-ult: 90% DR
   const laserMul = side.laserBeam ? LASER_DR_MUL : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul;
+  // Gimlu rage-ult: 50% DR
+  const rageMul = (side.rageRemaining || 0) > 0 ? RAGE_DR_MUL : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul;
   // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
   if ((side.lingShieldHp || 0) > 0 && final > 0) {
     if (side.lingShieldHp >= final) {
@@ -8039,10 +8056,230 @@ function applyLaserBeamTick(side) {
   }
 }
 
-// Placeholders — fylls i nästa commits
-function hostCastLegolasUlt(side, dx, dz) { /* TODO commit 3 */ }
-function hostCastGimluUlt(side) { /* TODO commit 4 */ }
-function tickGimluRage(side, dt) { /* TODO commit 4 */ }
+// === Legolas ult: Big Arrow + Teleport ===
+const ULT_ARROW_SPEED = 38;
+const ULT_ARROW_MAX_RANGE = 200;     // "global"
+const ULT_ARROW_LENGTH = 3.6;        // ~2 heroes
+const ULT_ARROW_HIT_RADIUS = 1.5;
+const ULT_ARROW_STUN_DURATION = 1.0;
+const LEGOLUS_ULT_BUFF_DURATION = 5.0;
+const LEGOLUS_ULT_AS_BONUS = 0.30;
+
+function hostCastLegolasUlt(side, dx, dz) {
+  if (side.hero.dead) return;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  // Stor pil-mesh: skaft (cylinder), spets (cone), vingar (planar). +Z = framåt.
+  const grp = new THREE.Group();
+  const shaftMat = new THREE.MeshStandardMaterial({
+    color: 0x6a4022, roughness: 0.6, emissive: 0x99dd44, emissiveIntensity: 0.55,
+  });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, ULT_ARROW_LENGTH, 10), shaftMat);
+  shaft.rotation.x = Math.PI / 2;
+  grp.add(shaft);
+  const tipMat = new THREE.MeshStandardMaterial({
+    color: 0xddff77, emissive: 0xaaff44, emissiveIntensity: 1.2, metalness: 0.4,
+  });
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.0, 10), tipMat);
+  tip.rotation.x = Math.PI / 2;
+  tip.position.z = ULT_ARROW_LENGTH / 2 + 0.5;
+  grp.add(tip);
+  // Vingar (3 fjädrar)
+  const featherMat = new THREE.MeshBasicMaterial({ color: 0xaaff66, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2;
+    const feather = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), featherMat);
+    feather.position.set(Math.cos(ang) * 0.18, Math.sin(ang) * 0.18, -ULT_ARROW_LENGTH / 2 + 0.4);
+    feather.rotation.z = ang;
+    grp.add(feather);
+  }
+  // Orientation: +Z framåt → atan2(dx, dz) (samma som hero-facing)
+  grp.rotation.y = Math.atan2(dx, dz);
+  grp.position.set(side.hero.x, 1.0, side.hero.z);
+  scene.add(grp);
+  side.bigArrows = side.bigArrows || [];
+  side.bigArrows.push({
+    mesh: grp,
+    dx, dz,
+    traveled: 0,
+    maxRange: ULT_ARROW_MAX_RANGE,
+  });
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff44, 1.4);
+  triggerCameraShake(0.15, 0.2);
+}
+
+function tickBigArrows(side, dt) {
+  if (!side.bigArrows || side.bigArrows.length === 0) return;
+  const opp = sides[3 - side.idx];
+  for (let i = side.bigArrows.length - 1; i >= 0; i--) {
+    const arr = side.bigArrows[i];
+    const step = ULT_ARROW_SPEED * dt;
+    arr.mesh.position.x += arr.dx * step;
+    arr.mesh.position.z += arr.dz * step;
+    arr.traveled += step;
+    // Roterande visuell rolling
+    arr.mesh.rotation.z = (arr.mesh.rotation.z || 0) + dt * 8;
+    let hit = null;
+    // Opp hero (arena)
+    if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+      const d = Math.hypot(opp.hero.x - arr.mesh.position.x, opp.hero.z - arr.mesh.position.z);
+      if (d < ULT_ARROW_HIT_RADIUS) hit = { kind: 'oppHero', target: opp };
+    }
+    // Bosses (i classic-mode side.monsters med isBoss=true)
+    if (!hit) {
+      for (const m of side.monsters) {
+        if (!m.isBoss) continue;
+        const d = Math.hypot(m.mesh.position.x - arr.mesh.position.x, m.mesh.position.z - arr.mesh.position.z);
+        if (d < ULT_ARROW_HIT_RADIUS + 1.0) { hit = { kind: 'boss', target: m }; break; }
+      }
+    }
+    if (hit) {
+      onLegolasUltHit(side, hit, arr);
+      disposeArrowMesh(arr.mesh);
+      side.bigArrows.splice(i, 1);
+      continue;
+    }
+    if (arr.traveled > arr.maxRange) {
+      disposeArrowMesh(arr.mesh);
+      side.bigArrows.splice(i, 1);
+    }
+  }
+}
+
+// Disposar geometry + material för en arrow-grupp innan scene.remove
+function disposeArrowMesh(grp) {
+  if (!grp) return;
+  grp.traverse(o => {
+    if (o.isMesh) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+        else o.material.dispose();
+      }
+    }
+  });
+  scene.remove(grp);
+}
+
+function onLegolasUltHit(side, hit, arr) {
+  let tx, tz;
+  if (hit.kind === 'oppHero') {
+    tx = hit.target.hero.x; tz = hit.target.hero.z;
+  } else {
+    tx = hit.target.mesh.position.x; tz = hit.target.mesh.position.z;
+  }
+  // Teleport caster — backa ~1.5m längs arrow-riktningen så vi inte överlappar
+  const newX = tx - arr.dx * 1.5;
+  const newZ = tz - arr.dz * 1.5;
+  side.hero.x = newX;
+  side.hero.z = newZ;
+  if (side.mesh) {
+    side.mesh.position.set(newX, 0, newZ);
+    side.mesh.rotation.y = Math.atan2(arr.dx, arr.dz);
+  }
+  // 30% AS buff i 5s
+  side.legolusUltBuff = LEGOLUS_ULT_BUFF_DURATION;
+  // Stun target i 1s
+  if (hit.kind === 'oppHero') {
+    hit.target.heroFearTime = Math.max(hit.target.heroFearTime || 0, ULT_ARROW_STUN_DURATION);
+  } else {
+    hit.target.frozenTime = Math.max(hit.target.frozenTime || 0, ULT_ARROW_STUN_DURATION);
+  }
+  spawnSkillCastFx(newX, newZ, 0xddff44, 2.0);
+  triggerCameraShake(0.35, 0.4);
+}
+
+// === Gimlu ult: Rage ===
+const RAGE_DURATION = 5.0;
+const RAGE_TICK_INTERVAL = 0.5;
+const RAGE_PULSE_RADIUS = 4.5;
+const RAGE_PULSE_DMG_PCT = 0.05;     // 5% maxHP per 0.5s
+const RAGE_DR_MUL = 0.50;             // 50% DR
+const RAGE_HEAL_PCT = 0.20;           // 20% lifesteal från all skada utdelad
+const RAGE_SCALE = 2.0;
+
+function hostCastGimluUlt(side) {
+  if (side.hero.dead) return;
+  side.rageRemaining = RAGE_DURATION;
+  side.rageTickAccum = 0;
+  if (side.mesh) side.mesh.scale.set(RAGE_SCALE, RAGE_SCALE, RAGE_SCALE);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff4422, 2.2);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xff6633);
+  triggerCameraShake(0.45, 0.5);
+}
+
+function tickGimluRage(side, dt) {
+  side.rageRemaining -= dt;
+  side.rageTickAccum += dt;
+  // CC-immune: nollställ alla cc-states
+  side.hero.frozenTime = 0;
+  side.hero.tauntedTime = 0;
+  side.heroFearTime = 0;
+  side.heroSlowTime = 0;
+  side.heroSlowMul = 1;
+  // Pulse-damage var 0.5s (max 10 pulser över 5s)
+  while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
+    side.rageTickAccum -= RAGE_TICK_INTERVAL;
+    applyRagePulse(side);
+  }
+  if (side.rageRemaining <= 0) {
+    side.rageRemaining = 0;
+    if (side.mesh) side.mesh.scale.set(1, 1, 1);
+  }
+}
+
+function applyRagePulse(side) {
+  const ox = side.hero.x, oz = side.hero.z;
+  const opp = sides[3 - side.idx];
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    const d = Math.hypot(m.mesh.position.x - ox, m.mesh.position.z - oz);
+    if (d < RAGE_PULSE_RADIUS) {
+      const dmg = (m.maxHp || m.hp) * RAGE_PULSE_DMG_PCT;
+      const dealt = Math.min(dmg, m.hp);
+      m.hp -= dmg;
+      applyRageLifesteal(side, dealt);
+      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+      if (m.hp <= 0) hostKillMonster(side, i, side);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    const d = Math.hypot(c.mesh.position.x - ox, c.mesh.position.z - oz);
+    if (d < RAGE_PULSE_RADIUS) {
+      const dmg = (c.maxHp || c.hp) * RAGE_PULSE_DMG_PCT;
+      const dealt = Math.min(dmg, c.hp);
+      c.hp -= dmg;
+      applyRageLifesteal(side, dealt);
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+    }
+  }
+  if (APP.gameMode === 'arena1v1' && arenaState.orb.alive) {
+    const d = Math.hypot(ARENA_CFG.orb.x - ox, ARENA_CFG.orb.z - oz);
+    if (d < RAGE_PULSE_RADIUS) {
+      const dmg = arenaState.orb.maxHp * RAGE_PULSE_DMG_PCT;
+      const dealt = Math.min(dmg, arenaState.orb.hp);
+      damageArenaOrb(dmg, side.idx);
+      applyRageLifesteal(side, dealt);
+    }
+  }
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+    const d = Math.hypot(opp.hero.x - ox, opp.hero.z - oz);
+    if (d < RAGE_PULSE_RADIUS) {
+      const dmg = opp.hero.maxHp * RAGE_PULSE_DMG_PCT;
+      const dealt = Math.min(dmg, opp.hero.hp);
+      damageHero(opp, dmg);
+      applyRageLifesteal(side, dealt);
+    }
+  }
+  spawnShieldBurstFx(ox, oz, 0xff6633);
+}
+
+function applyRageLifesteal(side, dmgDealt) {
+  if ((side.rageRemaining || 0) <= 0 || dmgDealt <= 0 || side.hero.dead) return;
+  side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmgDealt * RAGE_HEAL_PCT);
+}
 
 const keys = {};
 window.addEventListener('keydown', (e) => {
@@ -10359,9 +10596,10 @@ function simulateAll(dt) {
     tickLingShield(side, dt);
     tickIceBlock(side, dt);
     tickFearWave(side, dt);
-    // Ult-energy passiv gain + ult-tick (laser/rage)
+    // Ult-energy passiv gain + ult-tick (laser/rage/arrows)
     if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
     tickUltimates(side, dt);
+    tickBigArrows(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
