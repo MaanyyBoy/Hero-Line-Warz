@@ -6405,8 +6405,8 @@ const isdCloseBtn = document.getElementById('isd-close');
 
 const isdState = { itemId: null, variantId: null };
 
-// Mappa stat-nycklar till svenska etiketter + formatering
-const STAT_LABELS = {
+// Mappa stat-nycklar till svenska etiketter + formatering (shop-detail-modal)
+const ISD_STAT_LABELS = {
   moveSpeedPct:    { label: 'Rörelse',         pct: true },
   attackSpeedPct:  { label: 'Attackfart',      pct: true },
   skillDmgPct:     { label: 'Skill-skada',     pct: true },
@@ -6424,7 +6424,7 @@ function statsLinesHtml(stats) {
   const lines = [];
   for (const [k, v] of Object.entries(stats || {})) {
     if (!v) continue;
-    const meta = STAT_LABELS[k] || { label: k, pct: k.endsWith('Pct') };
+    const meta = ISD_STAT_LABELS[k] || { label: k, pct: k.endsWith('Pct') };
     const valStr = meta.pct ? `+${(v * 100).toFixed(1)}%` : `+${v}`;
     lines.push(`<div class="stat-line">${meta.label}: <strong>${valStr}</strong></div>`);
   }
