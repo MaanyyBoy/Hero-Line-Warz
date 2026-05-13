@@ -1861,10 +1861,11 @@ const HERO_GLTF_MAP = {
   legolas: 'ranger',
   gimlu:   'barbarian',
 };
+// Per-hero scale: {x,y,z}. X/Z mindre än Y → smalare silhuett (mindre lego-klump).
 const HERO_GLTF_SCALE = {
-  magiker: 0.95,
-  legolas: 0.95,
-  gimlu:   1.05,  // Barbarian = lite större för tank-känsla
+  magiker: { x: 0.70, y: 0.82, z: 0.78 },
+  legolas: { x: 0.70, y: 0.82, z: 0.78 },
+  gimlu:   { x: 0.80, y: 0.88, z: 0.86 },  // Barbarian = lite större för tank-känsla
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -1874,7 +1875,8 @@ function makeHeroMesh(idx, heroId) {
   const charName = HERO_GLTF_MAP[heroId] || HERO_GLTF_MAP.magiker;
   const inner = instantiateCharacter(charName, 'hero');
   if (inner) {
-    inner.scale.setScalar(HERO_GLTF_SCALE[heroId] || 0.95);
+    const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
+    inner.scale.set(sc.x, sc.y, sc.z);
     grp.add(inner);
     grp.userData.inner = inner;
     grp.userData.mixer = inner.userData.mixer;
@@ -5599,7 +5601,7 @@ function checkMatchEnd() {
 // KAMERA
 // ============================================================
 
-const cameraOffset = new THREE.Vector3(0, 12, 9.3);
+const cameraOffset = new THREE.Vector3(0, 14, 11);
 const cameraTarget = new THREE.Vector3();
 
 function updateCamera(dt) {
