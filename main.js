@@ -7548,6 +7548,8 @@ function updateBuffDebuffSprites() {
     drawDebuffSprite(s);
   }
 }
+
+function animateSceneProps(dt, now) {
   // Fontäner: pulsera emissive på vattnet, bobba övre skålens vattenyta
   for (const idx of [1, 2]) {
     const f = towerMeshes[idx];
