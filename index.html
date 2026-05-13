@@ -1289,24 +1289,27 @@
     body:not(.in-game) #arena-prep,
     body:not(.in-game) #arena-end { display: none !important; }
 
-    /* Item-shop-detail modal (öppnas när man trycker på item i shoppen) */
+    /* Item-shop-detail panel (öppnas när man trycker på item i shoppen).
+       Positionerad UNDER shop-containern i höger övre kant — inte centrerad
+       fullskärm — så man ser shoppen samtidigt. */
     #item-shop-detail {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,0.72);
-      display: none;
-      align-items: center; justify-content: center;
+      position: fixed;
+      top: max(280px, 55vh);
+      right: max(16px, env(safe-area-inset-right));
       z-index: 220;
-      backdrop-filter: blur(3px);
-      padding: 16px;
+      display: none;
+      width: min(330px, 88vw);
+      max-height: calc(100vh - max(296px, 56vh));
+      overflow-y: auto;
+      pointer-events: auto;
     }
-    #item-shop-detail.visible { display: flex; }
+    #item-shop-detail.visible { display: block; }
     #isd-card {
       background: linear-gradient(135deg, #18243d, #0c1424);
       border: 2px solid rgba(180,200,255,0.6);
       border-radius: 14px;
-      padding: 18px 20px 16px;
+      padding: 16px 18px 14px;
       width: 100%;
-      max-width: 360px;
       box-shadow: 0 8px 28px rgba(0,0,0,0.6);
       color: #fff;
       position: relative;

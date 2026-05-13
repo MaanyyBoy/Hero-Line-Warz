@@ -8242,7 +8242,10 @@ populateShop();
 
 function updateShop() {
   refreshShopUI();
-  if (isdState.itemId) refreshItemShopDetail();
+  // Detalj-panelens disable-states (Buy/Upgrade-knappar) uppdateras mot
+  // gold/inventory utan att rendera om hela DOM:n, så att variant-klick
+  // inte tappas mellan frames.
+  if (isdState.itemId) refreshIsdButtonsOnly();
 }
 
 // ---- Item-shop detalj-modal (klick på item → info + Buy/Upgrade) ----
@@ -8299,6 +8302,50 @@ function closeItemShopDetail() {
   isdState.itemId = null;
   isdState.variantId = null;
   if (isdEl) isdEl.classList.remove('visible');
+}
+
+// Uppdaterar bara knapp-disabled-states + cost-text utan att rendera om
+// variant-knapparna (annars tappas klick mellan frames).
+function refreshIsdButtonsOnly() {
+  const itemId = isdState.itemId;
+  if (!itemId) return;
+  const def = ITEM_TYPES[itemId];
+  if (!def) return;
+  const side = sides[APP.localSide];
+  const existing = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  const hasVariants = !!def.variants;
+  const needsVariantChoice = hasVariants && !existing;
+  const heroDead = side && side.hero && side.hero.dead;
+  const invFull = side && side.inventory.length >= INVENTORY_SLOTS;
+  if (isdBuyBtn) {
+    if (existing) {
+      isdBuyBtn.disabled = true;
+      isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
+    } else {
+      const variantOk = !needsVariantChoice || !!isdState.variantId;
+      const canAfford = side && side.gold >= ITEM_BUY_COST;
+      isdBuyBtn.disabled = heroDead || invFull || !variantOk || !canAfford;
+      const sub = invFull ? 'inventory full'
+                : !variantOk ? 'välj variant först'
+                : !canAfford ? `behöver ${ITEM_BUY_COST}g`
+                : `${ITEM_BUY_COST}g`;
+      isdBuyBtn.innerHTML = `Buy<small>${sub}</small>`;
+    }
+  }
+  if (isdUpgradeBtn) {
+    if (!existing) {
+      isdUpgradeBtn.disabled = true;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>kräver ägd</small>`;
+    } else if (existing.level >= ITEM_MAX_LEVEL) {
+      isdUpgradeBtn.disabled = true;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX nivå</small>`;
+    } else {
+      const cost = itemUpgradeCost(existing.level);
+      const canAfford = side && side.gold >= cost;
+      isdUpgradeBtn.disabled = heroDead || !canAfford;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>${cost}g · Lvl ${existing.level} → ${existing.level + 1}</small>`;
+    }
+  }
 }
 
 function refreshItemShopDetail() {
@@ -8454,7 +8501,8 @@ if (isdBuyBtn) {
       item: itemId,
       ...(isdState.variantId ? { variant: isdState.variantId } : {}),
     });
-    closeItemShopDetail();
+    // Användaren stänger manuellt via × — uppdatera bara DOM
+    refreshItemShopDetail();
   });
 }
 if (isdUpgradeBtn) {
@@ -8467,13 +8515,12 @@ if (isdUpgradeBtn) {
     if (!existing) return;
     if (existing.level >= ITEM_MAX_LEVEL) return;
     sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
-    closeItemShopDetail();
+    // Användaren stänger manuellt via × — uppdatera bara DOM
+    refreshItemShopDetail();
   });
 }
 if (isdCloseBtn) isdCloseBtn.addEventListener('click', closeItemShopDetail);
-if (isdEl) isdEl.addEventListener('click', (e) => {
-  if (e.target === isdEl) closeItemShopDetail();
-});
+// Klick utanför panel-card stänger INTE längre (panel är liten, inte fullskärm)
 
 // ============================================================
 // INVENTORY (4 slots längst ner i mitten) + tooltip
