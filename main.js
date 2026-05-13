@@ -1424,6 +1424,7 @@ const MAGIC_PROJ_SPEED = 10;
 // Soul Drain (Q): target-baserad channel. 5s, varje sek 5% av targets maxHP i skada
 // + self-heal Gandulf samma mängd. 10% slow per sek (max 5 stacks = 50%). Slow
 // ligger kvar 1s efter sista tick. Bryts om target dör eller springer >12m.
+// Om en minion dör av drain → explosion AoE = 50% av damage dealt.
 const SOULDRAIN_DURATION = 5.0;
 const SOULDRAIN_TICK = 1.0;
 const SOULDRAIN_DMG_PCT = 0.05;
@@ -1432,6 +1433,9 @@ const SOULDRAIN_MAX_STACKS = 5;
 const SOULDRAIN_SLOW_TAIL = 1.0;
 const SOULDRAIN_RANGE = 10.0;        // max räckvidd vid cast
 const SOULDRAIN_BREAK_RANGE = 12.0;  // bryt-range under channel
+const SOULDRAIN_EXPLOSION_RADIUS = 3.5;
+const SOULDRAIN_EXPLOSION_DMG_PCT = 0.50;   // 50% av damage dealt
+const SOULDRAIN_PARTICLE_INTERVAL = 0.06;   // sek mellan soul-puffs längs beamen
 const FIREWAVE_LENGTH = 5;
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;
 const FIREWAVE_DIRECT_DMG = 18;
@@ -5263,7 +5267,7 @@ function tickSoulDrain(side, dt) {
     side.soulDrain = null;
     return;
   }
-  updateSoulDrainBeam(side, target.mesh);
+  updateSoulDrainBeam(side, target.mesh, dt);
   sd.remaining -= dt;
   sd.tickAccum += dt;
   while (sd.tickAccum >= SOULDRAIN_TICK && sd.remaining > -SOULDRAIN_TICK) {
@@ -5298,15 +5302,22 @@ function applySoulDrainTick(side, target, sd) {
     const idx = side.monsters.indexOf(target);
     if (idx >= 0) {
       healed = Math.min(baseDmg, target.hp);
+      const deathX = target.mesh.position.x;
+      const deathZ = target.mesh.position.z;
       onGandulfSkillHit(side, target);
       soloApplySkillDmgToMonster(side, opp, idx, baseDmg);
       if (side.monsters[idx] === target && target.hp > 0) {
         target.slowMul = Math.min(target.slowMul || 1, slowMul);
         target.slowTime = Math.max(target.slowTime || 0, SOULDRAIN_SLOW_TAIL);
+      } else if (!side.monsters.includes(target)) {
+        // Monster dog av drain → explosion
+        spawnSoulDrainExplosion(side, opp, deathX, deathZ, healed * SOULDRAIN_EXPLOSION_DMG_PCT);
       }
     }
   } else if (tt === 'creep' && opp) {
     healed = Math.min(baseDmg, target.hp);
+    const deathX = target.mesh.position.x;
+    const deathZ = target.mesh.position.z;
     onGandulfSkillHit(side, target);
     soloApplySkillDmgToCreep(side, opp, target, baseDmg);
     if (target.hp > 0) {
@@ -5320,6 +5331,8 @@ function applySoulDrainTick(side, target, sd) {
         side.gold += minionBounty(target);
         gainXp(side, minionXp(target));
       }
+      // Creep dog av drain → explosion
+      spawnSoulDrainExplosion(side, opp, deathX, deathZ, healed * SOULDRAIN_EXPLOSION_DMG_PCT);
     }
   } else if (tt === 'arena-orb') {
     healed = Math.min(baseDmg, arenaState.orb.hp);
@@ -5351,28 +5364,167 @@ function applySoulDrainTick(side, target, sd) {
   }
 }
 
-// Beam-visual mellan Gandulf och target. Skapas vid cast, uppdateras varje frame,
-// disposas vid break/end.
+// Soul-explosion vid minion-död: AoE-skada + tydlig grön shockwave + soul-burst.
+function spawnSoulDrainExplosion(side, opp, x, z, damage) {
+  if (damage <= 0) return;
+  // Visuell shockwave-ring som expanderar och fadar
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.2, 0.5, 36),
+    new THREE.MeshBasicMaterial({ color: 0x88ff66, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.12, z);
+  scene.add(ring);
+  // Inre kraftig flash-sfär
+  const flash = new THREE.Mesh(
+    new THREE.SphereGeometry(SOULDRAIN_EXPLOSION_RADIUS * 0.35, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xddffcc, transparent: true, opacity: 0.85, depthWrite: false })
+  );
+  flash.position.set(x, 1.0, z);
+  scene.add(flash);
+  // Stort outer halo
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(SOULDRAIN_EXPLOSION_RADIUS * 0.55, 20, 14),
+    new THREE.MeshBasicMaterial({ color: 0x44ff66, transparent: true, opacity: 0.55, depthWrite: false })
+  );
+  halo.position.set(x, 1.0, z);
+  scene.add(halo);
+  // Point-light som blinkar starkt
+  const lit = new THREE.PointLight(0x66ff66, 4.0, SOULDRAIN_EXPLOSION_RADIUS * 2);
+  lit.position.set(x, 1.5, z);
+  scene.add(lit);
+  side.soulExplosions = side.soulExplosions || [];
+  side.soulExplosions.push({
+    ring, flash, halo, light: lit,
+    x, z,
+    life: 0.55, maxLife: 0.55,
+  });
+  // Burst-partiklar runt explosion-center
+  for (let i = 0; i < 16; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = Math.random() * SOULDRAIN_EXPLOSION_RADIUS * 0.7;
+    const px = x + Math.cos(ang) * r;
+    const py = 0.3 + Math.random() * 1.4;
+    const pz = z + Math.sin(ang) * r;
+    spawnHitSparkFx(px, py, pz, Math.random() < 0.5 ? 0x88ff44 : 0xddffcc);
+  }
+  triggerCameraShake(0.18, 0.20);
+  // AoE-skada — träffar monsters, creeps, opp-hero (i arena) men INTE arena-orb
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z) < SOULDRAIN_EXPLOSION_RADIUS) {
+      onGandulfSkillHit(side, m);
+      soloApplySkillDmgToMonster(side, opp, j, damage);
+    }
+  }
+  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (Math.hypot(c.mesh.position.x - x, c.mesh.position.z - z) < SOULDRAIN_EXPLOSION_RADIUS) {
+      onGandulfSkillHit(side, c);
+      soloApplySkillDmgToCreep(side, opp, c, damage);
+      if (c.hp <= 0) {
+        scene.remove(c.mesh);
+        opp.playerCreeps.splice(j, 1);
+        side.gold += minionBounty(c);
+        gainXp(side, minionXp(c));
+      }
+    }
+  }
+  // Arena: opp hero kan ta explosion-skada
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+    if (Math.hypot(opp.hero.x - x, opp.hero.z - z) < SOULDRAIN_EXPLOSION_RADIUS) {
+      damageHero(opp, damage);
+    }
+  }
+}
+
+function tickSoulExplosions(side, dt) {
+  if (!side.soulExplosions || side.soulExplosions.length === 0) return;
+  for (let i = side.soulExplosions.length - 1; i >= 0; i--) {
+    const e = side.soulExplosions[i];
+    e.life -= dt;
+    const t = 1 - Math.max(0, e.life / e.maxLife);   // 0 → 1 över livet
+    const fade = Math.max(0, e.life / e.maxLife);     // 1 → 0
+    // Ring expanderar utåt + fadar
+    if (e.ring) {
+      const r = SOULDRAIN_EXPLOSION_RADIUS * (0.2 + 0.95 * t);
+      e.ring.scale.set(r, r, 1);
+      e.ring.material.opacity = 0.95 * fade;
+    }
+    if (e.flash) {
+      const s = 1 + 1.3 * t;
+      e.flash.scale.set(s, s, s);
+      e.flash.material.opacity = 0.85 * fade * fade;
+    }
+    if (e.halo) {
+      const s = 1 + 1.0 * t;
+      e.halo.scale.set(s, s, s);
+      e.halo.material.opacity = 0.55 * fade;
+    }
+    if (e.light) e.light.intensity = 4.0 * fade;
+    if (e.life <= 0) {
+      const dispose = (o) => {
+        if (!o) return;
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+        scene.remove(o);
+      };
+      dispose(e.ring); dispose(e.flash); dispose(e.halo);
+      if (e.light) scene.remove(e.light);
+      side.soulExplosions.splice(i, 1);
+    }
+  }
+}
+
+// Beam-visual mellan Gandulf och target (3-lager grön + ljus). Tillsammans med en
+// roterande mark-aura under Gandulf (visar "drain aktiv"). Particles spawnar längs
+// beamen som virvlar mot Gandulf — "själen sugs tillbaka".
 function ensureSoulDrainBeam(side) {
   if (side.soulDrainBeam) return;
   const grp = new THREE.Group();
-  const coreMat = new THREE.MeshBasicMaterial({ color: 0xddffcc, transparent: true, opacity: 0.95 });
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1, 10, 1, false), coreMat);
+  // Inre vit-grön kärna — glödande hjärtat
+  const coreMat = new THREE.MeshBasicMaterial({ color: 0xeeffcc, transparent: true, opacity: 1.0 });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 1, 12, 1, false), coreMat);
   core.rotation.x = Math.PI / 2;
   grp.add(core);
-  const beamMat = new THREE.MeshBasicMaterial({ color: 0x66ff66, transparent: true, opacity: 0.65, side: THREE.DoubleSide });
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 1, 12, 1, false), beamMat);
+  // Mellanlager — kraftig grön
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0x44ff44, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.30, 1, 14, 1, false), beamMat);
   beam.rotation.x = Math.PI / 2;
   grp.add(beam);
-  const haloMat = new THREE.MeshBasicMaterial({ color: 0xaa44ff, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false });
-  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1, 12, 1, false), haloMat);
+  // Yttre halo — mjuk grön glow
+  const haloMat = new THREE.MeshBasicMaterial({ color: 0x88ff66, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 1, 14, 1, false), haloMat);
   halo.rotation.x = Math.PI / 2;
   grp.add(halo);
   scene.add(grp);
-  side.soulDrainBeam = { group: grp, core, beam, halo };
+  // Mark-aura under Gandulf — roterande grön ring (visar "drain aktiv")
+  const auraRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.7, 1.1, 32),
+    new THREE.MeshBasicMaterial({ color: 0x44ff66, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  auraRing.rotation.x = -Math.PI / 2;
+  auraRing.position.set(side.hero.x, 0.06, side.hero.z);
+  scene.add(auraRing);
+  const auraDisk = new THREE.Mesh(
+    new THREE.CircleGeometry(0.7, 24),
+    new THREE.MeshBasicMaterial({ color: 0x44ff88, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false })
+  );
+  auraDisk.rotation.x = -Math.PI / 2;
+  auraDisk.position.set(side.hero.x, 0.05, side.hero.z);
+  scene.add(auraDisk);
+  // Liten point-light som följer Gandulf
+  const auraLight = new THREE.PointLight(0x66ff66, 1.6, 4);
+  auraLight.position.set(side.hero.x, 1.0, side.hero.z);
+  scene.add(auraLight);
+  side.soulDrainBeam = {
+    group: grp, core, beam, halo,
+    auraRing, auraDisk, auraLight,
+    particleAccum: 0,
+  };
 }
 
-function updateSoulDrainBeam(side, targetMesh) {
+function updateSoulDrainBeam(side, targetMesh, dt = 1/60) {
   const sdb = side.soulDrainBeam;
   if (!sdb || !targetMesh) return;
   const hx = side.hero.x, hz = side.hero.z, hy = 1.2;
@@ -5385,14 +5537,51 @@ function updateSoulDrainBeam(side, targetMesh) {
   sdb.core.scale.y = len;
   sdb.beam.scale.y = len;
   sdb.halo.scale.y = len;
-  const t = performance.now() * 0.006;
-  sdb.beam.material.opacity = 0.55 + 0.15 * Math.sin(t);
-  sdb.halo.material.opacity = 0.25 + 0.10 * Math.sin(t + Math.PI / 2);
+  // Stark pulsering så det är tydligt att den är igång
+  const t = performance.now() * 0.008;
+  sdb.beam.material.opacity = 0.70 + 0.25 * Math.sin(t);
+  sdb.halo.material.opacity = 0.35 + 0.20 * Math.sin(t + Math.PI / 2);
+  sdb.core.material.opacity = 0.85 + 0.15 * Math.sin(t * 1.7);
+  // Mark-aura under Gandulf — följer med + roterar + pulsar
+  if (sdb.auraRing) {
+    sdb.auraRing.position.x = hx;
+    sdb.auraRing.position.z = hz;
+    sdb.auraRing.rotation.z = (sdb.auraRing.rotation.z || 0) + 0.05;
+    const auraPulse = 1 + 0.10 * Math.sin(t * 1.3);
+    sdb.auraRing.scale.set(auraPulse, auraPulse, 1);
+    sdb.auraRing.material.opacity = 0.55 + 0.25 * Math.sin(t);
+  }
+  if (sdb.auraDisk) {
+    sdb.auraDisk.position.x = hx;
+    sdb.auraDisk.position.z = hz;
+    sdb.auraDisk.material.opacity = 0.12 + 0.10 * Math.sin(t * 0.8);
+  }
+  if (sdb.auraLight) {
+    sdb.auraLight.position.set(hx, 1.0, hz);
+    sdb.auraLight.intensity = 1.4 + 0.6 * Math.sin(t * 1.5);
+  }
+  // Soul-particles längs beamen — flödar från target mot Gandulf.
+  // Cappa accum så tab-switch / frame drops inte spawnar massa partiklar på en frame.
+  sdb.particleAccum = Math.min((sdb.particleAccum || 0) + dt, SOULDRAIN_PARTICLE_INTERVAL * 3);
+  while (sdb.particleAccum >= SOULDRAIN_PARTICLE_INTERVAL) {
+    sdb.particleAccum -= SOULDRAIN_PARTICLE_INTERVAL;
+    const u = Math.random();  // 0..1 längs beamen
+    const px = tx + (hx - tx) * u + (Math.random() - 0.5) * 0.35;
+    const py = ty + (hy - ty) * u + (Math.random() - 0.5) * 0.3;
+    const pz = tz + (hz - tz) * u + (Math.random() - 0.5) * 0.35;
+    spawnProjectileTrailPuff(px, py, pz, Math.random() < 0.5 ? 0x66ff66 : 0xddffcc);
+  }
 }
 
 function removeSoulDrainBeam(side) {
   const sdb = side.soulDrainBeam;
   if (!sdb) return;
+  const cleanup = (obj) => {
+    if (!obj) return;
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) obj.material.dispose();
+    scene.remove(obj);
+  };
   if (sdb.group) {
     sdb.group.traverse(o => {
       if (o.isMesh) {
@@ -5402,6 +5591,9 @@ function removeSoulDrainBeam(side) {
     });
     scene.remove(sdb.group);
   }
+  cleanup(sdb.auraRing);
+  cleanup(sdb.auraDisk);
+  if (sdb.auraLight) scene.remove(sdb.auraLight);
   side.soulDrainBeam = null;
 }
 
@@ -8446,6 +8638,7 @@ function hostCastUlt(side, dx, dz) {
 function tickUltimates(side, dt) {
   if (side.laserBeam) tickMagikerLaser(side, dt);
   if (side.soulDrain) tickSoulDrain(side, dt);
+  if (side.soulExplosions && side.soulExplosions.length) tickSoulExplosions(side, dt);
   if ((side.rageRemaining || 0) > 0) tickGimluRage(side, dt);
   if ((side.legolusUltBuff || 0) > 0) {
     side.legolusUltBuff = Math.max(0, side.legolusUltBuff - dt);
@@ -10293,7 +10486,7 @@ const HEROES = [
 const HERO_INFO = {
   magiker: {
     skills: {
-      q: { name: 'Soul Drain', icon: '💀', desc: 'Kanalisera mot en target (tap för låst mål, eller närmaste fiende inom 10m). 5 sekunders drain — varje sekund: 5% av targets max-HP i skada och Gandulf healas med samma mängd. Slow stackar med 10% per sekund (max 50%). Slow ligger kvar 1s efter sista tick. Bryts om target dör eller springer >12m.' },
+      q: { name: 'Soul Drain', icon: '💀', desc: 'Kanalisera mot en target (tap för låst mål, eller närmaste fiende inom 10m). En grön själsbalk knyts mellan Gandulf och target — Gandulf får en pulsande mark-aura så länge drain är aktiv. 5 sekunders drain — varje sekund: 5% av targets max-HP i skada och Gandulf healas med samma mängd. Slow stackar med 10% per sekund (max 50%). Slow ligger kvar 1s efter sista tick. Om en minion (monster/creep) dör av drainen exploderar den i en grön shockwave (3.5m radie) som gör 50% av drain-skadan i AoE. Bryts om target dör eller springer >12m, eller om Gandulf får hård CC.' },
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
