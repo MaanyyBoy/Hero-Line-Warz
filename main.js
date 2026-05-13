@@ -3047,6 +3047,40 @@ let nextEntityId = 1;
 const sides = { 1: null, 2: null };
 
 // ============================================================
+// ARENA: KONFIG + KONSTANTER (måste deklareras FÖRE arenaState som refererar dem)
+// ============================================================
+
+// Arena ligger förskjuten z=80 från classic-scenen.
+// Heroes spawnar på motsatta sidor, orb i mitten, cover-props i mellanrummen.
+const ARENA_Z_OFFSET = 80;
+const ARENA_CFG = {
+  spawn1: { x: -16, z: ARENA_Z_OFFSET },
+  spawn2: { x:  16, z: ARENA_Z_OFFSET },
+  orb:    { x: 0,   z: ARENA_Z_OFFSET },
+  bounds: { minX: -22, maxX: 22, minZ: ARENA_Z_OFFSET - 14, maxZ: ARENA_Z_OFFSET + 14 },
+  props: [
+    { type: 'rock',    x: -8, z: -6, rot: 0.3 },
+    { type: 'rock',    x:  8, z:  5, rot: -0.7 },
+    { type: 'rock',    x:  0, z: -10, rot: 0.5 },
+    { type: 'wall',    x: -5, z:  6, rot: 0.1 },
+    { type: 'wall',    x:  6, z: -7, rot: -0.4 },
+    { type: 'pillar',  x: 12, z: -2, rot: 0 },
+    { type: 'pillar',  x: -12, z:  3, rot: 0 },
+    { type: 'wagon',   x: -10, z: -3, rot: 0.8 },
+    { type: 'wagon',   x: 10, z:  8, rot: -1.2 },
+  ],
+};
+
+const ARENA_ORB_MAX_HP = 100;
+const ARENA_ORB_SPAWN_DELAY = 30;
+const ARENA_ORB_RESPAWN_DELAY = 30;
+const ARENA_ORB_HEAL_PCT = 0.30;
+const ARENA_ORB_SHIELD_PCT = 0.30;
+const ARENA_PREP_TIME = 60;
+const ARENA_ROUND_END_PAUSE = 4;
+const ARENA_BO5_WINS_NEEDED = 3;
+
+// ============================================================
 // ARENA: TALENTS PER HERO
 // ============================================================
 
@@ -8547,36 +8581,6 @@ function startMatch(mode) {
   setupMatch(mode);
   enterPlayPhase();
 }
-// Arena-config: arena ligger förskjuten z=80 från classic-scenen.
-// Heroes spawnar på motsatta sidor, orb i mitten, cover-props i mellanrummen.
-const ARENA_Z_OFFSET = 80;
-const ARENA_CFG = {
-  spawn1: { x: -16, z: ARENA_Z_OFFSET },
-  spawn2: { x:  16, z: ARENA_Z_OFFSET },
-  orb:    { x: 0,   z: ARENA_Z_OFFSET },
-  bounds: { minX: -22, maxX: 22, minZ: ARENA_Z_OFFSET - 14, maxZ: ARENA_Z_OFFSET + 14 },
-  // Cover-props relativt z-offset
-  props: [
-    { type: 'rock',    x: -8, z: -6, rot: 0.3 },
-    { type: 'rock',    x:  8, z:  5, rot: -0.7 },
-    { type: 'rock',    x:  0, z: -10, rot: 0.5 },
-    { type: 'wall',    x: -5, z:  6, rot: 0.1 },
-    { type: 'wall',    x:  6, z: -7, rot: -0.4 },
-    { type: 'pillar',  x: 12, z: -2, rot: 0 },
-    { type: 'pillar',  x: -12, z:  3, rot: 0 },
-    { type: 'wagon',   x: -10, z: -3, rot: 0.8 },
-    { type: 'wagon',   x: 10, z:  8, rot: -1.2 },
-  ],
-};
-
-const ARENA_ORB_MAX_HP = 100;
-const ARENA_ORB_SPAWN_DELAY = 30;     // sek efter match-start
-const ARENA_ORB_RESPAWN_DELAY = 30;   // sek efter kill
-const ARENA_ORB_HEAL_PCT = 0.30;
-const ARENA_ORB_SHIELD_PCT = 0.30;
-const ARENA_PREP_TIME = 60;
-const ARENA_ROUND_END_PAUSE = 4;      // sek mellan rundor (visa vinst-banner)
-const ARENA_BO5_WINS_NEEDED = 3;
 
 function enterPlayPhase() {
   document.body.classList.add('in-game');
