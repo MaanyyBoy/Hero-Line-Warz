@@ -3625,6 +3625,11 @@ function startArenaRound(roundNum) {
     recomputeArenaSideStats(s);
     s.hero.hp = s.hero.maxHp;
     s.shield = 0;
+    // Reset item-stacks vid runda-start
+    s.furyStacks = 0;
+    s.furyTargetId = 0;
+    s.titansInstanceStacks = 0;
+    s.titansBlockPending = false;
   }
   showArenaPrep();
 }
@@ -4547,6 +4552,11 @@ function respawnHero(side) {
   side.hero.z = cfg.heroSpawn.z;
   side.mesh.position.set(side.hero.x, 0, side.hero.z);
   side.mesh.visible = true;
+  // Reset item-stacks vid respawn
+  side.furyStacks = 0;
+  side.furyTargetId = 0;
+  side.titansInstanceStacks = 0;
+  side.titansBlockPending = false;
 }
 
 // ============================================================
@@ -4670,6 +4680,30 @@ function updateHeroAttack(side, dt) {
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
+
+  // ---- Ling & Lang: Fury Stacks ----
+  // 1% AS + 1% AAdmg per AA mot SAMMA target, max 10. Första AA mot nytt
+  // target ger inga stacks (specen: "+1% per AA on same target").
+  const hasLingLang = side.inventory && side.inventory.some(it => it.itemId === 'item3');
+  if (hasLingLang) {
+    const tid = target.entity.id;
+    if (side.furyTargetId === tid) {
+      side.furyStacks = Math.min(10, (side.furyStacks || 0) + 1);
+    } else {
+      side.furyTargetId = tid;
+      side.furyStacks = 0;
+    }
+  } else {
+    side.furyStacks = 0;
+    side.furyTargetId = 0;
+  }
+  const furyMul = 1 + 0.01 * (side.furyStacks || 0);
+
+  // ---- Titans Armor: var 3:e AA → block nästa inkommande skada ----
+  const hasTitans = side.inventory && side.inventory.some(it => it.itemId === 'item5');
+  if (hasTitans && side.attackCounter % 3 === 0) {
+    side.titansBlockPending = true;
+  }
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(isAoE ? 0.28 : 0.18, 12, 8),
     new THREE.MeshStandardMaterial({
@@ -4698,7 +4732,7 @@ function updateHeroAttack(side, dt) {
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
-    damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
+    damage: side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul, isAoE, isCrit,
     lifestealRatio: dashBuffed ? dashLs : 0,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
@@ -4743,7 +4777,7 @@ function updateHeroAttack(side, dt) {
     if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) side.legolusSplitPending = true;
   }
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul);
 }
 
 function updateProjectiles(side, dt) {
@@ -5496,7 +5530,9 @@ function updateHammersSolo(side, dt) {
 }
 
 function updateSkillCooldowns(side, dt) {
-  const eff = dt * (side.heroFountainAura ? FOUNTAIN_CDR_MUL : 1);
+  // Titans Armor instance-stacks: +1% CDR per stack
+  const taCdrBoost = 1 + 0.01 * (side.titansInstanceStacks || 0);
+  const eff = dt * (side.heroFountainAura ? FOUNTAIN_CDR_MUL : 1) * taCdrBoost;
   side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
   side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
   side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
@@ -5835,16 +5871,32 @@ function damageHero(side, amount) {
       if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) return;
     }
   }
-  // Titans Armor: block-chans — fullt blocka instansen (efter Gimlu-counter så hans
-  // immune-stack inte tappas vid block)
-  if ((side.blockChancePct || 0) > 0 && Math.random() < side.blockChancePct) {
+  // Titans Armor: var-3:e-AA pending block ELLER procentuell block-chans
+  // (efter Gimlu-counter så hans immune-stack inte tappas vid block).
+  let blocked = false;
+  if (side.titansBlockPending) {
+    side.titansBlockPending = false;
+    blocked = true;
+  } else if ((side.blockChancePct || 0) > 0 && Math.random() < side.blockChancePct) {
+    blocked = true;
+  }
+  if (blocked) {
     spawnHitSparkFx(side.hero.x, 1.0, side.hero.z, 0xffaa66);
+    // Return 30% till skadegivaren — vi har inte attacker-ref här, så hoppa
+    // över returnen för nu (notera: kräver attacker-passing för full impl)
     return;
+  }
+  // Titans Armor: instance-stack (1% DR + 1% CDR per dmg-instans tagen, max 10)
+  const hasTitans = side.inventory && side.inventory.some(it => it.itemId === 'item5');
+  if (hasTitans) {
+    side.titansInstanceStacks = Math.min(10, (side.titansInstanceStacks || 0) + 1);
   }
   const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  // Titans Armor instance-stacks → +1% DR per stack
+  const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul;
   // Gandulf shield absorberar först
   if ((side.shield || 0) > 0 && final > 0) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
@@ -5900,8 +5952,16 @@ function applyMovement(side, joyX, joyZ, dt) {
   const ndx = joyX / mag, ndz = joyZ / mag;
   side.hero.facingX = ndx;
   side.hero.facingZ = ndz;
-  const nx = side.hero.x + ndx * side.moveSpeed * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * strength * dt;
+  // Onyx Orb: +10% MS per skill på CD
+  let onyxMs = 0;
+  if (side.inventory && side.inventory.some(it => it.itemId === 'item4')) {
+    if (side.skills && side.skills.q.cd > 0) onyxMs += 0.10;
+    if (side.skills && side.skills.f.cd > 0) onyxMs += 0.10;
+    if (side.skills && side.skills.e.cd > 0) onyxMs += 0.10;
+  }
+  const effSpeed = side.moveSpeed * (1 + onyxMs);
+  const nx = side.hero.x + ndx * effSpeed * strength * dt;
+  const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (isHeroWalkable(side.idx, nx, side.hero.z)) side.hero.x = nx;
   else if (isHeroWalkable(side.idx, side.hero.x, nz)) side.hero.z = nz;
