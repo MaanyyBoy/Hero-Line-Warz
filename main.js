@@ -5666,10 +5666,15 @@ function updateSkillCooldowns(side, dt) {
 //   → Level 3 ger då +9 skada och +45 max HP
 // ============================================================
 
-// Per-level-scaling-formel: 10% * 1.2^(level-1). Lvl1=10%, lvl2=12%, ..., lvl10=51.6%.
+// Per-level-scaling-formel: bas-stat 10% * 1.2^(level-1). Lvl1=10%, lvl10=51.6%.
+// "Slow"-varianter halverar compound-tillväxten (1.1 i st för 1.2) — används för de
+// stat:s som balanserades ner (crit, CDR, maxHP, attack speed, HP regen).
 const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const bootsPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
 const gloveBigPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveBigPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
 const gloveHealPct = (level) => 0.01 * Math.pow(1.2, level - 1);
+const gloveHealPctSlow = (level) => 0.01 * Math.pow(1.1, level - 1);
 
 const ITEM_TYPES = {
   item1: {
@@ -5681,10 +5686,10 @@ const ITEM_TYPES = {
       speed: {
         id: 'speed', parentId: 'item1', name: 'Boots of Speed', icon: '⚡',
         description: 'Snabbare rörelse och attacker',
-        statsAtLevel: (level) => {
-          const v = bootsPct(level);
-          return { moveSpeedPct: v, attackSpeedPct: v };
-        },
+        statsAtLevel: (level) => ({
+          moveSpeedPct: bootsPct(level),
+          attackSpeedPct: bootsPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% rörelse och attackfart i 5s',
@@ -5694,10 +5699,10 @@ const ITEM_TYPES = {
       magic: {
         id: 'magic', parentId: 'item1', name: 'Boots of Magic', icon: '✨',
         description: 'Förstärker skills och kortar cooldowns',
-        statsAtLevel: (level) => {
-          const v = bootsPct(level);
-          return { skillDmgPct: v, cdrPct: v };
-        },
+        statsAtLevel: (level) => ({
+          skillDmgPct: bootsPct(level),
+          cdrPct: bootsPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% skill-skada och CDR i 5s',
@@ -5707,10 +5712,10 @@ const ITEM_TYPES = {
       tank: {
         id: 'tank', parentId: 'item1', name: 'Boots of Tank', icon: '🛡',
         description: 'Mer HP och mindre inkommande skada',
-        statsAtLevel: (level) => {
-          const v = bootsPct(level);
-          return { dmgReductionPct: v, maxHpPct: v };
-        },
+        statsAtLevel: (level) => ({
+          dmgReductionPct: bootsPct(level),
+          maxHpPct: bootsPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% skadereduktion och max HP i 5s',
@@ -5728,10 +5733,10 @@ const ITEM_TYPES = {
       haste: {
         id: 'haste', parentId: 'item2', name: 'Glove of Haste', icon: '⚡',
         description: 'Snabbare AA + chans till crit',
-        statsAtLevel: (level) => {
-          const v = gloveBigPct(level);
-          return { attackSpeedPct: v, critChancePct: v };
-        },
+        statsAtLevel: (level) => ({
+          attackSpeedPct: gloveBigPct(level),
+          critChancePct: gloveBigPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% attackfart och crit chans i 5s',
@@ -5741,10 +5746,10 @@ const ITEM_TYPES = {
       spell: {
         id: 'spell', parentId: 'item2', name: 'Glove of Spell', icon: '🔮',
         description: 'Mer skill-skada och CDR',
-        statsAtLevel: (level) => {
-          const v = gloveBigPct(level);
-          return { skillDmgPct: v, cdrPct: v };
-        },
+        statsAtLevel: (level) => ({
+          skillDmgPct: gloveBigPct(level),
+          cdrPct: gloveBigPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% skill-skada och CDR i 5s',
@@ -5754,11 +5759,10 @@ const ITEM_TYPES = {
       tank: {
         id: 'tank', parentId: 'item2', name: 'Glove of Tank', icon: '🛡',
         description: 'Skadereduktion + passiv HP-regen',
-        statsAtLevel: (level) => {
-          const v = gloveBigPct(level);
-          const h = gloveHealPct(level);
-          return { dmgReductionPct: v, healPerSecPct: h };
-        },
+        statsAtLevel: (level) => ({
+          dmgReductionPct: gloveBigPct(level),
+          healPerSecPct: gloveHealPctSlow(level),
+        }),
         activeAtMax: {
           duration: 5, cooldown: 30,
           description: '+50% skadereduktion och 5%/s heal i 5s',
@@ -9077,6 +9081,13 @@ const STAT_LABELS = {
   maxHpPct: 'max HP',
   critChancePct: 'crit chans',
   healPerSecPct: 'HP regen/s',
+  attackDmgPct: 'AA-skada',
+  ccReductionPct: 'CC-reduktion',
+  skillLifestealPct: 'skill-lifesteal',
+  aaDmgReductionPct: 'AA-skadereduktion',
+  skillDmgReductionPct: 'skill-skadereduktion',
+  hpRegenLostPct: 'regen av förlorad HP',
+  blockChancePct: 'block-chans',
 };
 
 function formatStat(key, val) {
@@ -9769,6 +9780,7 @@ const HERO_INFO = {
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
     passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Varje skill-träff på en fiende stackar en 3s buf: +5% skill-skada per hit, och ger en shield = 5% av max HP per hit (stackar additivt upp till max HP). Träffar du SAMMA mål med 3 skills får du dessutom en stor shield på 30% av max HP.' },
+    ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Skjuter en kontinuerlig laserstråle rakt fram i 3 sekunder (60 m räckvidd, smal). Strålen tickar var 0.5 s och gör 15% av targets max-HP per tick — totalt 90% maxHP över hela varaktigheten. Träffar alla fiender, bossar, motståndarhjälte och arena-orb i strålens väg. Medan strålen är aktiv: 90% skadereduktion på Magikern, CC-immun (kan inte frysas/stunnas/tauntas) men kan röra sig fritt.' },
   },
   legolas: {
     skills: {
@@ -9777,6 +9789,7 @@ const HERO_INFO = {
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
     },
     passive: { name: 'Toxic Volley', icon: '☣', desc: 'Var 3:e auto-attack blir splittad: huvudtarget + 2 närmaste extra fiender inom 6 m. Alla 3 träffar applicerar en poison-stack som tickar damage i 4 sekunder. Stackar refreshar duration. Damage per sekund = 5 × stacks × (1 + 10% × (stacks − 1)), så varje stack gör 10% mer skada än föregående.' },
+    ult: { name: 'Worldpiercer', icon: '🏹', desc: 'Skjuter en gigantisk pil med global räckvidd (200 m) i siktriktningen. Den första boss:en eller (i arena) motståndarhjälten som träffas blir target. Vid träff: Legolas teleporteras direkt fram till target, target stunnas i 1 sekund. Efter teleporten får Legolas en 5-sekunders buf med +30% attackfart. Missar pilen sker varken teleport eller buff.' },
   },
   gimlu: {
     skills: {
@@ -9785,6 +9798,7 @@ const HERO_INFO = {
       e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
     },
     passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 20% damage reduction (alltid på).\n• Under 60% HP: + 5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 20% mer damage reduction (40% totalt) och var 3:e inkommande damage-instance blockas helt.' },
+    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 5% av targets max-HP i skada — totalt 50% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
   },
 };
 
@@ -9910,6 +9924,12 @@ function renderHeroDetail(heroId, hero, info, def) {
       <div class="skill-desc">${s.desc}</div>
     </div>`;
   }).join('');
+  const ultimate = info.ult
+    ? `<div class="skill-item${heroesBrowserSkillKey === 'r' ? ' expanded' : ''}" data-skill="r">
+        <div class="skill-head"><div class="skill-key r">${info.ult.icon || 'R'}</div><span>R · Ultimate · ${info.ult.name}</span></div>
+        <div class="skill-desc">${info.ult.desc}</div>
+      </div>`
+    : '';
   const passive = info.passive
     ? `<div class="skill-item${heroesBrowserSkillKey === 'p' ? ' expanded' : ''}" data-skill="p">
         <div class="skill-head"><div class="skill-key p">${info.passive.icon || 'P'}</div><span>Passiv · ${info.passive.name}</span></div>
@@ -9925,7 +9945,7 @@ function renderHeroDetail(heroId, hero, info, def) {
       </div>
     </div>
     <div class="stat-grid">${statRows}</div>
-    <div class="skill-list">${skillItems}${passive}</div>
+    <div class="skill-list">${skillItems}${ultimate}${passive}</div>
   `;
   heroDetailBody.querySelectorAll('.skill-item').forEach(el => {
     el.addEventListener('click', () => {
@@ -9937,38 +9957,62 @@ function renderHeroDetail(heroId, hero, info, def) {
 }
 
 // === Items-browser ===
+// Items har antingen flera varianter (Boots / Glove) ELLER egna statsAtLevel direkt
+// (Ling & Lang, Onyx Orb, Titans Armor). Båda formerna renderas med samma layout —
+// non-variant items blir ett enda block med rot-namnet.
+function itemHasContent(def) {
+  if (!def) return false;
+  if (def.variants) return true;
+  if (typeof def.statsAtLevel !== 'function') return false;
+  const sample = def.statsAtLevel(1);
+  return sample && Object.keys(sample).length > 0;
+}
 function openItemDetailModal(itemId) {
   const def = ITEM_TYPES[itemId];
-  if (!def || !def.variants || !itemDetailModal) return;
+  if (!def || !itemHasContent(def) || !itemDetailModal) return;
   renderItemDetail(itemId, def);
   itemDetailModal.classList.remove('hidden');
 }
 function closeItemDetailModal() { if (itemDetailModal) itemDetailModal.classList.add('hidden'); }
 
+function renderVariantBlock(v) {
+  const sample = v.statsAtLevel(1);
+  const statKeys = Object.keys(sample);
+  const thead = `<th>Lvl</th>${statKeys.map(k => `<th>${STAT_LABELS[k] || k}</th>`).join('')}`;
+  const rows = [];
+  for (let lvl = 1; lvl <= 10; lvl++) {
+    const s = v.statsAtLevel(lvl);
+    rows.push(`<tr><td class="lv">${lvl}</td>${statKeys.map(k => `<td>${fmtStatVal(k, s[k])}</td>`).join('')}</tr>`);
+  }
+  const activeHtml = v.activeAtMax
+    ? `<div class="variant-active"><b>Active (lvl 10):</b> ${v.activeAtMax.description || ''} — ${v.activeAtMax.duration ? v.activeAtMax.duration + 's effekt, ' : ''}${v.activeAtMax.cooldown}s cd</div>`
+    : '';
+  return `<div class="variant-block">
+    <div class="variant-name">${v.icon || ''} ${v.name}</div>
+    <div class="variant-desc">${v.description || ''}</div>
+    <table class="tier-table"><thead><tr>${thead}</tr></thead><tbody>${rows.join('')}</tbody></table>
+    ${activeHtml}
+  </div>`;
+}
+
 function renderItemDetail(itemId, def) {
-  const variantBlocks = Object.values(def.variants).map(v => {
-    const sample = v.statsAtLevel(1);
-    const statKeys = Object.keys(sample);
-    const thead = `<th>Lvl</th>${statKeys.map(k => `<th>${STAT_LABELS[k] || k}</th>`).join('')}`;
-    const rows = [];
-    for (let lvl = 1; lvl <= 10; lvl++) {
-      const s = v.statsAtLevel(lvl);
-      rows.push(`<tr><td class="lv">${lvl}</td>${statKeys.map(k => `<td>${fmtStatVal(k, s[k])}</td>`).join('')}</tr>`);
-    }
-    const activeHtml = v.activeAtMax
-      ? `<div class="variant-active"><b>Active (lvl 10):</b> ${v.activeAtMax.description || ''} — ${v.activeAtMax.duration}s effekt, ${v.activeAtMax.cooldown}s cd</div>`
-      : '';
-    return `<div class="variant-block">
-      <div class="variant-name">${v.icon || ''} ${v.name}</div>
-      <div class="variant-desc">${v.description || ''}</div>
-      <table class="tier-table"><thead><tr>${thead}</tr></thead><tbody>${rows.join('')}</tbody></table>
-      ${activeHtml}
-    </div>`;
-  }).join('');
+  let blocks;
+  if (def.variants) {
+    blocks = Object.values(def.variants).map(renderVariantBlock).join('');
+  } else {
+    // Non-variant item: rendera root-defen som ett enda block (utan dubbel-namn)
+    blocks = renderVariantBlock({
+      name: def.name,
+      icon: def.icon,
+      description: '',  // beskrivningen visas redan i headern
+      statsAtLevel: def.statsAtLevel,
+      activeAtMax: def.activeAtMax,
+    });
+  }
   itemDetailBody.innerHTML = `<h3 style="color:#ffd34a;margin:0 0 4px;font-size:24px">${def.icon || ''} ${def.name}</h3>
     <div class="sub-role">${def.description || ''}</div>
     <div class="sub-role" style="margin-bottom:10px">Köp: ${ITEM_BUY_COST}g · Uppgradering lvl N: 500×2^(N-1) guld · Max level 10</div>
-    <div class="variant-list">${variantBlocks}</div>`;
+    <div class="variant-list">${blocks}</div>`;
 }
 
 let itemsBrowserSelected = null;
@@ -9990,11 +10034,11 @@ function renderItemsBrowser() {
   for (const itemId of ITEM_ORDER) {
     const def = ITEM_TYPES[itemId];
     if (!def) continue;
-    const hasVariants = !!def.variants;
+    const hasContent = itemHasContent(def);
     const card = document.createElement('div');
-    card.className = 'browser-card' + (hasVariants ? '' : ' locked');
-    card.innerHTML = `<div class="card-icon" style="font-size:34px;background:linear-gradient(135deg,#2a2456,#15102a)">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasVariants ? 'Klicka för detaljer' : 'Coming Soon'}</div>`;
-    if (hasVariants) card.addEventListener('click', () => openItemDetailModal(itemId));
+    card.className = 'browser-card' + (hasContent ? '' : ' locked');
+    card.innerHTML = `<div class="card-icon" style="font-size:34px;background:linear-gradient(135deg,#2a2456,#15102a)">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasContent ? 'Klicka för detaljer' : 'Coming Soon'}</div>`;
+    if (hasContent) card.addEventListener('click', () => openItemDetailModal(itemId));
     grid.appendChild(card);
   }
   itemsBrowserContent.appendChild(grid);

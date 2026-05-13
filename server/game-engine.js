@@ -286,9 +286,12 @@ const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
 const ACTIVE_DURATION = 5;
 const ACTIVE_COOLDOWN = 30;
 const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
-// Glove of Haste: huvud-stats start på 10%, heal start på 1%. Båda växer +20% per level.
+const bootsPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
+// Glove huvud-stats start på 10%, heal start på 1%. "Slow"-varianten halverar compound (1.1×).
 const gloveBigPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveBigPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
 const gloveHealPct = (level) => 0.01 * Math.pow(1.2, level - 1);
+const gloveHealPctSlow = (level) => 0.01 * Math.pow(1.1, level - 1);
 
 const ITEM_TYPES = {
   item1: {
@@ -296,17 +299,17 @@ const ITEM_TYPES = {
     variants: {
       speed: {
         id: 'speed', name: 'Boots of Speed',
-        statsAtLevel: (level) => { const v = bootsPct(level); return { moveSpeedPct: v, attackSpeedPct: v }; },
+        statsAtLevel: (level) => ({ moveSpeedPct: bootsPct(level), attackSpeedPct: bootsPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { moveSpeedPct: 0.5, attackSpeedPct: 0.5 } },
       },
       magic: {
         id: 'magic', name: 'Boots of Magic',
-        statsAtLevel: (level) => { const v = bootsPct(level); return { skillDmgPct: v, cdrPct: v }; },
+        statsAtLevel: (level) => ({ skillDmgPct: bootsPct(level), cdrPct: bootsPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, cdrPct: 0.5 } },
       },
       tank: {
         id: 'tank', name: 'Boots of Tank',
-        statsAtLevel: (level) => { const v = bootsPct(level); return { dmgReductionPct: v, maxHpPct: v }; },
+        statsAtLevel: (level) => ({ dmgReductionPct: bootsPct(level), maxHpPct: bootsPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { dmgReductionPct: 0.5, maxHpPct: 0.5 } },
       },
     },
@@ -316,17 +319,17 @@ const ITEM_TYPES = {
     variants: {
       haste: {
         id: 'haste', name: 'Glove of Haste',
-        statsAtLevel: (level) => { const v = gloveBigPct(level); return { attackSpeedPct: v, critChancePct: v }; },
+        statsAtLevel: (level) => ({ attackSpeedPct: gloveBigPct(level), critChancePct: gloveBigPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { attackSpeedPct: 0.5, critChancePct: 0.5 } },
       },
       spell: {
         id: 'spell', name: 'Glove of Spell',
-        statsAtLevel: (level) => { const v = gloveBigPct(level); return { skillDmgPct: v, cdrPct: v }; },
+        statsAtLevel: (level) => ({ skillDmgPct: gloveBigPct(level), cdrPct: gloveBigPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, cdrPct: 0.5 } },
       },
       tank: {
         id: 'tank', name: 'Glove of Tank',
-        statsAtLevel: (level) => { const v = gloveBigPct(level); const h = gloveHealPct(level); return { dmgReductionPct: v, healPerSecPct: h }; },
+        statsAtLevel: (level) => ({ dmgReductionPct: gloveBigPct(level), healPerSecPct: gloveHealPctSlow(level) }),
         activeAtMax: { duration: 5, cooldown: 30, stats: { dmgReductionPct: 0.5, healPerSecPct: 0.05 } },
       },
     },
