@@ -1706,5 +1706,19 @@
   }
   </script>
   <script type="module" src="./main.js"></script>
+  <script>
+    // Watchdog: om main.js inte har laddat klart inom 8s = visa stort felmeddelande
+    setTimeout(() => {
+      if (!window.__mainJsLoaded) {
+        const msg = 'main.js körde inte klart — knappar fungerar inte. Öppna F12 → Console för rött fel.';
+        const box = document.getElementById('_fatal-err') || document.createElement('div');
+        box.id = '_fatal-err';
+        box.style.cssText = 'position:fixed;top:8px;left:8px;right:8px;background:rgba(80,15,15,0.95);color:#ffcccc;padding:14px 18px;border:2px solid #ff5544;border-radius:8px;font:13px/1.4 system-ui;z-index:9999;';
+        box.innerHTML = '<strong style="color:#ffaaaa">⚠ JS HALTERADE:</strong><br>' + msg;
+        if (!box.parentNode) document.body.appendChild(box);
+        console.error('[watchdog]', msg);
+      }
+    }, 8000);
+  </script>
 </body>
 </html>

@@ -9324,3 +9324,5 @@ function tick() {
 }
 
 requestAnimationFrame(tick);
+window.__mainJsLoaded = true;
+console.log('[main] module loaded fully');
