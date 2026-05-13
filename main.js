@@ -71,6 +71,7 @@ const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
 let assetsReady = false;
 
 async function preloadAllAssets() {
+  console.log('[asset] preloadAllAssets START');
   const loader = new GLTFLoader();
   const charEntries = Object.entries(CHARACTER_ASSETS);
   const animEntries = Object.entries(ANIMATION_ASSETS);
@@ -82,24 +83,31 @@ async function preloadAllAssets() {
     done++;
     if (fillEl) fillEl.style.width = `${(done / total) * 100}%`;
     if (statusEl) statusEl.textContent = `${done} / ${total} · ${label}`;
+    console.log(`[asset] ${done}/${total} ${label}`);
   };
+
+  // Safety net: dölj loading-screen efter 45s oavsett, så lobbyn alltid blir nåbar
+  const safetyTimer = setTimeout(() => {
+    console.warn('[asset] 45s timeout — döljer loading-screen oavsett resultat');
+    const al = document.getElementById('asset-loading');
+    if (al) al.classList.add('hidden');
+  }, 45000);
 
   const charPromises = charEntries.map(([name, path]) =>
     loader.loadAsync(ASSET_BASE + path).then(gltf => {
       loadedCharacters.set(name, { scene: gltf.scene, animations: gltf.animations || [] });
-      // Förbered shadows + texture-filtering på alla mesh-noder
       gltf.scene.traverse(o => {
         if (o.isMesh) {
           o.castShadow = true;
           o.receiveShadow = false;
           if (o.material && o.material.map) {
-            o.material.map.magFilter = THREE.NearestFilter; // crispy pixel-style för KayKit
+            o.material.map.magFilter = THREE.NearestFilter;
           }
         }
       });
       updateProgress(name);
     }).catch(err => {
-      console.error(`[asset] Failed character ${name}:`, err);
+      console.error(`[asset] Failed character ${name} (${path}):`, err);
       updateProgress(name + ' (FAILED)');
     })
   );
@@ -111,14 +119,15 @@ async function preloadAllAssets() {
       }
       updateProgress(name);
     }).catch(err => {
-      console.error(`[asset] Failed anim ${name}:`, err);
+      console.error(`[asset] Failed anim ${name} (${path}):`, err);
       updateProgress(name + ' (FAILED)');
     })
   );
   await Promise.all([...charPromises, ...animPromises]);
+  clearTimeout(safetyTimer);
   assetsReady = true;
   if (statusEl) statusEl.textContent = `${total} / ${total} · klart`;
-  // Liten fördröjning så användaren hinner se "klart"
+  console.log('[asset] preloadAllAssets DONE');
   setTimeout(() => {
     const al = document.getElementById('asset-loading');
     if (al) al.classList.add('hidden');

@@ -1401,6 +1401,21 @@
     <div id="al-status">0 / 0</div>
   </div>
 
+  <script>
+    // Visa moduladdar-fel direkt på loading-screen så vi kan diagnostisera
+    // problem som annars bara dyker upp i konsolen.
+    window.addEventListener('error', (e) => {
+      const s = document.getElementById('al-status');
+      if (s) s.innerHTML = '<span style="color:#ff8866">FEL: ' + (e.message || 'okänt') + '</span>';
+      console.error('[window error]', e.message, e.filename, e.lineno);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const s = document.getElementById('al-status');
+      const msg = (e.reason && (e.reason.message || e.reason)) || 'unhandled rejection';
+      if (s) s.innerHTML = '<span style="color:#ff8866">FEL: ' + msg + '</span>';
+      console.error('[unhandled rejection]', e.reason);
+    });
+  </script>
   <script type="importmap">
   {
     "imports": {
