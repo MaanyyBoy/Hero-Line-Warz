@@ -5995,7 +5995,9 @@ function damageHero(side, amount) {
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
   // Titans Armor instance-stacks → +1% DR per stack
   const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul;
+  // Magiker laser-ult: 90% DR
+  const laserMul = side.laserBeam ? LASER_DR_MUL : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul;
   // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
   if ((side.lingShieldHp || 0) > 0 && final > 0) {
     if (side.lingShieldHp >= final) {
@@ -6234,6 +6236,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.iceBlockRemaining || 0) > 0) return;
   // Feared av motspelaren: kan inte agera/röra sig
   if ((side.heroFearTime || 0) > 0) return;
+  // Magiker laser-beam ult: kan inte röra sig under cast
+  if (side.laserBeam) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
@@ -6276,8 +6280,10 @@ function applyEvent(side, ev) {
   const channelLocked = (side.iceBlockRemaining || 0) > 0;
   // Feared av motspelaren: kan inte göra AA/skills
   const feared = (side.heroFearTime || 0) > 0;
+  // Magiker laser-ult: kan inte göra AA eller andra skills
+  const laserLocked = !!side.laserBeam;
   if (ev.type === 'aa') {
-    if (side.hero.dead || channelLocked || feared) return;
+    if (side.hero.dead || channelLocked || feared || laserLocked) return;
     side.aaActive = true;
     const t = findClosestHostile(side, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE);
     if (t) {
@@ -6296,7 +6302,7 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'skill') {
-    if (side.hero.dead || channelLocked || feared) return;
+    if (side.hero.dead || channelLocked || feared || laserLocked) return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -7902,11 +7908,140 @@ function tickUltimates(side, dt) {
   }
 }
 
-// Placeholders — fylls i av per-hero-implementationer i nästa commit
-function hostCastMagikerUlt(side, dx, dz) { /* TODO commit 2 */ }
+// === Magiker ult: Laser Beam ===
+const LASER_DURATION = 3.0;
+const LASER_TICK_INTERVAL = 0.5;
+const LASER_TICK_DMG_PCT = 0.15;    // 15% av target maxHP per tick = 90% över 3s
+const LASER_RANGE = 60;             // jätte långt
+const LASER_WIDTH = 1.4;            // perpendicular bredd för träff
+const LASER_DR_MUL = 0.10;          // 90% DR
+
+function hostCastMagikerUlt(side, dx, dz) {
+  if (side.hero.dead) return;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  // Visuell laser-stråle — emissiv cylinder. Origo i hero, mittpunkt LASER_RANGE/2 framåt.
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xccddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+  });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, LASER_RANGE, 16, 1, false), mat);
+  beam.rotation.order = 'YXZ';
+  beam.rotation.y = Math.atan2(dx, dz);
+  beam.rotation.x = Math.PI / 2;
+  beam.position.set(side.hero.x + dx * LASER_RANGE / 2, 1.0, side.hero.z + dz * LASER_RANGE / 2);
+  scene.add(beam);
+  // Inre kärna (vit, smalare, högre opacity)
+  const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, LASER_RANGE, 14, 1, false), coreMat);
+  core.rotation.copy(beam.rotation);
+  core.position.copy(beam.position);
+  scene.add(core);
+  side.laserBeam = {
+    remaining: LASER_DURATION,
+    dx, dz,
+    tickAccum: 0,
+    mesh: beam,
+    core,
+  };
+  // Visuell start-effekt
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ccff, 1.6);
+  triggerCameraShake(0.30, 0.35);
+  // Ingen initial tick — första tick triggas av tickAccum >= 0.5
+  // (6 ticks under 3s = 90% av maxHP, matchar spec)
+}
+
+function tickMagikerLaser(side, dt) {
+  const lb = side.laserBeam;
+  if (!lb) return;
+  lb.remaining -= dt;
+  lb.tickAccum += dt;
+  // Synka beam-position med hero (skydd om hero får knuff, även om movement blockas)
+  const cx = side.hero.x + lb.dx * LASER_RANGE / 2;
+  const cz = side.hero.z + lb.dz * LASER_RANGE / 2;
+  if (lb.mesh) lb.mesh.position.set(cx, 1.0, cz);
+  if (lb.core) lb.core.position.set(cx, 1.0, cz);
+  // CC-immunitet: nollställ alla cc-tillstånd varje frame
+  side.hero.frozenTime = 0;
+  side.hero.tauntedTime = 0;
+  side.hero.dotRemaining = 0;
+  side.hero.poisonRemaining = 0;
+  side.heroFearTime = 0;
+  side.heroSlowTime = 0;
+  side.heroSlowMul = 1;
+  // Skada-tick var 0.5s
+  while (lb.tickAccum >= LASER_TICK_INTERVAL && lb.remaining > -LASER_TICK_INTERVAL) {
+    lb.tickAccum -= LASER_TICK_INTERVAL;
+    applyLaserBeamTick(side);
+  }
+  if (lb.remaining <= 0) {
+    if (lb.mesh) {
+      scene.remove(lb.mesh);
+      if (lb.mesh.geometry) lb.mesh.geometry.dispose();
+      if (lb.mesh.material) lb.mesh.material.dispose();
+    }
+    if (lb.core) {
+      scene.remove(lb.core);
+      if (lb.core.geometry) lb.core.geometry.dispose();
+      if (lb.core.material) lb.core.material.dispose();
+    }
+    side.laserBeam = null;
+  }
+}
+
+function applyLaserBeamTick(side) {
+  const lb = side.laserBeam;
+  if (!lb) return;
+  const opp = sides[3 - side.idx];
+  const ox = side.hero.x, oz = side.hero.z;
+  const { dx, dz } = lb;
+  const inBeam = (ex, ez) => {
+    const ddx = ex - ox, ddz = ez - oz;
+    const along = ddx * dx + ddz * dz;
+    if (along < 0 || along > LASER_RANGE) return false;
+    const perp = Math.abs(ddx * (-dz) + ddz * dx);
+    return perp < LASER_WIDTH;
+  };
+  // Monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (inBeam(m.mesh.position.x, m.mesh.position.z)) {
+      const dmg = (m.maxHp || m.hp) * LASER_TICK_DMG_PCT;
+      m.hp -= dmg;
+      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+      spawnHitSparkFx(m.mesh.position.x, 1.2, m.mesh.position.z, 0xaaddff);
+      if (m.hp <= 0) hostKillMonster(side, i, side);
+    }
+  }
+  // Opp creeps
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (inBeam(c.mesh.position.x, c.mesh.position.z)) {
+      const dmg = (c.maxHp || c.hp) * LASER_TICK_DMG_PCT;
+      c.hp -= dmg;
+      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+      spawnHitSparkFx(c.mesh.position.x, 1.2, c.mesh.position.z, 0xaaddff);
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+    }
+  }
+  // Arena orb
+  if (APP.gameMode === 'arena1v1' && arenaState.orb.alive) {
+    if (inBeam(ARENA_CFG.orb.x, ARENA_CFG.orb.z)) {
+      damageArenaOrb(arenaState.orb.maxHp * LASER_TICK_DMG_PCT, side.idx);
+    }
+  }
+  // Arena opp hero
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+    if (inBeam(opp.hero.x, opp.hero.z)) {
+      damageHero(opp, opp.hero.maxHp * LASER_TICK_DMG_PCT);
+      spawnHitSparkFx(opp.hero.x, 1.0, opp.hero.z, 0xaaddff);
+    }
+  }
+}
+
+// Placeholders — fylls i nästa commits
 function hostCastLegolasUlt(side, dx, dz) { /* TODO commit 3 */ }
 function hostCastGimluUlt(side) { /* TODO commit 4 */ }
-function tickMagikerLaser(side, dt) { /* TODO commit 2 */ }
 function tickGimluRage(side, dt) { /* TODO commit 4 */ }
 
 const keys = {};
