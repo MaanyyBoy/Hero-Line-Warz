@@ -3126,27 +3126,49 @@ const ARENA_BO5_WINS_NEEDED = 3;
 // med 1 poäng, får +1 per runda och +1 vid runda-vinst.
 const ARENA_TALENTS = {
   magiker: [
+    // Stat-talents
     { id: 'm_skill',   icon: '✦', name: 'Arcane Mastery',   desc: '+10% skill damage',     stats: { skillDmgPct: 0.10 } },
     { id: 'm_cdr',     icon: '⏱', name: 'Quick Casting',     desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
     { id: 'm_hp',      icon: '❤', name: 'Mana Shield',       desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
     { id: 'm_dr',      icon: '🛡', name: 'Magic Resistance',  desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
     { id: 'm_ms',      icon: '💨', name: 'Swift Robes',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    // Skill-modifiers
+    { id: 'm_frost_heal', icon: '❄', name: 'Frost Vampirism', desc: 'Frost Nova healar dig 15% av skadan den gör' },
+    { id: 'm_fire_dot',   icon: '🔥', name: 'Burning Lands',   desc: 'Fire Wave DoT håller 2s längre' },
+    { id: 'm_bh_radius',  icon: '⚫', name: 'Singularity',     desc: 'Black Hole-radie + explosionsradie +30%' },
   ],
   legolas: [
+    // Stat-talents
     { id: 'l_dmg',     icon: '🏹', name: 'Marksman Training', desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'l_as',      icon: '⚡', name: 'Quick Draw',        desc: '+15% attack speed',     stats: { attackSpeedPct: 0.15 } },
     { id: 'l_crit',    icon: '🎯', name: 'Sharpshooter',      desc: '+10% crit chans',       stats: { critChancePct: 0.10 } },
     { id: 'l_ms',      icon: '💨', name: 'Light Boots',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
     { id: 'l_cdr',     icon: '⏱', name: 'Forest Sense',      desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
+    // Skill-modifiers
+    { id: 'l_vine_dot',   icon: '🌿', name: 'Toxic Roots',     desc: 'Vine Trap DoT dubbel skada' },
+    { id: 'l_focus_dur',  icon: '🎯', name: 'Patient Hunter',  desc: 'Hunter\'s Focus håller 2s längre' },
+    { id: 'l_dash_buff',  icon: '💨', name: 'Phantom Dash',    desc: 'Shadow Dash lifesteal 20% → 50%' },
   ],
   gimlu: [
+    // Stat-talents
     { id: 'g_hp',      icon: '💪', name: 'Iron Body',         desc: '+20% max HP',           stats: { maxHpPct: 0.20 } },
     { id: 'g_dr',      icon: '🪨', name: 'Stone Skin',        desc: '+15% damage reduction', stats: { dmgReductionPct: 0.15 } },
     { id: 'g_dmg',     icon: '🔨', name: 'Forged Strength',   desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'g_as',      icon: '⚔', name: 'Battle Rhythm',     desc: '+10% attack speed',     stats: { attackSpeedPct: 0.10 } },
     { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+1% HP regen per sek',  stats: { healPerSecPct: 0.01 } },
+    // Skill-modifiers
+    { id: 'g_taunt_heal', icon: '📢', name: 'Vengeful Roar',   desc: 'Titan\'s Taunt heal +50% (20% → 30% av maxHP/s)' },
+    { id: 'g_iron_radius',icon: '🛡', name: 'Wrath Unleashed', desc: 'Iron Will explosionsradie +30%' },
+    { id: 'g_hammer_full',icon: '🔨', name: 'Mighty Throw',    desc: 'Hammer återvänder med 100% skada (var 50%)' },
   ],
 };
+
+// Helper för att kolla om sidan valt en specifik talent i arenan
+function arenaHasTalent(side, talentId) {
+  if (APP.gameMode !== 'arena1v1') return false;
+  const t = arenaState.talents[side.idx];
+  return !!(t && t.chosen && t.chosen.includes(talentId));
+}
 
 // ============================================================
 // ARENA: SCEN (golv + cover-props + orb)
@@ -4658,11 +4680,13 @@ function updateHeroAttack(side, dt) {
   const isLegolusHero = side.heroId === 'legolas';
   const splitNow = isLegolusHero && !!side.legolusSplitPending;
   if (splitNow) side.legolusSplitPending = false;
+  // Talent: Phantom Dash — lifesteal 20% → 50% när dash-buffed
+  const dashLs = arenaHasTalent(side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
     damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
+    lifestealRatio: dashBuffed ? dashLs : 0,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
   });
@@ -4887,6 +4911,8 @@ function hostCastEldklot(side, dirX, dirZ) {
   const passiveMul = gandulfSkillDmgMul(side);
   const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * passiveMul;
   const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1) * passiveMul;
+  // Talent: Burning Lands — DoT-tid +2s
+  const dotDuration = FIREWAVE_DOT_DURATION + (arenaHasTalent(side, 'm_fire_dot') ? 2 : 0);
   // Cone-mesh (ConeGeometry) — pekar i dx/dz, fade:as
   const coneMat = new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
   const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE), FIREWAVE_LENGTH, 16, 1, true), coneMat);
@@ -4910,14 +4936,14 @@ function hostCastEldklot(side, dirX, dirZ) {
     if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
     onGandulfSkillHit(side, m);
     soloApplySkillDmgToMonster(side, opp, j, directDmg);
-    if (m.hp > 0) { m.dotRemaining = FIREWAVE_DOT_DURATION; m.dotPerSec = dotDps; }
+    if (m.hp > 0) { m.dotRemaining = dotDuration; m.dotPerSec = dotDps; }
   }
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
     const c = opp.playerCreeps[j];
     if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
     onGandulfSkillHit(side, c);
     soloApplySkillDmgToCreep(side, opp, c, directDmg);
-    if (c.hp > 0) { c.dotRemaining = FIREWAVE_DOT_DURATION; c.dotPerSec = dotDps; }
+    if (c.hp > 0) { c.dotRemaining = dotDuration; c.dotPerSec = dotDps; }
     else { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
   }
   // Arena: cone-damage mot orb om i kon
@@ -4975,12 +5001,16 @@ function hostCastFrostnova(side, ev) {
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+  // Talent: Frost Vampirism — heal 15% av total damage done
+  let novaDmgDealt = 0;
+  const frostHeal = arenaHasTalent(side, 'm_frost_heal');
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.mesh.position.x - center.x, m.mesh.position.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (m.frozenTime || 0) > 0;
       onGandulfSkillHit(side, m);
       soloApplySkillDmgToMonster(side, opp, j, novaDmg);
+      if (frostHeal) novaDmgDealt += novaDmg;
       const stillExists = side.monsters[j] === m;
       if (stillExists && m.hp > 0 && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
     }
@@ -4991,12 +5021,32 @@ function hostCastFrostnova(side, ev) {
       const wasFrozen = (c.frozenTime || 0) > 0;
       onGandulfSkillHit(side, c);
       soloApplySkillDmgToCreep(side, opp, c, novaDmg);
+      if (frostHeal) novaDmgDealt += novaDmg;
       if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
       else if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
   // Arena: orb-damage om i radius
-  applyAoEDamageInArena(center.x, center.z, NOVA_RADIUS, novaDmg, side.idx);
+  if (APP.gameMode === 'arena1v1' && arenaState.orb.alive) {
+    const dToOrb = Math.hypot(ARENA_CFG.orb.x - center.x, ARENA_CFG.orb.z - center.z);
+    if (dToOrb < NOVA_RADIUS) {
+      damageArenaOrb(novaDmg, side.idx);
+      if (frostHeal) novaDmgDealt += novaDmg;
+    }
+  }
+  // Arena: damage opp hero om i radius
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+    const dToHero = Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z);
+    if (dToHero < NOVA_RADIUS) {
+      damageHero(opp, novaDmg);
+      if (frostHeal) novaDmgDealt += novaDmg;
+    }
+  }
+  // Apply Frost Vampirism heal
+  if (frostHeal && novaDmgDealt > 0 && !side.hero.dead) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + novaDmgDealt * 0.15);
+    spawnHealFx(side.hero.x, side.hero.z);
+  }
 }
 
 function updateNovaEffects(side, dt) {
@@ -5040,11 +5090,15 @@ function hostCastBlink(side, ev) {
   ring.position.set(center.x, 0.05, center.z);
   scene.add(ring);
   side.blackHoles = side.blackHoles || [];
+  // Talent: Singularity — radie +30% (pull + explosion)
+  const sizeMul = arenaHasTalent(side, 'm_bh_radius') ? 1.30 : 1.0;
   side.blackHoles.push({
     sphere, ring,
     x: center.x, z: center.z,
     life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
     explosionDmg: BLACKHOLE_EXPLOSION_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    radius: BLACKHOLE_RADIUS * sizeMul,
+    explosionRadius: BLACKHOLE_EXPLOSION_RADIUS * sizeMul,
   });
 }
 
@@ -5055,12 +5109,13 @@ function updateBlackHolesSolo(side, dt) {
     const bh = side.blackHoles[i];
     bh.life -= dt;
     const pull = BLACKHOLE_PULL_SPEED * dt;
+    const bhRadius = bh.radius || BLACKHOLE_RADIUS;
     // Sug in monsters + creeps
     for (const m of side.monsters) {
       const dx = bh.x - m.mesh.position.x, dz = bh.z - m.mesh.position.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
-        const f = 1 - d / BLACKHOLE_RADIUS;
+      if (d > 0.15 && d < bhRadius) {
+        const f = 1 - d / bhRadius;
         m.mesh.position.x += (dx / d) * pull * (0.4 + f * 0.6);
         m.mesh.position.z += (dz / d) * pull * (0.4 + f * 0.6);
       }
@@ -5068,8 +5123,8 @@ function updateBlackHolesSolo(side, dt) {
     if (opp) for (const c of opp.playerCreeps) {
       const dx = bh.x - c.mesh.position.x, dz = bh.z - c.mesh.position.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
-        const f = 1 - d / BLACKHOLE_RADIUS;
+      if (d > 0.15 && d < bhRadius) {
+        const f = 1 - d / bhRadius;
         c.mesh.position.x += (dx / d) * pull * (0.4 + f * 0.6);
         c.mesh.position.z += (dz / d) * pull * (0.4 + f * 0.6);
       }
@@ -5083,23 +5138,29 @@ function updateBlackHolesSolo(side, dt) {
     if (bh.life <= 0) {
       // Explosion
       const dmgMul = gandulfSkillDmgMul(side);
+      const expR = bh.explosionRadius || BLACKHOLE_EXPLOSION_RADIUS;
       for (let j = side.monsters.length - 1; j >= 0; j--) {
         const m = side.monsters[j];
-        if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+        if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < expR) {
           soloApplySkillDmgToMonster(side, opp, j, bh.explosionDmg * dmgMul);
           onGandulfSkillHit(side, m);
         }
       }
       if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
         const c = opp.playerCreeps[j];
-        if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+        if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < expR) {
           soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg * dmgMul);
           onGandulfSkillHit(side, c);
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      // Arena: orb-damage från black hole-explosion
-      applyAoEDamageInArena(bh.x, bh.z, BLACKHOLE_EXPLOSION_RADIUS, bh.explosionDmg * dmgMul, side.idx);
+      // Arena: orb + opp hero-damage från black hole-explosion
+      applyAoEDamageInArena(bh.x, bh.z, expR, bh.explosionDmg * dmgMul, side.idx);
+      if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+        if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < expR) {
+          damageHero(opp, bh.explosionDmg * dmgMul);
+        }
+      }
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
       side.blackHoles.splice(i, 1);
@@ -5134,11 +5195,13 @@ function hostCastLegolusVineTrap(side, ev) {
     spikes.push(sp);
   }
   side.vineTraps = side.vineTraps || [];
+  // Talent: Toxic Roots — DoT-skada dubbel
+  const dotMul = arenaHasTalent(side, 'l_vine_dot') ? 2 : 1;
   side.vineTraps.push({
     ring, spikes,
     x: center.x, z: center.z,
     life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
-    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1),
+    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1) * dotMul,
     radius: VINE_TRAP_RADIUS,
   });
 }
@@ -5146,7 +5209,9 @@ function hostCastLegolusVineTrap(side, ev) {
 function hostCastLegolusBuff(side) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION;
+  // Talent: Patient Hunter — buff-tid +2s
+  const extra = arenaHasTalent(side, 'l_focus_dur') ? 2 : 0;
+  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION + extra;
   // Visuell aim-buff (gulgrön expanderande ring)
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff55, 1.1);
 }
@@ -5258,7 +5323,9 @@ function updateIronWillSolo(side, dt) {
     side.ironWillStored = 0;
     side.ironWillRemaining = 0;
     if (dmg > 0) {
-      const r2 = IRON_WILL_EXPLOSION_RADIUS * IRON_WILL_EXPLOSION_RADIUS;
+      // Talent: Wrath Unleashed — radie +30%
+      const radius = IRON_WILL_EXPLOSION_RADIUS * (arenaHasTalent(side, 'g_iron_radius') ? 1.30 : 1.0);
+      const r2 = radius * radius;
       const opp = sides[3 - side.idx];
       for (let i = side.monsters.length - 1; i >= 0; i--) {
         const m = side.monsters[i];
@@ -5276,11 +5343,15 @@ function updateIronWillSolo(side, dt) {
           if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      // Arena: Iron Will-explosion mot orb
-      applyAoEDamageInArena(side.hero.x, side.hero.z, IRON_WILL_EXPLOSION_RADIUS, dmg, side.idx);
+      // Arena: Iron Will-explosion mot orb + opp hero
+      applyAoEDamageInArena(side.hero.x, side.hero.z, radius, dmg, side.idx);
+      if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+        const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
+        if (dx * dx + dz * dz < r2) damageHero(opp, dmg);
+      }
       // Stor explosion-ring
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.5, IRON_WILL_EXPLOSION_RADIUS, 56),
+        new THREE.RingGeometry(0.5, radius, 56),
         new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
       );
       ring.rotation.x = -Math.PI / 2;
@@ -5358,7 +5429,9 @@ function updateHammersSolo(side, dt) {
       h.mesh.position.z += (ddz / d) * step;
     }
     h.mesh.rotation.y += dt * 12; // spinn
-    const dmgMul = h.returning ? HAMMER_RETURN_DMG_MUL : 1;
+    // Talent: Mighty Throw — återresan får full skada (var 50%)
+    const returnMul = arenaHasTalent(side, 'g_hammer_full') ? 1.0 : HAMMER_RETURN_DMG_MUL;
+    const dmgMul = h.returning ? returnMul : 1;
     const dmg = h.damage * dmgMul;
     for (let j = side.monsters.length - 1; j >= 0; j--) {
       const m = side.monsters[j];
@@ -6557,7 +6630,8 @@ const cameraOffset = new THREE.Vector3(0, 17, 14);
 const cameraTarget = new THREE.Vector3();
 
 // Arena-läget får större kamera-distans så hela den dubblade banan syns
-const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 32, 26);
+// (30% inzoomad från tidigare 32/26 → 22/18)
+const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 22, 18);
 
 function updateCamera(dt) {
   if (!sides[APP.localSide]) return;
@@ -9261,9 +9335,10 @@ function simulateAll(dt) {
       if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
       }
-      // Titans Taunt passive heal: 20% av maxHP per sek medan tauntet är aktivt
+      // Titans Taunt passive heal: 20% av maxHP per sek (+50% med Vengeful Roar-talent)
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
-        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);
+        const tauntHealMul = arenaHasTalent(side, 'g_taunt_heal') ? 1.5 : 1.0;
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * tauntHealMul * dt);
       }
       // Gimlu Stalwart Resolve regen: 5%/s när <60% HP
       if (side.heroId === 'gimlu' && side.hero.hp < side.hero.maxHp) {
