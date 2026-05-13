@@ -5971,6 +5971,171 @@ const skillEls = {
   e: document.getElementById('skill-e'),
 };
 
+// SVG-ikoner per hero × skill — bild på vad skillen gör. Sätts via
+// updateSkillIcons() vid match-start och hero-swap.
+const SKILL_ICON_SVG = {
+  magiker: {
+    q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="sk-mq-fire" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0" stop-color="#ffcc00"/><stop offset="0.5" stop-color="#ff6622"/><stop offset="1" stop-color="#cc2200"/>
+        </linearGradient></defs>
+        <path d="M 20 35 Q 7 28 11 17 Q 12 24 17 21 Q 15 13 21 7 Q 22 15 25 13 Q 28 21 32 17 Q 33 28 20 35 Z" fill="url(#sk-mq-fire)" stroke="#aa3300" stroke-width="0.8"/>
+        <path d="M 19 27 Q 16 24 17 20 Q 18 22 19 21 Q 18 17 20 14 Q 21 18 22 17 Q 23 22 21 25 Q 21 27 19 27 Z" fill="#ffee88" opacity="0.85"/>
+      </svg>`,
+    f: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <g stroke="#aaddff" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <line x1="20" y1="5" x2="20" y2="35"/>
+          <line x1="7.5" y1="13" x2="32.5" y2="27"/>
+          <line x1="7.5" y1="27" x2="32.5" y2="13"/>
+          <path d="M 20 11 l -3 -2.5 M 20 11 l 3 -2.5 M 20 29 l -3 2.5 M 20 29 l 3 2.5"/>
+          <path d="M 14 16 l -3 0.5 l 0.5 -3 M 26 24 l 3 -0.5 l -0.5 3 M 14 24 l -3 -0.5 l 0.5 3 M 26 16 l 3 0.5 l -0.5 -3"/>
+        </g>
+        <circle cx="20" cy="20" r="3" fill="#cceeff"/>
+      </svg>`,
+    e: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><radialGradient id="sk-me-bh" cx="50%" cy="50%">
+          <stop offset="0" stop-color="#000"/><stop offset="0.55" stop-color="#1a0033"/>
+          <stop offset="0.85" stop-color="#5500aa"/><stop offset="1" stop-color="#9933ff"/>
+        </radialGradient></defs>
+        <circle cx="20" cy="20" r="15" fill="url(#sk-me-bh)"/>
+        <path d="M 20 7 Q 32 12 30 22 Q 22 30 12 24" stroke="#cc88ff" stroke-width="1.6" fill="none" opacity="0.8"/>
+        <path d="M 14 12 Q 22 14 24 22" stroke="#aa44ff" stroke-width="1.4" fill="none" opacity="0.6"/>
+      </svg>`,
+  },
+  legolas: {
+    q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <g stroke="#44aa44" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <path d="M 6 32 Q 14 22 20 28 Q 26 34 32 22"/>
+          <path d="M 10 18 Q 16 10 22 16 Q 28 22 34 12"/>
+        </g>
+        <ellipse cx="14" cy="14" rx="3.5" ry="2.2" fill="#77dd55" transform="rotate(-30 14 14)" stroke="#33772a" stroke-width="0.8"/>
+        <ellipse cx="27" cy="20" rx="3.5" ry="2.2" fill="#77dd55" transform="rotate(25 27 20)" stroke="#33772a" stroke-width="0.8"/>
+        <ellipse cx="20" cy="26" rx="3" ry="2" fill="#88ee66" transform="rotate(10 20 26)" stroke="#3a8030" stroke-width="0.7"/>
+      </svg>`,
+    f: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <g stroke="#ddff55" stroke-width="2" fill="none">
+          <circle cx="20" cy="20" r="13"/>
+          <circle cx="20" cy="20" r="7.5"/>
+          <line x1="20" y1="3" x2="20" y2="11"/>
+          <line x1="20" y1="29" x2="20" y2="37"/>
+          <line x1="3" y1="20" x2="11" y2="20"/>
+          <line x1="29" y1="20" x2="37" y2="20"/>
+        </g>
+        <circle cx="20" cy="20" r="2.5" fill="#ddff55"/>
+      </svg>`,
+    e: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <g fill="none" stroke="#66ff88" stroke-linecap="round">
+          <path d="M 11 20 L 28 20" stroke-width="4"/>
+          <path d="M 22 12 L 30 20 L 22 28" stroke-width="3.5"/>
+          <line x1="5" y1="12" x2="11" y2="12" stroke-width="2" opacity="0.55"/>
+          <line x1="3" y1="20" x2="9" y2="20" stroke-width="2" opacity="0.35"/>
+          <line x1="5" y1="28" x2="11" y2="28" stroke-width="2" opacity="0.55"/>
+        </g>
+      </svg>`,
+  },
+  gimlu: {
+    q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 6 17 L 18 14 L 18 26 L 6 23 Z" fill="#ffaa55" stroke="#cc6622" stroke-width="1"/>
+        <path d="M 18 14 L 27 9 L 27 31 L 18 26 Z" fill="#cc7733" stroke="#883311" stroke-width="1"/>
+        <rect x="3" y="18" width="4" height="4" fill="#553311"/>
+        <g stroke="#ffd34a" stroke-width="2" fill="none" stroke-linecap="round">
+          <path d="M 30 14 Q 34 20 30 26"/>
+          <path d="M 34 11 Q 39 20 34 29"/>
+        </g>
+      </svg>`,
+    f: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 20 4 L 33 8 Q 33 24 20 36 Q 7 24 7 8 Z" fill="#aa6633" stroke="#ff8844" stroke-width="2"/>
+        <path d="M 20 10 L 30 12 Q 30 22 20 31 Q 10 22 10 12 Z" fill="#cc8855" opacity="0.55"/>
+        <path d="M 20 13 L 20 27 M 13 19 L 27 19" stroke="#ffd34a" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      </svg>`,
+    e: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <rect x="6" y="13" width="16" height="14" rx="2" fill="#999" stroke="#444" stroke-width="1.5"/>
+        <rect x="22" y="18.5" width="14" height="3" fill="#6a4020" stroke="#3a2410" stroke-width="0.8"/>
+        <circle cx="33.5" cy="20" r="2.5" fill="#cc8844" stroke="#663300" stroke-width="0.8"/>
+        <line x1="4" y1="10" x2="9" y2="14" stroke="#aaa" stroke-width="1.8" opacity="0.6"/>
+        <line x1="4" y1="30" x2="9" y2="26" stroke="#aaa" stroke-width="1.8" opacity="0.6"/>
+        <line x1="2" y1="20" x2="7" y2="20" stroke="#aaa" stroke-width="1.8" opacity="0.4"/>
+        <path d="M 10 16 L 18 16 M 10 24 L 18 24" stroke="#666" stroke-width="0.8" opacity="0.7"/>
+      </svg>`,
+  },
+};
+
+function updateSkillIcons(heroId) {
+  const set = SKILL_ICON_SVG[heroId] || SKILL_ICON_SVG.magiker;
+  for (const k of ['q', 'f', 'e']) {
+    const btn = skillEls[k];
+    if (!btn) continue;
+    const iconEl = btn.querySelector('.icon');
+    if (iconEl) iconEl.innerHTML = set[k] || '';
+  }
+}
+
+// ---- Skill-tooltip (långt tryck på en skill-knapp visar beskrivning) ----
+const skillTooltipEl = document.getElementById('skill-tooltip');
+const sttNameEl = skillTooltipEl ? skillTooltipEl.querySelector('.stt-name') : null;
+const sttDescEl = skillTooltipEl ? skillTooltipEl.querySelector('.stt-desc') : null;
+const skillTooltipState = {
+  timer: null,
+  shown: false,
+  heldKey: null,
+};
+const SKILL_LONGPRESS_MS = 500;
+
+function showSkillTooltip(key) {
+  if (!skillTooltipEl) return;
+  const side = sides[APP.localSide];
+  const heroId = (side && side.heroId) || 'magiker';
+  const info = HERO_INFO[heroId];
+  if (!info || !info.skills || !info.skills[key]) return;
+  const sd = info.skills[key];
+  if (sttNameEl) sttNameEl.textContent = `${sd.icon || ''} ${sd.name || key.toUpperCase()}`;
+  if (sttDescEl) sttDescEl.textContent = sd.desc || '';
+  // Positionera ovanför skill-knappen
+  const btn = skillEls[key];
+  const r = btn.getBoundingClientRect();
+  skillTooltipEl.classList.remove('hidden');
+  // Mät tooltipens storlek efter att den blivit synlig
+  requestAnimationFrame(() => {
+    const tr = skillTooltipEl.getBoundingClientRect();
+    let left = r.left + r.width / 2 - tr.width / 2;
+    let top = r.top - tr.height - 12;
+    // Klamra inom viewport
+    left = Math.max(8, Math.min(window.innerWidth - tr.width - 8, left));
+    if (top < 8) top = r.bottom + 12;
+    skillTooltipEl.style.left = `${left}px`;
+    skillTooltipEl.style.top = `${top}px`;
+    skillTooltipEl.classList.add('visible');
+  });
+  skillTooltipState.shown = true;
+  skillTooltipState.heldKey = key;
+}
+
+function hideSkillTooltip() {
+  if (!skillTooltipEl) return;
+  skillTooltipEl.classList.remove('visible');
+  skillTooltipEl.classList.add('hidden');
+  skillTooltipState.shown = false;
+  skillTooltipState.heldKey = null;
+}
+
+function startSkillLongPress(key) {
+  clearSkillLongPress();
+  skillTooltipState.timer = setTimeout(() => {
+    skillTooltipState.timer = null;
+    showSkillTooltip(key);
+  }, SKILL_LONGPRESS_MS);
+}
+
+function clearSkillLongPress() {
+  if (skillTooltipState.timer) {
+    clearTimeout(skillTooltipState.timer);
+    skillTooltipState.timer = null;
+  }
+}
+
+// Default-ikoner (magiker) vid module-load så knapparna aldrig är tomma
+updateSkillIcons('magiker');
+
 function triggerAA() {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
@@ -6040,7 +6205,9 @@ function skillKeyFromTarget(target) {
 
 function startSkillTouch(touch, key) {
   const side = sides[APP.localSide];
-  if (!side || side.skills[key].cd > 0) return;
+  if (!side) return;
+  // Tillåt att hålla även när skillen är på cooldown — då vill man bara läsa
+  // beskrivningen. Cast blockeras separat på cd vid release.
   const r = rectOf(skillEls[key]);
   aimState.touchId = touch.identifier;
   aimState.key = key;
@@ -6051,6 +6218,8 @@ function startSkillTouch(touch, key) {
   aimState.dz = side.hero.facingZ;
   aimState.dragMag = 0;
   skillEls[key].classList.add('active');
+  // Starta 500ms-timer för tooltip
+  startSkillLongPress(key);
 }
 function moveSkillTouch(touch) {
   if (!aimState.key) return;
@@ -6061,14 +6230,21 @@ function moveSkillTouch(touch) {
   if (mag > AIM_THRESHOLD && aimState.active) {
     aimState.dx = dx / mag;
     aimState.dz = dy / mag;
+    // Användaren drar för att sikta — avbryt tooltip
+    clearSkillLongPress();
+    if (skillTooltipState.shown) hideSkillTooltip();
   }
 }
 function endSkillTouch(touch, cancelled) {
   const key = aimState.key;
   if (!key) return;
   skillEls[key].classList.remove('active');
+  const wasShowingTooltip = skillTooltipState.shown;
+  clearSkillLongPress();
+  hideSkillTooltip();
   const side = sides[APP.localSide];
-  if (!cancelled && side) {
+  // Om tooltipen visades = användaren ville läsa, INTE casta
+  if (!cancelled && !wasShowingTooltip && side && side.skills[key].cd <= 0) {
     let dx, dz;
     const isDrag = SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD;
     if (isDrag) {
@@ -7779,6 +7955,9 @@ function enterPlayPhase() {
     }
     swapHeroMeshIfNeeded(s);
   }
+  // Uppdatera skill-ikoner för lokal sidans hjälte
+  const localSide = sides[APP.localSide];
+  if (localSide) updateSkillIcons(localSide.heroId || 'magiker');
   // Arena: positionera heroes på motsatta sidor, sätt lvl 30
   if (APP.gameMode === 'arena1v1') {
     for (const idx of [1, 2]) {

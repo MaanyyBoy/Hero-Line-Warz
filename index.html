@@ -148,13 +148,52 @@
       gap: 3px;
       box-shadow: 0 3px 10px rgba(0,0,0,0.45);
     }
-    .skill .lbl { font-size: 11px; opacity: 0.85; }
-    .skill .name { font-size: 12px; font-weight: 700; }
-    .skill .cd { font-size: 17px; font-weight: 700; opacity: 0; }
+    .skill .lbl {
+      position: absolute; bottom: 4px; right: 6px;
+      font-size: 10px; font-weight: 700;
+      opacity: 0.7;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+    }
+    .skill .icon {
+      width: 80%; height: 80%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .skill .icon svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+    .skill .cd {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; font-weight: 800; opacity: 0;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    }
     .skill.cooling { background: rgba(20,20,30,0.7); border-color: rgba(140,140,160,0.5); color: rgba(255,255,255,0.55); }
     .skill.cooling .cd { opacity: 1; }
-    .skill.cooling .name { opacity: 0.5; }
+    .skill.cooling .icon { opacity: 0.4; }
     .skill.active { background: rgba(80,120,220,0.8); border-color: #fff; transform: scale(1.06); }
+
+    /* Skill-tooltip (visas vid långt tryck på en skill-knapp) */
+    #skill-tooltip {
+      position: fixed;
+      background: rgba(15,25,40,0.96);
+      border: 1.5px solid rgba(180,200,255,0.65);
+      border-radius: 10px;
+      padding: 10px 13px;
+      color: #fff;
+      font: 400 12px/1.45 system-ui, sans-serif;
+      z-index: 130;
+      pointer-events: none;
+      max-width: 260px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.55);
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+    }
+    #skill-tooltip.visible { opacity: 1; transform: translateY(0); }
+    #skill-tooltip.hidden { display: none; }
+    #skill-tooltip .stt-name {
+      font-weight: 700; font-size: 13.5px;
+      color: #ffd34a; margin-bottom: 5px;
+    }
+    #skill-tooltip .stt-desc { opacity: 0.92; }
 
     /* Skill-arc — placerade kring AA på radie ~118px från AA-mitten (47.5,47.5).
        Q rakt ovanför AA (90°), F upp-vänster (135°), E rakt vänster (180°). */
@@ -1315,11 +1354,16 @@
   <div id="touch-ui">
     <div id="joy"><div id="joy-knob"></div></div>
     <div id="combat-cluster">
-      <button class="skill" id="skill-e" data-key="e"><span class="name">Hole</span><span class="lbl">E</span><span class="cd"></span></button>
-      <button class="skill" id="skill-f" data-key="f"><span class="name">Frost</span><span class="lbl">F</span><span class="cd"></span></button>
-      <button class="skill" id="skill-q" data-key="q"><span class="name">Fire</span><span class="lbl">Q</span><span class="cd"></span></button>
+      <button class="skill" id="skill-e" data-key="e"><span class="icon"></span><span class="lbl">E</span><span class="cd"></span></button>
+      <button class="skill" id="skill-f" data-key="f"><span class="icon"></span><span class="lbl">F</span><span class="cd"></span></button>
+      <button class="skill" id="skill-q" data-key="q"><span class="icon"></span><span class="lbl">Q</span><span class="cd"></span></button>
       <button id="aa-btn" data-key="aa" aria-label="Auto attack">ATK</button>
     </div>
+  </div>
+
+  <div id="skill-tooltip" class="hidden">
+    <div class="stt-name"></div>
+    <div class="stt-desc"></div>
   </div>
 
   <div id="shop-container">
