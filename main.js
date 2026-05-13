@@ -1388,9 +1388,16 @@ function getNextBossDef(waveNum) {
   const nextBossWave = (Math.floor((waveNum - 1) / 10) + 1) * 10;
   return BOSS_DEFS[nextBossWave] || null;
 }
-// Mini-boss skill-rotation: roterar genom de 3 boss-skillsen per wave (% 3)
+// Mini-bossar spawnar bara på jämna waves (2,4,6,8 / 12,14,16,18 / etc).
+// Skill-rotation per tier: 1:a even-waven i tier → skill 0, 2:a → 1, 3:e → 2, 4:e → 0.
+function shouldSpawnMiniBoss(waveNum) {
+  if (waveNum % 10 === 0) return false;  // boss-wave
+  if (waveNum % 2 !== 0) return false;   // bara jämna waves
+  return true;
+}
 function getMiniBossSkillIdx(waveNum) {
-  return (waveNum - 1) % 3;
+  const waveInTier = ((waveNum - 1) % 10) + 1;   // 1..9 inom varje tier
+  return Math.floor((waveInTier - 2) / 2) % 3;
 }
 
 function getWaveDef(waveNum) {
@@ -4362,36 +4369,38 @@ function hostSpawnWaveAtOnce(side, def) {
     for (; i < melee; i++) hostSpawnMonsterFromDef(side, lane, def, positions[i], 'melee');
     for (let j = 0; j < range; j++) hostSpawnMonsterFromDef(side, lane, def, positions[melee + j], 'range');
   }
-  // Mini-boss i lane 1: använder 1 av kommande bossens 3 skills som hint
-  const nextBoss = getNextBossDef(def.number);
-  if (nextBoss) {
-    const miniSkill = nextBoss.skills[getMiniBossSkillIdx(def.number)];
-    hostSpawnMiniBoss(side, def, nextBoss, miniSkill);
+  // Mini-boss på jämna waves: använder 1 av kommande bossens 3 skills som hint
+  if (shouldSpawnMiniBoss(def.number)) {
+    const nextBoss = getNextBossDef(def.number);
+    if (nextBoss) {
+      const miniSkill = nextBoss.skills[getMiniBossSkillIdx(def.number)];
+      hostSpawnMiniBoss(side, def, nextBoss, miniSkill);
+    }
   }
 }
 
 function hostSpawnMiniBoss(side, waveDef, bossDef, skill) {
   const cfg = SIDE_CFG[side.idx];
-  const lane = ((waveDef.number - 1) % 2 === 0) ? 1 : 2;
-  const x = cfg.spawnX + 1.0;  // lite bakom
+  const lane = ((waveDef.number / 2) % 2 === 0) ? 1 : 2;  // alternerar lane per mini-boss-spawn
+  const x = cfg.spawnX + 1.0;
   const z = cfg.laneZ[lane];
   const mesh = makeMonsterMesh();
-  const scale = 1.85;
+  const scale = 1.55;   // lagom större än vanlig minion (men inte boss-stor)
   mesh.scale.set(scale, scale, scale);
-  // Tinta minibossen i bossens kropps-färg
-  applyMonsterTint(mesh, bossDef.bodyTint, 0.65);
+  applyMonsterTint(mesh, bossDef.bodyTint, 0.7);
   attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, true);
-  attachHpBar(mesh, 2.0);
+  attachHpBar(mesh, 1.9);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
-  const hp = Math.round(waveDef.monsterHp * 4.5);
+  // "Lite starkare än vanliga minions" — ~2× HP och ~1.25× dmg
+  const hp = Math.round(waveDef.monsterHp * 2.2);
   side.monsters.push({
     id: nextEntityId++,
     lane,
     hp, maxHp: hp,
-    speed: waveDef.monsterSpeed * 0.9,
-    damage: Math.round(waveDef.monsterDmg * 1.6),
-    attackType: 'melee', attackRange: 1.4, attackInterval: 1.2,
+    speed: waveDef.monsterSpeed * 0.92,
+    damage: Math.round(waveDef.monsterDmg * 1.25),
+    attackType: 'melee', attackRange: 1.3, attackInterval: 1.1,
     pathIndex: 0, atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: false, isMiniBoss: true,
     bossName: bossDef.name + ' Acolyte',
