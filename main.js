@@ -3362,17 +3362,127 @@ function makeArenaOrbMesh() {
   return grp;
 }
 
+// Arena-fackla: cylindrisk stenfot + skål + flammor som flickrar
+function makeArenaBrazier() {
+  const grp = new THREE.Group();
+  // Stenfot
+  const foot = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 0.55, 1.8, 12),
+    new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 0.9 })
+  );
+  foot.position.y = 0.9;
+  foot.castShadow = true;
+  grp.add(foot);
+  // Skål
+  const bowl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.65, 0.45, 0.3, 14),
+    new THREE.MeshStandardMaterial({ color: 0x2a221a, roughness: 0.85, metalness: 0.3 })
+  );
+  bowl.position.y = 1.95;
+  bowl.castShadow = true;
+  grp.add(bowl);
+  // Coal-glow
+  const coals = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.55, 0.08, 12),
+    new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3311, emissiveIntensity: 1.5 })
+  );
+  coals.position.y = 2.12;
+  grp.add(coals);
+  // Flammor (3 koner) som ska animeras via animateSceneProps
+  const flames = [];
+  const flameMat = new THREE.MeshBasicMaterial({ color: 0xff8a30, transparent: true, opacity: 0.85 });
+  for (let i = 0; i < 3; i++) {
+    const fl = new THREE.Mesh(new THREE.ConeGeometry(0.32 - i * 0.06, 0.9 + i * 0.2, 8), flameMat);
+    fl.position.set((Math.random() - 0.5) * 0.18, 2.55 + i * 0.15, (Math.random() - 0.5) * 0.18);
+    grp.add(fl);
+    flames.push(fl);
+  }
+  // Pointlight som flickar
+  const light = new THREE.PointLight(0xff7a30, 1.8, 18, 2);
+  light.position.y = 2.6;
+  grp.add(light);
+  grp.userData.flames = flames;
+  grp.userData.light = light;
+  return grp;
+}
+
+const arenaBraziers = []; // för animation
+
 function buildArenaScene() {
   if (arenaSceneGroup.children.length) return;  // bara en gång
-  // Golv — dubbel storlek (100x70)
+  // Golv — dubbel storlek (100x70) med procedurell sand/sten-textur
+  const floorTex = makeNoiseTexture([90, 75, 56], 0.22, {
+    w: 256, h: 256, repeatX: 8, repeatY: 6,
+    specks: 1800, speckColor: [40, 32, 24], streaks: false,
+  });
+  // Tillsätt sprickor + större stenar via 2D-canvas-overlay
+  const fc = document.createElement('canvas');
+  fc.width = 512; fc.height = 384;
+  const fctx = fc.getContext('2d');
+  // Bas-färg (mer beige sandig)
+  fctx.fillStyle = '#5a4a36';
+  fctx.fillRect(0, 0, fc.width, fc.height);
+  // Bas-brus
+  const baseTex = floorTex.image;
+  fctx.drawImage(baseTex, 0, 0, fc.width, fc.height);
+  // Sprickor — slumpade tunna mörka linjer
+  fctx.lineCap = 'round';
+  for (let i = 0; i < 22; i++) {
+    fctx.strokeStyle = `rgba(20,16,12,${0.45 + Math.random() * 0.3})`;
+    fctx.lineWidth = 1 + Math.random() * 1.2;
+    const x0 = Math.random() * fc.width, y0 = Math.random() * fc.height;
+    const segs = 3 + (Math.random() * 4 | 0);
+    let cx = x0, cy = y0;
+    fctx.beginPath();
+    fctx.moveTo(cx, cy);
+    for (let s = 0; s < segs; s++) {
+      cx += (Math.random() - 0.5) * 60;
+      cy += (Math.random() - 0.5) * 60;
+      fctx.lineTo(cx, cy);
+    }
+    fctx.stroke();
+  }
+  // Större stenar (mörka prickar)
+  for (let i = 0; i < 60; i++) {
+    const r = 2 + Math.random() * 5;
+    const x = Math.random() * fc.width, y = Math.random() * fc.height;
+    fctx.fillStyle = `rgba(45,35,26,${0.5 + Math.random() * 0.3})`;
+    fctx.beginPath();
+    fctx.arc(x, y, r, 0, Math.PI * 2);
+    fctx.fill();
+    // Liten highlight på toppen
+    fctx.fillStyle = `rgba(140,118,90,0.4)`;
+    fctx.beginPath();
+    fctx.arc(x - r * 0.3, y - r * 0.3, r * 0.4, 0, Math.PI * 2);
+    fctx.fill();
+  }
+  const detailedFloorTex = new THREE.CanvasTexture(fc);
+  detailedFloorTex.wrapS = detailedFloorTex.wrapT = THREE.RepeatWrapping;
+  detailedFloorTex.repeat.set(3, 2);
+  detailedFloorTex.colorSpace = THREE.SRGBColorSpace;
+
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(100, 70),
-    new THREE.MeshStandardMaterial({ color: 0x3a2e22, roughness: 0.95 })
+    new THREE.MeshStandardMaterial({ map: detailedFloorTex, roughness: 0.95 })
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(0, 0, ARENA_Z_OFFSET);
   floor.receiveShadow = true;
   arenaSceneGroup.add(floor);
+
+  // 4 facklor i arena-hörnen (innanför perimeter-väggarna)
+  const brazPos = [
+    [-44 + 4, ARENA_Z_OFFSET - 28 + 4],
+    [ 44 - 4, ARENA_Z_OFFSET - 28 + 4],
+    [-44 + 4, ARENA_Z_OFFSET + 28 - 4],
+    [ 44 - 4, ARENA_Z_OFFSET + 28 - 4],
+  ];
+  for (const [bx, bz] of brazPos) {
+    const br = makeArenaBrazier();
+    br.position.set(bx, 0, bz);
+    arenaSceneGroup.add(br);
+    arenaBraziers.push(br);
+  }
   // Perimeter (stenkant runt arenan)
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a4030, roughness: 0.9 });
   const wallTop = 1.2;
@@ -3569,6 +3679,10 @@ function updateArenaOrb(dt) {
       orb.alive = true;
       orb.hp = orb.maxHp;
       if (arenaOrbMesh) arenaOrbMesh.visible = true;
+      // Spawn-FX: stor ring-burst + skill-cast-ring runt orb-position
+      spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
+      spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
+      showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
     }
     return;
   }
@@ -3621,6 +3735,9 @@ function damageArenaOrb(amount, byIdx) {
     orb.alive = false;
     orb.spawnTimer = ARENA_ORB_RESPAWN_DELAY;
     if (arenaOrbMesh) arenaOrbMesh.visible = false;
+    // Stor explosion vid orb-position
+    spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x88ffdd);
+    spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0xaaffee, 2.0);
     // Dödaren får heal + shield
     const winner = sides[byIdx];
     if (winner) {
@@ -3631,7 +3748,48 @@ function damageArenaOrb(amount, byIdx) {
       spawnHealFx(winner.hero.x, winner.hero.z);
       spawnShieldBurstFx(winner.hero.x, winner.hero.z, 0x55ffcc);
     }
+    // Banner visas alltid vid orb-död (även edge-case när winner saknas)
+    const isLocal = byIdx === APP.localSide;
+    showOrbBanner(isLocal ? 'ORB DÖDAD! +30% HP & SHIELD' :
+                  (winner ? 'Motståndaren tog orben' : 'Orben dog'),
+                  isLocal ? '#aaffaa' : '#ffaaaa');
   }
+}
+
+// Liten flyttbar banner som visas några sekunder för orb-händelser
+function showOrbBanner(text, color = '#88ffdd') {
+  let el = document.getElementById('orb-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'orb-banner';
+    el.style.cssText = 'position:fixed;top:18%;left:50%;transform:translateX(-50%);'
+      + 'background:rgba(0,20,30,0.78);padding:10px 22px;border-radius:10px;'
+      + 'border:2px solid currentColor;color:#88ffdd;font:700 17px/1 system-ui;'
+      + 'letter-spacing:1.4px;z-index:75;pointer-events:none;text-align:center;'
+      + 'box-shadow:0 0 20px currentColor;'
+      + 'animation:orb-banner-pop 2.6s ease-out forwards;';
+    document.body.appendChild(el);
+    // CSS-animation (id-guard så vi inte duplicerar style-elementet vid re-create)
+    if (!document.getElementById('orb-banner-style')) {
+      const styleEl = document.createElement('style');
+      styleEl.id = 'orb-banner-style';
+      styleEl.textContent = `@keyframes orb-banner-pop {
+        0%   { opacity: 0; transform: translate(-50%, 8px) scale(0.85); }
+        12%  { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+        22%  { transform: translate(-50%, 0) scale(1); }
+        80%  { opacity: 1; }
+        100% { opacity: 0; transform: translate(-50%, -8px) scale(0.95); }
+      }`;
+      document.head.appendChild(styleEl);
+    }
+  }
+  el.textContent = text;
+  el.style.color = color;
+  el.style.borderColor = color;
+  // Restart animation
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = 'orb-banner-pop 2.6s ease-out forwards';
 }
 
 function tickArena(dt) {
@@ -9550,6 +9708,24 @@ function updateBuffDebuffSprites() {
 }
 
 function animateSceneProps(dt, now) {
+  // Arena-facklor: flickande ljus + flammande koner
+  if (APP.gameMode === 'arena1v1') {
+    for (let bi = 0; bi < arenaBraziers.length; bi++) {
+      const br = arenaBraziers[bi];
+      if (br.userData.flames) {
+        for (let i = 0; i < br.userData.flames.length; i++) {
+          const fl = br.userData.flames[i];
+          const k = 0.85 + 0.25 * Math.sin(now * (6 + i * 1.6) + bi);
+          fl.scale.set(1, k, 1);
+          fl.position.x = (Math.sin(now * (5.5 + i) + i + bi) * 0.06);
+          fl.position.z = (Math.cos(now * (4.4 + i) + i + bi) * 0.06);
+        }
+      }
+      if (br.userData.light) {
+        br.userData.light.intensity = 1.6 + 0.45 * Math.sin(now * 8 + bi * 1.7) + 0.15 * Math.sin(now * 17 + bi);
+      }
+    }
+  }
   // Fontäner: pulsera emissive på vattnet, bobba övre skålens vattenyta
   for (const idx of [1, 2]) {
     const f = towerMeshes[idx];
