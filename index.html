@@ -1041,6 +1041,52 @@
     }
     #hp-confirm:active:not(:disabled) { transform: scale(0.97); }
 
+    /* Asset-loading-screen (visas innan lobbyn) */
+    #asset-loading {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #08111e 0%, #1a253b 100%);
+      color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      z-index: 1500;
+      font: 14px/1.4 system-ui, sans-serif;
+      text-align: center;
+      padding: 24px;
+    }
+    #asset-loading.hidden { display: none; }
+    #asset-loading .al-spinner {
+      width: 56px; height: 56px;
+      border: 5px solid rgba(180,200,255,0.2);
+      border-top-color: #88ccff;
+      border-radius: 50%;
+      animation: al-spin 0.9s linear infinite;
+      margin-bottom: 18px;
+    }
+    @keyframes al-spin { to { transform: rotate(360deg); } }
+    #asset-loading .al-title {
+      font: 700 22px/1.2 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 1px;
+      margin-bottom: 14px;
+    }
+    #asset-loading .al-bar {
+      width: min(360px, 80vw); height: 10px;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(180,200,255,0.35);
+      border-radius: 6px; overflow: hidden;
+    }
+    #al-bar-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #5ab4ff 0%, #88d6ff 100%);
+      transition: width 0.18s ease-out;
+    }
+    #al-status {
+      margin-top: 10px;
+      font: 500 12px/1 ui-monospace, monospace;
+      opacity: 0.75;
+      letter-spacing: 0.5px;
+    }
+
     /* Desktop-tips */
     @media (pointer: fine) {
       #hud .hint::after { content: " · på dator: WASD + Q/F/E"; }
@@ -1215,6 +1261,21 @@
     </div>
   </div>
 
+  <div id="asset-loading">
+    <div class="al-spinner"></div>
+    <div class="al-title">Laddar grafik...</div>
+    <div class="al-bar"><div id="al-bar-fill"></div></div>
+    <div id="al-status">0 / 0</div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

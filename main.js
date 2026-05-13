@@ -1,4 +1,6 @@
-import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 // ============================================================
 // THREE.JS GRUND-SETUP
@@ -30,6 +32,158 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+// ============================================================
+// ASSET PRELOADER — laddar alla GLTF-modeller + animationer innan
+// lobbyn blir spelbar. Loading-screen i index.html ligger ovanpå tills
+// preloadAllAssets() är klar.
+// ============================================================
+
+const ASSET_BASE = './assets/';
+const CHARACTER_ASSETS = {
+  // Heroes (Adventurers-pack)
+  knight:    'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Knight.glb',
+  mage:      'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Mage.glb',
+  ranger:    'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Ranger.glb',
+  barbarian: 'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Barbarian.glb',
+  rogue:     'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Rogue.glb',
+  // Skeletons (wave-monster + minions)
+  skel_warrior: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Warrior.glb',
+  skel_mage:    'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Mage.glb',
+  skel_rogue:   'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Rogue.glb',
+  skel_minion:  'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Minion.glb',
+};
+// Rig_Medium_*.glb innehåller animations-clips som matchar både hero- och
+// skeleton-skeletten (samma rig-naming i KayKit-paken). Vi slår ihop alla
+// clips per rig-grupp.
+const ANIMATION_ASSETS = {
+  hero_general:  'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Animations/gltf/Rig_Medium/Rig_Medium_General.glb',
+  hero_movement: 'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Animations/gltf/Rig_Medium/Rig_Medium_MovementBasic.glb',
+  skel_general:  'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/Animations/gltf/Rig_Medium/Rig_Medium_General.glb',
+  skel_movement: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/Animations/gltf/Rig_Medium/Rig_Medium_MovementBasic.glb',
+};
+
+const loadedCharacters = new Map();   // name → { scene, animations }
+const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
+  hero: [],
+  skel: [],
+};
+let assetsReady = false;
+
+async function preloadAllAssets() {
+  const loader = new GLTFLoader();
+  const charEntries = Object.entries(CHARACTER_ASSETS);
+  const animEntries = Object.entries(ANIMATION_ASSETS);
+  const total = charEntries.length + animEntries.length;
+  let done = 0;
+  const fillEl = document.getElementById('al-bar-fill');
+  const statusEl = document.getElementById('al-status');
+  const updateProgress = (label) => {
+    done++;
+    if (fillEl) fillEl.style.width = `${(done / total) * 100}%`;
+    if (statusEl) statusEl.textContent = `${done} / ${total} · ${label}`;
+  };
+
+  const charPromises = charEntries.map(([name, path]) =>
+    loader.loadAsync(ASSET_BASE + path).then(gltf => {
+      loadedCharacters.set(name, { scene: gltf.scene, animations: gltf.animations || [] });
+      // Förbered shadows + texture-filtering på alla mesh-noder
+      gltf.scene.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = false;
+          if (o.material && o.material.map) {
+            o.material.map.magFilter = THREE.NearestFilter; // crispy pixel-style för KayKit
+          }
+        }
+      });
+      updateProgress(name);
+    }).catch(err => {
+      console.error(`[asset] Failed character ${name}:`, err);
+      updateProgress(name + ' (FAILED)');
+    })
+  );
+  const animPromises = animEntries.map(([name, path]) =>
+    loader.loadAsync(ASSET_BASE + path).then(gltf => {
+      const group = name.startsWith('hero_') ? 'hero' : 'skel';
+      for (const clip of (gltf.animations || [])) {
+        loadedAnimationClips[group].push(clip);
+      }
+      updateProgress(name);
+    }).catch(err => {
+      console.error(`[asset] Failed anim ${name}:`, err);
+      updateProgress(name + ' (FAILED)');
+    })
+  );
+  await Promise.all([...charPromises, ...animPromises]);
+  assetsReady = true;
+  if (statusEl) statusEl.textContent = `${total} / ${total} · klart`;
+  // Liten fördröjning så användaren hinner se "klart"
+  setTimeout(() => {
+    const al = document.getElementById('asset-loading');
+    if (al) al.classList.add('hidden');
+  }, 200);
+}
+
+// Hjälpfunktion: hämta en färsk klonad instans av en laddad karaktär
+// (med eget skinned-skeleton via SkeletonUtils.clone) + AnimationMixer
+// + actions för alla relevanta clips.
+function instantiateCharacter(charName, animGroup) {
+  const entry = loadedCharacters.get(charName);
+  if (!entry) {
+    console.warn(`[asset] Character ${charName} ej laddad — använder placeholder`);
+    return null;
+  }
+  const clone = SkeletonUtils.clone(entry.scene);
+  clone.traverse(o => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      o.castShadow = true;
+      o.receiveShadow = false;
+      o.frustumCulled = false; // skinned meshes kan ha fel bounding box
+    }
+  });
+  // Animations-clips: ta från animGroup-poolen + ev. inbäddade i karaktären
+  const clips = [
+    ...(loadedAnimationClips[animGroup] || []),
+    ...entry.animations,
+  ];
+  const mixer = new THREE.AnimationMixer(clone);
+  const actions = {};
+  for (const clip of clips) {
+    actions[clip.name] = mixer.clipAction(clip);
+  }
+  clone.userData.mixer = mixer;
+  clone.userData.actions = actions;
+  clone.userData.clipNames = Object.keys(actions);
+  clone.userData.currentAction = null;
+  clone.userData.gltfCharName = charName;
+  return clone;
+}
+
+// Stega alla aktiva mixers — anropas från tick().
+// Auto-rensar mixers vars root inte längre är i scenen (efter scene.remove).
+const activeMixers = new Set();
+function tickMixers(dt) {
+  if (!activeMixers.size) return;
+  const toRemove = [];
+  for (const m of activeMixers) {
+    let cur = m.getRoot();
+    let inScene = false;
+    while (cur) {
+      if (cur === scene) { inScene = true; break; }
+      cur = cur.parent;
+    }
+    if (!inScene) {
+      toRemove.push(m);
+      continue;
+    }
+    m.update(dt);
+  }
+  for (const m of toRemove) activeMixers.delete(m);
+}
+
+// Starta preload direkt vid sidladdning (medan resten av main.js körs)
+preloadAllAssets();
 
 // ============================================================
 // STATIC SCENE (mark, väggar, lanes, baser, torn, ljus)
@@ -1700,11 +1854,97 @@ function makeHeroCopyMesh(ownerSideIdx, heroId) {
   return grp;
 }
 
-// Hero-mesh-dispatcher per heroId. Default Gandulf (magiker).
+// Hero-mesh-dispatcher per heroId — GLTF-laddat från KayKit Adventurers.
+// Mappning: magiker→Mage, legolas→Ranger, gimlu→Barbarian.
+const HERO_GLTF_MAP = {
+  magiker: 'mage',
+  legolas: 'ranger',
+  gimlu:   'barbarian',
+};
+const HERO_GLTF_SCALE = {
+  magiker: 0.95,
+  legolas: 0.95,
+  gimlu:   1.05,  // Barbarian = lite större för tank-känsla
+};
 function makeHeroMesh(idx, heroId) {
-  if (heroId === 'legolas') return makeLegolasMesh(idx);
-  if (heroId === 'gimlu') return makeGimluMesh(idx);
-  return makeGandulfMesh(idx);
+  const cfg = SIDE_CFG[idx];
+  const grp = new THREE.Group();
+  grp.userData.heroId = heroId || 'magiker';
+
+  const charName = HERO_GLTF_MAP[heroId] || HERO_GLTF_MAP.magiker;
+  const inner = instantiateCharacter(charName, 'hero');
+  if (inner) {
+    inner.scale.setScalar(HERO_GLTF_SCALE[heroId] || 0.95);
+    grp.add(inner);
+    grp.userData.inner = inner;
+    grp.userData.mixer = inner.userData.mixer;
+    grp.userData.actions = inner.userData.actions;
+    activeMixers.add(inner.userData.mixer);
+    startDefaultIdle(grp);
+  } else {
+    // Fallback: röd placeholder-box om asset inte laddat
+    const fb = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 1.7, 0.5),
+      new THREE.MeshStandardMaterial({ color: 0xff3333 })
+    );
+    fb.position.y = 0.85;
+    grp.add(fb);
+  }
+
+  // Sido-ring under hjälten (visar färgen på ägarsidan)
+  const sideColor = cfg ? cfg.heroColor : 0xffffff;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.45, 0.62, 28),
+    new THREE.MeshBasicMaterial({ color: sideColor, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.04;
+  grp.add(ring);
+  grp.userData.sideRing = ring;
+
+  return grp;
+}
+
+// ---- GLTF-animations-hjälpare ----
+function findClipName(actions, ...substrs) {
+  if (!actions) return null;
+  const names = Object.keys(actions);
+  for (const sub of substrs) {
+    const found = names.find(n => n.toLowerCase().includes(sub.toLowerCase()));
+    if (found) return found;
+  }
+  return null;
+}
+
+function startDefaultIdle(grp) {
+  const actions = grp.userData.actions;
+  if (!actions) return;
+  const idleName = findClipName(actions, 'Idle', 'idle');
+  if (!idleName) return;
+  const a = actions[idleName];
+  a.reset().play();
+  grp.userData.currentClipName = idleName;
+}
+
+function playGltfAction(grp, clipName, opts = {}) {
+  const actions = grp.userData.actions;
+  if (!actions || !clipName) return;
+  const target = actions[clipName];
+  if (!target) return;
+  if (grp.userData.currentClipName === clipName) return;
+  const prevName = grp.userData.currentClipName;
+  const prev = prevName ? actions[prevName] : null;
+  const fade = opts.fade ?? 0.18;
+  target.reset();
+  target.setLoop(opts.once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+  target.clampWhenFinished = !!opts.once;
+  target.timeScale = opts.timeScale ?? 1;
+  target.enabled = true;
+  target.setEffectiveWeight(1);
+  target.fadeIn(fade);
+  target.play();
+  if (prev && prev !== target) prev.fadeOut(fade);
+  grp.userData.currentClipName = clipName;
 }
 
 function makeGandulfMesh(idx) {
@@ -2386,41 +2626,46 @@ function makeGimluMesh(idx) {
   return grp;
 }
 
-function makeMonsterMesh() {
-  const grp = new THREE.Group();
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0x3d2b1a, roughness: 0.9 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x2a1c10, roughness: 0.9 });
-
-  const rig = buildHumanoidRig(grp, {
-    legR: 0.10, legH: 0.30, armR: 0.09, armH: 0.32,
-    torsoR: 0.22, torsoH: 0.40, headR: 0.20,
-    torsoShape: 'capsule',
-    bodyMat: skinMat, armorMat: darkMat, skinMat,
-    limbMat: skinMat, legMat: darkMat,
+// Hjälpfunktion: applicera tier/grupp-tint på alla KayKit-meshes
+// via emissive (utan att skapa nya material per instans = bra prestanda).
+function tintGltfInner(inner, tintColor, tintIntensity = 0.25) {
+  if (!inner) return;
+  inner.traverse(o => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      if (!o.material._tinted) {
+        // Klon-materialet en gång per mesh så vi inte påverkar andra instanser
+        o.material = o.material.clone();
+        o.material._tinted = true;
+      }
+      if (tintColor !== undefined) {
+        o.material.emissive = new THREE.Color(tintColor);
+        o.material.emissiveIntensity = tintIntensity;
+      }
+    }
   });
+}
 
-  // Glödande röda ögon
-  addGlowingEyes(grp, rig.headY, 0xff4422, 1.3);
-
-  // Horn
-  const hornMat = new THREE.MeshStandardMaterial({ color: 0x1c130a, roughness: 0.8 });
-  for (const side of [-1, 1]) {
-    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.18, 10), hornMat);
-    horn.position.set(side * 0.12, rig.headY + 0.16, 0);
-    horn.rotation.z = side * 0.30;
-    grp.add(horn);
+function makeMonsterMesh() {
+  // Wave-monster använder Skeleton_Warrior som default. Range-monster
+  // tintas grönaktigt utifrån redan i hostSpawnMonsterFromDef (se nedan).
+  const grp = new THREE.Group();
+  const inner = instantiateCharacter('skel_warrior', 'skel');
+  if (inner) {
+    inner.scale.setScalar(0.85);
+    grp.add(inner);
+    grp.userData.inner = inner;
+    grp.userData.mixer = inner.userData.mixer;
+    grp.userData.actions = inner.userData.actions;
+    activeMixers.add(inner.userData.mixer);
+    startDefaultIdle(grp);
+  } else {
+    const fb = new THREE.Mesh(
+      new THREE.BoxGeometry(0.4, 1.4, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x8a3a3a })
+    );
+    fb.position.y = 0.7;
+    grp.add(fb);
   }
-
-  // Hängande klor på högerarmen så monsterets attack känns hotfullt
-  const claw = new THREE.Mesh(
-    new THREE.ConeGeometry(0.04, 0.18, 6),
-    new THREE.MeshStandardMaterial({ color: 0xddd0c0, roughness: 0.5 })
-  );
-  claw.position.set(0, -0.52, 0);
-  claw.rotation.x = Math.PI;
-  rig.rightArm.add(claw);
-
-  setShadow(grp, true, false);
   return grp;
 }
 
@@ -2681,6 +2926,25 @@ const ARCHETYPE_BUILDERS = {
   champion: buildChampionBody,
 };
 
+// Mappa arketyp → KayKit Skeleton-variant. Endast 4 finns i packen,
+// så några arketyper delar modell men särskiljs via scale + tier-tint.
+const ARCH_TO_GLTF = {
+  slasher:  'skel_rogue',
+  archer:   'skel_rogue',     // skeleton-rogue dubbar som archer (saknas dedikerad)
+  bruiser:  'skel_warrior',
+  mage:     'skel_mage',
+  tank:     'skel_warrior',
+  champion: 'skel_warrior',
+};
+const ARCH_SCALE_BIAS = {
+  slasher:  0.78,
+  archer:   0.82,
+  bruiser:  0.92,
+  mage:     0.85,
+  tank:     1.00,
+  champion: 1.05,
+};
+
 function makeMinionMesh(typeId, ownerIdx) {
   const def = MINION_TYPES[typeId];
   if (!def) {
@@ -2688,12 +2952,46 @@ function makeMinionMesh(typeId, ownerIdx) {
     return new THREE.Group();
   }
   const palette = TIER_PALETTE[def.tier];
-  const scale = TIER_SCALE[def.tier];
+  const tierScale = TIER_SCALE[def.tier];
   const ownerCfg = SIDE_CFG[ownerIdx];
+  const charName = ARCH_TO_GLTF[def.archetype] || 'skel_warrior';
+  const archBias = ARCH_SCALE_BIAS[def.archetype] ?? 0.85;
+
   const grp = new THREE.Group();
-  ARCHETYPE_BUILDERS[def.archetype](grp, palette, ownerCfg.gruntColor);
-  grp.scale.setScalar(scale);
-  setShadow(grp, true, false);
+  grp.userData.archetype = def.archetype;
+  grp.userData.tier = def.tier;
+  const inner = instantiateCharacter(charName, 'skel');
+  if (inner) {
+    inner.scale.setScalar(archBias * tierScale);
+    grp.add(inner);
+    grp.userData.inner = inner;
+    grp.userData.mixer = inner.userData.mixer;
+    grp.userData.actions = inner.userData.actions;
+    activeMixers.add(inner.userData.mixer);
+    startDefaultIdle(grp);
+    // Tier-tint via emissive (gör T2+ glöda lite i sin palette-färg).
+    // T1 = ingen extra glow, T5 = stark glow.
+    if (palette && palette.glow > 0) {
+      tintGltfInner(inner, palette.accent ?? palette.body, Math.min(0.6, palette.glow * 0.4));
+    }
+  } else {
+    const fb = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 1.2, 0.35),
+      new THREE.MeshStandardMaterial({ color: palette ? palette.body : 0x666666 })
+    );
+    fb.position.y = 0.6;
+    grp.add(fb);
+  }
+
+  // Ägar-ring (visar vems minion det är)
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.30, 0.42, 24),
+    new THREE.MeshBasicMaterial({ color: ownerCfg.gruntColor, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.03;
+  grp.add(ring);
+
   return grp;
 }
 
@@ -4708,6 +5006,87 @@ const ATTACK_DURATION = 0.4;     // sek per attack-thrust
 const HERO_ATTACK_DURATION = 0.4;
 const CREEP_ATTACK_DURATION = 0.3;
 
+// Cache:a relevant clip-namnen per mesh (kostar att traversa actions varje frame)
+function getCachedClipNames(mesh) {
+  if (mesh.userData._cachedClips) return mesh.userData._cachedClips;
+  const actions = mesh.userData.actions;
+  if (!actions) return null;
+  const cache = {
+    idle:   findClipName(actions, 'Idle'),
+    walk:   findClipName(actions, 'Walking', 'Walk'),
+    run:    findClipName(actions, 'Running', 'Run'),
+    attack: findClipName(actions, '1H_Melee_Attack', '2H_Melee_Attack', 'Attack', 'Chop', 'Spellcast_Shoot', 'Spellcast'),
+    death:  findClipName(actions, 'Death_A', 'Death'),
+  };
+  mesh.userData._cachedClips = cache;
+  return cache;
+}
+
+function animateGltfCharacter(mesh, dt, side, type) {
+  let st = mesh._gltfState;
+  if (!st) {
+    st = mesh._gltfState = {
+      lastX: mesh.position.x,
+      lastZ: mesh.position.z,
+      attackTimer: 0,
+    };
+  }
+
+  // Velocity från positionsdelta
+  const dx = mesh.position.x - st.lastX;
+  const dz = mesh.position.z - st.lastZ;
+  const vel = Math.hypot(dx, dz) / Math.max(dt, 0.001);
+  st.lastX = mesh.position.x;
+  st.lastZ = mesh.position.z;
+
+  const clips = getCachedClipNames(mesh);
+  if (!clips) return;
+
+  // Death: kör en gång och stanna kvar
+  const isDead = side && side.hero && side.hero.dead;
+  if (isDead) {
+    if (clips.death && mesh.userData.currentClipName !== clips.death) {
+      playGltfAction(mesh, clips.death, { once: true, fade: 0.15 });
+    }
+    return;
+  }
+
+  // Attack-detektion (hero): attackCounter-delta + skill-CD-hopp
+  let attackTrig = false;
+  if (side && type === 'hero') {
+    if (side._lastAttackCounter === undefined) side._lastAttackCounter = side.attackCounter || 0;
+    if ((side.attackCounter || 0) > side._lastAttackCounter) {
+      side._lastAttackCounter = side.attackCounter;
+      attackTrig = true;
+    }
+    if (!side._lastSkillCd) side._lastSkillCd = { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) {
+      const cur = (side.skills && side.skills[k]) ? side.skills[k].cd : 0;
+      if (cur > side._lastSkillCd[k] + 0.5 && cur > 0.5) attackTrig = true;
+      side._lastSkillCd[k] = cur;
+    }
+  }
+
+  if (attackTrig && clips.attack) {
+    playGltfAction(mesh, clips.attack, { once: true, fade: 0.08, timeScale: 1.4 });
+    st.attackTimer = HERO_ATTACK_DURATION;
+  }
+
+  if (st.attackTimer > 0) {
+    st.attackTimer -= dt;
+    return; // håll kvar attack-clipet
+  }
+
+  // Movement state
+  if (vel > 4.0 && clips.run) {
+    playGltfAction(mesh, clips.run);
+  } else if (vel > 0.4 && clips.walk) {
+    playGltfAction(mesh, clips.walk);
+  } else if (clips.idle) {
+    playGltfAction(mesh, clips.idle);
+  }
+}
+
 function animateCharacter(mesh, dt, side, type) {
   const rig = mesh.userData && mesh.userData.rig;
   if (!rig) return;
@@ -4827,6 +5206,14 @@ function animateCharacter(mesh, dt, side, type) {
   }
 }
 
+function animateMeshChar(mesh, dt, side, type) {
+  if (mesh.userData.mixer) {
+    animateGltfCharacter(mesh, dt, side, type);
+  } else if (mesh.userData.rig) {
+    animateCharacter(mesh, dt, side, type); // legacy procedurell fallback
+  }
+}
+
 function animateAllCharacters(dt) {
   if (APP.mode === 'lobby') return;
   // Hero-meshes (båda sidor om de finns)
@@ -4834,15 +5221,15 @@ function animateAllCharacters(dt) {
     const side = sides[sideIdx];
     if (!side || !side.mesh) continue;
     if (!side.mesh.visible) continue;
-    animateCharacter(side.mesh, dt, side, 'hero');
+    animateMeshChar(side.mesh, dt, side, 'hero');
   }
   // Solo: monster/creep-meshes ligger på side.monsters/playerCreeps direkt
   if (APP.mode === 'solo') {
     for (const sideIdx of [1, 2]) {
       const side = sides[sideIdx];
       if (!side) continue;
-      for (const m of side.monsters) if (m.mesh) animateCharacter(m.mesh, dt, null, 'monster');
-      for (const c of side.playerCreeps) if (c.mesh) animateCharacter(c.mesh, dt, null, 'minion');
+      for (const m of side.monsters) if (m.mesh) animateMeshChar(m.mesh, dt, null, 'monster');
+      for (const c of side.playerCreeps) if (c.mesh) animateMeshChar(c.mesh, dt, null, 'minion');
     }
   }
   // MP: meshes från clientMeshes
@@ -4852,7 +5239,7 @@ function animateAllCharacters(dt) {
       if (!tier) continue;
       const type = key === 'monsters' ? 'monster' : 'minion';
       for (const map of tier.values()) {
-        for (const mesh of map.values()) animateCharacter(mesh, dt, null, type);
+        for (const mesh of map.values()) animateMeshChar(mesh, dt, null, type);
       }
     }
   }
@@ -7766,6 +8153,7 @@ function tick() {
     smoothEntityMeshes(dt);
   }
 
+  tickMixers(dt);
   animateAllCharacters(dt);
   animateSceneProps(dt, now);
   tickAllHpBars();
