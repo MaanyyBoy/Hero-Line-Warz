@@ -3630,6 +3630,9 @@ function startArenaRound(roundNum) {
     s.furyTargetId = 0;
     s.titansInstanceStacks = 0;
     s.titansBlockPending = false;
+    // Reset shield-state — refresh-timern triggar omedelbart vid fight-start
+    s.lingShieldHp = 0;
+    s.lingShieldRefreshTimer = 0.5;  // kort delay så shield-pop syns
   }
   showArenaPrep();
 }
@@ -4229,6 +4232,10 @@ function updateMonsters(side, dt) {
       m.frozenTime -= dt;
       continue;
     }
+    // Feared: kan inte agera (taggas i tickFearWave; här bara skippa AI)
+    if ((m.fearTime || 0) > 0) {
+      continue;
+    }
     // Taunted: tvinga chase
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
 
@@ -4344,6 +4351,10 @@ function updatePlayerCreeps(side, dt) {
     // Frusen — hoppa över
     if ((c.frozenTime || 0) > 0) {
       c.frozenTime -= dt;
+      continue;
+    }
+    // Feared — kan inte agera
+    if ((c.fearTime || 0) > 0) {
       continue;
     }
     // Taunt-tick (förändrar inte movement-logiken här i solo,
@@ -4557,6 +4568,8 @@ function respawnHero(side) {
   side.furyTargetId = 0;
   side.titansInstanceStacks = 0;
   side.titansBlockPending = false;
+  side.lingShieldHp = 0;
+  side.lingShieldRefreshTimer = 0.5;
 }
 
 // ============================================================
@@ -5795,6 +5808,11 @@ function recomputeSideStats(side) {
       addStats(def.activeAtMax.stats);
     }
   }
+  // Ling & Lang lvl 10 shield-uppe: +AA range + AA dmg
+  if ((side.lingShieldHp || 0) > 0) {
+    attackDmgPct += LING_AA_DMG_BONUS;
+    aaRangePct += LING_AA_RANGE_BONUS;
+  }
 
   // Level-skalning ovanpå items (matchar server-engine)
   const lvl = (side.level || 1) - 1;
@@ -5833,6 +5851,76 @@ function recomputeSideStats(side) {
   side.skills.q.max = SKILL_BASE_CD.q * side.cdrMul;
   side.skills.f.max = SKILL_BASE_CD.f * side.cdrMul;
   side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
+}
+
+// ============================================================
+// ITEM-ACTIVES: Tier 10 (Ling & Lang shield, Onyx ice-block, Titans fear)
+// ============================================================
+
+const LING_SHIELD_REFRESH = 20;       // sek mellan refresh
+const LING_SHIELD_PCT = 0.20;          // 20% maxHP
+const LING_AOE_RADIUS = 4.5;
+const LING_AOE_DMG_PCT = 0.15;         // 15% av hero maxHp till AoE-fiender
+const LING_AA_RANGE_BONUS = 0.20;      // medan shield > 0
+const LING_AA_DMG_BONUS = 0.10;        // medan shield > 0
+
+// Auto-passiv: refreshar var 20:e sek till 20% maxHP (toppas upp om partial).
+function tickLingShield(side, dt) {
+  const hasLvl10 = side.inventory && side.inventory.some(it => it.itemId === 'item3' && it.level >= ITEM_MAX_LEVEL);
+  if (!hasLvl10) {
+    if ((side.lingShieldHp || 0) > 0) {
+      side.lingShieldHp = 0;
+      recomputeSideStats(side);
+    }
+    return;
+  }
+  if ((side.lingShieldRefreshTimer ?? -1) <= 0) {
+    // Första frame eller efter trigger — sätt nästa timer
+    side.lingShieldRefreshTimer = LING_SHIELD_REFRESH;
+  }
+  side.lingShieldRefreshTimer -= dt;
+  if (side.lingShieldRefreshTimer <= 0) {
+    side.lingShieldRefreshTimer = LING_SHIELD_REFRESH;
+    const target = side.hero.maxHp * LING_SHIELD_PCT;
+    const wasUp = (side.lingShieldHp || 0) > 0;
+    side.lingShieldHp = Math.max(side.lingShieldHp || 0, target);
+    spawnShieldBurstFx(side.hero.x, side.hero.z, 0xddffaa);
+    if (!wasUp) recomputeSideStats(side);  // applicera +20% range + 10% AA dmg
+  }
+}
+
+function lingShieldExplode(side) {
+  // Förhindra rekursion (om explosionen skadar opp's Ling shield som triggar igen)
+  if (side._inLingExplode) return;
+  side._inLingExplode = true;
+  const dmg = side.hero.maxHp * LING_AOE_DMG_PCT;
+  // Skada egna monsters/opp's creeps i radie
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < LING_AOE_RADIUS) {
+      m.hp -= dmg;
+      if (m.hp <= 0) hostKillMonster(side, i, side);
+    }
+  }
+  const opp = sides[3 - side.idx];
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < LING_AOE_RADIUS) {
+      c.hp -= dmg;
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+    }
+  }
+  // Arena: orb + opp hero
+  applyAoEDamageInArena(side.hero.x, side.hero.z, LING_AOE_RADIUS, dmg, side.idx);
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+    if (Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z) < LING_AOE_RADIUS) {
+      damageHero(opp, dmg);
+    }
+  }
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa55);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xffcc44, 2.0);
+  triggerCameraShake(0.30, 0.3);
+  side._inLingExplode = false;
 }
 
 // Skada till hjälten — applicerar dmgReductionMul från items + fontän-aura.
@@ -5897,7 +5985,22 @@ function damageHero(side, amount) {
   // Titans Armor instance-stacks → +1% DR per stack
   const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
   let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul;
-  // Gandulf shield absorberar först
+  // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
+  if ((side.lingShieldHp || 0) > 0 && final > 0) {
+    if (side.lingShieldHp >= final) {
+      side.lingShieldHp -= final;
+      final = 0;
+    } else {
+      final -= side.lingShieldHp;
+      side.lingShieldHp = 0;
+    }
+    if (side.lingShieldHp <= 0) {
+      side.lingShieldHp = 0;
+      lingShieldExplode(side);
+      recomputeSideStats(side);
+    }
+  }
+  // Gandulf shield absorberar därefter
   if ((side.shield || 0) > 0 && final > 0) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
     else { final -= side.shield; side.shield = 0; }
@@ -5937,15 +6040,189 @@ function activateInventoryItem(side, slotIdx) {
   const def = itemDefForEntry(entry);
   if (!def || !def.activeAtMax) return;
   if (entry.level < ITEM_MAX_LEVEL) return;
+  const kind = def.activeAtMax.kind || 'statBuff';
+  // Specialfall: ice-block kan avbrytas mid-channel med en till tap.
+  // Sätt CD vid cancel också så spam-tap inte kringgår 45s-cooldown.
+  if (kind === 'iceBlock' && (entry.activeRemaining || 0) > 0) {
+    entry.activeRemaining = 0;
+    entry.activeCd = def.activeAtMax.cooldown ?? ACTIVE_COOLDOWN;
+    onIceBlockEnd(side);
+    return;
+  }
   if ((entry.activeCd || 0) > 0) return;
   if ((entry.activeRemaining || 0) > 0) return;
-  entry.activeRemaining = def.activeAtMax.duration ?? ACTIVE_DURATION;
   entry.activeCd = def.activeAtMax.cooldown ?? ACTIVE_COOLDOWN;
+  if (kind === 'iceBlock') {
+    entry.activeRemaining = def.activeAtMax.duration ?? 1.5;
+    side.iceBlockRemaining = entry.activeRemaining;
+    side.iceBlockHealAccum = 0;
+    side.iceBlockOwnerEntry = entry;
+    spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ddff, 1.5);
+  } else if (kind === 'fearWave') {
+    entry.activeRemaining = 0;  // instant — ingen channel
+    fearWaveActivate(side);
+  } else if (kind === 'lingShield') {
+    // Inte klickbar — passiv. Bara safeguard.
+    entry.activeRemaining = 0;
+    entry.activeCd = 0;
+  } else {
+    // Generisk stat-buff (boots/glove)
+    entry.activeRemaining = def.activeAtMax.duration ?? ACTIVE_DURATION;
+  }
   recomputeSideStats(side);
+}
+
+// === Onyx Orb ice-block ===
+const ICE_BLOCK_HEAL_PCT = 0.15;       // 15% maxHP per 0.5s
+const ICE_BLOCK_HEAL_INTERVAL = 0.5;
+const ICE_BLOCK_SLOW_RADIUS = 5.5;
+const ICE_BLOCK_SLOW_DURATION = 2.0;
+const ICE_BLOCK_SLOW_MUL = 0.5;
+const ICE_BLOCK_SELF_MS_BUFF = 1.0;    // 1s buff på 50% MS
+
+function tickIceBlock(side, dt) {
+  if ((side.iceBlockRemaining || 0) > 0) {
+    side.iceBlockRemaining -= dt;
+    side.iceBlockHealAccum = (side.iceBlockHealAccum || 0) + dt;
+    while (side.iceBlockHealAccum >= ICE_BLOCK_HEAL_INTERVAL && side.iceBlockRemaining > 0) {
+      side.iceBlockHealAccum -= ICE_BLOCK_HEAL_INTERVAL;
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * ICE_BLOCK_HEAL_PCT);
+      spawnHealFx(side.hero.x, side.hero.z);
+    }
+    if (side.iceBlockRemaining <= 0) {
+      side.iceBlockRemaining = 0;
+      onIceBlockEnd(side);
+    }
+  }
+  // Tick self-MS buff
+  if ((side.iceBlockMsBuff || 0) > 0) {
+    side.iceBlockMsBuff -= dt;
+    if (side.iceBlockMsBuff < 0) side.iceBlockMsBuff = 0;
+  }
+  // Tick opp-hero-slow timer (om någon icel-block slogan oss)
+  if ((side.heroSlowTime || 0) > 0) {
+    side.heroSlowTime -= dt;
+    if (side.heroSlowTime <= 0) {
+      side.heroSlowTime = 0;
+      side.heroSlowMul = 1;
+    }
+  }
+}
+
+function onIceBlockEnd(side) {
+  side.iceBlockRemaining = 0;
+  side.iceBlockHealAccum = 0;
+  if (side.iceBlockOwnerEntry) {
+    side.iceBlockOwnerEntry.activeRemaining = 0;
+    side.iceBlockOwnerEntry = null;
+  }
+  // Self MS buff
+  side.iceBlockMsBuff = ICE_BLOCK_SELF_MS_BUFF;
+  // Slow alla nära fiender
+  for (const m of side.monsters) {
+    if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < ICE_BLOCK_SLOW_RADIUS) {
+      m.slowTime = Math.max(m.slowTime || 0, ICE_BLOCK_SLOW_DURATION);
+      m.slowMul = Math.min(m.slowMul || 1, ICE_BLOCK_SLOW_MUL);
+    }
+  }
+  const opp = sides[3 - side.idx];
+  if (opp) {
+    for (const c of opp.playerCreeps) {
+      if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < ICE_BLOCK_SLOW_RADIUS) {
+        c.slowTime = Math.max(c.slowTime || 0, ICE_BLOCK_SLOW_DURATION);
+        c.slowMul = Math.min(c.slowMul || 1, ICE_BLOCK_SLOW_MUL);
+      }
+    }
+    // Opp hero (arena PvP)
+    if (APP.gameMode === 'arena1v1' && !opp.hero.dead) {
+      if (Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z) < ICE_BLOCK_SLOW_RADIUS) {
+        opp.heroSlowTime = ICE_BLOCK_SLOW_DURATION;
+        opp.heroSlowMul = ICE_BLOCK_SLOW_MUL;
+      }
+    }
+  }
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ddff, 2.0);
+  triggerCameraShake(0.20, 0.3);
+}
+
+// === Titans Armor fear-wave ===
+const FEAR_RADIUS = 6.0;
+const FEAR_DURATION = 1.5;
+const FEAR_HP_DMG_PCT = 0.20;
+
+function fearWaveActivate(side) {
+  // Visuell expanderande ring
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xaa44ff, 1.8);
+  triggerCameraShake(0.30, 0.35);
+  // Mark monsters i radie
+  for (const m of side.monsters) {
+    if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < FEAR_RADIUS) {
+      m.fearTime = FEAR_DURATION;
+      m.fearOwnerIdx = side.idx;
+    }
+  }
+  const opp = sides[3 - side.idx];
+  if (opp) for (const c of opp.playerCreeps) {
+    if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < FEAR_RADIUS) {
+      c.fearTime = FEAR_DURATION;
+      c.fearOwnerIdx = side.idx;
+    }
+  }
+  // Arena: opp hero
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+    if (Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z) < FEAR_RADIUS) {
+      opp.heroFearTime = FEAR_DURATION;
+      opp.heroFearOwnerIdx = side.idx;
+    }
+  }
+}
+
+// Tick fear på alla entiteter. På utgång: damage 20% av nuvarande HP.
+function tickFearWave(side, dt) {
+  // Side's own monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if ((m.fearTime || 0) > 0) {
+      const prev = m.fearTime;
+      m.fearTime -= dt;
+      if (m.fearTime <= 0 && prev > 0) {
+        const dmg = m.hp * FEAR_HP_DMG_PCT;
+        m.hp -= dmg;
+        if (m.hp <= 0) hostKillMonster(side, i, sides[m.fearOwnerIdx] || side);
+      }
+    }
+  }
+  // Opp creeps (i denna arena)
+  const opp = sides[3 - side.idx];
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if ((c.fearTime || 0) > 0) {
+      const prev = c.fearTime;
+      c.fearTime -= dt;
+      if (c.fearTime <= 0 && prev > 0) {
+        const dmg = c.hp * FEAR_HP_DMG_PCT;
+        c.hp -= dmg;
+        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+      }
+    }
+  }
+  // Egen hero (om motspelaren feared oss)
+  if ((side.heroFearTime || 0) > 0) {
+    const prev = side.heroFearTime;
+    side.heroFearTime -= dt;
+    if (side.heroFearTime <= 0 && prev > 0) {
+      const dmg = side.hero.hp * FEAR_HP_DMG_PCT;
+      damageHero(side, dmg);
+    }
+  }
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
+  // Ice-block channel: kan inte röra sig
+  if ((side.iceBlockRemaining || 0) > 0) return;
+  // Feared av motspelaren: kan inte agera/röra sig
+  if ((side.heroFearTime || 0) > 0) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
@@ -5959,7 +6236,11 @@ function applyMovement(side, joyX, joyZ, dt) {
     if (side.skills && side.skills.f.cd > 0) onyxMs += 0.10;
     if (side.skills && side.skills.e.cd > 0) onyxMs += 0.10;
   }
-  const effSpeed = side.moveSpeed * (1 + onyxMs);
+  // Ice-block post-exit self-buff: +50% MS
+  const iceMsBuff = (side.iceBlockMsBuff || 0) > 0 ? 0.5 : 0;
+  // Ice-block applicerad slow från motspelaren
+  const slowMul = (side.heroSlowMul || 1);
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff) * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -5971,6 +6252,7 @@ function applyMovement(side, joyX, joyZ, dt) {
 }
 
 function applyEvent(side, ev) {
+  // Cheat-events får alltid gå igenom
   if (ev.type === 'cheat') {
     if (ev.cmd === 'gold' && typeof ev.amount === 'number') {
       const amt = Math.max(0, Math.min(10_000_000, Math.floor(ev.amount)));
@@ -5978,8 +6260,13 @@ function applyEvent(side, ev) {
     }
     return;
   }
+  // Ice-block channel: kan inte använda AA/skills (förutom item-activate som
+  // hanteras separat — den tappar redan ice-block via cancel-flödet)
+  const channelLocked = (side.iceBlockRemaining || 0) > 0;
+  // Feared av motspelaren: kan inte göra AA/skills
+  const feared = (side.heroFearTime || 0) > 0;
   if (ev.type === 'aa') {
-    if (side.hero.dead) return;
+    if (side.hero.dead || channelLocked || feared) return;
     side.aaActive = true;
     const t = findClosestHostile(side, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE);
     if (t) {
@@ -5998,6 +6285,7 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'skill') {
+    if (side.hero.dead || channelLocked || feared) return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -9793,6 +10081,9 @@ function simulateAll(dt) {
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
+    tickLingShield(side, dt);
+    tickIceBlock(side, dt);
+    tickFearWave(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
