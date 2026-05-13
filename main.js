@@ -10571,9 +10571,17 @@ function showLobbyError(msg) {
 // ---- WebSocket relay-anslutning ----
 // Öppnar en WS till relay-servern och registrerar en envelope-handler.
 // Server-protokoll:
-//   client → server : { t: 'host' } | { t: 'join', code } | { t: 'msg', d } | { t: 'leave' }
+//   client → server : { t: 'host' } | { t: 'join', code } | { t: 'msg', d } | { t: 'leave' } | { t: 'reclaim', code } | { t: 'ping' }
 //   server → client : { t: 'hosted', code } | { t: 'joined', code } | { t: 'join-error', msg }
-//                     | { t: 'peer-joined' } | { t: 'peer-left' } | { t: 'msg', d }
+//                     | { t: 'peer-joined' } | { t: 'peer-left' } | { t: 'peer-rejoined' }
+//                     | { t: 'reclaimed', code, hasClient } | { t: 'reclaim-error', msg }
+//                     | { t: 'pong' } | { t: 'msg', d }
+
+// Modul-scope state för reclaim-flödet. Deklareras INNAN openRelay/onRelayClose
+// så vi undviker TDZ om någon onclose-event triggas tidigt.
+let pendingHostCode = null;
+let _reclaimInProgress = false;
+
 function openRelay() {
   return new Promise((resolve, reject) => {
     if (wsOpen()) { resolve(APP.ws); return; }
@@ -10596,6 +10604,7 @@ function openRelay() {
       ws.onmessage = handleRelayEnvelope;
       ws.onclose = onRelayClose;
       ws.onerror = (err) => { console.warn('WS error', err); };
+      startWsKeepalive();
       resolve(ws);
     };
     ws.onerror = (err) => { console.warn('WS error pre-open', err); fail('Kunde inte ansluta till relay-servern'); };
@@ -10616,11 +10625,26 @@ function handleRelayEnvelope(e) {
     closeRelay();
   } else if (env.t === 'peer-joined') {
     onPeerJoined();
+  } else if (env.t === 'peer-rejoined') {
+    // Host:en återanslöt efter grace-period — ingen action på client-sidan
+    // utöver att logga (server fortsätter relay:a meddelanden som vanligt).
+    console.log('Host återansluten');
   } else if (env.t === 'peer-left') {
     if (APP.mode === 'host' || APP.mode === 'client') {
       showLobbyError('Motståndaren lämnade matchen.');
       returnToLobby();
     }
+  } else if (env.t === 'reclaimed') {
+    // Lyckad reclaim — host fortsätter visa rumkoden, ev. med "Återansluten"
+    onReclaimed(env.code, !!env.hasClient);
+  } else if (env.t === 'reclaim-error') {
+    showLobbyError(env.msg || 'Rummet finns inte längre.');
+    pendingHostCode = null;
+    closeRelay();
+    showLobbyPanel('main');
+  } else if (env.t === 'pong') {
+    // Keepalive-svar — bara markera att vi är vid liv
+    APP._lastPongMs = performance.now();
   } else if (env.t === 'msg') {
     handleNetworkMessage(env.d);
   }
@@ -10628,6 +10652,12 @@ function handleRelayEnvelope(e) {
 
 function onRelayClose() {
   console.log('WS closed');
+  stopWsKeepalive();
+  // Host tappade WS INNAN peer joinad — försök automatisk reclaim
+  if (pendingHostCode && APP.mode === 'lobby') {
+    tryReclaimHostRoom(pendingHostCode);
+    return;
+  }
   if (APP.mode === 'host' || APP.mode === 'client') {
     showLobbyError('Anslutningen till servern tappades.');
     returnToLobby();
@@ -10635,13 +10665,68 @@ function onRelayClose() {
 }
 
 function closeRelay() {
+  stopWsKeepalive();
   if (APP.ws) {
     try { APP.ws.onclose = null; APP.ws.close(); } catch (_) {}
     APP.ws = null;
   }
 }
 
-let pendingHostCode = null;
+// Keepalive: skickar { t: 'ping' } var 25s så proxy/Render-sleep inte stänger WS.
+// Server svarar { t: 'pong' }. Räcker som signal att WS är vid liv på båda sidor.
+function startWsKeepalive() {
+  stopWsKeepalive();
+  APP._kaInterval = setInterval(() => {
+    if (wsOpen()) {
+      try { APP.ws.send(JSON.stringify({ t: 'ping' })); } catch (_) {}
+    }
+  }, 25000);
+}
+function stopWsKeepalive() {
+  if (APP._kaInterval) { clearInterval(APP._kaInterval); APP._kaInterval = null; }
+}
+
+// Auto-reclaim när host:s WS dör med ett aktivt rum. Försöker återansluta
+// med backoff och skickar { t: 'reclaim', code }. Server svarar 'reclaimed'
+// eller 'reclaim-error' (om rummet faktiskt är borta).
+async function tryReclaimHostRoom(code) {
+  // Race-guard: om en reclaim redan pågår, ignorera nya disconnect-event
+  if (_reclaimInProgress) return;
+  _reclaimInProgress = true;
+  try {
+    lobbyHostMsgEl.textContent = 'Anslutningen tappades — försöker återansluta...';
+    let attempts = 0;
+    const maxAttempts = 3;
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        // Liten paus mellan försök (linjär backoff)
+        await new Promise(r => setTimeout(r, 1000 + attempts * 500));
+        await openRelay();
+        wsSendEnvelope({ t: 'reclaim', code });
+        return; // Vänta på 'reclaimed' / 'reclaim-error' via handleRelayEnvelope
+      } catch (err) {
+        console.warn(`Reclaim försök ${attempts} misslyckades:`, err);
+        if (attempts >= maxAttempts) {
+          showLobbyError('Anslutningen tappades och kunde inte återställas. Skapa ett nytt rum.');
+          pendingHostCode = null;
+          showLobbyPanel('main');
+          return;
+        }
+      }
+    }
+  } finally {
+    _reclaimInProgress = false;
+  }
+}
+
+function onReclaimed(code, hasClient) {
+  pendingHostCode = code;
+  if (lobbyCodeDisplayEl) lobbyCodeDisplayEl.textContent = code;
+  if (lobbyHostMsgEl) lobbyHostMsgEl.textContent = hasClient
+    ? 'Återansluten. Spelet återupptas...'
+    : 'Återansluten. Väntar på spelare...';
+}
 
 function onHosted(code) {
   pendingHostCode = code;

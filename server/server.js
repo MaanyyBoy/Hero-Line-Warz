@@ -11,6 +11,9 @@ const TICK_RATE = 30;                       // simuleringssteg per sekund
 const STATE_RATE = 20;                      // state-broadcasts per sekund
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
+// Grace-period när host disconnect:ar utan client. Rummet behålls så
+// host kan reclaim:a med samma kod (t.ex. efter mobile-bakgrund/proxy-blip).
+const HOST_GRACE_MS = 30000;
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -19,7 +22,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-// roomCode -> { host, client, game, tickHandle, lastStateMs }
+// roomCode -> { host, client, game, tickHandle, lastStateMs, hostGoneAt? }
 const rooms = new Map();
 
 function genCode() {
@@ -87,7 +90,6 @@ function handleGameInput(room, ws, payload) {
   const sideIdx = (ws.role === 'host') ? 1 : 2;
   if (payload.j) {
     const j = payload.j;
-    // Sanitize: numeric, clamp magnitude <= 1
     const jx = Number(j.x) || 0;
     const jz = Number(j.z) || 0;
     const mag = Math.hypot(jx, jz);
@@ -126,21 +128,62 @@ wss.on('connection', (ws) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
 
+    if (msg.t === 'ping') {
+      // Keepalive från klient — håller WS levande mot proxy. Svara med pong-app.
+      send(ws, { t: 'pong' });
+      ws.isAlive = true;
+      return;
+    }
+
     if (msg.t === 'host') {
       if (ws.roomCode) return;
       const code = genCode();
-      const room = { code, host: ws, client: null, game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0 };
+      const room = { code, host: ws, client: null, game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null };
       rooms.set(code, room);
       ws.role = 'host';
       ws.roomCode = code;
       send(ws, { t: 'hosted', code });
       console.log(`[${code}] hosted (rooms=${rooms.size})`);
+    } else if (msg.t === 'reclaim') {
+      // Host försöker återansluta till sitt gamla rum efter WS-disconnect
+      if (ws.roomCode) return;
+      const code = (msg.code || '').toUpperCase();
+      const room = rooms.get(code);
+      if (!room) {
+        send(ws, { t: 'reclaim-error', msg: 'Rummet finns inte längre.' });
+        console.log(`[reclaim-fail] code=${code} not found`);
+        return;
+      }
+      if (room.host) {
+        // Någon är redan host — kan inte reclaim:a
+        send(ws, { t: 'reclaim-error', msg: 'Rummet är upptaget.' });
+        return;
+      }
+      room.host = ws;
+      room.hostGoneAt = null;
+      ws.role = 'host';
+      ws.roomCode = code;
+      send(ws, { t: 'reclaimed', code, hasClient: !!room.client });
+      if (room.client) send(room.client, { t: 'peer-rejoined' });
+      console.log(`[${code}] host reclaimed (rooms=${rooms.size})`);
     } else if (msg.t === 'join') {
       if (ws.roomCode) return;
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
-      if (!room) { send(ws, { t: 'join-error', msg: 'Rummet finns inte.' }); return; }
-      if (room.client) { send(ws, { t: 'join-error', msg: 'Rummet är fullt.' }); return; }
+      if (!room) {
+        send(ws, { t: 'join-error', msg: 'Rummet finns inte. Kontrollera koden eller be hosten skapa ett nytt rum.' });
+        console.log(`[join-fail] code=${code} not found. Existing: ${[...rooms.keys()].join(',') || '(none)'}`);
+        return;
+      }
+      if (!room.host) {
+        send(ws, { t: 'join-error', msg: 'Hosten har tappat anslutningen. Be hosten skapa ett nytt rum.' });
+        console.log(`[join-fail] code=${code} host gone`);
+        return;
+      }
+      if (room.client) {
+        send(ws, { t: 'join-error', msg: 'Rummet är fullt.' });
+        return;
+      }
       room.client = ws;
       ws.role = 'client';
       ws.roomCode = code;
@@ -163,10 +206,32 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => { closeRoom(ws); });
+  ws.on('close', () => { handleDisconnect(ws); });
   ws.on('error', () => {});
 });
 
+// Anropas när ws stänger. Skiljer på "host disconnect utan client" (grace-period
+// så host kan reclaim:a) och "normal disconnect" (stäng rummet direkt).
+function handleDisconnect(ws) {
+  const code = ws.roomCode;
+  if (!code) return;
+  const room = rooms.get(code);
+  ws.roomCode = null;
+  ws.role = null;
+  if (!room) return;
+
+  // Host disconnect utan client → grace-period innan rumet stängs
+  if (room.host === ws && !room.client) {
+    room.host = null;
+    room.hostGoneAt = Date.now();
+    console.log(`[${code}] host disconnected, grace ${HOST_GRACE_MS}ms`);
+    return;
+  }
+  // Annars normal stängning (client disconnect, eller host efter att client joinat)
+  closeRoomNow(room);
+}
+
+// Tvinga stängning oavsett state — används av 'leave' + grace-timeout
 function closeRoom(ws) {
   const code = ws.roomCode;
   if (!code) return;
@@ -174,15 +239,39 @@ function closeRoom(ws) {
   ws.roomCode = null;
   ws.role = null;
   if (!room) return;
-  const other = (room.host === ws) ? room.client : room.host;
-  send(other, { t: 'peer-left' });
-  if (other) { other.roomCode = null; other.role = null; }
-  stopGame(room);
-  rooms.delete(code);
-  console.log(`[${code}] closed (rooms=${rooms.size})`);
+  closeRoomNow(room);
 }
 
-// Heartbeat så zombi-anslutningar inte hänger kvar
+function closeRoomNow(room) {
+  if (!rooms.has(room.code)) return;  // redan stängt
+  const other = room.client;
+  if (other && other !== room.host) {
+    send(other, { t: 'peer-left' });
+    other.roomCode = null;
+    other.role = null;
+  }
+  if (room.host) {
+    send(room.host, { t: 'peer-left' });
+    room.host.roomCode = null;
+    room.host.role = null;
+  }
+  stopGame(room);
+  rooms.delete(room.code);
+  console.log(`[${room.code}] closed (rooms=${rooms.size})`);
+}
+
+// Cleanup: stäng rum vars grace-period gått ut
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, room] of rooms) {
+    if (!room.host && room.hostGoneAt && (now - room.hostGoneAt) > HOST_GRACE_MS) {
+      console.log(`[${code}] grace expired, closing`);
+      closeRoomNow(room);
+    }
+  }
+}, 5000);
+
+// Heartbeat så zombi-anslutningar inte hänger kvar (server-pingar var 30s)
 setInterval(() => {
   for (const ws of wss.clients) {
     if (!ws.isAlive) { try { ws.terminate(); } catch (_) {} continue; }
