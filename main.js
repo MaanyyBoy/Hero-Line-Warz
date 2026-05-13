@@ -1419,7 +1419,19 @@ const CREEP_XP_RATIO = 0.6;
 const ARROW_SPEED = 14;
 const MAGIC_PROJ_SPEED = 10;
 
-// Gandulf-skills omskrivna — Fire Wave / Frost Nova target / Black Hole
+// Gandulf-skills omskrivna — Soul Drain / Frost Nova target / Black Hole
+
+// Soul Drain (Q): target-baserad channel. 5s, varje sek 5% av targets maxHP i skada
+// + self-heal Gandulf samma mängd. 10% slow per sek (max 5 stacks = 50%). Slow
+// ligger kvar 1s efter sista tick. Bryts om target dör eller springer >12m.
+const SOULDRAIN_DURATION = 5.0;
+const SOULDRAIN_TICK = 1.0;
+const SOULDRAIN_DMG_PCT = 0.05;
+const SOULDRAIN_SLOW_PER_STACK = 0.10;
+const SOULDRAIN_MAX_STACKS = 5;
+const SOULDRAIN_SLOW_TAIL = 1.0;
+const SOULDRAIN_RANGE = 10.0;        // max räckvidd vid cast
+const SOULDRAIN_BREAK_RANGE = 12.0;  // bryt-range under channel
 const FIREWAVE_LENGTH = 5;
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;
 const FIREWAVE_DIRECT_DMG = 18;
@@ -3206,7 +3218,7 @@ const ARENA_TALENTS = {
     { id: 'm_ms',      icon: '💨', name: 'Swift Robes',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
     // Skill-modifiers
     { id: 'm_frost_heal', icon: '❄', name: 'Frost Vampirism', desc: 'Frost Nova healar dig 15% av skadan den gör' },
-    { id: 'm_fire_dot',   icon: '🔥', name: 'Burning Lands',   desc: 'Fire Wave DoT håller 2s längre' },
+    { id: 'm_drain_extend', icon: '💀', name: 'Lasting Drain',  desc: 'Soul Drain pågår 2s längre (5s → 7s)' },
     { id: 'm_bh_radius',  icon: '⚫', name: 'Singularity',     desc: 'Black Hole-radie + explosionsradie +30%' },
   ],
   legolas: [
@@ -4078,6 +4090,8 @@ function createSide(idx) {
     // Ult-energy + per-ult timers (sätts av hostCast*Ult)
     ultEnergy: 0,
     laserBeam: null,           // Magiker: { remaining, dx, dz, tickAccum }
+    soulDrain: null,            // Magiker Q: { remaining, tickAccum, stacks, targetId, targetType }
+    soulDrainBeam: null,        // Klient-visual för Soul Drain
     rageRemaining: 0,           // Gimlu: sek kvar
     rageHealAccum: 0,           // Gimlu: damage dealt under rage (för 20% heal)
     rageTickAccum: 0,           // Gimlu: 0.5s pulse-timer
@@ -4450,6 +4464,11 @@ function updatePlayerCreeps(side, dt) {
       c.frozenTime -= dt;
       continue;
     }
+    // Slow-tick: decay slowMul tillbaka till 1 när slowTime expirar
+    if ((c.slowTime || 0) > 0) {
+      c.slowTime -= dt;
+      if (c.slowTime <= 0) { c.slowTime = 0; c.slowMul = 1.0; }
+    }
     // Feared — kan inte agera
     if ((c.fearTime || 0) > 0) {
       continue;
@@ -4525,7 +4544,7 @@ function updatePlayerCreeps(side, dt) {
     const d = Math.hypot(dx, dz);
     if (d < 0.3 && c.pathIndex < path.length - 1) { c.pathIndex++; continue; }
     const dirX = dx / d, dirZ = dz / d;
-    const step = c.speed * dt;
+    const step = c.speed * (c.slowMul || 1) * dt;
     const nx = c.mesh.position.x + dirX * step;
     const nz = c.mesh.position.z + dirZ * step;
     if (isCreepPos(nx, nz)) { c.mesh.position.x = nx; c.mesh.position.z = nz; }
@@ -4652,9 +4671,17 @@ function killHero(side) {
     if (side.mesh) side.mesh.scale.set(1, 1, 1);
   }
   if (side.laserBeam) {
-    if (side.laserBeam.mesh) scene.remove(side.laserBeam.mesh);
-    if (side.laserBeam.core) scene.remove(side.laserBeam.core);
+    for (const m of [side.laserBeam.mesh, side.laserBeam.core, side.laserBeam.halo]) {
+      if (!m) continue;
+      scene.remove(m);
+      if (m.geometry) m.geometry.dispose();
+      if (m.material) m.material.dispose();
+    }
     side.laserBeam = null;
+  }
+  if (side.soulDrain || side.soulDrainBeam) {
+    removeSoulDrainBeam(side);
+    side.soulDrain = null;
   }
   // I arena: behåll mesh synlig så GLTF death-animationen syns
   if (APP.gameMode !== 'arena1v1') {
@@ -5144,86 +5171,238 @@ function applySkillLifesteal(side, dmgDealt) {
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmgDealt * ls);
 }
 
-// Fire Wave (Q): triangulär cone framför hero. Direct dmg + 3s DoT.
-function hostCastEldklot(side, dirX, dirZ) {
+// Soul Drain (Q): target-baserad channel. Tap → låst target (eller närmaste i range).
+// 5 ticks (1/sek). Per tick: 5% av target maxHP i skada + self-heal Gandulf med samma
+// mängd, slow-stack +10% (max 50%). Slow ligger kvar 1s efter sista tick. Bryts om
+// target dör/försvinner/springer >12m. Talent m_drain_extend förlänger med +2s.
+function hostCastSoulDrain(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
-  const len = Math.hypot(dirX, dirZ);
-  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
-  else { dirX /= len; dirZ /= len; }
-  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  if (side.soulDrain) removeSoulDrainBeam(side);
+  side.soulDrain = null;
   const opp = sides[3 - side.idx];
-  const passiveMul = gandulfSkillDmgMul(side);
-  const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * passiveMul;
-  const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1) * passiveMul;
-  // Talent: Burning Lands — DoT-tid +2s
-  const dotDuration = FIREWAVE_DOT_DURATION + (arenaHasTalent(side, 'm_fire_dot') ? 2 : 0);
-  // Cone-mesh (ConeGeometry) — pekar i dx/dz, fade:as
-  // Cast-FX: stor orange burst vid hero + camera shake
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 1.4);
-  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa44);
-  triggerCameraShake(0.18, 0.22);
-  // Cone-mesh — fyllt med inner-glow (gradient via 2 lager) och rörlig flicker
-  const coneRadius = FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE);
-  const grp = new THREE.Group();
-  const coneOuter = new THREE.Mesh(
-    new THREE.ConeGeometry(coneRadius, FIREWAVE_LENGTH, 20, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
-  );
-  const coneInner = new THREE.Mesh(
-    new THREE.ConeGeometry(coneRadius * 0.66, FIREWAVE_LENGTH * 0.95, 18, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
-  );
-  grp.add(coneOuter); grp.add(coneInner);
-  // Glow point-light längs konens centrum
-  const fireLight = new THREE.PointLight(0xff7733, 2.2, 8);
-  fireLight.position.set(0, 0, 0);
-  grp.add(fireLight);
-  grp.rotation.x = -Math.PI / 2;
-  grp.rotation.z = Math.atan2(-dirZ, dirX) + Math.PI / 2;
-  grp.position.set(side.hero.x + dirX * (FIREWAVE_LENGTH / 2), 0.6, side.hero.z + dirZ * (FIREWAVE_LENGTH / 2));
-  scene.add(grp);
-  side.fireWaves = side.fireWaves || [];
-  side.fireWaves.push({ mesh: grp, light: fireLight, life: FIREWAVE_EFFECT_LIFE, maxLife: FIREWAVE_EFFECT_LIFE });
-  // Embers längs konens längd — små partiklar som stiger
-  for (let i = 0; i < 8; i++) {
-    const t = Math.random();
-    const ex = side.hero.x + dirX * FIREWAVE_LENGTH * t + (Math.random() - 0.5) * 1.0;
-    const ez = side.hero.z + dirZ * FIREWAVE_LENGTH * t + (Math.random() - 0.5) * 1.0;
-    spawnHitSparkFx(ex, 0.4 + Math.random() * 0.6, ez, 0xffaa33);
+  // Hitta target: tap-aim → låst target, annars närmaste i range
+  let target = null;
+  let targetType = null;
+  if (ev && ev.tap === true && side.targetId) {
+    target = resolveTargetEntity(side, opp);
+    if (target) targetType = side.targetType;
   }
-  // Skada alla i cone
-  const inCone = (ex, ez) => {
-    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
-    const d = Math.hypot(ddx, ddz);
-    if (d > FIREWAVE_LENGTH || d < 0.001) return false;
-    const dot = (ddx * dirX + ddz * dirZ) / d;
-    return Math.acos(Math.max(-1, Math.min(1, dot))) < FIREWAVE_HALF_ANGLE;
-  };
-  for (let j = side.monsters.length - 1; j >= 0; j--) {
-    const m = side.monsters[j];
-    if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
-    onGandulfSkillHit(side, m);
-    soloApplySkillDmgToMonster(side, opp, j, directDmg);
-    if (m.hp > 0) { m.dotRemaining = dotDuration; m.dotPerSec = dotDps; }
-  }
-  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
-    const c = opp.playerCreeps[j];
-    if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
-    onGandulfSkillHit(side, c);
-    soloApplySkillDmgToCreep(side, opp, c, directDmg);
-    if (c.hp > 0) { c.dotRemaining = dotDuration; c.dotPerSec = dotDps; }
-    else { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
-  }
-  // Arena: cone-damage mot orb om i kon
-  applyConeDamageInArena(side.hero.x, side.hero.z, dirX, dirZ, FIREWAVE_LENGTH, FIREWAVE_HALF_ANGLE, directDmg, side.idx);
-  // Arena PvP: skada + DoT på opp.hero om hen är i konen
-  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
-    if (inCone(opp.hero.x, opp.hero.z)) {
-      damageHero(opp, directDmg);
-      opp.hero.dotRemaining = Math.max(opp.hero.dotRemaining || 0, dotDuration);
-      opp.hero.dotPerSec = Math.max(opp.hero.dotPerSec || 0, dotDps);
+  if (!target) {
+    const t = findClosestHostile(side, side.hero.x, side.hero.z, SOULDRAIN_RANGE);
+    if (t) {
+      target = t.entity;
+      targetType = t.targetType || (t.isMonster ? 'monster' : 'creep');
     }
   }
+  if (!target || !target.mesh) return;
+  const tx = target.mesh.position.x, tz = target.mesh.position.z;
+  if (Math.hypot(tx - side.hero.x, tz - side.hero.z) > SOULDRAIN_RANGE) return;
+  // Talent: Lasting Drain — +2s duration
+  const duration = SOULDRAIN_DURATION + (arenaHasTalent(side, 'm_drain_extend') ? 2 : 0);
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  side.soulDrain = {
+    remaining: duration,
+    tickAccum: 0,
+    stacks: 0,
+    targetId: target.id,
+    targetType,
+  };
+  ensureSoulDrainBeam(side);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x99ff88, 1.6);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaa44ff);
+  triggerCameraShake(0.12, 0.18);
+  // Initial tick direkt — drain ska börja skada vid cast
+  const initialTarget = resolveSoulDrainTarget(side, side.soulDrain, opp);
+  if (initialTarget) {
+    updateSoulDrainBeam(side, initialTarget.mesh);
+    applySoulDrainTick(side, initialTarget, side.soulDrain);
+  }
+}
+
+function resolveSoulDrainTarget(side, sd, opp) {
+  if (!sd) return null;
+  if (sd.targetType === 'monster') {
+    for (const m of side.monsters) if (m.id === sd.targetId) return m.hp > 0 ? m : null;
+    return null;
+  }
+  if (sd.targetType === 'creep' && opp) {
+    for (const c of opp.playerCreeps) if (c.id === sd.targetId) return c.hp > 0 ? c : null;
+    return null;
+  }
+  if (sd.targetType === 'arena-orb') {
+    return (arenaState.orb && arenaState.orb.alive && arenaState.orbTarget) ? arenaState.orbTarget : null;
+  }
+  if (sd.targetType === 'arena-hero') {
+    const oppSide = sides[3 - side.idx];
+    if (!oppSide || oppSide.hero.dead) return null;
+    return (arenaState.heroTargets && arenaState.heroTargets[oppSide.idx]) || null;
+  }
+  return null;
+}
+
+function tickSoulDrain(side, dt) {
+  const sd = side.soulDrain;
+  if (!sd) return;
+  const opp = sides[3 - side.idx];
+  const target = resolveSoulDrainTarget(side, sd, opp);
+  // Break-villkor: target borta, död, eller out-of-range
+  let shouldBreak = false;
+  if (side.hero.dead) shouldBreak = true;
+  else if (!target || !target.mesh) shouldBreak = true;
+  // Hård CC bryter channel
+  else if ((side.hero.frozenTime || 0) > 0) shouldBreak = true;
+  else if ((side.heroFearTime || 0) > 0) shouldBreak = true;
+  else if ((side.hero.tauntedTime || 0) > 0) shouldBreak = true;
+  else if ((side.iceBlockRemaining || 0) > 0) shouldBreak = true;
+  else {
+    const d = Math.hypot(target.mesh.position.x - side.hero.x, target.mesh.position.z - side.hero.z);
+    if (d > SOULDRAIN_BREAK_RANGE) shouldBreak = true;
+  }
+  if (shouldBreak) {
+    removeSoulDrainBeam(side);
+    side.soulDrain = null;
+    return;
+  }
+  updateSoulDrainBeam(side, target.mesh);
+  sd.remaining -= dt;
+  sd.tickAccum += dt;
+  while (sd.tickAccum >= SOULDRAIN_TICK && sd.remaining > -SOULDRAIN_TICK) {
+    sd.tickAccum -= SOULDRAIN_TICK;
+    const tt = resolveSoulDrainTarget(side, sd, opp);
+    if (!tt || !tt.mesh) break;
+    applySoulDrainTick(side, tt, sd);
+  }
+  if (sd.remaining <= 0) {
+    removeSoulDrainBeam(side);
+    side.soulDrain = null;
+  }
+}
+
+function applySoulDrainTick(side, target, sd) {
+  const opp = sides[3 - side.idx];
+  // Hitta target-maxHp per typ (proxies för orb/hero har inte egna .maxHp)
+  let maxHp = target.maxHp || target.hp || 1;
+  if (sd.targetType === 'arena-orb') maxHp = arenaState.orb.maxHp || maxHp;
+  else if (sd.targetType === 'arena-hero') {
+    const oppSide = sides[3 - side.idx];
+    if (oppSide) maxHp = oppSide.hero.maxHp || maxHp;
+  }
+  const baseDmg = maxHp * SOULDRAIN_DMG_PCT * (side.skillDmgMul || 1) *
+                  (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) *
+                  gandulfSkillDmgMul(side);
+  sd.stacks = Math.min(SOULDRAIN_MAX_STACKS, (sd.stacks || 0) + 1);
+  const slowMul = 1 - SOULDRAIN_SLOW_PER_STACK * sd.stacks;
+  const tt = sd.targetType;
+  let healed = 0;
+  if (tt === 'monster') {
+    const idx = side.monsters.indexOf(target);
+    if (idx >= 0) {
+      healed = Math.min(baseDmg, target.hp);
+      onGandulfSkillHit(side, target);
+      soloApplySkillDmgToMonster(side, opp, idx, baseDmg);
+      if (side.monsters[idx] === target && target.hp > 0) {
+        target.slowMul = Math.min(target.slowMul || 1, slowMul);
+        target.slowTime = Math.max(target.slowTime || 0, SOULDRAIN_SLOW_TAIL);
+      }
+    }
+  } else if (tt === 'creep' && opp) {
+    healed = Math.min(baseDmg, target.hp);
+    onGandulfSkillHit(side, target);
+    soloApplySkillDmgToCreep(side, opp, target, baseDmg);
+    if (target.hp > 0) {
+      target.slowMul = Math.min(target.slowMul || 1, slowMul);
+      target.slowTime = Math.max(target.slowTime || 0, SOULDRAIN_SLOW_TAIL);
+    } else {
+      const i = opp.playerCreeps.indexOf(target);
+      if (i >= 0) {
+        scene.remove(target.mesh);
+        opp.playerCreeps.splice(i, 1);
+        side.gold += minionBounty(target);
+        gainXp(side, minionXp(target));
+      }
+    }
+  } else if (tt === 'arena-orb') {
+    healed = Math.min(baseDmg, arenaState.orb.hp);
+    damageArenaOrb(baseDmg, side.idx);
+    gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+  } else if (tt === 'arena-hero') {
+    const oppIdx = 3 - side.idx;
+    const oppSide = sides[oppIdx];
+    if (oppSide && !oppSide.hero.dead && APP.gameMode === 'arena1v1' && arenaState.phase === 'fight') {
+      healed = Math.min(baseDmg, oppSide.hero.hp);
+      damageHero(oppSide, baseDmg);
+      const ccMul = Math.max(0, 1 - (oppSide.ccReductionPct || 0));
+      const heroSlowMul = 1 - SOULDRAIN_SLOW_PER_STACK * sd.stacks * ccMul;
+      oppSide.heroSlowMul = Math.min(oppSide.heroSlowMul || 1, heroSlowMul);
+      oppSide.heroSlowTime = Math.max(oppSide.heroSlowTime || 0, SOULDRAIN_SLOW_TAIL);
+      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+    }
+  }
+  // Heal Gandulf
+  if (healed > 0 && !side.hero.dead) {
+    const newHp = Math.min(side.hero.maxHp, side.hero.hp + healed);
+    const delta = newHp - side.hero.hp;
+    side.hero.hp = newHp;
+    if (delta > 0) spawnHeroHealText(side, delta);
+  }
+  if (target.mesh) {
+    spawnHitSparkFx(target.mesh.position.x, 1.2, target.mesh.position.z, 0x99ff88);
+    spawnHitSparkFx(side.hero.x, 1.2, side.hero.z, 0xaa44ff);
+  }
+}
+
+// Beam-visual mellan Gandulf och target. Skapas vid cast, uppdateras varje frame,
+// disposas vid break/end.
+function ensureSoulDrainBeam(side) {
+  if (side.soulDrainBeam) return;
+  const grp = new THREE.Group();
+  const coreMat = new THREE.MeshBasicMaterial({ color: 0xddffcc, transparent: true, opacity: 0.95 });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1, 10, 1, false), coreMat);
+  core.rotation.x = Math.PI / 2;
+  grp.add(core);
+  const beamMat = new THREE.MeshBasicMaterial({ color: 0x66ff66, transparent: true, opacity: 0.65, side: THREE.DoubleSide });
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 1, 12, 1, false), beamMat);
+  beam.rotation.x = Math.PI / 2;
+  grp.add(beam);
+  const haloMat = new THREE.MeshBasicMaterial({ color: 0xaa44ff, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false });
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1, 12, 1, false), haloMat);
+  halo.rotation.x = Math.PI / 2;
+  grp.add(halo);
+  scene.add(grp);
+  side.soulDrainBeam = { group: grp, core, beam, halo };
+}
+
+function updateSoulDrainBeam(side, targetMesh) {
+  const sdb = side.soulDrainBeam;
+  if (!sdb || !targetMesh) return;
+  const hx = side.hero.x, hz = side.hero.z, hy = 1.2;
+  const tx = targetMesh.position.x, tz = targetMesh.position.z, ty = 1.2;
+  const dx = tx - hx, dz = tz - hz;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) return;
+  sdb.group.position.set((hx + tx) / 2, (hy + ty) / 2, (hz + tz) / 2);
+  sdb.group.rotation.y = Math.atan2(dx, dz);
+  sdb.core.scale.y = len;
+  sdb.beam.scale.y = len;
+  sdb.halo.scale.y = len;
+  const t = performance.now() * 0.006;
+  sdb.beam.material.opacity = 0.55 + 0.15 * Math.sin(t);
+  sdb.halo.material.opacity = 0.25 + 0.10 * Math.sin(t + Math.PI / 2);
+}
+
+function removeSoulDrainBeam(side) {
+  const sdb = side.soulDrainBeam;
+  if (!sdb) return;
+  if (sdb.group) {
+    sdb.group.traverse(o => {
+      if (o.isMesh) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+      }
+    });
+    scene.remove(sdb.group);
+  }
+  side.soulDrainBeam = null;
 }
 
 function updateFireballs(side, dt) {
@@ -6582,8 +6761,6 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.heroFearTime || 0) > 0) return;
   // Frusen/rotad av motspelaren (Frostnova / Vine Trap): kan inte röra sig
   if ((side.hero.frozenTime || 0) > 0) return;
-  // Magiker laser-beam ult: kan inte röra sig under cast
-  if (side.laserBeam) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
@@ -6674,7 +6851,7 @@ function applyEvent(side, ev) {
     } else if (ev.key === 'q') {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
       else if (isGimlu) hostCastGimluTaunt(side);
-      else hostCastEldklot(side, dx, dz);
+      else hostCastSoulDrain(side, ev);
     } else if (ev.key === 'f') {
       if (isLegolus) hostCastLegolusBuff(side);
       else if (isGimlu) hostCastGimluIronWill(side);
@@ -8268,6 +8445,7 @@ function hostCastUlt(side, dx, dz) {
 // Per-hero ult-funktioner implementeras nedan i sina respektive sektioner.
 function tickUltimates(side, dt) {
   if (side.laserBeam) tickMagikerLaser(side, dt);
+  if (side.soulDrain) tickSoulDrain(side, dt);
   if ((side.rageRemaining || 0) > 0) tickGimluRage(side, dt);
   if ((side.legolusUltBuff || 0) > 0) {
     side.legolusUltBuff = Math.max(0, side.legolusUltBuff - dt);
@@ -8279,7 +8457,7 @@ const LASER_DURATION = 3.0;
 const LASER_TICK_INTERVAL = 0.5;
 const LASER_TICK_DMG_PCT = 0.15;    // 15% av target maxHP per tick = 90% över 3s
 const LASER_RANGE = 60;             // jätte långt
-const LASER_WIDTH = 1.4;            // perpendicular bredd för träff
+const LASER_WIDTH = 2.2;            // perpendicular bredd för träff
 const LASER_DR_MUL = 0.10;          // 90% DR
 
 function hostCastMagikerUlt(side, dx, dz) {
@@ -8287,34 +8465,45 @@ function hostCastMagikerUlt(side, dx, dz) {
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
-  // Visuell laser-stråle — emissiv cylinder. Origo i hero, mittpunkt LASER_RANGE/2 framåt.
-  const mat = new THREE.MeshBasicMaterial({
+  // Visuell laser-stråle — flera lager för pop. Origo i hero, mittpunkt LASER_RANGE/2 framåt.
+  // Yttre halo (mjuk blå, semi-transparent, brett)
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0x66bbff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, LASER_RANGE, 18, 1, false), haloMat);
+  halo.rotation.order = 'YXZ';
+  halo.rotation.y = Math.atan2(dx, dz);
+  halo.rotation.x = Math.PI / 2;
+  halo.position.set(side.hero.x + dx * LASER_RANGE / 2, 1.0, side.hero.z + dz * LASER_RANGE / 2);
+  scene.add(halo);
+  // Mellanlager (ljusare blå)
+  const beamMat = new THREE.MeshBasicMaterial({
     color: 0xccddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
   });
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, LASER_RANGE, 16, 1, false), mat);
-  beam.rotation.order = 'YXZ';
-  beam.rotation.y = Math.atan2(dx, dz);
-  beam.rotation.x = Math.PI / 2;
-  beam.position.set(side.hero.x + dx * LASER_RANGE / 2, 1.0, side.hero.z + dz * LASER_RANGE / 2);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, LASER_RANGE, 18, 1, false), beamMat);
+  beam.rotation.copy(halo.rotation);
+  beam.position.copy(halo.position);
   scene.add(beam);
-  // Inre kärna (vit, smalare, högre opacity)
-  const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, LASER_RANGE, 14, 1, false), coreMat);
-  core.rotation.copy(beam.rotation);
-  core.position.copy(beam.position);
+  // Inre kärna (vit, brännhet, smalare men tjockare än innan)
+  const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98 });
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, LASER_RANGE, 16, 1, false), coreMat);
+  core.rotation.copy(halo.rotation);
+  core.position.copy(halo.position);
   scene.add(core);
   side.laserBeam = {
     remaining: LASER_DURATION,
     dx, dz,
     tickAccum: 0,
     mesh: beam,
+    halo,
     core,
   };
   // Visuell start-effekt
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ccff, 1.6);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ccff, 2.0);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaddff);
   triggerCameraShake(0.30, 0.35);
-  // Ingen initial tick — första tick triggas av tickAccum >= 0.5
-  // (6 ticks under 3s = 90% av maxHP, matchar spec)
+  // Initial tick direkt — laser ska börja skada omedelbart (6 ticks under 3s, varannan 0.5s)
+  applyLaserBeamTick(side);
 }
 
 function tickMagikerLaser(side, dt) {
@@ -8322,11 +8511,12 @@ function tickMagikerLaser(side, dt) {
   if (!lb) return;
   lb.remaining -= dt;
   lb.tickAccum += dt;
-  // Synka beam-position med hero (skydd om hero får knuff, även om movement blockas)
+  // Synka beam-position med hero (hero kan röra sig fritt under cast)
   const cx = side.hero.x + lb.dx * LASER_RANGE / 2;
   const cz = side.hero.z + lb.dz * LASER_RANGE / 2;
   if (lb.mesh) lb.mesh.position.set(cx, 1.0, cz);
   if (lb.core) lb.core.position.set(cx, 1.0, cz);
+  if (lb.halo) lb.halo.position.set(cx, 1.0, cz);
   // CC-immunitet: nollställ alla cc-tillstånd varje frame
   side.hero.frozenTime = 0;
   side.hero.tauntedTime = 0;
@@ -8341,15 +8531,11 @@ function tickMagikerLaser(side, dt) {
     applyLaserBeamTick(side);
   }
   if (lb.remaining <= 0) {
-    if (lb.mesh) {
-      scene.remove(lb.mesh);
-      if (lb.mesh.geometry) lb.mesh.geometry.dispose();
-      if (lb.mesh.material) lb.mesh.material.dispose();
-    }
-    if (lb.core) {
-      scene.remove(lb.core);
-      if (lb.core.geometry) lb.core.geometry.dispose();
-      if (lb.core.material) lb.core.material.dispose();
+    for (const m of [lb.mesh, lb.core, lb.halo]) {
+      if (!m) continue;
+      scene.remove(m);
+      if (m.geometry) m.geometry.dispose();
+      if (m.material) m.material.dispose();
     }
     side.laserBeam = null;
   }
@@ -8408,41 +8594,67 @@ function applyLaserBeamTick(side) {
 // === Legolas ult: Big Arrow + Teleport ===
 const ULT_ARROW_SPEED = 38;
 const ULT_ARROW_MAX_RANGE = 200;     // "global"
-const ULT_ARROW_LENGTH = 3.6;        // ~2 heroes
-const ULT_ARROW_HIT_RADIUS = 1.5;
+const ULT_ARROW_LENGTH = 5.5;        // ~3 heroes (större och tydligare)
+const ULT_ARROW_HIT_RADIUS = 1.8;
 const ULT_ARROW_STUN_DURATION = 1.0;
 const LEGOLUS_ULT_BUFF_DURATION = 5.0;
 const LEGOLUS_ULT_AS_BONUS = 0.30;
+const ULT_ARROW_TRAIL_INTERVAL = 0.025;  // sek mellan trail-spawns
 
 function hostCastLegolasUlt(side, dx, dz) {
   if (side.hero.dead) return;
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
-  // Stor pil-mesh: skaft (cylinder), spets (cone), vingar (planar). +Z = framåt.
+  // Stor pil-mesh — natur-magi: gyllene skaft, glödande tip, fjädrar + halo + roterande blad. +Z = framåt.
   const grp = new THREE.Group();
+  // Skaft (silver-gult trä, lite glowing)
   const shaftMat = new THREE.MeshStandardMaterial({
-    color: 0x6a4022, roughness: 0.6, emissive: 0x99dd44, emissiveIntensity: 0.55,
+    color: 0x8a6028, roughness: 0.45, emissive: 0xaaff55, emissiveIntensity: 0.7, metalness: 0.3,
   });
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, ULT_ARROW_LENGTH, 10), shaftMat);
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, ULT_ARROW_LENGTH, 14), shaftMat);
   shaft.rotation.x = Math.PI / 2;
   grp.add(shaft);
+  // Tipp (kristallin grön, kraftigt glow)
   const tipMat = new THREE.MeshStandardMaterial({
-    color: 0xddff77, emissive: 0xaaff44, emissiveIntensity: 1.2, metalness: 0.4,
+    color: 0xddff88, emissive: 0xaaff55, emissiveIntensity: 2.0, metalness: 0.6, roughness: 0.2,
   });
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.0, 10), tipMat);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.8, 14), tipMat);
   tip.rotation.x = Math.PI / 2;
-  tip.position.z = ULT_ARROW_LENGTH / 2 + 0.5;
+  tip.position.z = ULT_ARROW_LENGTH / 2 + 0.85;
   grp.add(tip);
-  // Vingar (3 fjädrar)
-  const featherMat = new THREE.MeshBasicMaterial({ color: 0xaaff66, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-  for (let i = 0; i < 3; i++) {
-    const ang = (i / 3) * Math.PI * 2;
-    const feather = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.7), featherMat);
-    feather.position.set(Math.cos(ang) * 0.18, Math.sin(ang) * 0.18, -ULT_ARROW_LENGTH / 2 + 0.4);
+  // Yttre halo runt pilen (semi-transparent grön cylinder)
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0x88ff44, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, ULT_ARROW_LENGTH + 1.0, 16), haloMat);
+  halo.rotation.x = Math.PI / 2;
+  grp.add(halo);
+  // Vingar (4 fjädrar, större)
+  const featherMat = new THREE.MeshBasicMaterial({ color: 0xccff88, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2;
+    const feather = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.1), featherMat);
+    feather.position.set(Math.cos(ang) * 0.28, Math.sin(ang) * 0.28, -ULT_ARROW_LENGTH / 2 + 0.6);
     feather.rotation.z = ang;
     grp.add(feather);
   }
+  // Roterande blad-ring vid spetsen (3 löv som orbiterar)
+  const leafGroup = new THREE.Group();
+  leafGroup.position.z = ULT_ARROW_LENGTH / 2 + 0.4;
+  const leafMat = new THREE.MeshBasicMaterial({ color: 0x66dd33, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2;
+    const leaf = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.9), leafMat);
+    leaf.position.set(Math.cos(ang) * 0.9, Math.sin(ang) * 0.9, 0);
+    leaf.rotation.z = ang + Math.PI / 2;
+    leafGroup.add(leaf);
+  }
+  grp.add(leafGroup);
+  // Glow-light som följer med
+  const glow = new THREE.PointLight(0xaaff55, 2.4, 6);
+  glow.position.z = ULT_ARROW_LENGTH / 2;
+  grp.add(glow);
   // Orientation: +Z framåt → atan2(dx, dz) (samma som hero-facing)
   grp.rotation.y = Math.atan2(dx, dz);
   grp.position.set(side.hero.x, 1.0, side.hero.z);
@@ -8453,9 +8665,12 @@ function hostCastLegolasUlt(side, dx, dz) {
     dx, dz,
     traveled: 0,
     maxRange: ULT_ARROW_MAX_RANGE,
+    leafGroup,
+    trailAccum: 0,
   });
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff44, 1.4);
-  triggerCameraShake(0.15, 0.2);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ff44, 1.8);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaff66);
+  triggerCameraShake(0.18, 0.25);
 }
 
 function tickBigArrows(side, dt) {
@@ -8467,8 +8682,19 @@ function tickBigArrows(side, dt) {
     arr.mesh.position.x += arr.dx * step;
     arr.mesh.position.z += arr.dz * step;
     arr.traveled += step;
-    // Roterande visuell rolling
+    // Roterande visuell rolling + orbiterande löv
     arr.mesh.rotation.z = (arr.mesh.rotation.z || 0) + dt * 8;
+    if (arr.leafGroup) arr.leafGroup.rotation.z = (arr.leafGroup.rotation.z || 0) + dt * 6;
+    // Nature-magic trail: gröna gnistor + virvlande löv bakom pilen
+    arr.trailAccum = (arr.trailAccum || 0) + dt;
+    while (arr.trailAccum >= ULT_ARROW_TRAIL_INTERVAL) {
+      arr.trailAccum -= ULT_ARROW_TRAIL_INTERVAL;
+      const tx = arr.mesh.position.x - arr.dx * (ULT_ARROW_LENGTH * 0.5 + Math.random() * 1.2);
+      const ty = 1.0 + (Math.random() - 0.5) * 0.5;
+      const tz = arr.mesh.position.z - arr.dz * (ULT_ARROW_LENGTH * 0.5 + Math.random() * 1.2);
+      const color = Math.random() < 0.5 ? 0x88ff44 : 0xccff88;
+      spawnProjectileTrailPuff(tx + (Math.random() - 0.5) * 0.4, ty, tz + (Math.random() - 0.5) * 0.4, color);
+    }
     let hit = null;
     // Opp hero (arena)
     if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
@@ -8543,7 +8769,7 @@ function onLegolasUltHit(side, hit, arr) {
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
 const RAGE_PULSE_RADIUS = 4.5;
-const RAGE_PULSE_DMG_PCT = 0.05;     // 5% maxHP per 0.5s
+const RAGE_PULSE_DMG_PCT = 0.035;    // 3.5% maxHP per 0.5s (nerf -30%)
 const RAGE_DR_MUL = 0.50;             // 50% DR
 const RAGE_HEAL_PCT = 0.20;           // 20% lifesteal från all skada utdelad
 const RAGE_SCALE = 2.0;
@@ -10067,7 +10293,7 @@ const HEROES = [
 const HERO_INFO = {
   magiker: {
     skills: {
-      q: { name: 'Fire Wave', icon: '🔥', desc: 'Skickar ut en triangulär eldvåg framför hjälten (45° vinkel, 5 m lång). Träffar alla fiender i konen med direkt damage och applicerar 3 sekunders DoT (damage over time).' },
+      q: { name: 'Soul Drain', icon: '💀', desc: 'Kanalisera mot en target (tap för låst mål, eller närmaste fiende inom 10m). 5 sekunders drain — varje sekund: 5% av targets max-HP i skada och Gandulf healas med samma mängd. Slow stackar med 10% per sekund (max 50%). Slow ligger kvar 1s efter sista tick. Bryts om target dör eller springer >12m.' },
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
@@ -10090,7 +10316,7 @@ const HERO_INFO = {
       e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
     },
     passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 20% damage reduction (alltid på).\n• Under 60% HP: + 5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 20% mer damage reduction (40% totalt) och var 3:e inkommande damage-instance blockas helt.' },
-    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 5% av targets max-HP i skada — totalt 50% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
+    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 3.5% av targets max-HP i skada — totalt 35% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
   },
 };
 
@@ -10399,7 +10625,7 @@ function renderHowto() {
     },
     {
       icon: 'heroes', title: 'Heroes',
-      html: `<p>3 hjältar valbara (fler kommer):</p><ul><li><strong>Gandulf</strong> — magiker, 100 HP, 5 AA, AoE skills (Fire Wave / Frost Nova / Black Hole). Passive: skill-hits ger shield + skill-dmg-stacks.</li><li><strong>Legolus</strong> — archer-assassin, 85 HP, 6 AA, längre range + snabb AA. Var 3:e AA = buff.</li><li><strong>Gimlu</strong> — dvärg-tank, hög HP, hammar-skills. Passive: under 80% HP får han DR-tier.</li></ul>`
+      html: `<p>3 hjältar valbara (fler kommer):</p><ul><li><strong>Gandulf</strong> — magiker, 100 HP, 5 AA, target-skills (Soul Drain / Frost Nova / Black Hole). Passive: skill-hits ger shield + skill-dmg-stacks.</li><li><strong>Legolus</strong> — archer-assassin, 85 HP, 6 AA, längre range + snabb AA. Var 3:e AA = buff.</li><li><strong>Gimlu</strong> — dvärg-tank, hög HP, hammar-skills. Passive: under 80% HP får han DR-tier.</li></ul>`
     },
     {
       icon: 'fountain', title: 'Fontän-aura',
