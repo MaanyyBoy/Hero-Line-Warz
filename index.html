@@ -1667,17 +1667,33 @@
   </div>
 
   <script>
-    // Visa moduladdar-fel direkt på loading-screen så vi kan diagnostisera
-    // problem som annars bara dyker upp i konsolen.
-    window.addEventListener('error', (e) => {
+    // Visa moduladdar-fel direkt — antingen på loading-screen om den fortfarande
+    // är synlig, annars som en flytande röd ruta över lobbyn.
+    function _showFatalError(msg, where) {
+      // Försök loading-screen först
       const s = document.getElementById('al-status');
-      if (s) s.innerHTML = '<span style="color:#ff8866">FEL: ' + (e.message || 'okänt') + '</span>';
+      if (s && !document.getElementById('asset-loading').classList.contains('hidden')) {
+        s.innerHTML = '<span style="color:#ff8866">FEL: ' + msg + '<br><small>' + (where || '') + '</small></span>';
+        return;
+      }
+      // Annars: skapa en flytande ruta över lobbyn
+      let box = document.getElementById('_fatal-err');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = '_fatal-err';
+        box.style.cssText = 'position:fixed;top:8px;left:8px;right:8px;background:rgba(80,15,15,0.95);color:#ffcccc;padding:14px 18px;border:2px solid #ff5544;border-radius:8px;font:13px/1.4 system-ui;z-index:9999;white-space:pre-wrap;word-break:break-word;';
+        document.body.appendChild(box);
+      }
+      box.innerHTML = '<strong style="color:#ffaaaa">JS-fel — listeners avbröts:</strong><br>' + msg + (where ? '<br><small style="opacity:0.7">' + where + '</small>' : '');
+    }
+    window.addEventListener('error', (e) => {
+      const where = (e.filename || '') + ':' + (e.lineno || '?');
+      _showFatalError(e.message || 'okänt', where);
       console.error('[window error]', e.message, e.filename, e.lineno);
     });
     window.addEventListener('unhandledrejection', (e) => {
-      const s = document.getElementById('al-status');
       const msg = (e.reason && (e.reason.message || e.reason)) || 'unhandled rejection';
-      if (s) s.innerHTML = '<span style="color:#ff8866">FEL: ' + msg + '</span>';
+      _showFatalError(msg, 'promise');
       console.error('[unhandled rejection]', e.reason);
     });
   </script>
