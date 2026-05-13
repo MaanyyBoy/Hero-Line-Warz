@@ -1543,34 +1543,54 @@ function setShadow(obj, cast = true, recv = false) {
 
 function createHpBar(hero = false) {
   const canvas = document.createElement('canvas');
-  canvas.width = 100; canvas.height = 14;
+  // Canvas = 100 × 28 = HP-rad (rad 1) + Shield-rad (rad 2). Höjd-skalan dubblas.
+  canvas.width = 100; canvas.height = 28;
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(hero ? 1.2 : 0.85, hero ? 0.17 : 0.13, 1);
+  sprite.scale.set(hero ? 1.2 : 0.85, hero ? 0.34 : 0.26, 1);
   sprite.renderOrder = 999;
   sprite.userData.canvas = canvas;
   sprite.userData.tex = tex;
   sprite.userData.lastPct = -1;
+  sprite.userData.lastShieldPct = -1;
   return sprite;
 }
 
-function drawHpBar(sprite, pct) {
+function drawHpBar(sprite, pct, shieldPct = 0) {
   pct = Math.max(0, Math.min(1, pct));
-  if (Math.abs(pct - sprite.userData.lastPct) < 0.004) return;
+  shieldPct = Math.max(0, Math.min(1, shieldPct));
+  if (Math.abs(pct - sprite.userData.lastPct) < 0.004 &&
+      Math.abs(shieldPct - sprite.userData.lastShieldPct) < 0.004) return;
   sprite.userData.lastPct = pct;
+  sprite.userData.lastShieldPct = shieldPct;
   const ctx = sprite.userData.canvas.getContext('2d');
-  ctx.clearRect(0, 0, 100, 14);
+  ctx.clearRect(0, 0, 100, 28);
+  // HP-rad (rad 1, y=0-13)
   ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, 100, 14);
+  ctx.fillRect(0, 0, 100, 13);
   ctx.strokeStyle = 'rgba(255,255,255,0.45)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, 99, 13);
+  ctx.strokeRect(0.5, 0.5, 99, 12);
   ctx.fillStyle = pct > 0.35 ? '#2bd054' : (pct > 0.15 ? '#d5a52a' : '#d04a2a');
-  ctx.fillRect(1.5, 1.5, 97 * pct, 11);
+  ctx.fillRect(1.5, 1.5, 97 * pct, 10);
+  // Shield-rad (rad 2, y=14-27) — bara om shieldPct > 0
+  if (shieldPct > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 15, 100, 13);
+    ctx.strokeStyle = 'rgba(170,200,255,0.55)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 15.5, 99, 12);
+    // Ljusblå shield-bar
+    ctx.fillStyle = '#7ec4ff';
+    ctx.fillRect(1.5, 16.5, 97 * shieldPct, 10);
+    // Inre highlight (toppen 3px)
+    ctx.fillStyle = 'rgba(220,240,255,0.55)';
+    ctx.fillRect(1.5, 16.5, 97 * shieldPct, 3);
+  }
   sprite.userData.tex.needsUpdate = true;
 }
 
@@ -1585,27 +1605,30 @@ function attachHpBar(meshGroup, yOffset, hero = false) {
   return bar;
 }
 
-function updateEntityHpBar(mesh, hp, maxHp, now) {
+function updateEntityHpBar(mesh, hp, maxHp, now, shield = 0) {
   if (!mesh?.userData?.hpBar) return;
   const bar = mesh.userData.hpBar;
   const prev = mesh.userData.prevHp;
   if (prev !== undefined && hp < prev) mesh.userData.lastHurtTime = now;
   mesh.userData.prevHp = hp;
   const pct = maxHp > 0 ? hp / maxHp : 0;
+  // Shield mäts ALLTID mot maxHp så halvbar = 50% av max-HP absorberat
+  const shieldPct = maxHp > 0 ? Math.max(0, shield) / maxHp : 0;
   const damaged = (now - (mesh.userData.lastHurtTime || -10)) < 3.0;
   const lowHp = pct < 1.0;
   const showAlways = !!mesh.userData.hpBarHero;
-  bar.visible = (showAlways || damaged || lowHp) && pct > 0;
-  if (bar.visible) drawHpBar(bar, pct);
+  bar.visible = (showAlways || damaged || lowHp || shieldPct > 0) && pct > 0;
+  if (bar.visible) drawHpBar(bar, pct, shieldPct);
 }
 
 function tickAllHpBars() {
   const now = performance.now() / 1000;
-  // Heroes
-  for (const idx of [1, 2]) {
+  // Heroes — skicka in shield så HP-baren ritar shield-raden
+  for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s || !s.mesh) continue;
-    updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now);
+    const shieldTotal = (s.shield || 0) + (s.lingShieldHp || 0);
+    updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now, shieldTotal);
     if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
   }
   if (APP.mode === 'solo') {
@@ -4934,16 +4957,24 @@ function updateProjectiles(side, dt) {
       // Arena-orb / arena-hero hit → applicera special damage och hoppa över monster-logiken
       if (isArenaOrbT) {
         damageArenaOrb(p.damage, side.idx);
+        spawnFloatingText(ARENA_CFG.orb.x, 1.5, ARENA_CFG.orb.z, String(Math.round(p.damage)), p.isCrit ? 'crit' : 'dmg');
         if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
-          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+          const healAmt = p.damage * p.lifestealRatio;
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+          spawnHeroHealText(side, healAmt);
         }
         scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
       }
       if (isArenaHeroT) {
         const targetSide = sides[p.target.sideIdx];
-        if (targetSide) damageHero(targetSide, p.damage);
+        if (targetSide) {
+          // damageHero spawnar redan popup baserat på faktisk skada efter shields/DR
+          damageHero(targetSide, p.damage, p.isCrit);
+        }
         if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
-          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+          const healAmt = p.damage * p.lifestealRatio;
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+          spawnHeroHealText(side, healAmt);
         }
         scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
       }
@@ -4952,7 +4983,9 @@ function updateProjectiles(side, dt) {
         p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
         p.target.poisonRemaining = POISON_DURATION;
       }
+      const _dmgApplied = Math.min(p.damage, p.target.hp);
       p.target.hp -= p.damage;
+      spawnDamageText(p.target.mesh, _dmgApplied, p.isCrit);
       let killedTarget = false;
       if (p.target.hp <= 0) {
         killedTarget = true;
@@ -5085,6 +5118,7 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
   }
   const actual = Math.min(dmg, m.hp);
   m.hp -= dmg;
+  spawnDamageText(m.mesh, actual, false);
   applySkillLifesteal(side, actual);
   applyRageLifesteal(side, actual);
   gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
@@ -5097,6 +5131,7 @@ function soloApplySkillDmgToCreep(side, opp, c, dmg) {
   }
   const actual = Math.min(dmg, c.hp);
   c.hp -= dmg;
+  spawnDamageText(c.mesh, actual, false);
   applySkillLifesteal(side, actual);
   applyRageLifesteal(side, actual);
   gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
@@ -6196,7 +6231,8 @@ function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
   side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
-  // +5% maxHP shield per hit (stackar additivt, capad på maxHP)
+  // +5% maxHP shield per hit (stackar additivt, capad på maxHP).
+  // Popup hanteras av checkShieldGain (deltektion baserad på diff).
   side.shield = Math.min(side.hero.maxHp, (side.shield || 0) + side.hero.maxHp * GANDULF_SHIELD_PER_HIT_PCT);
   if (target && typeof target === 'object') {
     target.gandulfHits = (target.gandulfHits || 0) + 1;
@@ -6207,7 +6243,7 @@ function onGandulfSkillHit(side, target) {
   }
 }
 
-function damageHero(side, amount) {
+function damageHero(side, amount, isCrit = false) {
   if (side.hero.dead) return;
   let gimluDR = 0;
   if (side.heroId === 'gimlu') {
@@ -6216,7 +6252,10 @@ function damageHero(side, amount) {
     if (ratio < GIMLU_PASSIVE_TIER3_HP) {
       gimluDR += GIMLU_PASSIVE_TIER3_DR;
       side.gimluDmgInstanceCount = (side.gimluDmgInstanceCount || 0) + 1;
-      if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) return;
+      if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) {
+        spawnCcText(side.mesh, 'IMMUNE');
+        return;
+      }
     }
   }
   // Titans Armor: var-3:e-AA pending block ELLER procentuell block-chans
@@ -6230,6 +6269,7 @@ function damageHero(side, amount) {
   }
   if (blocked) {
     spawnHitSparkFx(side.hero.x, 1.0, side.hero.z, 0xffaa66);
+    spawnCcText(side.mesh, 'BLOCK');
     // Return 30% till skadegivaren — vi har inte attacker-ref här, så hoppa
     // över returnen för nu (notera: kräver attacker-passing för full impl)
     return;
@@ -6269,9 +6309,15 @@ function damageHero(side, amount) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
     else { final -= side.shield; side.shield = 0; }
   }
+  const hpBefore = side.hero.hp;
   side.hero.hp = Math.max(0, side.hero.hp - final);
+  const hpLost = hpBefore - side.hero.hp;
+  // Visa skada som faktiskt landade på HP (efter shields/DR)
+  if (hpLost > 0.5) spawnHeroDamageText(side, hpLost, isCrit);
   if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
-    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
+    const tauntHeal = final * TAUNT_HEAL_PCT;
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + tauntHeal);
+    if (tauntHeal > 0.5) spawnHeroHealText(side, tauntHeal);
   }
   if ((side.ironWillRemaining || 0) > 0) {
     side.ironWillStored = (side.ironWillStored || 0) + final;
@@ -11141,6 +11187,141 @@ function makeHeroAaProjectileMesh(heroId, isAoE, isCrit) {
   return grp;
 }
 
+// ============================================================
+// FLYTANDE TEXT-POPUPS (damage / heal / shield / CC) via DOM-overlay
+// ============================================================
+const fxOverlayEl = document.getElementById('fx-overlay');
+const _fxProjVec = new THREE.Vector3();
+let _fxPopupBudget = 0;
+const FX_POPUP_MAX_PER_FRAME = 4;  // max nya popups per frame (cappar spam)
+const FX_POPUP_MAX_LIVE = 60;       // hård cap på samtidiga DOM-element
+
+function worldToScreen(x, y, z) {
+  _fxProjVec.set(x, y, z).project(camera);
+  // NDC (-1..1) → pixlar
+  const sx = (_fxProjVec.x * 0.5 + 0.5) * window.innerWidth;
+  const sy = (1 - (_fxProjVec.y * 0.5 + 0.5)) * window.innerHeight;
+  const behind = _fxProjVec.z < -1 || _fxProjVec.z > 1;
+  return { x: sx, y: sy, behind };
+}
+
+// type: 'dmg' (röd) | 'crit' (orange större) | 'heal' (grön) | 'shield' (ljusblå) | 'cc' (gul mindre)
+function spawnFloatingText(worldX, worldY, worldZ, text, type = 'dmg') {
+  if (!fxOverlayEl) return;
+  if (_fxPopupBudget >= FX_POPUP_MAX_PER_FRAME) return;
+  if (fxOverlayEl.childElementCount >= FX_POPUP_MAX_LIVE) return;
+  const p = worldToScreen(worldX, worldY, worldZ);
+  if (p.behind) return;
+  // Slumpa horisontellt jitter så stackade träffar inte överlappar perfekt
+  const jitter = (Math.random() - 0.5) * 24;
+  const el = document.createElement('div');
+  el.className = 'fx-popup ' + (type === 'crit' ? 'dmg crit' : type);
+  el.textContent = text;
+  el.style.left = (p.x + jitter) + 'px';
+  el.style.top  = (p.y - 12) + 'px';
+  el.addEventListener('animationend', () => el.remove(), { once: true });
+  fxOverlayEl.appendChild(el);
+  _fxPopupBudget++;
+}
+
+// Reset:as varje frame i tick()
+function resetFxPopupBudget() { _fxPopupBudget = 0; }
+
+// Bekväma wrapper:s med entitets-position
+function spawnDamageText(mesh, amount, isCrit = false) {
+  if (!mesh || !mesh.position) return;
+  const v = Math.round(amount);
+  if (v <= 0) return;
+  const yTop = (mesh.userData && mesh.userData.hpBar ? mesh.userData.hpBar.position.y : 2.0) + 0.4;
+  spawnFloatingText(mesh.position.x, yTop, mesh.position.z, String(v), isCrit ? 'crit' : 'dmg');
+}
+function spawnHeroDamageText(side, amount, isCrit = false) {
+  if (!side || !side.mesh) return;
+  spawnDamageText(side.mesh, amount, isCrit);
+}
+function spawnHealText(mesh, amount) {
+  if (!mesh || !mesh.position) return;
+  const v = Math.round(amount);
+  if (v <= 0) return;
+  const yTop = (mesh.userData && mesh.userData.hpBar ? mesh.userData.hpBar.position.y : 2.0) + 0.4;
+  spawnFloatingText(mesh.position.x, yTop, mesh.position.z, '+' + v, 'heal');
+}
+function spawnHeroHealText(side, amount) {
+  if (!side || !side.mesh) return;
+  spawnHealText(side.mesh, amount);
+}
+function spawnShieldText(mesh, amount) {
+  if (!mesh || !mesh.position) return;
+  const v = Math.round(amount);
+  if (v <= 0) return;
+  const yTop = (mesh.userData && mesh.userData.hpBar ? mesh.userData.hpBar.position.y : 2.0) + 0.4;
+  spawnFloatingText(mesh.position.x, yTop, mesh.position.z, '+' + v + ' shield', 'shield');
+}
+function spawnCcText(mesh, label) {
+  if (!mesh || !mesh.position) return;
+  const yTop = (mesh.userData && mesh.userData.hpBar ? mesh.userData.hpBar.position.y : 2.0) + 0.7;
+  spawnFloatingText(mesh.position.x, yTop, mesh.position.z, label, 'cc');
+}
+
+// Scanna alla entiteter och spawna CC-popup när en CC går från 0 → aktiv.
+// Repeat var 2s medan CC är aktiv så spelaren ser status-texten flera gånger.
+const CC_DEFS = [
+  { key: 'tauntedTime', label: 'TAUNTED' },
+  { key: 'frozenTime',  label: 'FROZEN' },
+  { key: 'fearTime',    label: 'STUNNED' },     // bossar/monster: fearTime
+  { key: 'heroFearTime',label: 'STUNNED' },     // hero: heroFearTime
+  { key: 'slowTime',    label: 'SLOWED' },       // monster/creep
+  { key: 'heroSlowTime',label: 'SLOWED' },       // hero
+  { key: 'poisonRemaining', label: 'POISONED' },
+  { key: 'dotRemaining', label: 'BURNING' },
+];
+const CC_REPEAT_INTERVAL = 2.0;
+
+function checkCcStateForEntity(entity, mesh) {
+  if (!entity || !mesh) return;
+  if (!entity._ccTracked) entity._ccTracked = {};
+  for (const def of CC_DEFS) {
+    const val = entity[def.key] || 0;
+    const t = entity._ccTracked[def.key];
+    if (val > 0) {
+      if (!t) {
+        entity._ccTracked[def.key] = { lastSpawnT: performance.now() / 1000 };
+        spawnCcText(mesh, def.label);
+      } else {
+        const nowS = performance.now() / 1000;
+        if (nowS - t.lastSpawnT > CC_REPEAT_INTERVAL) {
+          t.lastSpawnT = nowS;
+          spawnCcText(mesh, def.label);
+        }
+      }
+    } else if (t) {
+      entity._ccTracked[def.key] = null;
+    }
+  }
+}
+
+function checkAllCcStates() {
+  // Heroes — kolla både CC på .hero (taunt/frozen/dot/poison) och på .side (fear/slow)
+  for (const idx of [1, 2, 3, 4]) {
+    const s = sides[idx];
+    if (!s || !s.mesh || s.hero.dead) continue;
+    checkCcStateForEntity(s.hero, s.mesh);
+    // side-objekt äger heroFearTime/heroSlowTime — använd side direkt som "entity"
+    checkCcStateForEntity(s, s.mesh);
+  }
+  // Monsters + creeps i varje side
+  for (const idx of [1, 2, 3, 4]) {
+    const s = sides[idx];
+    if (!s) continue;
+    if (Array.isArray(s.monsters)) for (const m of s.monsters) {
+      if (m.hp > 0) checkCcStateForEntity(m, m.mesh);
+    }
+    if (Array.isArray(s.playerCreeps)) for (const c of s.playerCreeps) {
+      if (c.hp > 0) checkCcStateForEntity(c, c.mesh);
+    }
+  }
+}
+
 function spawnHitSparkFx(x, y, z, color = 0xffaa44) {
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
   const burst = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), mat);
@@ -11248,16 +11429,26 @@ function updateShieldAuras(now) {
 
 // Track shield-deltas så vi kan spawna en burst första gången shield gains
 function checkShieldGain() {
-  for (const idx of [1, 2]) {
+  const nowS = performance.now() / 1000;
+  for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s) continue;
     const prev = s._shieldPrev || 0;
-    const cur = s.shield || 0;
+    const cur = (s.shield || 0) + (s.lingShieldHp || 0);
     if (cur > prev + 0.5) {
-      // Shield ökade — spawna burst
       if (s.hero && !s.hero.dead && s.mesh) {
         spawnShieldBurstFx(s.hero.x, s.hero.z, 0x66c8ff);
+        // Ackumulera shield-gain (start-tid sätts vid första delta så
+        // burst:s i samma frame summeras).
+        s._shieldPopAccum = (s._shieldPopAccum || 0) + (cur - prev);
+        if (!s._shieldPopStartT) s._shieldPopStartT = nowS;
       }
+    }
+    // Throttling-timer tickar alltid på reell tid (oberoende av FPS)
+    if ((s._shieldPopAccum || 0) > 0 && s._shieldPopStartT && (nowS - s._shieldPopStartT) > 0.15) {
+      if (s.mesh) spawnShieldText(s.mesh, s._shieldPopAccum);
+      s._shieldPopAccum = 0;
+      s._shieldPopStartT = 0;
     }
     s._shieldPrev = cur;
   }
@@ -11265,16 +11456,30 @@ function checkShieldGain() {
 
 // Track hp-gains så vi kan spawna heal-plus, OCH hp-drops för slash
 function checkHealGain() {
-  for (const idx of [1, 2]) {
+  const nowS = performance.now() / 1000;
+  for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s) continue;
     const prev = s._hpPrev !== undefined ? s._hpPrev : s.hero.hp;
     const cur = s.hero.hp;
-    if (cur > prev + 1.0 && !s.hero.dead) {
-      spawnHealFx(s.hero.x, s.hero.z);
+    const delta = cur - prev;
+    if (delta > 0 && !s.hero.dead) {
+      if (delta > 1.0) spawnHealFx(s.hero.x, s.hero.z);
+      s._healAccum = (s._healAccum || 0) + delta;
+      if (!s._healAccumStartT) s._healAccumStartT = nowS;
     }
-    // Skada — spawna ett slash om hjälten just tog skada (MP-fallback, solo har redan
-    // egna slash-spawns i melee-källan)
+    // Reell-tid throttling (oberoende av FPS): burst > 5 spawnar snabbt,
+    // passiv regen spawnar var ~1s.
+    if ((s._healAccum || 0) > 0) {
+      const elapsed = nowS - (s._healAccumStartT || nowS);
+      const big = s._healAccum > 5;
+      if ((big && elapsed > 0.15) || elapsed > 1.0) {
+        spawnHeroHealText(s, s._healAccum);
+        s._healAccum = 0;
+        s._healAccumStartT = 0;
+      }
+    }
+    // MP-fallback slash-spawn när HP sjunker
     if (cur < prev - 0.5 && !s.hero.dead && APP.mode !== 'solo') {
       spawnSlashFx(s.hero.x, s.hero.z, 0xff5544);
     }
@@ -11543,6 +11748,7 @@ function animateSceneProps(dt, now) {
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
+  resetFxPopupBudget();
 
   if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
     // Solo + arena-host kör simulationen lokalt
@@ -11574,6 +11780,7 @@ function tick() {
   updateShieldAuras(now);
   checkShieldGain();
   checkHealGain();
+  checkAllCcStates();
   updateBuffDebuffSprites();
 
   updateHud();
