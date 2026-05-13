@@ -7347,18 +7347,26 @@ function onTalentPick(talentId) {
   const tStat = arenaState.talents[APP.localSide];
   if (!tStat || tStat.points <= 0) return;
   if (tStat.chosen.includes(talentId)) return;
+  // Optimistisk local-pick — host:ens nästa a-state bekräftar
   tStat.chosen.push(talentId);
   tStat.points -= 1;
-  // Applicera direkt på lokal hjälte
   const side = sides[APP.localSide];
   if (side) recomputeArenaSideStats(side);
   renderTalentsGrid();
   updateArenaPrepUI();
+  // Skicka till host om vi är klient
+  if (isArenaMp() && APP.mode === 'client') {
+    sendGameMsg({ t: 'a-talent', side: APP.localSide, talentId });
+  }
 }
 
 if (apReadyBtn) apReadyBtn.addEventListener('click', () => {
-  arenaState.ready[APP.localSide] = !arenaState.ready[APP.localSide];
+  const newVal = !arenaState.ready[APP.localSide];
+  arenaState.ready[APP.localSide] = newVal;
   updateArenaPrepUI();
+  if (isArenaMp() && APP.mode === 'client') {
+    sendGameMsg({ t: 'a-ready', side: APP.localSide, value: newVal });
+  }
 });
 
 if (aeContinueBtn) aeContinueBtn.addEventListener('click', () => {
@@ -8323,10 +8331,11 @@ function castLocalSkill(key, worldDx, worldDz, tap = false) {
 }
 
 function sendOrApplyEvent(ev) {
-  if (APP.mode === 'solo') {
+  if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
+    // Solo + arena-host kör simulering lokalt — applicera event direkt
     applyEvent(sides[APP.localSide], ev);
   } else if (APP.mode === 'host' || APP.mode === 'client') {
-    // Server är auktoritativ i multiplayer — alla events går via relay
+    // Klassisk MP / arena-client: events går via relay
     APP.pendingEvents.push(ev);
     flushClientInput();
   }
@@ -8354,21 +8363,34 @@ function readLocalJoystick() {
 let lastInputJoy = { x: 0, z: 0 };
 const INPUT_SEND_INTERVAL = 1 / 30;   // 30 Hz input
 const STATE_SEND_INTERVAL = 1 / 20;   // 20 Hz state
+const ARENA_STATE_SEND_INTERVAL = 1 / 15;  // 15 Hz arena overlay-state
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
+function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
 
 function flushClientInput() {
   if (!isMpMode() || !wsOpen()) return;
+  // Arena-host kör lokalt och ska aldrig skicka client-input
+  if (isArenaMp() && APP.mode === 'host') return;
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = APP.pendingEvents;
   APP.pendingEvents = [];
-  sendGameMsg({ t: 'in', j: { x: dir.x, z: dir.z }, ev: evs });
+  // I arena-MP: skicka som 'a-input' till host (peer-to-peer), inte 'in' till server
+  if (isArenaMp() && APP.mode === 'client') {
+    sendGameMsg({ t: 'a-input', jx: dir.x, jz: dir.z, events: evs });
+  } else {
+    sendGameMsg({ t: 'in', j: { x: dir.x, z: dir.z }, ev: evs });
+  }
   lastInputJoy = dir;
 }
 
 function maybeSendClientInput(now) {
   if (!isMpMode() || !wsOpen()) return;
+  // Klassisk MP: bara client skickar input (host kör server-state-rendering)
+  // Arena MP: bara client skickar input (host kör simulering lokalt)
+  if (isArenaMp() && APP.mode !== 'client') return;
+  if (!isArenaMp() && APP.mode === 'host') return;  // klassisk host får server-state
   if (now - APP.lastInputSent < INPUT_SEND_INTERVAL && APP.pendingEvents.length === 0) return;
   APP.lastInputSent = now;
   flushClientInput();
@@ -8376,9 +8398,190 @@ function maybeSendClientInput(now) {
 
 function handleNetworkMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
-  if (msg.t === 'st' && isMpMode()) {
+  if (msg.t === 'st' && isMpMode() && APP.gameMode !== 'arena1v1') {
     applyRemoteState(msg);
+    return;
   }
+  // Arena MP-meddelanden
+  if (msg.t === 'a-input' && APP.mode === 'host' && isArenaMp()) {
+    APP.remoteArenaInput = msg;  // konsumeras i simulateAll
+    return;
+  }
+  if (msg.t === 'a-state' && APP.mode === 'client' && isArenaMp()) {
+    applyArenaState(msg);
+    return;
+  }
+  if (msg.t === 'a-ready' && APP.mode === 'host' && isArenaMp()) {
+    if (msg.side === 1 || msg.side === 2) arenaState.ready[msg.side] = !!msg.value;
+    return;
+  }
+  if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
+    const t = arenaState.talents[msg.side];
+    if (t && t.points > 0 && !t.chosen.includes(msg.talentId)) {
+      t.chosen.push(msg.talentId);
+      t.points -= 1;
+      const s = sides[msg.side];
+      if (s) recomputeArenaSideStats(s);
+    }
+    return;
+  }
+}
+
+// Bygger en snapshot av en sidas hero-state till klienten
+function heroSnap(side) {
+  if (!side) return null;
+  return {
+    x: side.hero.x, z: side.hero.z,
+    fx: side.hero.facingX, fz: side.hero.facingZ,
+    hp: side.hero.hp, mh: side.hero.maxHp,
+    d: side.hero.dead,
+    sh: side.shield || 0,
+    lv: side.level,
+    sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
+    hid: side.heroId || 'magiker',
+    ac: side.attackCounter || 0,
+  };
+}
+
+function applyHeroSnap(side, snap) {
+  if (!side || !snap) return;
+  side.hero.x = snap.x;
+  side.hero.z = snap.z;
+  side.hero.facingX = snap.fx;
+  side.hero.facingZ = snap.fz;
+  const wasDead = side.hero.dead;
+  side.hero.hp = snap.hp;
+  side.hero.maxHp = snap.mh;
+  side.hero.dead = !!snap.d;
+  side.shield = snap.sh;
+  side.level = snap.lv;
+  side.skills.q.cd = snap.sk.q;
+  side.skills.f.cd = snap.sk.f;
+  side.skills.e.cd = snap.sk.e;
+  side.attackCounter = snap.ac;
+  if (side.mesh) {
+    side.mesh.position.x = snap.x;
+    side.mesh.position.z = snap.z;
+    // Bara uppdatera rotation om facing != 0 (annars stay-where-was)
+    if (snap.fx || snap.fz) {
+      side.mesh.rotation.y = Math.atan2(snap.fx, snap.fz);
+    }
+    if (side.heroId !== snap.hid) {
+      side.heroId = snap.hid;
+      swapHeroMeshIfNeeded(side);
+    }
+    // I arena: behåll mesh synlig vid död så GLTF Death-anim körs
+    if (APP.gameMode !== 'arena1v1') {
+      side.mesh.visible = !side.hero.dead;
+    }
+  }
+}
+
+// Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
+function broadcastArenaState() {
+  if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
+  sendGameMsg({
+    t: 'a-state',
+    ph: arenaState.phase,
+    rn: arenaState.roundNum,
+    w: arenaState.wins,
+    pt: arenaState.prepTimer,
+    sst: arenaState.startingTimer,
+    spl: arenaState.startingPhaseShown,
+    et: arenaState.endTimer,
+    rw: arenaState.roundWinner,
+    mw: arenaState.matchWinner,
+    rdy: arenaState.ready,
+    tal: {
+      1: { p: arenaState.talents[1].points, c: arenaState.talents[1].chosen.slice() },
+      2: { p: arenaState.talents[2].points, c: arenaState.talents[2].chosen.slice() },
+    },
+    o: { hp: arenaState.orb.hp, a: arenaState.orb.alive, sp: arenaState.orb.spawnTimer },
+    h1: heroSnap(sides[1]),
+    h2: heroSnap(sides[2]),
+  });
+}
+
+// Client: ta emot a-state och applicera lokalt
+function applyArenaState(msg) {
+  if (APP.mode !== 'client' || !isArenaMp()) return;
+  const prevPhase = arenaState.phase;
+  const prevRound = arenaState.roundNum;
+  arenaState.phase = msg.ph;
+  arenaState.roundNum = msg.rn;
+  // Använd numeriska keys för wins/ready så vi inte blandar med strings efter JSON-roundtrip
+  arenaState.wins[1] = (msg.w && msg.w[1]) || 0;
+  arenaState.wins[2] = (msg.w && msg.w[2]) || 0;
+  arenaState.prepTimer = msg.pt;
+  arenaState.startingTimer = msg.sst;
+  arenaState.startingPhaseShown = msg.spl;
+  arenaState.endTimer = msg.et;
+  arenaState.roundWinner = msg.rw;
+  arenaState.matchWinner = msg.mw;
+  arenaState.ready[1] = !!(msg.rdy && msg.rdy[1]);
+  arenaState.ready[2] = !!(msg.rdy && msg.rdy[2]);
+  // Talents (merge with optimistic local picks — server är auktoritativ)
+  arenaState.talents[1].points = msg.tal[1].p;
+  arenaState.talents[1].chosen = msg.tal[1].c.slice();
+  arenaState.talents[2].points = msg.tal[2].p;
+  arenaState.talents[2].chosen = msg.tal[2].c.slice();
+  // Orb
+  const orbWasAlive = arenaState.orb.alive;
+  arenaState.orb.hp = msg.o.hp;
+  arenaState.orb.alive = msg.o.a;
+  arenaState.orb.spawnTimer = msg.o.sp;
+  if (arenaOrbMesh) arenaOrbMesh.visible = arenaState.orb.alive;
+  if (!orbWasAlive && arenaState.orb.alive) {
+    // Orb spawnade — spela FX lokalt också
+    spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
+    spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
+    showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
+  } else if (orbWasAlive && !arenaState.orb.alive) {
+    // Orb dog
+    spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x88ffdd);
+    triggerCameraShake(0.4, 0.45);
+  }
+  // Hero-snapshots
+  applyHeroSnap(sides[1], msg.h1);
+  applyHeroSnap(sides[2], msg.h2);
+  // UI-fas-transitions
+  if (prevPhase !== arenaState.phase) {
+    if (arenaState.phase === 'prep') {
+      hideArenaEnd();
+      hideArenaCountdown();
+      showArenaPrep();
+    } else if (arenaState.phase === 'starting') {
+      hideArenaPrep();
+      showArenaCountdown(arenaState.startingPhaseShown || '3');
+    } else if (arenaState.phase === 'starting-end') {
+      // FIGHT! visas
+      showArenaCountdown('FIGHT!', true);
+    } else if (arenaState.phase === 'fight') {
+      hideArenaPrep();
+      hideArenaCountdown();
+      hideArenaEnd();
+    } else if (arenaState.phase === 'roundEnd') {
+      showArenaEnd(arenaState.roundWinner, false);
+    } else if (arenaState.phase === 'matchEnd') {
+      showArenaEnd(arenaState.matchWinner, true);
+    }
+  } else if (arenaState.phase === 'starting') {
+    // Uppdatera countdown-text när phase-shown ändras
+    const lbl = arenaState.startingPhaseShown;
+    if (lbl) {
+      const isFight = lbl.toUpperCase().startsWith('F');
+      const cur = (typeof acTextEl !== 'undefined' && acTextEl) ? acTextEl.textContent : null;
+      if (cur !== lbl) showArenaCountdown(lbl, isFight);
+    }
+  }
+  // Uppdatera prep-UI om i prep-fas (timer, points, ready, talents)
+  if (arenaState.phase === 'prep') {
+    updateArenaPrepUI();
+    renderTalentsGrid();
+  }
+  // Recompute stats för lokal sida (talents kan ha ändrats)
+  const localSide = sides[APP.localSide];
+  if (localSide) recomputeArenaSideStats(localSide);
 }
 
 // ---- Hero pick-skärm ----
@@ -9194,11 +9397,18 @@ function enterPlayPhase() {
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
     }
-    resetArenaState();
-    // Ge båda 1 talent-poäng vid match-start (innan första round-bonusen)
-    arenaState.talents[1].points = 0;
-    arenaState.talents[2].points = 0;
-    startArenaRound(1);  // +1 poäng per runda → båda får 1 vid start
+    // Endast host (eller solo) initierar arenaState. Klienten följer via a-state-broadcast.
+    if (APP.mode !== 'client') {
+      resetArenaState();
+      arenaState.talents[1].points = 0;
+      arenaState.talents[2].points = 0;
+      startArenaRound(1);
+    } else {
+      // Client: visa hero-pick-överlag bortagen, vänta på host's första a-state
+      hideArenaPrep();
+      hideArenaEnd();
+      hideArenaCountdown();
+    }
   } else {
     arenaSceneGroup.visible = false;
   }
@@ -9352,14 +9562,24 @@ function simulateAll(dt) {
       if (side.hero.respawnTimer <= 0) respawnHero(side);
     }
   }
-  // Applicera input för lokal sida
+  // Applicera input för lokal sida (host=1, solo=1)
   if (sides[APP.localSide]) {
     const raw = readLocalJoystick();
     const dir = screenToWorld(raw.x, raw.z);
     applyMovement(sides[APP.localSide], dir.x, dir.z, dt);
   }
-  // (Multiplayer-fjärrsidans input hanteras av servern numera — denna funktion
-  // kör bara i solo-mode där sides[2] inte existerar.)
+  // I arena-MP host: applicera klientens senaste input på sides[2]
+  if (isArenaMp() && APP.mode === 'host' && sides[2]) {
+    const ri = APP.remoteArenaInput;
+    if (ri) {
+      applyMovement(sides[2], ri.jx || 0, ri.jz || 0, dt);
+      if (ri.events && ri.events.length) {
+        for (const ev of ri.events) applyEvent(sides[2], ev);
+        ri.events = [];
+      }
+    }
+  }
+  // (Klassisk multiplayer-fjärrsidans input hanteras av servern numera.)
   // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
@@ -9888,15 +10108,26 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
 
-  if (APP.mode === 'solo') {
+  if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
+    // Solo + arena-host kör simulationen lokalt
     if (!matchState.gameOver) simulateAll(dt);
   } else if (isMpMode()) {
-    // Servern simulerar — klienten skickar bara input och renderar mottagen state
+    // Klassisk MP: servern simulerar, klienten skickar input och renderar state
+    // Arena-client: skickar input till host och renderar a-state
     maybeSendClientInput(now);
     smoothEntityMeshes(dt);
   }
-  // Arena state-machine (oberoende av classic-simulation)
-  if (APP.gameMode === 'arena1v1') tickArena(dt);
+  // Arena MP host broadcastar state till klienten
+  if (isArenaMp() && APP.mode === 'host' && wsOpen()) {
+    if (now - APP.lastStateSent > ARENA_STATE_SEND_INTERVAL) {
+      APP.lastStateSent = now;
+      broadcastArenaState();
+    }
+  }
+  // Arena state-machine (host kör; client följer a-state)
+  if (APP.gameMode === 'arena1v1') {
+    if (APP.mode === 'solo' || APP.mode === 'host') tickArena(dt);
+  }
 
   tickMixers(dt);
   animateAllCharacters(dt);
