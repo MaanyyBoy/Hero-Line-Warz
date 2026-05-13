@@ -4902,7 +4902,9 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
     soloShatter(side, opp, m.mesh.position.x, m.mesh.position.z);
     m.frozenTime = 0;
   }
+  const actual = Math.min(dmg, m.hp);
   m.hp -= dmg;
+  applySkillLifesteal(side, actual);
   if (m.hp <= 0) hostKillMonster(side, mIdx, side);
 }
 function soloApplySkillDmgToCreep(side, opp, c, dmg) {
@@ -4910,7 +4912,16 @@ function soloApplySkillDmgToCreep(side, opp, c, dmg) {
     soloShatter(side, opp, c.mesh.position.x, c.mesh.position.z);
     c.frozenTime = 0;
   }
+  const actual = Math.min(dmg, c.hp);
   c.hp -= dmg;
+  applySkillLifesteal(side, actual);
+}
+
+// Onyx Orb skill-lifesteal: hela X% av skill-skada utdelad
+function applySkillLifesteal(side, dmgDealt) {
+  const ls = side.skillLifestealPct || 0;
+  if (ls <= 0 || dmgDealt <= 0 || side.hero.dead) return;
+  side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmgDealt * ls);
 }
 
 // Fire Wave (Q): triangulär cone framför hero. Direct dmg + 3s DoT.
@@ -5610,9 +5621,57 @@ const ITEM_TYPES = {
       },
     },
   },
-  item3: { id: 'item3', name: 'Item 3', icon: '③', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
-  item4: { id: 'item4', name: 'Item 4', icon: '④', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
-  item5: { id: 'item5', name: 'Item 5', icon: '⑤', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
+  item3: {
+    id: 'item3', name: 'Ling & Lang', icon: '🌪',
+    description: 'Snabbhet, fury-stacks, CC-immunitet — krockreduktion. Vid Lv 10: explosiv sköld var 20:e sek.',
+    statsAtLevel: (level) => {
+      const v = 0.10 * Math.pow(1.1, level - 1);  // 10% → 23.6% vid lvl 10 (1.1× compound)
+      return {
+        moveSpeedPct: v,
+        attackSpeedPct: v,
+        attackDmgPct: v,
+        ccReductionPct: 0.20,    // konstant, skalas inte
+      };
+    },
+    activeAtMax: {
+      kind: 'lingShield', duration: 0, cooldown: 20,
+      description: 'Sköld 20% maxHP. Vid kollaps: AoE-explosion. Medan aktiv: +20% AA-räckvidd och +10% AA-skada.',
+    },
+  },
+  item4: {
+    id: 'item4', name: 'Onyx Orb', icon: '🔮',
+    description: 'CDR, skill-skada, skill-lifesteal. Movement +10% per skill på CD. Vid Lv 10: aktiv is-block.',
+    statsAtLevel: (level) => {
+      const v = 0.10 * Math.pow(1.1, level - 1);
+      return {
+        cdrPct: v,
+        skillDmgPct: v,
+        skillLifestealPct: v,
+        aaDmgReductionPct: 0.20,    // konstant
+        skillDmgReductionPct: 0.20, // konstant
+      };
+    },
+    activeAtMax: {
+      kind: 'iceBlock', duration: 1.5, cooldown: 45,
+      description: 'Fryser hjälten i 1.5s, healar 15% maxHP/0.5s (total 45%). Avbryt med en till tap. Vid utgång: 50% slow runt i 2s, +50% MS i 1s.',
+    },
+  },
+  item5: {
+    id: 'item5', name: 'Titans Armor', icon: '🛡',
+    description: 'Skadereduktion, regen från förlorad HP, block-chans. Block var 3:e AA + 30% return. Stacking DR/CDR per damage taken. Vid Lv 10: aktiv fear-våg.',
+    statsAtLevel: (level) => {
+      const v = 0.10 * Math.pow(1.1, level - 1);
+      return {
+        dmgReductionPct: v,
+        hpRegenLostPct: v,   // 10% av FÖRLORAD HP per sek
+        blockChancePct: v,
+      };
+    },
+    activeAtMax: {
+      kind: 'fearWave', duration: 1.5, cooldown: 45,
+      description: 'Skräm-våg AoE i 1.5s. Fiender spring slumpmässigt och kan inte agera. När fear slutar tar de 20% av nuvarande HP som skada.',
+    },
+  },
   item6: { id: 'item6', name: 'Item 6', icon: '⑥', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
 };
 const ITEM_ORDER = ['item1', 'item2', 'item3', 'item4', 'item5', 'item6'];
@@ -5658,6 +5717,15 @@ function recomputeSideStats(side) {
   let maxHpPct = 0;
   let critChancePct = 0;
   let healPerSecPct = 0;
+  // Nya stat-keys för Ling & Lang / Onyx Orb / Titans Armor
+  let attackDmgPct = 0;          // multiplikativ AA-skada
+  let ccReductionPct = 0;        // -X% varaktighet på stuns/roots/freeze/taunt etc
+  let skillLifestealPct = 0;     // hela X% av skill-skada utdelad
+  let aaDmgReductionPct = 0;     // -X% inkommande AA-skada
+  let skillDmgReductionPct = 0;  // -X% inkommande skill-skada
+  let hpRegenLostPct = 0;        // X% av FÖRLORAD HP per sek (Titans Armor)
+  let blockChancePct = 0;        // X% chans att helt blocka skadeinstans (Titans Armor)
+  let aaRangePct = 0;            // +X% AA-räckvidd (Ling & Lang shield aktiv)
 
   const addStats = (stats) => {
     if (!stats) return;
@@ -5672,6 +5740,14 @@ function recomputeSideStats(side) {
     maxHpPct += stats.maxHpPct || 0;
     critChancePct += stats.critChancePct || 0;
     healPerSecPct += stats.healPerSecPct || 0;
+    attackDmgPct += stats.attackDmgPct || 0;
+    ccReductionPct += stats.ccReductionPct || 0;
+    skillLifestealPct += stats.skillLifestealPct || 0;
+    aaDmgReductionPct += stats.aaDmgReductionPct || 0;
+    skillDmgReductionPct += stats.skillDmgReductionPct || 0;
+    hpRegenLostPct += stats.hpRegenLostPct || 0;
+    blockChancePct += stats.blockChancePct || 0;
+    aaRangePct += stats.aaRangePct || 0;
   };
 
   for (const entry of side.inventory) {
@@ -5689,14 +5765,24 @@ function recomputeSideStats(side) {
   const levelDmgMul = 1 + LEVEL_DMG_PCT * lvl;
   const levelHpMul = 1 + LEVEL_HP_PCT * lvl;
   const levelMsMul = 1 + LEVEL_MS_PCT * lvl;
-  side.attackDmg = attackDmg * levelDmgMul;
+  side.attackDmg = attackDmg * levelDmgMul * (1 + attackDmgPct);
   side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul;
   side.attackSpeedMul = 1 + attackSpeedPct;
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
-  side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
+  // Generisk DR + AA-DR + Skill-DR (alla appliceras additivt → cap 90%)
+  const totalDR = Math.min(0.9, dmgReductionPct + aaDmgReductionPct + skillDmgReductionPct);
+  side.dmgReductionMul = Math.max(0.10, 1 - totalDR);
   side.critChancePct = Math.min(1, critChancePct);
   side.healPerSecPct = Math.max(0, healPerSecPct);
+  // Nya stats för items
+  side.ccReductionPct = Math.min(0.9, ccReductionPct);
+  side.skillLifestealPct = Math.max(0, skillLifestealPct);
+  side.hpRegenLostPct = Math.max(0, hpRegenLostPct);
+  side.blockChancePct = Math.min(1, blockChancePct);
+  // AA-range: bas från heroDef + bonus från items/active (lingShield kollas i aaRangeMul ovan)
+  side.aaRangeBonus = aaRangePct;
+  side.attackRange = def.attackRange * (1 + aaRangePct);
 
   // Max HP — räkna ny topp, behåll relativ HP vid förändring
   const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
@@ -5748,6 +5834,12 @@ function damageHero(side, amount) {
       side.gimluDmgInstanceCount = (side.gimluDmgInstanceCount || 0) + 1;
       if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) return;
     }
+  }
+  // Titans Armor: block-chans — fullt blocka instansen (efter Gimlu-counter så hans
+  // immune-stack inte tappas vid block)
+  if ((side.blockChancePct || 0) > 0 && Math.random() < side.blockChancePct) {
+    spawnHitSparkFx(side.hero.x, 1.0, side.hero.z, 0xffaa66);
+    return;
   }
   const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
@@ -9595,6 +9687,11 @@ function simulateAll(dt) {
       }
       if ((side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
+      }
+      // Titans Armor: regen X% av FÖRLORAD HP per sek (% av (maxHP - hp))
+      if ((side.hpRegenLostPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+        const lost = side.hero.maxHp - side.hero.hp;
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + lost * side.hpRegenLostPct * dt);
       }
       // Titans Taunt passive heal: 20% av maxHP per sek (+50% med Vengeful Roar-talent)
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
