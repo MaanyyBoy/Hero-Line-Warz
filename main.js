@@ -3047,6 +3047,481 @@ let nextEntityId = 1;
 const sides = { 1: null, 2: null };
 
 // ============================================================
+// ARENA: TALENTS PER HERO
+// ============================================================
+
+// Pass 1: bara stat-buffar. Skill-modifierande talents (typ "Frost Nova heals")
+// kommer i senare pass. Varje talent kostar 1 talent-poäng. En spelare börjar
+// med 1 poäng, får +1 per runda och +1 vid runda-vinst.
+const ARENA_TALENTS = {
+  magiker: [
+    { id: 'm_skill',   icon: '✦', name: 'Arcane Mastery',   desc: '+10% skill damage',     stats: { skillDmgPct: 0.10 } },
+    { id: 'm_cdr',     icon: '⏱', name: 'Quick Casting',     desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
+    { id: 'm_hp',      icon: '❤', name: 'Mana Shield',       desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
+    { id: 'm_dr',      icon: '🛡', name: 'Magic Resistance',  desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
+    { id: 'm_ms',      icon: '💨', name: 'Swift Robes',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+  ],
+  legolas: [
+    { id: 'l_dmg',     icon: '🏹', name: 'Marksman Training', desc: '+5 attack damage',      stats: { attackDmg: 5 } },
+    { id: 'l_as',      icon: '⚡', name: 'Quick Draw',        desc: '+15% attack speed',     stats: { attackSpeedPct: 0.15 } },
+    { id: 'l_crit',    icon: '🎯', name: 'Sharpshooter',      desc: '+10% crit chans',       stats: { critChancePct: 0.10 } },
+    { id: 'l_ms',      icon: '💨', name: 'Light Boots',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    { id: 'l_cdr',     icon: '⏱', name: 'Forest Sense',      desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
+  ],
+  gimlu: [
+    { id: 'g_hp',      icon: '💪', name: 'Iron Body',         desc: '+20% max HP',           stats: { maxHpPct: 0.20 } },
+    { id: 'g_dr',      icon: '🪨', name: 'Stone Skin',        desc: '+15% damage reduction', stats: { dmgReductionPct: 0.15 } },
+    { id: 'g_dmg',     icon: '🔨', name: 'Forged Strength',   desc: '+5 attack damage',      stats: { attackDmg: 5 } },
+    { id: 'g_as',      icon: '⚔', name: 'Battle Rhythm',     desc: '+10% attack speed',     stats: { attackSpeedPct: 0.10 } },
+    { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+1% HP regen per sek',  stats: { healPerSecPct: 0.01 } },
+  ],
+};
+
+// ============================================================
+// ARENA: SCEN (golv + cover-props + orb)
+// ============================================================
+
+const arenaSceneGroup = new THREE.Group();
+arenaSceneGroup.visible = false;
+arenaSceneGroup.userData.isArena = true;
+scene.add(arenaSceneGroup);
+
+let arenaOrbMesh = null;     // Three.js Group för orb
+let arenaOrbLight = null;
+let arenaOrbBuilt = false;
+
+function makeArenaProp(type) {
+  const g = new THREE.Group();
+  if (type === 'rock') {
+    const r = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.9 + Math.random() * 0.4, 0),
+      new THREE.MeshStandardMaterial({ color: 0x6a6660, roughness: 0.95 })
+    );
+    r.position.y = 0.5;
+    r.scale.y = 0.85 + Math.random() * 0.3;
+    r.castShadow = true;
+    r.receiveShadow = true;
+    g.add(r);
+  } else if (type === 'wall') {
+    // Trasig mur: 3 staplade stenblock med slight slumpighet
+    const blockMat = new THREE.MeshStandardMaterial({ color: 0x807060, roughness: 0.88 });
+    for (let i = 0; i < 3; i++) {
+      const block = new THREE.Mesh(
+        new THREE.BoxGeometry(2 + Math.random() * 0.3, 0.55, 0.7),
+        blockMat
+      );
+      block.position.set((Math.random() - 0.5) * 0.3, 0.3 + i * 0.6, (Math.random() - 0.5) * 0.15);
+      block.rotation.y = (Math.random() - 0.5) * 0.18;
+      block.castShadow = true;
+      block.receiveShadow = true;
+      g.add(block);
+    }
+    // Krossad sten vid foten
+    const rubble = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.4, 0),
+      blockMat
+    );
+    rubble.position.set(1.1, 0.2, 0.4);
+    rubble.castShadow = true;
+    g.add(rubble);
+  } else if (type === 'pillar') {
+    // Trasig pelare
+    const p = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.45, 0.65, 2.2, 12),
+      new THREE.MeshStandardMaterial({ color: 0x9a9a92, roughness: 0.85 })
+    );
+    p.position.y = 1.1;
+    p.castShadow = true;
+    g.add(p);
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(1.1, 0.28, 1.1),
+      new THREE.MeshStandardMaterial({ color: 0xaaaaa0, roughness: 0.85 })
+    );
+    cap.position.y = 2.34;
+    cap.castShadow = true;
+    g.add(cap);
+    // Avbruten topp
+    const broken = new THREE.Mesh(
+      new THREE.ConeGeometry(0.35, 0.5, 6),
+      new THREE.MeshStandardMaterial({ color: 0x888880, roughness: 0.9 })
+    );
+    broken.position.set(0.3, 2.7, 0);
+    broken.rotation.set(0.4, 0, -0.3);
+    broken.castShadow = true;
+    g.add(broken);
+  } else if (type === 'wagon') {
+    // Övergiven krachad vagn
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6a4022, roughness: 0.88 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 0.9, 1.4), wood);
+    body.position.y = 0.6;
+    body.rotation.z = 0.35;
+    body.castShadow = true;
+    g.add(body);
+    // Sidor
+    for (const dx of [-1, 1]) {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.6, 1.3), wood);
+      side.position.set(dx * 1.45, 0.95, 0);
+      side.rotation.z = 0.35;
+      side.castShadow = true;
+      g.add(side);
+    }
+    // Hjul
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x2a1a08, roughness: 0.85 });
+    for (const [dx, dz] of [[-0.9, 0.85], [0.9, 0.85], [-0.9, -0.85]]) {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.11, 8, 18), wheelMat);
+      wheel.position.set(dx, 0.45, dz);
+      wheel.rotation.y = Math.PI / 2;
+      wheel.castShadow = true;
+      g.add(wheel);
+    }
+    // Vält "axe" sticker ut
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.4, 8), wheelMat);
+    axle.position.set(0.9, 0.45, 0);
+    axle.rotation.x = Math.PI / 2;
+    g.add(axle);
+  }
+  return g;
+}
+
+function makeArenaOrbMesh() {
+  const grp = new THREE.Group();
+  // Core: glowing sphere
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.7, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0x55ffcc, emissive: 0x22aa88, emissiveIntensity: 1.4,
+      roughness: 0.25, metalness: 0.4,
+    })
+  );
+  core.position.y = 1.3;
+  core.castShadow = true;
+  grp.add(core);
+  grp.userData.core = core;
+  // Outer halo
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(1.0, 18, 14),
+    new THREE.MeshBasicMaterial({ color: 0x66ffdd, transparent: true, opacity: 0.18 })
+  );
+  halo.position.y = 1.3;
+  grp.add(halo);
+  grp.userData.halo = halo;
+  // Pillar bas
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.6, 0.8, 0.3, 10),
+    new THREE.MeshStandardMaterial({ color: 0x556680, roughness: 0.65, metalness: 0.55 })
+  );
+  base.position.y = 0.15;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  grp.add(base);
+  // Pointlight
+  const light = new THREE.PointLight(0x66ffcc, 1.2, 8, 2);
+  light.position.y = 1.3;
+  grp.add(light);
+  grp.userData.light = light;
+  attachHpBar(grp, 2.7);
+  return grp;
+}
+
+function buildArenaScene() {
+  if (arenaSceneGroup.children.length) return;  // bara en gång
+  // Golv (mörkare än classic)
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(50, 35),
+    new THREE.MeshStandardMaterial({ color: 0x3a2e22, roughness: 0.95 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, 0, ARENA_Z_OFFSET);
+  floor.receiveShadow = true;
+  arenaSceneGroup.add(floor);
+  // Perimeter (stenkant runt arenan)
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a4030, roughness: 0.9 });
+  const wallTop = 1.2;
+  const wallThickness = 1;
+  const wallH = 1.6;
+  const aLen = 50, aDep = 35;
+  // Lång murbit norr och söder
+  for (const dz of [-aDep / 2, aDep / 2]) {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(aLen, wallH, wallThickness), wallMat);
+    w.position.set(0, wallH / 2, ARENA_Z_OFFSET + dz);
+    w.castShadow = true;
+    w.receiveShadow = true;
+    arenaSceneGroup.add(w);
+  }
+  for (const dx of [-aLen / 2, aLen / 2]) {
+    const w = new THREE.Mesh(new THREE.BoxGeometry(wallThickness, wallH, aDep), wallMat);
+    w.position.set(dx, wallH / 2, ARENA_Z_OFFSET);
+    w.castShadow = true;
+    w.receiveShadow = true;
+    arenaSceneGroup.add(w);
+  }
+  // Cover-props (slumpsådd från ARENA_CFG.props)
+  for (const p of ARENA_CFG.props) {
+    const m = makeArenaProp(p.type);
+    m.position.set(p.x, 0, ARENA_Z_OFFSET + p.z);
+    m.rotation.y = p.rot;
+    arenaSceneGroup.add(m);
+  }
+  // Orb
+  arenaOrbMesh = makeArenaOrbMesh();
+  arenaOrbMesh.position.set(ARENA_CFG.orb.x, 0, ARENA_CFG.orb.z);
+  arenaOrbMesh.visible = false;
+  arenaSceneGroup.add(arenaOrbMesh);
+  arenaOrbBuilt = true;
+}
+
+// ============================================================
+// ARENA: STATE + LOGIK
+// ============================================================
+
+const arenaState = {
+  phase: 'idle',      // 'idle' | 'prep' | 'fight' | 'roundEnd' | 'matchEnd'
+  roundNum: 0,
+  wins: { 1: 0, 2: 0 },
+  prepTimer: 0,
+  fightTimer: 0,
+  ready: { 1: false, 2: false },
+  // Per-side talents
+  talents: {
+    1: { points: 0, chosen: [] },  // chosen = array of talent ids
+    2: { points: 0, chosen: [] },
+  },
+  // Orb
+  orb: { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 },
+  endTimer: 0,
+  roundWinner: 0,
+  matchWinner: 0,
+};
+
+function resetArenaState() {
+  arenaState.phase = 'idle';
+  arenaState.roundNum = 0;
+  arenaState.wins = { 1: 0, 2: 0 };
+  arenaState.prepTimer = 0;
+  arenaState.fightTimer = 0;
+  arenaState.ready = { 1: false, 2: false };
+  arenaState.talents = {
+    1: { points: 0, chosen: [] },
+    2: { points: 0, chosen: [] },
+  };
+  arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
+  arenaState.endTimer = 0;
+  arenaState.roundWinner = 0;
+  arenaState.matchWinner = 0;
+}
+
+function startArenaRound(roundNum) {
+  arenaState.roundNum = roundNum;
+  arenaState.phase = 'prep';
+  arenaState.prepTimer = ARENA_PREP_TIME;
+  arenaState.fightTimer = 0;
+  arenaState.ready = { 1: false, 2: false };
+  // +1 talent-poäng per runda för båda sidor; vinnaren får +1 extra (added in roundEnd)
+  for (const idx of [1, 2]) {
+    arenaState.talents[idx].points += 1;
+  }
+  // Återställ orb
+  arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
+  if (arenaOrbMesh) arenaOrbMesh.visible = false;
+  // Återställ heroes till spawn + full HP, ej dead
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s) continue;
+    const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
+    s.hero.x = spawn.x; s.hero.z = spawn.z;
+    s.hero.facingX = idx === 1 ? 1 : -1;
+    s.hero.facingZ = 0;
+    s.hero.dead = false;
+    s.hero.respawnTimer = 0;
+    if (s.mesh) {
+      s.mesh.position.set(spawn.x, 0, spawn.z);
+      s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+    }
+    recomputeArenaSideStats(s);
+    s.hero.hp = s.hero.maxHp;
+    s.shield = 0;
+  }
+  showArenaPrep();
+}
+
+function transitionArenaToFight() {
+  arenaState.phase = 'fight';
+  arenaState.fightTimer = 0;
+  arenaState.ready = { 1: false, 2: false };
+  hideArenaPrep();
+  // Sätt orb spawn-timer
+  arenaState.orb.spawnTimer = ARENA_ORB_SPAWN_DELAY;
+  arenaState.orb.alive = false;
+  if (arenaOrbMesh) arenaOrbMesh.visible = false;
+}
+
+function transitionArenaRoundEnd(winnerIdx) {
+  arenaState.phase = 'roundEnd';
+  arenaState.roundWinner = winnerIdx;
+  arenaState.endTimer = ARENA_ROUND_END_PAUSE;
+  if (winnerIdx > 0) {
+    arenaState.wins[winnerIdx] = (arenaState.wins[winnerIdx] || 0) + 1;
+    // Vinnaren får +1 extra talent-poäng
+    arenaState.talents[winnerIdx].points += 1;
+  }
+  // Visa banner
+  showArenaEnd(winnerIdx, false);
+}
+
+function transitionArenaMatchEnd(winnerIdx) {
+  arenaState.phase = 'matchEnd';
+  arenaState.matchWinner = winnerIdx;
+  showArenaEnd(winnerIdx, true);
+}
+
+function checkArenaRoundEnd() {
+  // 1v1: när en hjälte är död, andra vinner. Solo (sides[2]=null) → vinner när sides[1] dör.
+  const s1 = sides[1];
+  const s2 = sides[2];
+  if (!s1) return;
+  if (s1.hero.dead && (!s2 || s2.hero.dead)) {
+    // Båda döda samtidigt = draw, ge båda 0.5 (round-ändå, ingen får points)
+    transitionArenaRoundEnd(0);
+    return;
+  }
+  if (s1.hero.dead) {
+    transitionArenaRoundEnd(2);
+    return;
+  }
+  if (s2 && s2.hero.dead) {
+    transitionArenaRoundEnd(1);
+    return;
+  }
+}
+
+function updateArenaOrb(dt) {
+  const orb = arenaState.orb;
+  if (!orb.alive) {
+    orb.spawnTimer -= dt;
+    if (orb.spawnTimer <= 0) {
+      orb.alive = true;
+      orb.hp = orb.maxHp;
+      if (arenaOrbMesh) arenaOrbMesh.visible = true;
+    }
+    return;
+  }
+  // HP-bar update (samma format som hero/monster)
+  if (arenaOrbMesh) {
+    const now = performance.now() / 1000;
+    updateEntityHpBar(arenaOrbMesh, orb.hp, orb.maxHp, now);
+    // Orb-animation: pulserande halo + roterande core
+    const t = now;
+    if (arenaOrbMesh.userData.core) {
+      arenaOrbMesh.userData.core.rotation.y = t * 0.8;
+      arenaOrbMesh.userData.core.position.y = 1.3 + Math.sin(t * 2.4) * 0.10;
+    }
+    if (arenaOrbMesh.userData.halo) {
+      const pulse = 0.18 + Math.sin(t * 3.2) * 0.08;
+      arenaOrbMesh.userData.halo.material.opacity = pulse;
+    }
+    if (arenaOrbMesh.userData.light) {
+      arenaOrbMesh.userData.light.intensity = 1.0 + Math.sin(t * 2.6) * 0.4;
+    }
+  }
+}
+
+function damageArenaOrb(amount, byIdx) {
+  const orb = arenaState.orb;
+  if (!orb.alive || orb.hp <= 0) return;
+  orb.hp -= amount;
+  if (orb.hp <= 0) {
+    orb.hp = 0;
+    orb.alive = false;
+    orb.spawnTimer = ARENA_ORB_RESPAWN_DELAY;
+    if (arenaOrbMesh) arenaOrbMesh.visible = false;
+    // Dödaren får heal + shield
+    const winner = sides[byIdx];
+    if (winner) {
+      const healAmount = winner.hero.maxHp * ARENA_ORB_HEAL_PCT;
+      winner.hero.hp = Math.min(winner.hero.maxHp, winner.hero.hp + healAmount);
+      const shieldAmount = winner.hero.maxHp * ARENA_ORB_SHIELD_PCT;
+      winner.shield = Math.max(winner.shield || 0, shieldAmount);
+      spawnHealFx(winner.hero.x, winner.hero.z);
+      spawnShieldBurstFx(winner.hero.x, winner.hero.z, 0x55ffcc);
+    }
+  }
+}
+
+function tickArena(dt) {
+  if (APP.gameMode !== 'arena1v1') return;
+  if (arenaState.phase === 'prep') {
+    arenaState.prepTimer = Math.max(0, arenaState.prepTimer - dt);
+    updateArenaPrepUI();
+    // Start fight om timer = 0 eller båda ready
+    const bothReady = arenaState.ready[1] && (sides[2] ? arenaState.ready[2] : true);
+    if (arenaState.prepTimer <= 0 || bothReady) {
+      transitionArenaToFight();
+    }
+  } else if (arenaState.phase === 'fight') {
+    arenaState.fightTimer += dt;
+    updateArenaOrb(dt);
+    checkArenaRoundEnd();
+  } else if (arenaState.phase === 'roundEnd') {
+    arenaState.endTimer -= dt;
+    if (arenaState.endTimer <= 0) {
+      // Check bo5
+      if (arenaState.wins[1] >= ARENA_BO5_WINS_NEEDED) {
+        transitionArenaMatchEnd(1);
+      } else if (arenaState.wins[2] >= ARENA_BO5_WINS_NEEDED) {
+        transitionArenaMatchEnd(2);
+      } else {
+        hideArenaEnd();
+        startArenaRound(arenaState.roundNum + 1);
+      }
+    }
+  }
+  // Uppdatera UI
+  updateArenaHud();
+}
+
+// Räknar om stats inklusive arena-talents (om gameMode=arena)
+function recomputeArenaSideStats(side) {
+  // Klassisk stats först
+  recomputeSideStats(side);
+  if (APP.gameMode !== 'arena1v1') return;
+  // Applicera arena-talents ovanpå
+  const heroId = side.heroId || 'magiker';
+  const talentList = ARENA_TALENTS[heroId] || [];
+  const chosen = arenaState.talents[side.idx]?.chosen || [];
+  let attackDmgFlat = 0;
+  let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0;
+  let dmgReductionPct = 0, maxHpPct = 0, critChancePct = 0, healPerSecPct = 0;
+  for (const id of chosen) {
+    const t = talentList.find(x => x.id === id);
+    if (!t || !t.stats) continue;
+    if (t.stats.attackDmg) attackDmgFlat += t.stats.attackDmg;
+    attackSpeedPct  += t.stats.attackSpeedPct  || 0;
+    moveSpeedPct    += t.stats.moveSpeedPct    || 0;
+    skillDmgPct     += t.stats.skillDmgPct     || 0;
+    cdrPct          += t.stats.cdrPct          || 0;
+    dmgReductionPct += t.stats.dmgReductionPct || 0;
+    maxHpPct        += t.stats.maxHpPct        || 0;
+    critChancePct   += t.stats.critChancePct   || 0;
+    healPerSecPct   += t.stats.healPerSecPct   || 0;
+  }
+  // Applicera ovanpå redan computerade base+items stats
+  side.attackDmg = (side.attackDmg || 0) + attackDmgFlat;
+  side.attackSpeedMul = (side.attackSpeedMul || 1) * (1 + attackSpeedPct);
+  side.moveSpeed = (side.moveSpeed || HERO_BASE_MOVE_SPEED) * (1 + moveSpeedPct);
+  side.skillDmgMul = (side.skillDmgMul || 1) * (1 + skillDmgPct);
+  side.cdrMul = (side.cdrMul || 1) * (1 - cdrPct);  // CDR shrinker cd
+  side.dmgReductionMul = (side.dmgReductionMul || 1) * (1 - dmgReductionPct);
+  const maxHpBefore = side.hero.maxHp;
+  side.hero.maxHp = Math.round(side.hero.maxHp * (1 + maxHpPct));
+  // Heal upp till nya maxHp om vi just boosta:ade
+  if (side.hero.maxHp > maxHpBefore) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + (side.hero.maxHp - maxHpBefore));
+  }
+  side.critChance = (side.critChance || 0) + critChancePct;
+  side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
+}
+
+// ============================================================
 // SIDE-STATE-FABRIK
 // ============================================================
 
@@ -6136,6 +6611,156 @@ function clearSkillLongPress() {
 // Default-ikoner (magiker) vid module-load så knapparna aldrig är tomma
 updateSkillIcons('magiker');
 
+// ============================================================
+// ARENA UI (HUD, prep-panel, end-overlay)
+// ============================================================
+
+const arenaRoundEl = document.getElementById('arena-round');
+const arenaRoundTextEl = document.getElementById('arena-round-text');
+const arenaScore1El = document.getElementById('arena-score-1');
+const arenaScore2El = document.getElementById('arena-score-2');
+const arenaPrepEl = document.getElementById('arena-prep');
+const apTitleEl = document.getElementById('ap-title');
+const apTimerEl = document.getElementById('ap-timer');
+const apPointsEl = document.getElementById('ap-points');
+const apOppStatusEl = document.getElementById('ap-opp-status');
+const apTalentsGridEl = document.getElementById('ap-talents-grid');
+const apReadyBtn = document.getElementById('ap-ready');
+const arenaEndEl = document.getElementById('arena-end');
+const aeTitleEl = document.getElementById('ae-title');
+const aeInfoEl = document.getElementById('ae-info');
+const aeContinueBtn = document.getElementById('ae-continue');
+
+function showArenaPrep() {
+  if (!arenaPrepEl) return;
+  arenaPrepEl.classList.add('visible');
+  renderTalentsGrid();
+  updateArenaPrepUI();
+}
+function hideArenaPrep() {
+  if (arenaPrepEl) arenaPrepEl.classList.remove('visible');
+}
+function showArenaEnd(winnerIdx, isMatchEnd) {
+  if (!arenaEndEl) return;
+  arenaEndEl.classList.add('visible');
+  if (!aeTitleEl || !aeInfoEl) return;
+  if (isMatchEnd) {
+    if (winnerIdx === APP.localSide) {
+      aeTitleEl.textContent = 'MATCH WON!';
+      aeTitleEl.classList.add('win'); aeTitleEl.classList.remove('lose');
+    } else if (winnerIdx > 0) {
+      aeTitleEl.textContent = 'Match Lost';
+      aeTitleEl.classList.add('lose'); aeTitleEl.classList.remove('win');
+    } else {
+      aeTitleEl.textContent = 'Match Draw';
+      aeTitleEl.classList.remove('win', 'lose');
+    }
+    aeInfoEl.textContent = `Slutresultat: ${arenaState.wins[1]} – ${arenaState.wins[2]}`;
+    if (aeContinueBtn) aeContinueBtn.textContent = 'Tillbaka till lobby';
+  } else {
+    if (winnerIdx === 0) {
+      aeTitleEl.textContent = 'Draw';
+      aeTitleEl.classList.remove('win', 'lose');
+    } else if (winnerIdx === APP.localSide) {
+      aeTitleEl.textContent = 'Round Won';
+      aeTitleEl.classList.add('win'); aeTitleEl.classList.remove('lose');
+    } else {
+      aeTitleEl.textContent = 'Round Lost';
+      aeTitleEl.classList.add('lose'); aeTitleEl.classList.remove('win');
+    }
+    aeInfoEl.textContent = `Score: ${arenaState.wins[1]} – ${arenaState.wins[2]} · nästa runda börjar...`;
+    if (aeContinueBtn) aeContinueBtn.style.display = 'none';
+  }
+}
+function hideArenaEnd() {
+  if (arenaEndEl) arenaEndEl.classList.remove('visible');
+  if (aeContinueBtn) aeContinueBtn.style.display = '';
+}
+
+function updateArenaHud() {
+  if (!arenaRoundEl) return;
+  if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'idle') {
+    arenaRoundEl.classList.remove('hidden');
+    if (arenaRoundTextEl) arenaRoundTextEl.textContent = `Round ${arenaState.roundNum}`;
+    if (arenaScore1El) arenaScore1El.textContent = String(arenaState.wins[1] || 0);
+    if (arenaScore2El) arenaScore2El.textContent = String(arenaState.wins[2] || 0);
+  } else {
+    arenaRoundEl.classList.add('hidden');
+  }
+}
+
+function updateArenaPrepUI() {
+  if (!arenaPrepEl) return;
+  if (apTitleEl) apTitleEl.textContent = `Round ${arenaState.roundNum} · Prep`;
+  if (apTimerEl) {
+    apTimerEl.textContent = String(Math.ceil(arenaState.prepTimer));
+    apTimerEl.classList.toggle('urgent', arenaState.prepTimer <= 10);
+  }
+  const localTalents = arenaState.talents[APP.localSide] || { points: 0, chosen: [] };
+  if (apPointsEl) apPointsEl.textContent = String(localTalents.points);
+  if (apOppStatusEl) {
+    const otherIdx = 3 - APP.localSide;
+    const oppReady = arenaState.ready[otherIdx];
+    apOppStatusEl.textContent = sides[otherIdx]
+      ? (oppReady ? '· Motståndaren är redo' : '· Motståndaren väljer talents...')
+      : '· (Ingen motståndare)';
+  }
+  // Uppdatera ready-knappen
+  if (apReadyBtn) {
+    const myReady = arenaState.ready[APP.localSide];
+    apReadyBtn.textContent = myReady ? 'Ready ✓' : 'Ready';
+    apReadyBtn.classList.toggle('ready-confirmed', myReady);
+  }
+}
+
+function renderTalentsGrid() {
+  if (!apTalentsGridEl) return;
+  const side = sides[APP.localSide];
+  const heroId = (side && side.heroId) || 'magiker';
+  const talents = ARENA_TALENTS[heroId] || [];
+  apTalentsGridEl.innerHTML = '';
+  const chosen = new Set(arenaState.talents[APP.localSide]?.chosen || []);
+  const points = arenaState.talents[APP.localSide]?.points || 0;
+  for (const t of talents) {
+    const picked = chosen.has(t.id);
+    const div = document.createElement('div');
+    div.className = 'talent-card' + (picked ? ' picked' : (points <= 0 ? ' disabled' : ''));
+    div.innerHTML = `
+      <div class="tc-icon">${t.icon || '✦'}</div>
+      <div class="tc-name">${t.name}</div>
+      <div class="tc-desc">${t.desc}</div>`;
+    if (!picked) {
+      div.addEventListener('click', () => onTalentPick(t.id));
+    }
+    apTalentsGridEl.appendChild(div);
+  }
+}
+
+function onTalentPick(talentId) {
+  const tStat = arenaState.talents[APP.localSide];
+  if (!tStat || tStat.points <= 0) return;
+  if (tStat.chosen.includes(talentId)) return;
+  tStat.chosen.push(talentId);
+  tStat.points -= 1;
+  // Applicera direkt på lokal hjälte
+  const side = sides[APP.localSide];
+  if (side) recomputeArenaSideStats(side);
+  renderTalentsGrid();
+  updateArenaPrepUI();
+}
+
+if (apReadyBtn) apReadyBtn.addEventListener('click', () => {
+  arenaState.ready[APP.localSide] = !arenaState.ready[APP.localSide];
+  updateArenaPrepUI();
+});
+
+if (aeContinueBtn) aeContinueBtn.addEventListener('click', () => {
+  if (arenaState.phase === 'matchEnd') {
+    hideArenaEnd();
+    returnToLobby();
+  }
+});
+
 function triggerAA() {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
@@ -7922,13 +8547,36 @@ function startMatch(mode) {
   setupMatch(mode);
   enterPlayPhase();
 }
-// Arena-config: spawnar, orb-position, prop-platser. Endast 1v1 i Pass 1.
+// Arena-config: arena ligger förskjuten z=80 från classic-scenen.
+// Heroes spawnar på motsatta sidor, orb i mitten, cover-props i mellanrummen.
+const ARENA_Z_OFFSET = 80;
 const ARENA_CFG = {
-  spawn1: { x: -16, z: 0 },   // Spelare 1 (host) startar västra sidan
-  spawn2: { x:  16, z: 0 },   // Spelare 2 (client) startar östra sidan
-  orb:    { x: 0, z: 0 },     // Special orb i mitten
-  bounds: { minX: -22, maxX: 22, minZ: -14, maxZ: 14 },
+  spawn1: { x: -16, z: ARENA_Z_OFFSET },
+  spawn2: { x:  16, z: ARENA_Z_OFFSET },
+  orb:    { x: 0,   z: ARENA_Z_OFFSET },
+  bounds: { minX: -22, maxX: 22, minZ: ARENA_Z_OFFSET - 14, maxZ: ARENA_Z_OFFSET + 14 },
+  // Cover-props relativt z-offset
+  props: [
+    { type: 'rock',    x: -8, z: -6, rot: 0.3 },
+    { type: 'rock',    x:  8, z:  5, rot: -0.7 },
+    { type: 'rock',    x:  0, z: -10, rot: 0.5 },
+    { type: 'wall',    x: -5, z:  6, rot: 0.1 },
+    { type: 'wall',    x:  6, z: -7, rot: -0.4 },
+    { type: 'pillar',  x: 12, z: -2, rot: 0 },
+    { type: 'pillar',  x: -12, z:  3, rot: 0 },
+    { type: 'wagon',   x: -10, z: -3, rot: 0.8 },
+    { type: 'wagon',   x: 10, z:  8, rot: -1.2 },
+  ],
 };
+
+const ARENA_ORB_MAX_HP = 100;
+const ARENA_ORB_SPAWN_DELAY = 30;     // sek efter match-start
+const ARENA_ORB_RESPAWN_DELAY = 30;   // sek efter kill
+const ARENA_ORB_HEAL_PCT = 0.30;
+const ARENA_ORB_SHIELD_PCT = 0.30;
+const ARENA_PREP_TIME = 60;
+const ARENA_ROUND_END_PAUSE = 4;      // sek mellan rundor (visa vinst-banner)
+const ARENA_BO5_WINS_NEEDED = 3;
 
 function enterPlayPhase() {
   document.body.classList.add('in-game');
@@ -7958,23 +8606,24 @@ function enterPlayPhase() {
   // Uppdatera skill-ikoner för lokal sidans hjälte
   const localSide = sides[APP.localSide];
   if (localSide) updateSkillIcons(localSide.heroId || 'magiker');
-  // Arena: positionera heroes på motsatta sidor, sätt lvl 30
+  // Arena: bygg scen, sätt lvl 30, starta runda 1 (prep-fas)
   if (APP.gameMode === 'arena1v1') {
+    buildArenaScene();
+    arenaSceneGroup.visible = true;
     for (const idx of [1, 2]) {
       const s = sides[idx];
       if (!s) continue;
-      const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
-      s.hero.x = spawn.x; s.hero.z = spawn.z;
-      s.hero.facingX = idx === 1 ? 1 : -1;
-      s.hero.facingZ = 0;
-      if (s.mesh) {
-        s.mesh.position.set(spawn.x, 0, spawn.z);
-        s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
-      }
       s.level = 30;
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
     }
+    resetArenaState();
+    // Ge båda 1 talent-poäng vid match-start (innan första round-bonusen)
+    arenaState.talents[1].points = 0;
+    arenaState.talents[2].points = 0;
+    startArenaRound(1);  // +1 poäng per runda → båda får 1 vid start
+  } else {
+    arenaSceneGroup.visible = false;
   }
   // Recompute stats för solo (MP får från servern)
   if (APP.mode === 'solo') {
@@ -8021,6 +8670,12 @@ function returnToLobby() {
   }
   heroPickState.active = false;
   heroPickState.mode = null;
+  // Arena cleanup
+  arenaSceneGroup.visible = false;
+  resetArenaState();
+  hideArenaPrep();
+  hideArenaEnd();
+  if (arenaRoundEl) arenaRoundEl.classList.add('hidden');
   lobbyEl.classList.remove('hidden');
   showLobbyPanel('main');
   APP.mode = 'lobby';
@@ -8100,12 +8755,15 @@ if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
 const clock = new THREE.Clock();
 
 function simulateAll(dt) {
+  // I arena: pausa all gameplay-sim utanför 'fight'-fasen (prep + roundEnd + matchEnd)
+  if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return;
   // Lokal duel-timer (bara HUD, ingen duel triggas i solo). Stannar vid 0.
   if (duelState.timer > 0) duelState.timer = Math.max(0, duelState.timer - dt);
   // Hjälte-respawn
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
-    if (side.hero.dead) {
+    // I arena: ingen auto-respawn — runda måste avslutas och startas om manuellt.
+    if (side.hero.dead && APP.gameMode !== 'arena1v1') {
       side.hero.respawnTimer -= dt;
       if (side.hero.respawnTimer <= 0) respawnHero(side);
     }
@@ -8634,6 +9292,8 @@ function tick() {
     maybeSendClientInput(now);
     smoothEntityMeshes(dt);
   }
+  // Arena state-machine (oberoende av classic-simulation)
+  if (APP.gameMode === 'arena1v1') tickArena(dt);
 
   tickMixers(dt);
   animateAllCharacters(dt);
