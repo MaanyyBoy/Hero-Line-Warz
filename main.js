@@ -917,12 +917,12 @@ const TEXTURES = {
   })();
 
   // Hemisphere: himmel ovanifrån + jord-bounce nedifrån
-  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x3a2b1a, 0.55);
+  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x3a2b1a, 0.45);
   hemi.position.set(0, 50, 0);
   scene.add(hemi);
 
-  // Sol: varm directional med skuggor
-  const sun = new THREE.DirectionalLight(0xfff1d6, 1.4);
+  // Sol: varm directional med skuggor — primärt nyckel-ljus från fram-höger
+  const sun = new THREE.DirectionalLight(0xfff1d6, 1.55);
   sun.position.set(18, 28, 14);
   sun.castShadow = true;
   sun.shadow.mapSize.width = 2048;
@@ -937,10 +937,15 @@ const TEXTURES = {
   sun.shadow.normalBias = 0.02;
   scene.add(sun);
 
-  // Rim: kall ton från motsatt riktning, ingen skugga
-  const rim = new THREE.DirectionalLight(0x6b8fc4, 0.45);
-  rim.position.set(-16, 12, -12);
+  // Bak-rim: kall ton bakifrån för att lyfta silhuetter (MLBB-stil rim-light)
+  const rim = new THREE.DirectionalLight(0x88b0e6, 0.85);
+  rim.position.set(-12, 16, -22);
   scene.add(rim);
+
+  // Fyll-ljus från motsatt sida (mjukar upp skugg-skuggorna utan att kasta nya)
+  const fill = new THREE.DirectionalLight(0xffd9a8, 0.35);
+  fill.position.set(-18, 14, 10);
+  scene.add(fill);
 
   // ---- Dekorativa props (utanför spelytan) ----
   let propSeed = 31337;
@@ -1464,50 +1469,132 @@ function buildHumanoidRig(grp, opts = {}) {
   const legMat = opts.legMat || armorMat;
 
   const legR = opts.legR ?? 0.10;
-  const legH = opts.legH ?? 0.34;        // capsule-cylinderlängd (exklusive cap-rundning)
+  const legH = opts.legH ?? 0.34;        // total ben-cylinder-längd (kvar för bakåtkompatibel höjdberäkning)
   const armR = opts.armR ?? 0.085;
   const armH = opts.armH ?? 0.36;
   const torsoR = opts.torsoR ?? 0.21;
   const torsoH = opts.torsoH ?? 0.46;
   const headR = opts.headR ?? 0.17;
   const torsoShape = opts.torsoShape || 'capsule'; // 'capsule' | 'cylinder'
+  const useShoulderCaps = opts.shoulderCaps !== false; // axel-deltoider om inte opt-out
 
-  // Höft-höjd = total ben-längd (cylinder + 2 caps)
-  const hipY = legH + legR * 2;
-  // Torson sitter ovanpå höften
+  // Höft-höjd = total ben-längd (samma formel som tidigare så alla anchor-positioner stämmer)
+  const totalLegLen = legH + legR * 2;
+  const hipY = totalLegLen;
   const torsoBottom = hipY;
   const torsoCenterY = torsoBottom + torsoH / 2 + (torsoShape === 'capsule' ? torsoR : 0);
   const torsoTopY = torsoCenterY + torsoH / 2 + (torsoShape === 'capsule' ? torsoR : 0);
   const shoulderY = torsoTopY - 0.05;
   const headY = torsoTopY + headR + 0.04;
 
-  // ----- Ben (pivot vid höft, geometri hänger ned) -----
-  const legGeo = new THREE.CapsuleGeometry(legR, legH, 6, 12);
+  // ----- Segmenterade ben med knä + fot -----
+  // Splittar totala benlängden i: lår (46%) + underben (42%) + fot (12%).
+  // Höft-pivoten (rig.leftLeg / rightLeg) är samma API som förut — animeringen
+  // roterar den för hip-swing. Knä-pivoten (rig.leftLegLower / rightLegLower) är
+  // child av lår-pivoten och möjliggör knäböj under steg-cykeln.
+  const upperLegLen = totalLegLen * 0.46;
+  const lowerLegLen = totalLegLen * 0.42;
+  const footH = totalLegLen - upperLegLen - lowerLegLen;
 
   function makeLeg(side) {
-    const pivot = new THREE.Group();
-    pivot.position.set(side * (legR + 0.03), hipY, 0);
-    const mesh = new THREE.Mesh(legGeo, legMat);
-    mesh.position.y = -(legH / 2 + legR);   // foten vid pivot-y - hela ben-höjden
-    pivot.add(mesh);
-    grp.add(pivot);
-    return pivot;
-  }
-  const leftLeg = makeLeg(-1);
-  const rightLeg = makeLeg(1);
+    // Lår-pivot vid höften
+    const upperPivot = new THREE.Group();
+    upperPivot.position.set(side * (legR + 0.03), hipY, 0);
 
-  // ----- Torso -----
+    // Lår (cylinder som tapar mot knäet)
+    const upperLeg = new THREE.Mesh(
+      new THREE.CylinderGeometry(legR * 1.10, legR * 0.90, upperLegLen, 14),
+      legMat
+    );
+    upperLeg.position.y = -upperLegLen / 2;
+    upperPivot.add(upperLeg);
+
+    // Höft-rundning (lite muskeldefinition uppe)
+    const hipKnob = new THREE.Mesh(
+      new THREE.SphereGeometry(legR * 1.15, 10, 8),
+      legMat
+    );
+    hipKnob.position.y = -0.02;
+    hipKnob.scale.set(1, 0.7, 1);
+    upperPivot.add(hipKnob);
+
+    // Knä-led (sfärisk leddel)
+    const knee = new THREE.Mesh(
+      new THREE.SphereGeometry(legR * 0.95, 12, 10),
+      legMat
+    );
+    knee.position.y = -upperLegLen;
+    upperPivot.add(knee);
+
+    // Underben-pivot vid knäet
+    const lowerPivot = new THREE.Group();
+    lowerPivot.position.y = -upperLegLen;
+    upperPivot.add(lowerPivot);
+
+    // Underben (smalnar mot ankeln)
+    const lowerLeg = new THREE.Mesh(
+      new THREE.CylinderGeometry(legR * 0.88, legR * 0.68, lowerLegLen, 12),
+      legMat
+    );
+    lowerLeg.position.y = -lowerLegLen / 2;
+    lowerPivot.add(lowerLeg);
+
+    // Ankel/fot — pivot vid ankeln så animation kan tilta foten oberoende
+    const footPivot = new THREE.Group();
+    footPivot.position.y = -lowerLegLen;
+    lowerPivot.add(footPivot);
+
+    const foot = new THREE.Mesh(
+      new THREE.BoxGeometry(legR * 1.8, footH * 1.2, legR * 2.8),
+      legMat
+    );
+    foot.position.set(0, -footH * 0.45, legR * 0.55);
+    foot.castShadow = true;
+    footPivot.add(foot);
+
+    grp.add(upperPivot);
+    return { upper: upperPivot, lower: lowerPivot, footPivot, foot };
+  }
+  const leftLegInfo = makeLeg(-1);
+  const rightLegInfo = makeLeg(1);
+
+  // ----- Torso (cylinder med taper för bredare bröst, smalare midja) -----
   let torsoGeo;
   if (torsoShape === 'capsule') {
     torsoGeo = new THREE.CapsuleGeometry(torsoR, torsoH, 6, 14);
   } else {
-    torsoGeo = new THREE.CylinderGeometry(torsoR * 0.92, torsoR, torsoH, 14);
+    torsoGeo = new THREE.CylinderGeometry(torsoR * 1.05, torsoR * 0.82, torsoH, 16);
   }
   const torso = new THREE.Mesh(torsoGeo, bodyMat);
   torso.position.y = torsoCenterY;
   grp.add(torso);
 
-  // ----- Armar (pivot vid axel, geometri hänger ned) -----
+  // ----- Hals (kort cylinder mellan torso och huvud) -----
+  const neckR = headR * 0.55;
+  const neckLen = 0.06;
+  const neck = new THREE.Mesh(
+    new THREE.CylinderGeometry(neckR, neckR * 1.15, neckLen, 12),
+    skinMat
+  );
+  neck.position.y = torsoTopY + neckLen / 2;
+  grp.add(neck);
+
+  // ----- Axel-deltoider (mjukar upp lego-kanten mellan torso och armar) -----
+  if (useShoulderCaps) {
+    for (const sx of [-1, 1]) {
+      const sh = new THREE.Mesh(
+        new THREE.SphereGeometry(armR * 1.55, 12, 10),
+        bodyMat
+      );
+      sh.position.set(sx * (torsoR + armR * 0.35), shoulderY + 0.02, 0);
+      sh.scale.set(1.05, 0.95, 1);
+      sh.castShadow = true;
+      grp.add(sh);
+    }
+  }
+
+  // ----- Armar (single-segment så vapen/dekorations-anchors fortsätter fungera) -----
+  // Capsule + handsfär vid handleden.
   const armGeo = new THREE.CapsuleGeometry(armR, armH, 6, 10);
 
   function makeArm(side) {
@@ -1516,23 +1603,53 @@ function buildHumanoidRig(grp, opts = {}) {
     const mesh = new THREE.Mesh(armGeo, limbMat);
     mesh.position.y = -(armH / 2 + armR);
     pivot.add(mesh);
-    grp.add(pivot);
-    return pivot;
-  }
-  const leftArm = makeArm(-1);
-  const rightArm = makeArm(1);
 
-  // ----- Huvud -----
+    // Hand vid armens ände
+    const hand = new THREE.Mesh(
+      new THREE.SphereGeometry(armR * 1.18, 10, 8),
+      skinMat
+    );
+    hand.position.y = -(armH + armR * 1.85);
+    hand.scale.set(1, 0.95, 1.05);
+    hand.castShadow = true;
+    pivot.add(hand);
+
+    grp.add(pivot);
+    return { pivot, hand };
+  }
+  const leftArmInfo = makeArm(-1);
+  const rightArmInfo = makeArm(1);
+
+  // ----- Huvud (något äggformat, inte bara sfär) -----
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(headR, 18, 14),
+    new THREE.SphereGeometry(headR, 20, 16),
     skinMat
   );
   head.position.y = headY;
+  head.scale.set(0.95, 1.05, 1.0);
   grp.add(head);
 
-  const rig = { leftLeg, rightLeg, torso, leftArm, rightArm, head,
-                hipY, torsoCenterY, torsoTopY, shoulderY, headY, headR, torsoR,
-                bodyMat, armorMat, skinMat, limbMat };
+  // ----- Käke/haka-antydan -----
+  const jaw = new THREE.Mesh(
+    new THREE.SphereGeometry(headR * 0.72, 12, 10, 0, Math.PI * 2, Math.PI * 0.45, Math.PI * 0.45),
+    skinMat
+  );
+  jaw.position.set(0, headY - headR * 0.18, headR * 0.08);
+  grp.add(jaw);
+
+  const rig = {
+    // Pivotar — samma API som tidigare så att alla decorations fortsätter funka.
+    leftLeg: leftLegInfo.upper, rightLeg: rightLegInfo.upper,
+    leftArm: leftArmInfo.pivot, rightArm: rightArmInfo.pivot,
+    torso, head, neck,
+    // Nya pivotar för knäböj + fot-tilt
+    leftLegLower: leftLegInfo.lower, rightLegLower: rightLegInfo.lower,
+    leftFootPivot: leftLegInfo.footPivot, rightFootPivot: rightLegInfo.footPivot,
+    leftHand: leftArmInfo.hand, rightHand: rightArmInfo.hand,
+    // Dimensions (oförändrade fält)
+    hipY, torsoCenterY, torsoTopY, shoulderY, headY, headR, torsoR, torsoH,
+    bodyMat, armorMat, skinMat, limbMat,
+  };
   grp.userData.rig = rig;
   return rig;
 }
@@ -4618,19 +4735,61 @@ function animateCharacter(mesh, dt, side, type) {
   const moving = vel > 0.4;
   if (moving) st.walkPhase += dt * Math.min(vel * 2.2, 12);
 
-  // Walk-pose: armar svingar i motsatt fas mot ben
-  const swing = moving ? Math.sin(st.walkPhase) * WALK_AMPLITUDE : 0;
+  const phase = st.walkPhase;
+  const sinP = Math.sin(phase);
+  const cosP = Math.cos(phase);
+
+  // ---- Walk-cykel ----
+  // Lår svänger ±SWING runt höften. Underbenet bryts (knäböj) bara när
+  // benet är på väg fram (sin>0 för vänster, <0 för höger) — det är vad som
+  // ger MLBB-känslan av "fot lyfts upp och svingas framåt".
+  const swing = moving ? sinP * WALK_AMPLITUDE * 1.15 : 0;
   if (rig.leftLeg) rig.leftLeg.rotation.x = swing;
   if (rig.rightLeg) rig.rightLeg.rotation.x = -swing;
-  if (rig.leftArm) rig.leftArm.rotation.x = -swing * 0.55;
-  if (rig.rightArm) rig.rightArm.rotation.x = swing * 0.55;
 
-  // Body-bounce vid gång; idle-breath stilla
+  // Knäböj: 0 i stance, upp till ~1.4 rad (80°) under swing-fasen.
+  // Smoothstep-likt med ^1.4 → mjuk upp/ner.
+  const KNEE_MAX = 1.45;
+  const leftBend  = moving ? Math.pow(Math.max(0,  sinP), 1.3) * KNEE_MAX : 0;
+  const rightBend = moving ? Math.pow(Math.max(0, -sinP), 1.3) * KNEE_MAX : 0;
+  if (rig.leftLegLower)  rig.leftLegLower.rotation.x  = leftBend;
+  if (rig.rightLegLower) rig.rightLegLower.rotation.x = rightBend;
+
+  // Fot-tilt: kompenserar lite för knäböjen så foten inte pekar rakt ned
+  // när benet är högst, och tippar framåt vid avstöt (toe-off).
+  if (rig.leftFootPivot)  rig.leftFootPivot.rotation.x  = moving ? -leftBend * 0.45 + Math.max(0, -sinP) * 0.30 : 0;
+  if (rig.rightFootPivot) rig.rightFootPivot.rotation.x = moving ? -rightBend * 0.45 + Math.max(0,  sinP) * 0.30 : 0;
+
+  // Arm-swing (motsatt fas mot benen, ~70% av amplituden)
+  if (rig.leftArm)  rig.leftArm.rotation.x  = -swing * 0.70;
+  if (rig.rightArm) rig.rightArm.rotation.x =  swing * 0.70;
+  // Lite sidoutåt-vinkel på armarna under löpning (mer naturlig pose)
   if (moving) {
-    mesh.position.y = Math.abs(Math.cos(st.walkPhase)) * 0.04;
+    if (rig.leftArm)  rig.leftArm.rotation.z  =  0.10;
+    if (rig.rightArm) rig.rightArm.rotation.z = -0.10;
+  } else {
+    if (rig.leftArm)  rig.leftArm.rotation.z  = 0;
+    if (rig.rightArm) rig.rightArm.rotation.z = 0;
+  }
+
+  // Spine / torso counter-rotation: shoulders vrider sig mot bäckenet,
+  // huvudet kompenserar lite tillbaka så blicken hålls stabil.
+  if (rig.torso) rig.torso.rotation.y = moving ?  sinP * 0.12 : 0;
+  if (rig.head)  rig.head.rotation.y  = moving ? -sinP * 0.07 : 0;
+  // Lutar bröstet aningen framåt vid löpning
+  if (rig.torso) rig.torso.rotation.x = moving ? 0.06 : 0;
+
+  // Kropps-bounce: två studsar per stride (vid varje fot-ilandning),
+  // amplitud skalar lätt med velocity.
+  if (moving) {
+    const bounceAmp = 0.05 + Math.min(0.04, vel * 0.005);
+    mesh.position.y = Math.abs(sinP) * bounceAmp;
   } else {
     const t = performance.now() / 1000;
-    mesh.position.y = Math.sin(t * 1.6 + st.idlePhase) * 0.012;
+    // Idle: andningsrörelse + svag sway
+    mesh.position.y = Math.sin(t * 1.6 + st.idlePhase) * 0.014;
+    if (rig.torso) rig.torso.rotation.y = Math.sin(t * 0.8 + st.idlePhase) * 0.035;
+    if (rig.head)  rig.head.rotation.y  = Math.sin(t * 0.9 + st.idlePhase * 1.3) * 0.045;
   }
 
   // Hero-attack-detektion: attackCounter-delta från state + skill-CD-hopp
@@ -4652,16 +4811,19 @@ function animateCharacter(mesh, dt, side, type) {
     }
   }
 
-  // Attack-thrust: ersätt höger arm-rotation med framåt-pose
+  // Attack-thrust: ersätt höger arm-rotation med framåt-pose + lätt
+  // bål-rotation så slaget ser ut att komma från höften.
   if (st.attackTimer > 0) {
     st.attackTimer -= dt;
     const total = st.attackTotal || ATTACK_DURATION;
     const t = Math.max(0, Math.min(1, 1 - st.attackTimer / total));
     const intensity = Math.sin(t * Math.PI);  // 0 → 1 → 0
     if (rig.rightArm) {
-      const walkRot = swing * 0.55;
-      rig.rightArm.rotation.x = -1.15 * intensity + walkRot * (1 - intensity);
+      const walkRot = swing * 0.70;
+      rig.rightArm.rotation.x = -1.25 * intensity + walkRot * (1 - intensity);
+      rig.rightArm.rotation.z = -0.10 - intensity * 0.20;
     }
+    if (rig.torso) rig.torso.rotation.y += intensity * -0.20;
   }
 }
 
