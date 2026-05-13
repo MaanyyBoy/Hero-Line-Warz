@@ -1149,17 +1149,18 @@
     #arena-score .asep { opacity: 0.5; margin: 0 2px; }
     #arena-score .ascore { color: #fff; }
 
-    /* Arena prep-panel (full-screen overlay under 60s prep) */
+    /* Arena prep-panel — centrerad till vänster så shoppen syns till höger */
     #arena-prep {
-      position: fixed; inset: 0;
-      background: rgba(10,15,28,0.88);
+      position: fixed;
+      top: 50%; left: max(16px, 4vw);
+      transform: translateY(-50%);
+      width: min(540px, 62vw);
+      max-height: 92vh;
+      overflow-y: auto;
       display: none;
-      align-items: center; justify-content: center;
       z-index: 250;
-      backdrop-filter: blur(4px);
-      padding: 16px;
     }
-    #arena-prep.visible { display: flex; }
+    #arena-prep.visible { display: block; }
     #ap-card {
       background: linear-gradient(135deg, #18243d, #0c1424);
       border: 2px solid rgba(255,170,80,0.6);
@@ -1335,19 +1336,15 @@
     body:not(.in-game) #arena-prep,
     body:not(.in-game) #arena-end { display: none !important; }
 
-    /* Item-shop-detail panel (öppnas när man trycker på item i shoppen).
-       Positionerad UNDER shop-containern i höger övre kant — inte centrerad
-       fullskärm — så man ser shoppen samtidigt. */
+    /* Item-shop-detail panel — appendas in i #shop-container vid module-load
+       (via JS) så den flödar naturligt UNDER shop-panels. */
     #item-shop-detail {
-      position: fixed;
-      top: max(280px, 55vh);
-      right: max(16px, env(safe-area-inset-right));
-      z-index: 220;
       display: none;
       width: min(330px, 88vw);
-      max-height: calc(100vh - max(296px, 56vh));
+      max-height: 45vh;
       overflow-y: auto;
       pointer-events: auto;
+      margin-top: 8px;
     }
     #item-shop-detail.visible { display: block; }
     #isd-card {

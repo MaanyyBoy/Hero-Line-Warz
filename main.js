@@ -3109,13 +3109,15 @@ const ARENA_CFG = {
 };
 
 const ARENA_ORB_MAX_HP = 100;
-const ARENA_ORB_SPAWN_DELAY = 30;
-const ARENA_ORB_RESPAWN_DELAY = 30;
+const ARENA_ORB_SPAWN_DELAY = 0;       // spawnar direkt vid fight-start
+const ARENA_ORB_RESPAWN_DELAY = 15;    // 15s respawn efter kill
 const ARENA_ORB_HEAL_PCT = 0.30;
 const ARENA_ORB_SHIELD_PCT = 0.30;
 const ARENA_PREP_TIME = 60;
 const ARENA_ROUND_END_PAUSE = 4;
 const ARENA_BO5_WINS_NEEDED = 3;
+const ARENA_GOLD_PER_ROUND = 200;
+const ARENA_GOLD_WIN_BONUS = 500;
 
 // ============================================================
 // ARENA: TALENTS PER HERO
@@ -3633,6 +3635,8 @@ function startArenaRound(roundNum) {
     // Reset shield-state — refresh-timern triggar omedelbart vid fight-start
     s.lingShieldHp = 0;
     s.lingShieldRefreshTimer = 0.5;  // kort delay så shield-pop syns
+    // Arena-gold: +200 per runda (alla sidor)
+    s.gold = (s.gold || 0) + ARENA_GOLD_PER_ROUND;
   }
   showArenaPrep();
 }
@@ -3665,10 +3669,14 @@ function transitionArenaToFight() {
   arenaState.ready = { 1: false, 2: false };
   hideArenaPrep();
   hideArenaCountdown();
-  // Sätt orb spawn-timer
-  arenaState.orb.spawnTimer = ARENA_ORB_SPAWN_DELAY;
-  arenaState.orb.alive = false;
-  if (arenaOrbMesh) arenaOrbMesh.visible = false;
+  // Orb spawnar direkt vid fight-start (visuell pop)
+  arenaState.orb.alive = true;
+  arenaState.orb.hp = arenaState.orb.maxHp;
+  arenaState.orb.spawnTimer = 0;
+  if (arenaOrbMesh) arenaOrbMesh.visible = true;
+  spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
+  spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
+  showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
 }
 
 function transitionArenaRoundEnd(winnerIdx) {
@@ -3677,8 +3685,10 @@ function transitionArenaRoundEnd(winnerIdx) {
   arenaState.endTimer = ARENA_ROUND_END_PAUSE;
   if (winnerIdx > 0) {
     arenaState.wins[winnerIdx] = (arenaState.wins[winnerIdx] || 0) + 1;
-    // Vinnaren får +1 extra talent-poäng
+    // Vinnaren får +1 extra talent-poäng + 500 gold-bonus
     arenaState.talents[winnerIdx].points += 1;
+    const winSide = sides[winnerIdx];
+    if (winSide) winSide.gold = (winSide.gold || 0) + ARENA_GOLD_WIN_BONUS;
   }
   // Visa banner
   showArenaEnd(winnerIdx, false);
@@ -8684,7 +8694,9 @@ function refreshShopUI() {
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
   }
 
-  const showShop = inBase && APP.gameMode !== 'arena1v1';
+  // I arena: shop tillgänglig under prep-fasen (köpa items innan match)
+  const isArenaPrep = APP.gameMode === 'arena1v1' && arenaState.phase === 'prep';
+  const showShop = isArenaPrep || (inBase && APP.gameMode !== 'arena1v1');
   if (shopContainerEl) shopContainerEl.classList.toggle('visible', showShop);
   if (!showShop) collapseShopPanels();
 }
@@ -8701,6 +8713,10 @@ function updateShop() {
 
 // ---- Item-shop detalj-modal (klick på item → info + Buy/Upgrade) ----
 const isdEl = document.getElementById('item-shop-detail');
+// Flytta modalen in i shop-container så den flödar direkt under shoppen
+if (isdEl && shopContainerEl && isdEl.parentNode !== shopContainerEl) {
+  shopContainerEl.appendChild(isdEl);
+}
 const isdIconEl = document.getElementById('isd-icon');
 const isdNameEl = document.getElementById('isd-name');
 const isdLevelEl = document.getElementById('isd-level');
@@ -9392,6 +9408,8 @@ function heroSnap(side) {
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
     hid: side.heroId || 'magiker',
     ac: side.attackCounter || 0,
+    g: side.gold || 0,
+    ue: side.ultEnergy || 0,
   };
 }
 
@@ -9411,6 +9429,8 @@ function applyHeroSnap(side, snap) {
   side.skills.f.cd = snap.sk.f;
   side.skills.e.cd = snap.sk.e;
   side.attackCounter = snap.ac;
+  if (snap.g !== undefined) side.gold = snap.g;
+  if (snap.ue !== undefined) side.ultEnergy = snap.ue;
   if (side.mesh) {
     side.mesh.position.x = snap.x;
     side.mesh.position.z = snap.z;
