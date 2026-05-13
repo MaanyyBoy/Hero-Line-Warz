@@ -106,6 +106,16 @@ function handleGameInput(room, ws, payload) {
   }
 }
 
+// Arena MP är peer-to-peer (host simulerar lokalt). Servern relayar
+// arena-meddelanden mellan peers; den klassiska engine tickar fortfarande
+// men ignoreras av klienterna när APP.gameMode === 'arena1v1'.
+function relayArenaMessage(room, fromWs, envelope) {
+  // Spoof-skydd: bara host får broadcasta auktoritativ state.
+  if (envelope.d && envelope.d.t === 'a-state' && fromWs !== room.host) return;
+  const peer = (fromWs === room.host) ? room.client : room.host;
+  if (peer) send(peer, envelope);
+}
+
 wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
@@ -142,7 +152,12 @@ wss.on('connection', (ws) => {
     } else if (msg.t === 'msg') {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
-      handleGameInput(room, ws, msg.d);
+      const payload = msg.d;
+      if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
+        relayArenaMessage(room, ws, msg);
+      } else {
+        handleGameInput(room, ws, payload);
+      }
     } else if (msg.t === 'leave') {
       closeRoom(ws);
     }

@@ -10197,6 +10197,8 @@ function showHeroPick(mode) {
       heroPickState.timer -= 1;
       if (heroPickState.timer <= 0) {
         heroPickState.timer = 0;
+        hpTimerEl.textContent = '0';
+        hpTimerEl.classList.add('urgent');
         if (!heroPickState.selected) heroPickState.selected = 'magiker';
         // Arena-MP watchdog: motspelaren kanske disconnect:ade —
         // forcera oppConfirmed med default-hjälte så transition kan ske
@@ -10204,8 +10206,12 @@ function showHeroPick(mode) {
           if (!heroPickState.oppSelected) heroPickState.oppSelected = 'magiker';
           heroPickState.oppConfirmed = true;
         }
-        if (!heroPickState.confirmed) confirmHero();
-        return; // confirmHero kan ha triggat finishHeroPick — undvik dubbel-call
+        if (!heroPickState.confirmed) {
+          confirmHero();          // triggar finishHeroPick via opp-check inom confirmHero
+        } else {
+          finishHeroPick();        // redan confirm:ad men opp-confirm uteblev — starta nu
+        }
+        return;
       }
       hpTimerEl.textContent = String(heroPickState.timer);
       hpTimerEl.classList.toggle('urgent', heroPickState.timer <= 10);
