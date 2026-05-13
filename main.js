@@ -3020,6 +3020,7 @@ const RELAY_URL = 'wss://hero-line-warz.onrender.com';
 
 const APP = {
   mode: 'lobby',          // 'lobby' | 'solo' | 'host' | 'client'
+  gameMode: 'classic',    // 'classic' (Line Wars) | 'arena1v1'
   localSide: 1,           // 1 eller 2 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
   ws: null,               // WebSocket till relay-servern (host + client)
@@ -6376,8 +6377,9 @@ function refreshShopUI() {
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
   }
 
-  if (shopContainerEl) shopContainerEl.classList.toggle('visible', inBase);
-  if (!inBase) collapseShopPanels();
+  const showShop = inBase && APP.gameMode !== 'arena1v1';
+  if (shopContainerEl) shopContainerEl.classList.toggle('visible', showShop);
+  if (!showShop) collapseShopPanels();
 }
 
 populateShop();
@@ -7566,8 +7568,10 @@ const lobbyCodeInputEl = document.getElementById('lobby-code-input');
 const lobbyHeroesEl = document.getElementById('lobby-heroes');
 const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
+const lobbyArenaModeEl = document.getElementById('lobby-arena-mode');
+const lobbyArena1v1El = document.getElementById('lobby-arena-1v1');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaModeEl, lobbyArena1v1El]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -7576,6 +7580,8 @@ function showLobbyPanel(which) {
   else if (which === 'heroes') lobbyHeroesEl.classList.add('visible');
   else if (which === 'items') lobbyItemsEl.classList.add('visible');
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
+  else if (which === 'arena-mode') lobbyArenaModeEl.classList.add('visible');
+  else if (which === 'arena-1v1') lobbyArena1v1El.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -7740,6 +7746,14 @@ function startMatch(mode) {
   setupMatch(mode);
   enterPlayPhase();
 }
+// Arena-config: spawnar, orb-position, prop-platser. Endast 1v1 i Pass 1.
+const ARENA_CFG = {
+  spawn1: { x: -16, z: 0 },   // Spelare 1 (host) startar västra sidan
+  spawn2: { x:  16, z: 0 },   // Spelare 2 (client) startar östra sidan
+  orb:    { x: 0, z: 0 },     // Special orb i mitten
+  bounds: { minX: -22, maxX: 22, minZ: -14, maxZ: 14 },
+};
+
 function enterPlayPhase() {
   document.body.classList.add('in-game');
   if (heroPickEl) heroPickEl.classList.add('hidden');
@@ -7765,9 +7779,31 @@ function enterPlayPhase() {
     }
     swapHeroMeshIfNeeded(s);
   }
+  // Arena: positionera heroes på motsatta sidor, sätt lvl 30
+  if (APP.gameMode === 'arena1v1') {
+    for (const idx of [1, 2]) {
+      const s = sides[idx];
+      if (!s) continue;
+      const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
+      s.hero.x = spawn.x; s.hero.z = spawn.z;
+      s.hero.facingX = idx === 1 ? 1 : -1;
+      s.hero.facingZ = 0;
+      if (s.mesh) {
+        s.mesh.position.set(spawn.x, 0, spawn.z);
+        s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+      }
+      s.level = 30;
+      s.xp = 0;
+      s.xpToNext = xpForLevel(30);
+    }
+  }
   // Recompute stats för solo (MP får från servern)
   if (APP.mode === 'solo') {
     if (sides[1]) recomputeSideStats(sides[1]);
+  } else if (APP.gameMode === 'arena1v1') {
+    // I arena vill vi att klientens lvl 30 också ger rätt stats lokalt
+    if (sides[1]) recomputeSideStats(sides[1]);
+    if (sides[2]) recomputeSideStats(sides[2]);
   }
 }
 
@@ -7809,6 +7845,7 @@ function returnToLobby() {
   lobbyEl.classList.remove('hidden');
   showLobbyPanel('main');
   APP.mode = 'lobby';
+  APP.gameMode = 'classic';
   resetIncomeTickTracking();
 }
 
@@ -7852,6 +7889,30 @@ if (btnItemDetailBack) btnItemDetailBack.addEventListener('click', closeItemDeta
 // Klick på modal-bakgrund stänger också
 if (heroDetailModal) heroDetailModal.addEventListener('click', (e) => { if (e.target === heroDetailModal) closeHeroDetailModal(); });
 if (itemDetailModal) itemDetailModal.addEventListener('click', (e) => { if (e.target === itemDetailModal) closeItemDetailModal(); });
+
+// ---- Arena lobby ----
+function hostArena() {
+  APP.gameMode = 'arena1v1';
+  hostGame();
+}
+function joinArenaShow() {
+  APP.gameMode = 'arena1v1';
+  lobbyJoinMsgEl.textContent = '';
+  showLobbyPanel('joining');
+  setTimeout(() => lobbyCodeInputEl.focus(), 50);
+}
+const btnArena = document.getElementById('btn-arena');
+if (btnArena) btnArena.addEventListener('click', () => showLobbyPanel('arena-mode'));
+const btnArenaBack = document.getElementById('btn-arena-back');
+if (btnArenaBack) btnArenaBack.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('main'); });
+const btnArena1v1 = document.getElementById('btn-arena-1v1');
+if (btnArena1v1) btnArena1v1.addEventListener('click', () => showLobbyPanel('arena-1v1'));
+const btnArena1v1Back = document.getElementById('btn-arena-1v1-back');
+if (btnArena1v1Back) btnArena1v1Back.addEventListener('click', () => showLobbyPanel('arena-mode'));
+const btnArenaHost = document.getElementById('btn-arena-host');
+if (btnArenaHost) btnArenaHost.addEventListener('click', hostArena);
+const btnArenaJoin = document.getElementById('btn-arena-join');
+if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
 
 // ============================================================
 // HUVUDLOOP
@@ -7907,14 +7968,17 @@ function simulateAll(dt) {
       }
     }
   }
+  const isArena = APP.gameMode === 'arena1v1';
   // Per-sida simulering
   for (const side of [sides[1], sides[2]]) {
     if (!side) continue;
     updateSkillCooldowns(side, dt);
-    updateWaves(side, dt);
-    updateMonsters(side, dt);
-    updatePlayerCreeps(side, dt);
-    updateCreepProjectiles(side, dt);
+    if (!isArena) {
+      updateWaves(side, dt);
+      updateMonsters(side, dt);
+      updatePlayerCreeps(side, dt);
+      updateCreepProjectiles(side, dt);
+    }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
     updateFireballs(side, dt);
@@ -7930,9 +7994,9 @@ function simulateAll(dt) {
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
-    tickIncome(side, dt);
+    if (!isArena) tickIncome(side, dt);
   }
-  checkMatchEnd();
+  if (!isArena) checkMatchEnd();
 }
 
 function tickIncome(side, dt) {
@@ -7950,6 +8014,12 @@ const incomeDisplayEl = document.getElementById('income-display');
 
 function updateIncomeDisplay() {
   if (!incomeDisplayEl) return;
+  // Dölj income-display i arena (ingen income-mekanik där)
+  if (APP.gameMode === 'arena1v1') {
+    incomeDisplayEl.style.display = 'none';
+    return;
+  }
+  incomeDisplayEl.style.display = '';
   const side = sides[APP.localSide];
   if (!side) return;
   incomeDisplayEl.textContent = `Income: ${side.income}g / 15s`;
