@@ -195,6 +195,52 @@
     }
     #skill-tooltip .stt-desc { opacity: 0.92; }
 
+    /* Ult-knapp — större (88px), ovanför Q. Energy-fill animeras bottom→top. */
+    .skill.skill-ult {
+      width: 88px; height: 88px;
+      right: 4px; bottom: 222px;
+      background: rgba(60,30,80,0.7);
+      border: 3px solid rgba(180,140,255,0.7);
+      overflow: hidden;
+    }
+    .skill.skill-ult .ult-fill {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 0%;
+      background: linear-gradient(to top, rgba(255,200,80,0.65) 0%, rgba(255,150,40,0.25) 100%);
+      transition: height 0.2s ease-out;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .skill.skill-ult .icon { position: relative; z-index: 2; }
+    .skill.skill-ult .lbl {
+      position: absolute; bottom: 5px; right: 7px;
+      font: 800 11px/1 system-ui, sans-serif;
+      color: #fff;
+      letter-spacing: 1px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.85);
+      z-index: 3;
+    }
+    .skill.skill-ult .ult-pct {
+      position: absolute; top: 4px; left: 50%;
+      transform: translateX(-50%);
+      font: 700 11px/1 ui-monospace, monospace;
+      color: rgba(255,255,255,0.85);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+      z-index: 3;
+    }
+    .skill.skill-ult.ready {
+      border-color: #ffdd55;
+      box-shadow: 0 0 18px rgba(255,210,80,0.65), 0 4px 14px rgba(0,0,0,0.55);
+      animation: ult-ready-pulse 1.5s ease-in-out infinite;
+    }
+    .skill.skill-ult.ready .ult-fill {
+      background: linear-gradient(to top, rgba(255,220,90,0.85) 0%, rgba(255,180,50,0.55) 100%);
+    }
+    @keyframes ult-ready-pulse {
+      0%, 100% { box-shadow: 0 0 14px rgba(255,210,80,0.5), 0 4px 14px rgba(0,0,0,0.55); }
+      50%      { box-shadow: 0 0 24px rgba(255,210,80,0.95), 0 4px 14px rgba(0,0,0,0.55); }
+    }
+
     /* Skill-arc — placerade kring AA på radie ~118px från AA-mitten (47.5,47.5).
        Q rakt ovanför AA (90°), F upp-vänster (135°), E rakt vänster (180°). */
     #skill-q { right: 11.5px; bottom: 129.5px; background: rgba(180,70,30,0.65); border-color: rgba(255,160,90,0.8); }
@@ -1570,6 +1616,12 @@
       <button class="skill" id="skill-e" data-key="e"><span class="icon"></span><span class="lbl">E</span><span class="cd"></span></button>
       <button class="skill" id="skill-f" data-key="f"><span class="icon"></span><span class="lbl">F</span><span class="cd"></span></button>
       <button class="skill" id="skill-q" data-key="q"><span class="icon"></span><span class="lbl">Q</span><span class="cd"></span></button>
+      <button class="skill skill-ult" id="skill-r" data-key="r">
+        <span class="ult-fill"></span>
+        <span class="icon"></span>
+        <span class="lbl">ULT</span>
+        <span class="ult-pct">0%</span>
+      </button>
       <button id="aa-btn" data-key="aa" aria-label="Auto attack">ATK</button>
     </div>
   </div>

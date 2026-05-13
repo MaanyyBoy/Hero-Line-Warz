@@ -3985,6 +3985,13 @@ function createSide(idx) {
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
     shield: 0,
+    // Ult-energy + per-ult timers (sätts av hostCast*Ult)
+    ultEnergy: 0,
+    laserBeam: null,           // Magiker: { remaining, dx, dz, tickAccum }
+    rageRemaining: 0,           // Gimlu: sek kvar
+    rageHealAccum: 0,           // Gimlu: damage dealt under rage (för 20% heal)
+    rageTickAccum: 0,           // Gimlu: 0.5s pulse-timer
+    legolusUltBuff: 0,          // Legolas: sek kvar med +30% AS efter teleport
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -4822,6 +4829,8 @@ function updateProjectiles(side, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
+      // AA-träff → ult-energy gain
+      gainUltEnergy(side, ULT_GAIN_AA_HIT);
       // Arena-orb / arena-hero hit → applicera special damage och hoppa över monster-logiken
       if (isArenaOrbT) {
         damageArenaOrb(p.damage, side.idx);
@@ -4952,6 +4961,7 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
   const actual = Math.min(dmg, m.hp);
   m.hp -= dmg;
   applySkillLifesteal(side, actual);
+  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
   if (m.hp <= 0) hostKillMonster(side, mIdx, side);
 }
 function soloApplySkillDmgToCreep(side, opp, c, dmg) {
@@ -4962,6 +4972,7 @@ function soloApplySkillDmgToCreep(side, opp, c, dmg) {
   const actual = Math.min(dmg, c.hp);
   c.hp -= dmg;
   applySkillLifesteal(side, actual);
+  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
 }
 
 // Onyx Orb skill-lifesteal: hela X% av skill-skada utdelad
@@ -6299,7 +6310,9 @@ function applyEvent(side, ev) {
     }
     const isLegolus = side.heroId === 'legolas';
     const isGimlu = side.heroId === 'gimlu';
-    if (ev.key === 'q') {
+    if (ev.key === 'r') {
+      hostCastUlt(side, dx, dz);
+    } else if (ev.key === 'q') {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
       else if (isGimlu) hostCastGimluTaunt(side);
       else hostCastEldklot(side, dx, dz);
@@ -7475,12 +7488,22 @@ const skillEls = {
   q: document.getElementById('skill-q'),
   f: document.getElementById('skill-f'),
   e: document.getElementById('skill-e'),
+  r: document.getElementById('skill-r'),
 };
+const ultFillEl = skillEls.r ? skillEls.r.querySelector('.ult-fill') : null;
+const ultPctEl = skillEls.r ? skillEls.r.querySelector('.ult-pct') : null;
 
 // SVG-ikoner per hero × skill — bild på vad skillen gör. Sätts via
 // updateSkillIcons() vid match-start och hero-swap.
 const SKILL_ICON_SVG = {
   magiker: {
+    r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="sk-mr-las" x1="0" y1="50%" x2="100%" y2="50%"><stop offset="0" stop-color="#ffffff"/><stop offset="0.5" stop-color="#88ccff"/><stop offset="1" stop-color="#3366ff"/></linearGradient></defs>
+        <rect x="3" y="17" width="34" height="6" rx="2" fill="url(#sk-mr-las)" stroke="#225599" stroke-width="0.8"/>
+        <circle cx="6" cy="20" r="4.5" fill="#ddeeff" opacity="0.85"/>
+        <line x1="35" y1="14" x2="38" y2="11" stroke="#88ccff" stroke-width="2" stroke-linecap="round"/>
+        <line x1="35" y1="26" x2="38" y2="29" stroke="#88ccff" stroke-width="2" stroke-linecap="round"/>
+      </svg>`,
     q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
         <defs><linearGradient id="sk-mq-fire" x1="0" y1="1" x2="0" y2="0">
           <stop offset="0" stop-color="#ffcc00"/><stop offset="0.5" stop-color="#ff6622"/><stop offset="1" stop-color="#cc2200"/>
@@ -7509,6 +7532,11 @@ const SKILL_ICON_SVG = {
       </svg>`,
   },
   legolas: {
+    r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="sk-lr-arr" x1="0" y1="50%" x2="100%" y2="50%"><stop offset="0" stop-color="#ddff66"/><stop offset="1" stop-color="#66aa22"/></linearGradient></defs>
+        <path d="M 4 20 L 30 20 L 30 13 L 38 20 L 30 27 L 30 20" fill="url(#sk-lr-arr)" stroke="#446a18" stroke-width="1.2"/>
+        <line x1="2" y1="20" x2="6" y2="20" stroke="#bbff77" stroke-width="3" stroke-linecap="round"/>
+      </svg>`,
     q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
         <g stroke="#44aa44" stroke-width="2.4" stroke-linecap="round" fill="none">
           <path d="M 6 32 Q 14 22 20 28 Q 26 34 32 22"/>
@@ -7540,6 +7568,11 @@ const SKILL_ICON_SVG = {
       </svg>`,
   },
   gimlu: {
+    r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><radialGradient id="sk-gr-rage" cx="50%" cy="50%"><stop offset="0" stop-color="#ff4422"/><stop offset="0.7" stop-color="#cc2200"/><stop offset="1" stop-color="#660000"/></radialGradient></defs>
+        <path d="M 20 4 L 24 14 L 35 16 L 27 24 L 30 35 L 20 28 L 10 35 L 13 24 L 5 16 L 16 14 Z" fill="url(#sk-gr-rage)" stroke="#aa0000" stroke-width="1"/>
+        <circle cx="20" cy="22" r="3" fill="#fff" opacity="0.7"/>
+      </svg>`,
     q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
         <path d="M 6 17 L 18 14 L 18 26 L 6 23 Z" fill="#ffaa55" stroke="#cc6622" stroke-width="1"/>
         <path d="M 18 14 L 27 9 L 27 31 L 18 26 Z" fill="#cc7733" stroke="#883311" stroke-width="1"/>
@@ -7568,7 +7601,7 @@ const SKILL_ICON_SVG = {
 
 function updateSkillIcons(heroId) {
   const set = SKILL_ICON_SVG[heroId] || SKILL_ICON_SVG.magiker;
-  for (const k of ['q', 'f', 'e']) {
+  for (const k of ['q', 'f', 'e', 'r']) {
     const btn = skillEls[k];
     if (!btn) continue;
     const iconEl = btn.querySelector('.icon');
@@ -7831,7 +7864,50 @@ const aimState = {
   btnCx: 0, btnCy: 0, dx: 0, dz: 0, dragMag: 0,
 };
 const AIM_THRESHOLD = 16;
-const SKILL_AIMABLE = { q: true, e: true, f: true };
+const SKILL_AIMABLE = { q: true, e: true, f: true, r: true };
+
+// Ult-energy: fills 0.5%/s passivt, +5% per skill-hit, +3% per AA-hit.
+// Vid 100% kan hero casta sin ultimate (key='r').
+const ULT_ENERGY_MAX = 100;
+const ULT_GAIN_PASSIVE = 0.5;   // %/sek
+const ULT_GAIN_SKILL_HIT = 5;
+const ULT_GAIN_AA_HIT = 3;
+
+function gainUltEnergy(side, amount) {
+  if (!side) return;
+  side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amount);
+}
+
+// Dispatchar ULT-cast per hero. Konsumerar 100% energy och kallar
+// rätt host-fn.
+function hostCastUlt(side, dx, dz) {
+  if (!side || side.hero.dead) return;
+  if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
+  // Förhindra dubbel-cast för alla heroes
+  if (side.laserBeam || (side.rageRemaining || 0) > 0 || (side.legolusUltBuff || 0) > 0) return;
+  side.ultEnergy = 0;
+  const heroId = side.heroId || 'magiker';
+  if (heroId === 'magiker') hostCastMagikerUlt(side, dx, dz);
+  else if (heroId === 'legolas') hostCastLegolasUlt(side, dx, dz);
+  else if (heroId === 'gimlu') hostCastGimluUlt(side);
+}
+
+// Tick:ar pågående ultimates (laser-tick, rage-tick, etc).
+// Per-hero ult-funktioner implementeras nedan i sina respektive sektioner.
+function tickUltimates(side, dt) {
+  if (side.laserBeam) tickMagikerLaser(side, dt);
+  if ((side.rageRemaining || 0) > 0) tickGimluRage(side, dt);
+  if ((side.legolusUltBuff || 0) > 0) {
+    side.legolusUltBuff = Math.max(0, side.legolusUltBuff - dt);
+  }
+}
+
+// Placeholders — fylls i av per-hero-implementationer i nästa commit
+function hostCastMagikerUlt(side, dx, dz) { /* TODO commit 2 */ }
+function hostCastLegolasUlt(side, dx, dz) { /* TODO commit 3 */ }
+function hostCastGimluUlt(side) { /* TODO commit 4 */ }
+function tickMagikerLaser(side, dt) { /* TODO commit 2 */ }
+function tickGimluRage(side, dt) { /* TODO commit 4 */ }
 
 const keys = {};
 window.addEventListener('keydown', (e) => {
@@ -7841,7 +7917,8 @@ window.addEventListener('keydown', (e) => {
   if (!side) return;
   if (e.code === 'KeyQ') castLocalSkill('q', side.hero.facingX, side.hero.facingZ, true);
   if (e.code === 'KeyE') castLocalSkill('e', side.hero.facingX, side.hero.facingZ, true);
-  if (e.code === 'KeyR' || e.code === 'KeyF') castLocalSkill('f', 0, 0, true);
+  if (e.code === 'KeyF') castLocalSkill('f', 0, 0, true);
+  if (e.code === 'KeyR') castLocalSkill('r', side.hero.facingX, side.hero.facingZ, true);
   if (e.code === 'Space' || e.code === 'KeyA') { e.preventDefault?.(); triggerAA(); }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -7924,7 +8001,9 @@ function endSkillTouch(touch, cancelled) {
   hideSkillTooltip();
   const side = sides[APP.localSide];
   // Om tooltipen visades = användaren ville läsa, INTE casta
-  if (!cancelled && !wasShowingTooltip && side && side.skills[key].cd <= 0) {
+  // ULT (r) har ingen CD — kolla energi i hostCastUlt i stället
+  const skillCdOK = key === 'r' ? true : (side && side.skills[key].cd <= 0);
+  if (!cancelled && !wasShowingTooltip && side && skillCdOK) {
     let dx, dz;
     const isDrag = SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD;
     if (isDrag) {
@@ -8794,6 +8873,14 @@ function updateSkillButtonStyles() {
     const hasTarget = !!(side && side.aaActive && side.targetId);
     aaBtnEl.classList.toggle('has-target', hasTarget);
   }
+  // ULT-knappens fill + percentage + ready-glow
+  if (skillEls.r) {
+    const energy = side ? (side.ultEnergy || 0) : 0;
+    const pct = Math.min(100, Math.max(0, Math.round(energy)));
+    if (ultFillEl) ultFillEl.style.height = pct + '%';
+    if (ultPctEl) ultPctEl.textContent = pct + '%';
+    skillEls.r.classList.toggle('ready', pct >= 100);
+  }
 }
 
 // ============================================================
@@ -8811,6 +8898,12 @@ function screenToWorld(sx, sz) {
 function castLocalSkill(key, worldDx, worldDz, tap = false) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
+  // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
+  if (key === 'r') {
+    if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
+    sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap });
+    return;
+  }
   // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
   if (!isGimluE && side.skills[key].cd > 0) return;
@@ -10131,6 +10224,9 @@ function simulateAll(dt) {
     tickLingShield(side, dt);
     tickIceBlock(side, dt);
     tickFearWave(side, dt);
+    // Ult-energy passiv gain + ult-tick (laser/rage)
+    if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
+    tickUltimates(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
