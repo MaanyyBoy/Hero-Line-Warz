@@ -8727,7 +8727,7 @@ if (aaBtnEl) {
 const shopContainerEl = document.getElementById('shop-container');
 const shopHeroEl = document.getElementById('shop-hero');
 const shopMinionEl = document.getElementById('shop-minion');
-const shopState = { selectedTier: 1, selectedLane: 1, variantPickerOpenFor: null };
+const shopState = { selectedTier: 1, selectedLane: 1 };
 
 // Rollup-knapparna: klick på header togglar expanded på sin panel.
 // Klick på själva body/innehåll bubblar inte upp (header är syskon till body),
@@ -8742,7 +8742,6 @@ document.querySelectorAll('.shop-header').forEach((h) => {
 function collapseShopPanels() {
   if (shopHeroEl) shopHeroEl.classList.remove('expanded');
   if (shopMinionEl) shopMinionEl.classList.remove('expanded');
-  shopState.variantPickerOpenFor = null;
 }
 const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
@@ -8751,44 +8750,49 @@ function getNextLockedTier(side) {
   return null;
 }
 
+// Bygger en flatten:ad lista av alla shop-cells: items med varianter får
+// en cell per variant. Items utan varianter får exakt en cell. Item6 är stub
+// → skippas tills den fylls i. Returnerar { itemId, variantId? }.
+function buildShopItemList() {
+  const list = [];
+  for (const itemId of ITEM_ORDER) {
+    const def = ITEM_TYPES[itemId];
+    if (!def) continue;
+    if (def.variants) {
+      for (const vid of Object.keys(def.variants)) {
+        list.push({ itemId, variantId: vid });
+      }
+    } else {
+      // Skippa items utan stats (stub-items som item6 returnerar {})
+      if (typeof def.statsAtLevel !== 'function') { list.push({ itemId }); continue; }
+      const sample = def.statsAtLevel(1);
+      if (sample && Object.keys(sample).length > 0) list.push({ itemId });
+      else list.push({ itemId });  // Visa även stub men sub-text säger "Coming Soon"
+    }
+  }
+  return list;
+}
+
 function populateShop() {
-  // ITEMS (6 st). Items med varianter får en inline variant-picker.
+  // ITEMS — alla varianter visas direkt som separata cells (Glove of Speed,
+  // Glove of Magic, Glove of Tank, etc istället för en "Glove"-rad med picker).
   const heroRow = document.getElementById('shop-hero-row');
   heroRow.innerHTML = '';
   shopRefs.heroBtns = [];
   shopRefs.heroCells = [];
   shopRefs.heroVariantBtns = [];
-  for (const itemId of ITEM_ORDER) {
-    const def = ITEM_TYPES[itemId];
+  for (const entry of buildShopItemList()) {
     const cell = document.createElement('div');
     cell.className = 'item-cell';
-    cell.dataset.item = itemId;
+    cell.dataset.item = entry.itemId;
+    if (entry.variantId) cell.dataset.variant = entry.variantId;
 
     const primary = document.createElement('button');
     primary.className = 'shop-btn item-btn primary';
-    primary.dataset.item = itemId;
-    primary.addEventListener('click', () => onItemPrimaryClick(itemId));
+    primary.dataset.item = entry.itemId;
+    if (entry.variantId) primary.dataset.variant = entry.variantId;
+    primary.addEventListener('click', () => onItemPrimaryClick(entry.itemId, entry.variantId));
     cell.appendChild(primary);
-
-    if (def.variants) {
-      const picker = document.createElement('div');
-      picker.className = 'variant-picker';
-      for (const [vid] of Object.entries(def.variants)) {
-        const vb = document.createElement('button');
-        vb.className = 'shop-btn item-btn variant';
-        vb.dataset.item = itemId;
-        vb.dataset.variant = vid;
-        vb.addEventListener('click', () => onVariantClick(itemId, vid));
-        picker.appendChild(vb);
-        shopRefs.heroVariantBtns.push(vb);
-      }
-      const cancel = document.createElement('button');
-      cancel.className = 'shop-btn item-btn variant-cancel';
-      cancel.textContent = '×';
-      cancel.addEventListener('click', closeVariantPicker);
-      picker.appendChild(cancel);
-      cell.appendChild(picker);
-    }
 
     heroRow.appendChild(cell);
     shopRefs.heroBtns.push(primary);
@@ -8836,20 +8840,9 @@ function populateShop() {
   }
 }
 
-function onItemPrimaryClick(itemId) {
-  // Öppna detalj-modalen i stället för att köpa direkt.
-  openItemShopDetail(itemId);
-}
-
-function onVariantClick(itemId, variantId) {
-  sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId, variant: variantId });
-  shopState.variantPickerOpenFor = null;
-  refreshShopUI();
-}
-
-function closeVariantPicker() {
-  shopState.variantPickerOpenFor = null;
-  refreshShopUI();
+function onItemPrimaryClick(itemId, variantId) {
+  // Öppna detalj-modalen — variantId pre-selecteras om angiven.
+  openItemShopDetail(itemId, variantId);
 }
 
 function onTierClick(tier) {
@@ -8887,47 +8880,54 @@ function refreshShopUI() {
     for (let t = 5; t >= 1; t--) if (side.tierUnlocks[t]) { shopState.selectedTier = t; break; }
   }
 
-  // Item-knappar + variant-picker + cells
+  // Item-knappar — primary alltid klickbar (öppnar detail-modal). Disable bara
+  // för MAX-level (inget mer att göra). Köp/upgrade-disable hanteras i modalen.
   const invFull = side.inventory.length >= INVENTORY_SLOTS;
   for (const cell of shopRefs.heroCells) {
     const itemId = cell.dataset.item;
+    const variantId = cell.dataset.variant || null;
     const def = ITEM_TYPES[itemId];
     if (!def) continue;
-    const existing = side.inventory.find(it => it.itemId === itemId);
-    const subDef = existing ? itemDefForEntry(existing) : null;
-    const pickerOpen = !existing && shopState.variantPickerOpenFor === itemId;
-    cell.classList.toggle('picker-open', pickerOpen);
+    // Hitta existing entry — för variants kollar vi om EXAKT denna variant ägs
+    const existing = side.inventory.find(it =>
+      it.itemId === itemId && (variantId ? it.variantId === variantId : true)
+    );
+    // Andra variants ägs?
+    const otherVariantOwned = !!variantId && side.inventory.find(it =>
+      it.itemId === itemId && it.variantId && it.variantId !== variantId
+    );
+    const subDef = variantId && def.variants && def.variants[variantId]
+      ? def.variants[variantId]
+      : (existing ? itemDefForEntry(existing) : def);
+    cell.classList.remove('picker-open');
 
     const primary = cell.querySelector('.primary');
-    primary.classList.remove('owned', 'maxlvl');
+    primary.classList.remove('owned', 'maxlvl', 'locked-variant');
     if (!existing) {
-      // Visa generisk knapp; klick öppnar picker (om varianter), annars köper direkt
-      primary.innerHTML = `${def.icon} ${def.name}<small>${invFull ? 'Inventory full' : (def.variants ? 'Välj — köp ' + ITEM_BUY_COST + 'g' : 'Köp ' + ITEM_BUY_COST + 'g')}</small>`;
-      primary.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
+      const name = subDef.name || def.name;
+      const icon = subDef.icon || def.icon || '?';
+      let sub;
+      if (otherVariantOwned) { primary.classList.add('locked-variant'); sub = 'Annan variant ägs'; }
+      else if (invFull) sub = 'Inventory full';
+      else if (side.gold < ITEM_BUY_COST) sub = `${ITEM_BUY_COST}g · saknar`;
+      else sub = `${ITEM_BUY_COST}g · köp`;
+      primary.innerHTML = `${icon} ${name}<small>${sub}</small>`;
+      primary.disabled = false;  // alltid klickbar → öppnar info-modal
     } else if (existing.level >= ITEM_MAX_LEVEL) {
       primary.classList.add('owned', 'maxlvl');
-      const name = subDef ? subDef.name : def.name;
-      const icon = subDef ? subDef.icon : def.icon;
+      const name = subDef.name || def.name;
+      const icon = subDef.icon || def.icon;
       primary.innerHTML = `${icon} ${name}<small>MAX (lvl ${existing.level})</small>`;
-      primary.disabled = true;
+      primary.disabled = false;  // klickbar → öppnar info
     } else {
       primary.classList.add('owned');
       const cost = itemUpgradeCost(existing.level);
-      const name = subDef ? subDef.name : def.name;
-      const icon = subDef ? subDef.icon : def.icon;
-      primary.innerHTML = `${icon} ${name}<small>Lvl ${existing.level} → ${existing.level+1} · ${cost}g</small>`;
-      primary.disabled = side.hero.dead || side.gold < cost;
+      const name = subDef.name || def.name;
+      const icon = subDef.icon || def.icon;
+      const sub = side.gold < cost ? `Lvl ${existing.level} · ${cost}g saknas` : `Lvl ${existing.level} → ${existing.level+1} · ${cost}g`;
+      primary.innerHTML = `${icon} ${name}<small>${sub}</small>`;
+      primary.disabled = false;  // klickbar → öppnar info-modal
     }
-  }
-  // Variant-knapparna (samma data hela tiden, men disable beror på gold/full)
-  for (const vb of shopRefs.heroVariantBtns) {
-    const itemId = vb.dataset.item;
-    const variantId = vb.dataset.variant;
-    const def = ITEM_TYPES[itemId];
-    const vdef = def && def.variants && def.variants[variantId];
-    if (!vdef) continue;
-    vb.innerHTML = `${vdef.icon} ${vdef.name}<small>${ITEM_BUY_COST}g</small>`;
-    vb.disabled = side.hero.dead || invFull || side.gold < ITEM_BUY_COST;
   }
 
   // Lane-knappar
@@ -8988,11 +8988,8 @@ function updateShop() {
 }
 
 // ---- Item-shop detalj-modal (klick på item → info + Buy/Upgrade) ----
+// Modalen ligger nu CSS-positionerad till vänster (fixed, left), inte i shop-containern.
 const isdEl = document.getElementById('item-shop-detail');
-// Flytta modalen in i shop-container så den flödar direkt under shoppen
-if (isdEl && shopContainerEl && isdEl.parentNode !== shopContainerEl) {
-  shopContainerEl.appendChild(isdEl);
-}
 const isdIconEl = document.getElementById('isd-icon');
 const isdNameEl = document.getElementById('isd-name');
 const isdLevelEl = document.getElementById('isd-level');
@@ -9033,10 +9030,10 @@ function statsLinesHtml(stats) {
   return lines.join('');
 }
 
-function openItemShopDetail(itemId) {
+function openItemShopDetail(itemId, variantId = null) {
   if (!ITEM_TYPES[itemId]) return;
   isdState.itemId = itemId;
-  isdState.variantId = null;
+  isdState.variantId = variantId;
   refreshItemShopDetail();
   if (isdEl) isdEl.classList.add('visible');
 }
@@ -9055,15 +9052,24 @@ function refreshIsdButtonsOnly() {
   const def = ITEM_TYPES[itemId];
   if (!def) return;
   const side = sides[APP.localSide];
-  const existing = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  const existingAny = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  const existing = side
+    ? side.inventory.find(it =>
+        it.itemId === itemId && (isdState.variantId ? it.variantId === isdState.variantId : true)
+      )
+    : null;
+  const otherVariantOwned = !existing && existingAny;
   const hasVariants = !!def.variants;
-  const needsVariantChoice = hasVariants && !existing;
+  const needsVariantChoice = hasVariants && !existing && !otherVariantOwned;
   const heroDead = side && side.hero && side.hero.dead;
   const invFull = side && side.inventory.length >= INVENTORY_SLOTS;
   if (isdBuyBtn) {
     if (existing) {
       isdBuyBtn.disabled = true;
       isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
+    } else if (otherVariantOwned) {
+      isdBuyBtn.disabled = true;
+      isdBuyBtn.innerHTML = `Buy<small>annan variant ägs</small>`;
     } else {
       const variantOk = !needsVariantChoice || !!isdState.variantId;
       const canAfford = side && side.gold >= ITEM_BUY_COST;
@@ -9097,14 +9103,21 @@ function refreshItemShopDetail() {
   const def = ITEM_TYPES[itemId];
   if (!def) return;
   const side = sides[APP.localSide];
-  const existing = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  // existing: matchar samma item OCH (om vi specifierat variant) samma variant.
+  // existingAny: matchar bara samma itemId (för att indikera "annan variant ägd").
+  const existingAny = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  const existing = side
+    ? side.inventory.find(it =>
+        it.itemId === itemId && (isdState.variantId ? it.variantId === isdState.variantId : true)
+      )
+    : null;
+  const otherVariantOwned = !existing && existingAny;
   const subDef = existing ? itemDefForEntry(existing) : null;
   const hasVariants = !!def.variants;
-  const needsVariantChoice = hasVariants && !existing;
-  // Vid uppgrade visas variant-info från existing.variantId. Vid köp valt
-  // i isdState.variantId.
-  const displayDef = subDef
-    ?? (needsVariantChoice && isdState.variantId ? def.variants[isdState.variantId] : def);
+  const needsVariantChoice = hasVariants && !existing && !otherVariantOwned;
+  // Display-def: pre-selected variant > existing variant > raw root
+  const variantDef = (isdState.variantId && def.variants) ? def.variants[isdState.variantId] : null;
+  const displayDef = variantDef || subDef || def;
 
   if (isdIconEl) isdIconEl.textContent = displayDef.icon || '?';
   if (isdNameEl) isdNameEl.textContent = displayDef.name || def.name;
@@ -9115,11 +9128,12 @@ function refreshItemShopDetail() {
   }
   if (isdDescEl) isdDescEl.textContent = displayDef.description || def.description || '';
 
-  // Variant-picker (om item har varianter och inte ägs)
-  if (needsVariantChoice) {
+  // Variant-picker dolt eftersom shoppen nu visar varje variant som egen cell.
+  // Vi behåller logiken på en linje "vald variant" om man landat på root-itemet
+  // utan variant (gammal entry-point).
+  if (needsVariantChoice && !isdState.variantId) {
     const buttons = Object.entries(def.variants).map(([vid, v]) => {
-      const sel = vid === isdState.variantId ? ' selected' : '';
-      return `<button class="var-btn${sel}" data-vid="${vid}">${v.icon || ''} ${v.name}<small>${v.description || ''}</small></button>`;
+      return `<button class="var-btn" data-vid="${vid}">${v.icon || ''} ${v.name}<small>${v.description || ''}</small></button>`;
     }).join('');
     isdVariantsEl.innerHTML = `<div class="vt-title">VÄLJ VARIANT</div>${buttons}`;
     isdVariantsEl.classList.remove('hidden');
@@ -9202,6 +9216,9 @@ function refreshItemShopDetail() {
     if (existing) {
       isdBuyBtn.disabled = true;
       isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
+    } else if (otherVariantOwned) {
+      isdBuyBtn.disabled = true;
+      isdBuyBtn.innerHTML = `Buy<small>annan variant ägs</small>`;
     } else {
       const variantOk = !needsVariantChoice || !!isdState.variantId;
       const canAfford = side && side.gold >= ITEM_BUY_COST;
@@ -10808,7 +10825,28 @@ function swapHeroMeshIfNeeded(side) {
   side.mesh = newMesh;
 }
 
+// Options-meny (kugghjul under match): pause + lämna match
+const optionsBtnEl = document.getElementById('options-btn');
+const optionsOverlayEl = document.getElementById('options-overlay');
+const optResumeBtn = document.getElementById('opt-resume');
+const optLeaveBtn = document.getElementById('opt-leave');
+function openOptionsOverlay() { if (optionsOverlayEl) optionsOverlayEl.classList.remove('hidden'); }
+function closeOptionsOverlay() { if (optionsOverlayEl) optionsOverlayEl.classList.add('hidden'); }
+if (optionsBtnEl) optionsBtnEl.addEventListener('click', openOptionsOverlay);
+if (optResumeBtn) optResumeBtn.addEventListener('click', closeOptionsOverlay);
+if (optLeaveBtn) optLeaveBtn.addEventListener('click', () => {
+  closeOptionsOverlay();
+  returnToLobby();
+});
+// Klick på overlay-bakgrund (utanför kortet) stänger menyn
+if (optionsOverlayEl) {
+  optionsOverlayEl.addEventListener('click', (e) => {
+    if (e.target === optionsOverlayEl) closeOptionsOverlay();
+  });
+}
+
 function returnToLobby() {
+  closeOptionsOverlay();
   closeRelay();
   pendingHostCode = null;
   // Städar alla 4 sidor (2v2 kan ha sides[3]/[4])
