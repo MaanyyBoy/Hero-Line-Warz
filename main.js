@@ -3342,6 +3342,8 @@ function resetArenaState() {
   arenaState.endTimer = 0;
   arenaState.roundWinner = 0;
   arenaState.matchWinner = 0;
+  arenaState.startingTimer = 0;
+  arenaState.startingPhaseShown = null;
   // Rensa virtual-target-cacher (recreate on demand i findClosestHostile)
   arenaState.orbTarget = null;
   arenaState.heroTargets = { 1: null, 2: null };
@@ -3381,11 +3383,34 @@ function startArenaRound(roundNum) {
   showArenaPrep();
 }
 
+function transitionArenaToStarting() {
+  // Mellanfas mellan prep och fight: visar 3-2-1-FIGHT-banner
+  arenaState.phase = 'starting';
+  arenaState.startingTimer = 3.0;
+  arenaState.startingPhaseShown = -1; // visa "3" först
+  hideArenaPrep();
+  // Säkerställ att hjältarna står på spawn-positioner med rotation
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s) continue;
+    const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
+    s.hero.x = spawn.x; s.hero.z = spawn.z;
+    s.hero.facingX = idx === 1 ? 1 : -1;
+    s.hero.facingZ = 0;
+    if (s.mesh) {
+      s.mesh.position.set(spawn.x, 0, spawn.z);
+      s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+    }
+  }
+  showArenaCountdown('3');
+}
+
 function transitionArenaToFight() {
   arenaState.phase = 'fight';
   arenaState.fightTimer = 0;
   arenaState.ready = { 1: false, 2: false };
   hideArenaPrep();
+  hideArenaCountdown();
   // Sätt orb spawn-timer
   arenaState.orb.spawnTimer = ARENA_ORB_SPAWN_DELAY;
   arenaState.orb.alive = false;
@@ -3509,10 +3534,34 @@ function tickArena(dt) {
   if (arenaState.phase === 'prep') {
     arenaState.prepTimer = Math.max(0, arenaState.prepTimer - dt);
     updateArenaPrepUI();
-    // Start fight om timer = 0 eller båda ready
-    const bothReady = arenaState.ready[1] && (sides[2] ? arenaState.ready[2] : true);
-    if (arenaState.prepTimer <= 0 || bothReady) {
-      transitionArenaToFight();
+    // Start 3-2-1-countdown om timer = 0 eller alla aktuella sidor ready
+    const s1Ready = arenaState.ready[1];
+    const s2Ready = sides[2] ? arenaState.ready[2] : true; // solo: ingen opponent → räcker att du själv är ready
+    const allReady = s1Ready && s2Ready;
+    if (arenaState.prepTimer <= 0 || allReady) {
+      transitionArenaToStarting();
+    }
+  } else if (arenaState.phase === 'starting') {
+    // 3-2-1-FIGHT countdown — hjältarna kan inte röra sig (simulateAll pausar)
+    arenaState.startingTimer = Math.max(0, arenaState.startingTimer - dt);
+    const elapsed = 3.0 - arenaState.startingTimer;
+    // 0-1s = "3", 1-2s = "2", 2-3s = "1", >3s = "FIGHT!"
+    let label, isFight = false;
+    if (elapsed < 1.0)      label = '3';
+    else if (elapsed < 2.0) label = '2';
+    else if (elapsed < 3.0) label = '1';
+    else { label = 'FIGHT!'; isFight = true; }
+    if (arenaState.startingPhaseShown !== label) {
+      arenaState.startingPhaseShown = label;
+      showArenaCountdown(label, isFight);
+    }
+    if (arenaState.startingTimer <= 0) {
+      // Lås phase så vi inte triggar setTimeout flera gånger
+      arenaState.phase = 'starting-end';
+      // Korta extra-paus för att FIGHT-bannern hinner synas, sen fight
+      setTimeout(() => {
+        if (arenaState.phase === 'starting-end') transitionArenaToFight();
+      }, 600);
     }
   } else if (arenaState.phase === 'fight') {
     arenaState.fightTimer += dt;
@@ -6285,17 +6334,22 @@ function updateHud() {
     return;
   }
   const opp = sides[3 - APP.localSide];
+  const isArena = APP.gameMode === 'arena1v1';
   const heroLine = side.hero.dead
-    ? `<span style="color:#ff6666">DÖD — respawn om ${side.hero.respawnTimer.toFixed(1)}s</span>`
+    ? `<span style="color:#ff6666">${isArena ? 'DÖD — väntar nästa runda' : `DÖD — respawn om ${side.hero.respawnTimer.toFixed(1)}s`}</span>`
     : `HP: ${Math.round(side.hero.hp)}/${Math.round(side.hero.maxHp)}`;
-  const top = [
-    heroLine,
-    `Guld: ${side.gold}`,
-    `<span style="color:#88aaff">Du: ${side.tower.hp}/${side.tower.maxHp}</span>`,
-    `<span style="color:#ff8888">Motst: ${opp ? opp.tower.hp + '/' + opp.tower.maxHp : '–'}</span>`,
-  ];
-  if (side.wave.active) top.push(`Wave ${side.wave.current}`);
-  else top.push(`Wave ${side.wave.current + 1} om: ${side.wave.betweenTimer.toFixed(1)}s`);
+  const top = [heroLine];
+  if (!isArena) {
+    top.push(
+      `Guld: ${side.gold}`,
+      `<span style="color:#88aaff">Du: ${side.tower.hp}/${side.tower.maxHp}</span>`,
+      `<span style="color:#ff8888">Motst: ${opp ? opp.tower.hp + '/' + opp.tower.maxHp : '–'}</span>`,
+    );
+    if (side.wave.active) top.push(`Wave ${side.wave.current}`);
+    else top.push(`Wave ${side.wave.current + 1} om: ${side.wave.betweenTimer.toFixed(1)}s`);
+  } else if (side.shield > 0) {
+    top.push(`<span style="color:#66ccff">Shield: ${Math.round(side.shield)}</span>`);
+  }
   const nextAoe = PASSIVE_EVERY - (side.attackCounter % PASSIVE_EVERY);
   const bottom = [
     `Q: ${fmtCd(side.skills.q.cd)}`,
@@ -6788,6 +6842,22 @@ function showArenaPrep() {
 }
 function hideArenaPrep() {
   if (arenaPrepEl) arenaPrepEl.classList.remove('visible');
+}
+
+const arenaCountdownEl = document.getElementById('arena-countdown');
+const acTextEl = document.getElementById('ac-text');
+function showArenaCountdown(text, isFight = false) {
+  if (!arenaCountdownEl || !acTextEl) return;
+  arenaCountdownEl.classList.remove('hidden');
+  acTextEl.textContent = text;
+  acTextEl.classList.toggle('fight', !!isFight);
+  // Restart animation by forcing reflow
+  acTextEl.style.animation = 'none';
+  void acTextEl.offsetWidth;
+  acTextEl.style.animation = '';
+}
+function hideArenaCountdown() {
+  if (arenaCountdownEl) arenaCountdownEl.classList.add('hidden');
 }
 function showArenaEnd(winnerIdx, isMatchEnd) {
   if (!arenaEndEl) return;
@@ -8794,6 +8864,7 @@ function returnToLobby() {
   resetArenaState();
   hideArenaPrep();
   hideArenaEnd();
+  hideArenaCountdown();
   if (arenaRoundEl) arenaRoundEl.classList.add('hidden');
   lobbyEl.classList.remove('hidden');
   showLobbyPanel('main');
@@ -8854,6 +8925,10 @@ function joinArenaShow() {
   showLobbyPanel('joining');
   setTimeout(() => lobbyCodeInputEl.focus(), 50);
 }
+function soloArenaStart() {
+  APP.gameMode = 'arena1v1';
+  showHeroPick('solo');
+}
 const btnArena = document.getElementById('btn-arena');
 if (btnArena) btnArena.addEventListener('click', () => showLobbyPanel('arena-mode'));
 const btnArenaBack = document.getElementById('btn-arena-back');
@@ -8866,6 +8941,8 @@ const btnArenaHost = document.getElementById('btn-arena-host');
 if (btnArenaHost) btnArenaHost.addEventListener('click', hostArena);
 const btnArenaJoin = document.getElementById('btn-arena-join');
 if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
+const btnArenaSolo = document.getElementById('btn-arena-solo');
+if (btnArenaSolo) btnArenaSolo.addEventListener('click', soloArenaStart);
 
 // ============================================================
 // HUVUDLOOP
@@ -9445,3 +9522,21 @@ function tick() {
 requestAnimationFrame(tick);
 window.__mainJsLoaded = true;
 console.log('[main] module loaded fully');
+
+// Dev-trigger: ?test=arena → auto-start solo arena (för screenshot/QA)
+if (new URLSearchParams(location.search).get('test') === 'arena') {
+  // Vänta tills assets är klara
+  const tryStart = () => {
+    if (!assetsReady) { setTimeout(tryStart, 300); return; }
+    APP.gameMode = 'arena1v1';
+    // Hoppa över hero-pick: sätt hero direkt och kör enterPlayPhase som solo
+    heroPickState.selected = 'magiker';
+    setupMatch('solo');
+    enterPlayPhase();
+    // Hoppa direkt till fight-fas så vi ser arena-scenen utan prep-overlay
+    arenaState.phase = 'fight';
+    arenaState.fightTimer = 0;
+    hideArenaPrep();
+  };
+  tryStart();
+}

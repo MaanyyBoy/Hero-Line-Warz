@@ -1213,6 +1213,51 @@
       border-color: rgba(180,255,180,0.8);
     }
 
+    /* Arena 3-2-1 countdown banner */
+    #arena-countdown {
+      position: fixed;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 240;
+      pointer-events: none;
+    }
+    #arena-countdown.hidden { display: none; }
+    #ac-text {
+      font: 900 140px/1 system-ui, sans-serif;
+      color: #ffd34a;
+      text-shadow:
+        0 0 24px rgba(255,180,40,0.85),
+        0 4px 18px rgba(0,0,0,0.85),
+        0 0 4px rgba(255,255,255,0.7);
+      letter-spacing: 4px;
+      text-align: center;
+      animation: ac-pulse 0.9s ease-out;
+    }
+    #ac-text.fight {
+      font-size: 90px;
+      color: #ff6633;
+      text-shadow:
+        0 0 30px rgba(255,80,30,0.95),
+        0 5px 22px rgba(0,0,0,0.9),
+        0 0 6px rgba(255,255,255,0.9);
+      animation: ac-pulse-fight 0.95s ease-out;
+    }
+    @keyframes ac-pulse {
+      0%   { transform: scale(0.5); opacity: 0; }
+      18%  { transform: scale(1.3); opacity: 1; }
+      40%  { transform: scale(1.0); opacity: 1; }
+      100% { transform: scale(1.0); opacity: 1; }
+    }
+    @keyframes ac-pulse-fight {
+      0%   { transform: scale(0.4); opacity: 0; }
+      15%  { transform: scale(1.5); opacity: 1; }
+      40%  { transform: scale(1.0); opacity: 1; }
+      100% { transform: scale(1.05); opacity: 1; }
+    }
+
+    body:not(.in-game) #arena-countdown { display: none !important; }
+
     /* Arena round-end + match-end overlay */
     #arena-end {
       position: fixed; inset: 0;
@@ -1435,6 +1480,7 @@
       <div style="font-size: 24px; color: #ff7733; letter-spacing: 1px; font-weight: 800; margin-bottom: 14px;">ARENA · 1v1</div>
       <button class="lobby-btn" id="btn-arena-host">Host Arena</button>
       <button class="lobby-btn" id="btn-arena-join">Join Arena</button>
+      <button class="lobby-btn secondary" id="btn-arena-solo" style="margin-top: 12px; opacity: 0.85;">Solo Practice <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">(test alone)</small></button>
       <button class="lobby-btn secondary" id="btn-arena-1v1-back" style="margin-top: 18px;">← Tillbaka</button>
     </div>
 
@@ -1605,6 +1651,11 @@
   </div>
 
   <!-- Arena round-end + match-end overlay -->
+  <!-- Arena 3-2-1 countdown banner (3s mellan ready och fight) -->
+  <div id="arena-countdown" class="hidden">
+    <div id="ac-text">3</div>
+  </div>
+
   <div id="arena-end" class="hidden">
     <div id="ae-card">
       <h2 id="ae-title"></h2>
