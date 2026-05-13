@@ -1250,6 +1250,19 @@ const SIDE_CFG = {
     gruntColor: 0xdd6644,
     gruntEmissive: 0x441a14,
   },
+  // 3 & 4: placeholders för 2v2 arena (classic-fält används aldrig för dessa)
+  3: {
+    arenaSign: 1, laneZ: { 1: 12, 2: 4 }, oppLaneZ: { 1: -4, 2: -12 },
+    spawnX: -27, baseZRange: [0.5, 14.55], tower: { x: 24, z: 8 },
+    heroSpawn: { x: 15, z: 8 },
+    heroColor: 0xffaa33, gruntColor: 0x66aaff, gruntEmissive: 0x223366,
+  },
+  4: {
+    arenaSign: -1, laneZ: { 1: -4, 2: -12 }, oppLaneZ: { 1: 12, 2: 4 },
+    spawnX: -27, baseZRange: [-14.55, -0.5], tower: { x: 24, z: -8 },
+    heroSpawn: { x: 15, z: -8 },
+    heroColor: 0x66ddff, gruntColor: 0xff6644, gruntEmissive: 0x442211,
+  },
 };
 
 // ============================================================
@@ -3028,7 +3041,8 @@ const RELAY_URL = 'wss://hero-line-warz.onrender.com';
 const APP = {
   mode: 'lobby',          // 'lobby' | 'solo' | 'host' | 'client'
   gameMode: 'classic',    // 'classic' (Line Wars) | 'arena1v1'
-  localSide: 1,           // 1 eller 2 — vilken sida den lokala spelaren styr
+  arenaTeamSize: 1,       // 1 (1v1) eller 2 (2v2) — antal hjältar per team
+  localSide: 1,           // 1, 2, 3 eller 4 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
   ws: null,               // WebSocket till relay-servern (host + client)
   // Klient-input som ska skickas
@@ -3062,8 +3076,16 @@ const sides = { 1: null, 2: null };
 // Heroes spawnar på motsatta östra/västra sidor. Orb alltid mittpunkten.
 const ARENA_Z_OFFSET = 80;
 const ARENA_CFG = {
+  // 1v1 spawns: en hjälte per sida
   spawn1: { x: -32, z: ARENA_Z_OFFSET },
   spawn2: { x:  32, z: ARENA_Z_OFFSET },
+  // 2v2 spawns: två hjältar per team, spridda i Z-axeln
+  spawns2v2: {
+    1: { x: -32, z: ARENA_Z_OFFSET - 10 },  // team A medlem 1
+    3: { x: -32, z: ARENA_Z_OFFSET + 10 },  // team A medlem 2 (dummy/ally)
+    2: { x:  32, z: ARENA_Z_OFFSET - 10 },  // team B medlem 1 (dummy)
+    4: { x:  32, z: ARENA_Z_OFFSET + 10 },  // team B medlem 2 (dummy)
+  },
   orb:    { x: 0,   z: ARENA_Z_OFFSET },
   bounds: { minX: -44, maxX: 44, minZ: ARENA_Z_OFFSET - 28, maxZ: ARENA_Z_OFFSET + 28 },
   // Cover-props: x/z är relativt arena-mitten. collision = AABB/cirkel som
@@ -3118,6 +3140,31 @@ const ARENA_ROUND_END_PAUSE = 4;
 const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_PER_ROUND = 200;
 const ARENA_GOLD_WIN_BONUS = 500;
+
+// Team-helpers för 2v2: side 1+3 = team A, side 2+4 = team B
+function arenaTeamOf(idx) { return (idx === 1 || idx === 3) ? 'A' : 'B'; }
+function arenaTeamRep(team) { return team === 'A' ? 1 : 2; }
+function arenaSideIdxs() {
+  return APP.arenaTeamSize === 2 ? [1, 2, 3, 4] : [1, 2];
+}
+function arenaTeamMates(team) {
+  if (APP.arenaTeamSize === 2) {
+    return team === 'A' ? [1, 3] : [2, 4];
+  }
+  return team === 'A' ? [1] : [2];
+}
+function arenaOppTeamSides(side) {
+  const oppTeam = arenaTeamOf(side.idx) === 'A' ? 'B' : 'A';
+  return arenaTeamMates(oppTeam).map(i => sides[i]).filter(s => s);
+}
+
+// Returnerar alla aktiva sidor (filtered null). 1v1: [s1, s2]. 2v2 arena: [s1,s2,s3,s4].
+function activeSides() {
+  if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
+    return [sides[1], sides[2], sides[3], sides[4]].filter(s => s);
+  }
+  return [sides[1], sides[2]].filter(s => s);
+}
 
 // ============================================================
 // ARENA: TALENTS PER HERO
@@ -3572,10 +3619,12 @@ function resetArenaState() {
   arenaState.wins = { 1: 0, 2: 0 };
   arenaState.prepTimer = 0;
   arenaState.fightTimer = 0;
-  arenaState.ready = { 1: false, 2: false };
+  arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   arenaState.talents = {
     1: { points: 0, chosen: [] },
     2: { points: 0, chosen: [] },
+    3: { points: 0, chosen: [] },
+    4: { points: 0, chosen: [] },
   };
   arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
   arenaState.endTimer = 0;
@@ -3593,21 +3642,25 @@ function startArenaRound(roundNum) {
   arenaState.phase = 'prep';
   arenaState.prepTimer = ARENA_PREP_TIME;
   arenaState.fightTimer = 0;
-  arenaState.ready = { 1: false, 2: false };
-  // +1 talent-poäng per runda för båda sidor; vinnaren får +1 extra (added in roundEnd)
-  for (const idx of [1, 2]) {
+  arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
+  const idxs = arenaSideIdxs();
+  // +1 talent-poäng per runda för alla aktiva sidor
+  for (const idx of idxs) {
+    if (!arenaState.talents[idx]) arenaState.talents[idx] = { points: 0, chosen: [] };
     arenaState.talents[idx].points += 1;
   }
   // Återställ orb
   arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
   if (arenaOrbMesh) arenaOrbMesh.visible = false;
   // Återställ heroes till spawn + full HP, ej dead
-  for (const idx of [1, 2]) {
+  for (const idx of idxs) {
     const s = sides[idx];
     if (!s) continue;
-    const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
+    const spawn = APP.arenaTeamSize === 2
+      ? ARENA_CFG.spawns2v2[idx]
+      : (idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2);
     s.hero.x = spawn.x; s.hero.z = spawn.z;
-    s.hero.facingX = idx === 1 ? 1 : -1;
+    s.hero.facingX = arenaTeamOf(idx) === 'A' ? 1 : -1;
     s.hero.facingZ = 0;
     s.hero.dead = false;
     s.hero.respawnTimer = 0;
@@ -3648,12 +3701,14 @@ function transitionArenaToStarting() {
   arenaState.startingPhaseShown = -1; // visa "3" först
   hideArenaPrep();
   // Säkerställ att hjältarna står på spawn-positioner med rotation
-  for (const idx of [1, 2]) {
+  for (const idx of arenaSideIdxs()) {
     const s = sides[idx];
     if (!s) continue;
-    const spawn = idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2;
+    const spawn = APP.arenaTeamSize === 2
+      ? ARENA_CFG.spawns2v2[idx]
+      : (idx === 1 ? ARENA_CFG.spawn1 : ARENA_CFG.spawn2);
     s.hero.x = spawn.x; s.hero.z = spawn.z;
-    s.hero.facingX = idx === 1 ? 1 : -1;
+    s.hero.facingX = arenaTeamOf(idx) === 'A' ? 1 : -1;
     s.hero.facingZ = 0;
     if (s.mesh) {
       s.mesh.position.set(spawn.x, 0, spawn.z);
@@ -3666,7 +3721,7 @@ function transitionArenaToStarting() {
 function transitionArenaToFight() {
   arenaState.phase = 'fight';
   arenaState.fightTimer = 0;
-  arenaState.ready = { 1: false, 2: false };
+  arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   hideArenaPrep();
   hideArenaCountdown();
   // Orb spawnar direkt vid fight-start (visuell pop)
@@ -3684,13 +3739,16 @@ function transitionArenaRoundEnd(winnerIdx) {
   arenaState.roundWinner = winnerIdx;
   arenaState.endTimer = ARENA_ROUND_END_PAUSE;
   if (winnerIdx > 0) {
-    arenaState.wins[winnerIdx] = (arenaState.wins[winnerIdx] || 0) + 1;
-    // Vinnaren får +1 extra talent-poäng + 500 gold-bonus
-    arenaState.talents[winnerIdx].points += 1;
-    const winSide = sides[winnerIdx];
-    if (winSide) winSide.gold = (winSide.gold || 0) + ARENA_GOLD_WIN_BONUS;
+    const winTeam = arenaTeamOf(winnerIdx);
+    const repIdx = arenaTeamRep(winTeam);  // 1 eller 2 (rep för team)
+    arenaState.wins[repIdx] = (arenaState.wins[repIdx] || 0) + 1;
+    // Alla team-medlemmar får +1 talent-poäng + 500 gold-bonus
+    for (const tidx of arenaTeamMates(winTeam)) {
+      if (arenaState.talents[tidx]) arenaState.talents[tidx].points += 1;
+      const ts = sides[tidx];
+      if (ts) ts.gold = (ts.gold || 0) + ARENA_GOLD_WIN_BONUS;
+    }
   }
-  // Visa banner
   showArenaEnd(winnerIdx, false);
 }
 
@@ -3701,23 +3759,15 @@ function transitionArenaMatchEnd(winnerIdx) {
 }
 
 function checkArenaRoundEnd() {
-  // 1v1: när en hjälte är död, andra vinner. Solo (sides[2]=null) → vinner när sides[1] dör.
-  const s1 = sides[1];
-  const s2 = sides[2];
-  if (!s1) return;
-  if (s1.hero.dead && (!s2 || s2.hero.dead)) {
-    // Båda döda samtidigt = draw, ge båda 0.5 (round-ändå, ingen får points)
-    transitionArenaRoundEnd(0);
-    return;
-  }
-  if (s1.hero.dead) {
-    transitionArenaRoundEnd(2);
-    return;
-  }
-  if (s2 && s2.hero.dead) {
-    transitionArenaRoundEnd(1);
-    return;
-  }
+  // Räkna levande per team. Runda slutar när ett team är helt utslaget.
+  const aMembers = arenaTeamMates('A').map(i => sides[i]).filter(s => s);
+  const bMembers = arenaTeamMates('B').map(i => sides[i]).filter(s => s);
+  if (aMembers.length === 0 && bMembers.length === 0) return;
+  const aAlive = aMembers.some(s => !s.hero.dead);
+  const bAlive = bMembers.some(s => !s.hero.dead);
+  if (!aAlive && !bAlive) { transitionArenaRoundEnd(0); return; }
+  if (!aAlive) { transitionArenaRoundEnd(2); return; }     // team B vinner (rep idx)
+  if (!bAlive && bMembers.length > 0) { transitionArenaRoundEnd(1); return; }  // team A vinner
 }
 
 function updateArenaOrb(dt) {
@@ -3847,10 +3897,17 @@ function tickArena(dt) {
   if (arenaState.phase === 'prep') {
     arenaState.prepTimer = Math.max(0, arenaState.prepTimer - dt);
     updateArenaPrepUI();
-    // Start 3-2-1-countdown om timer = 0 eller alla aktuella sidor ready
-    const s1Ready = arenaState.ready[1];
-    const s2Ready = sides[2] ? arenaState.ready[2] : true; // solo: ingen opponent → räcker att du själv är ready
-    const allReady = s1Ready && s2Ready;
+    // Start 3-2-1-countdown om timer = 0 eller alla MÄNNISKO-styrda sidor ready
+    // Solo: bara localSide räknas. MP: alla connected peers.
+    let allReady = true;
+    const idxs = arenaSideIdxs();
+    for (const idx of idxs) {
+      const s = sides[idx];
+      if (!s) continue;
+      // I solo: bara localSide är människa, övriga sidor räknas som ready
+      if (APP.mode === 'solo' && idx !== APP.localSide) continue;
+      if (!arenaState.ready[idx]) { allReady = false; break; }
+    }
     if (arenaState.prepTimer <= 0 || allReady) {
       transitionArenaToStarting();
     }
@@ -4636,19 +4693,23 @@ function findClosestHostile(side, x, z, maxDist) {
         best = { entity: arenaState.orbTarget, isMonster: false, targetType: 'arena-orb' };
       }
     }
-    if (opp && !opp.hero.dead) {
-      const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
+    // 2v2: leta efter ALLA opp-team-hjältar (1v1: bara opp som var)
+    const oppHeroes = APP.arenaTeamSize === 2
+      ? arenaOppTeamSides(side)
+      : (opp ? [opp] : []);
+    for (const oh of oppHeroes) {
+      if (oh.hero.dead) continue;
+      const d = Math.hypot(oh.hero.x - x, oh.hero.z - z);
       if (d < bestDist) {
         if (!arenaState.heroTargets) arenaState.heroTargets = {};
-        if (!arenaState.heroTargets[opp.idx]) {
-          arenaState.heroTargets[opp.idx] = {
-            id: -200 + opp.idx, isArenaHero: true, sideIdx: opp.idx,
-            // Getter så stale mesh-pekare aldrig läses (mesh kan bytas via swapHeroMeshIfNeeded)
+        if (!arenaState.heroTargets[oh.idx]) {
+          arenaState.heroTargets[oh.idx] = {
+            id: -200 + oh.idx, isArenaHero: true, sideIdx: oh.idx,
             get mesh() { return sides[this.sideIdx]?.mesh; },
           };
         }
         bestDist = d;
-        best = { entity: arenaState.heroTargets[opp.idx], isMonster: false, targetType: 'arena-hero' };
+        best = { entity: arenaState.heroTargets[oh.idx], isMonster: false, targetType: 'arena-hero' };
       }
     }
   }
@@ -6744,8 +6805,9 @@ function animateMeshChar(mesh, dt, side, type) {
 
 function animateAllCharacters(dt) {
   if (APP.mode === 'lobby') return;
-  // Hero-meshes (båda sidor om de finns)
-  for (const sideIdx of [1, 2]) {
+  const idxs = (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) ? [1, 2, 3, 4] : [1, 2];
+  // Hero-meshes
+  for (const sideIdx of idxs) {
     const side = sides[sideIdx];
     if (!side || !side.mesh) continue;
     if (!side.mesh.visible) continue;
@@ -6753,7 +6815,7 @@ function animateAllCharacters(dt) {
   }
   // Solo: monster/creep-meshes ligger på side.monsters/playerCreeps direkt
   if (APP.mode === 'solo') {
-    for (const sideIdx of [1, 2]) {
+    for (const sideIdx of idxs) {
       const side = sides[sideIdx];
       if (!side) continue;
       for (const m of side.monsters) if (m.mesh) animateMeshChar(m.mesh, dt, null, 'monster');
@@ -10153,8 +10215,9 @@ const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
 const lobbyArenaModeEl = document.getElementById('lobby-arena-mode');
 const lobbyArena1v1El = document.getElementById('lobby-arena-1v1');
+const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaModeEl, lobbyArena1v1El]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaModeEl, lobbyArena1v1El, lobbyArena2v2El]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -10165,6 +10228,7 @@ function showLobbyPanel(which) {
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
   else if (which === 'arena-mode') lobbyArenaModeEl.classList.add('visible');
   else if (which === 'arena-1v1') lobbyArena1v1El.classList.add('visible');
+  else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -10308,16 +10372,26 @@ function setupMatch(mode) {
     APP.twoSides = false;
     sides[1] = createSide(1);
     sides[2] = null;
+    sides[3] = null;
+    sides[4] = null;
+    // Solo Practice 2v2: skapa 3 dummies (sida 2, 3, 4)
+    if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
+      sides[2] = createSide(2);
+      sides[3] = createSide(3);
+      sides[4] = createSide(4);
+    }
   } else if (mode === 'host') {
     APP.localSide = 1;
     APP.twoSides = true;
     sides[1] = createSide(1);
     sides[2] = createSide(2);
+    sides[3] = null; sides[4] = null;
   } else if (mode === 'client') {
     APP.localSide = 2;
     APP.twoSides = true;
     sides[1] = createSide(1);
     sides[2] = createSide(2);
+    sides[3] = null; sides[4] = null;
   }
   matchState.gameOver = false;
   matchState.gameWon = false;
@@ -10362,7 +10436,7 @@ function enterPlayPhase() {
   if (APP.gameMode === 'arena1v1') {
     buildArenaScene();
     arenaSceneGroup.visible = true;
-    for (const idx of [1, 2]) {
+    for (const idx of arenaSideIdxs()) {
       const s = sides[idx];
       if (!s) continue;
       s.level = 30;
@@ -10413,8 +10487,10 @@ function swapHeroMeshIfNeeded(side) {
 function returnToLobby() {
   closeRelay();
   pendingHostCode = null;
-  if (sides[1]) { removeSide(sides[1]); sides[1] = null; }
-  if (sides[2]) { removeSide(sides[2]); sides[2] = null; }
+  // Städar alla 4 sidor (2v2 kan ha sides[3]/[4])
+  for (const i of [1, 2, 3, 4]) {
+    if (sides[i]) { removeSide(sides[i]); sides[i] = null; }
+  }
   for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles']) {
     for (const m of clientMeshes[key].values()) for (const mesh of m.values()) scene.remove(mesh);
     clientMeshes[key].clear();
@@ -10497,6 +10573,12 @@ function joinArenaShow() {
 }
 function soloArenaStart() {
   APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 1;
+  showHeroPick('solo');
+}
+function soloArena2v2Start() {
+  APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 2;
   showHeroPick('solo');
 }
 const btnArena = document.getElementById('btn-arena');
@@ -10513,6 +10595,13 @@ const btnArenaJoin = document.getElementById('btn-arena-join');
 if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
 const btnArenaSolo = document.getElementById('btn-arena-solo');
 if (btnArenaSolo) btnArenaSolo.addEventListener('click', soloArenaStart);
+// 2v2 mode
+const btnArena2v2 = document.getElementById('btn-arena-2v2');
+if (btnArena2v2) btnArena2v2.addEventListener('click', () => showLobbyPanel('arena-2v2'));
+const btnArena2v2Back = document.getElementById('btn-arena-2v2-back');
+if (btnArena2v2Back) btnArena2v2Back.addEventListener('click', () => showLobbyPanel('arena-mode'));
+const btnArena2v2Solo = document.getElementById('btn-arena-2v2-solo');
+if (btnArena2v2Solo) btnArena2v2Solo.addEventListener('click', soloArena2v2Start);
 
 // ============================================================
 // HUVUDLOOP
@@ -10526,7 +10615,7 @@ function simulateAll(dt) {
   // Lokal duel-timer (bara HUD, ingen duel triggas i solo). Stannar vid 0.
   if (duelState.timer > 0) duelState.timer = Math.max(0, duelState.timer - dt);
   // Hjälte-respawn
-  for (const side of [sides[1], sides[2]]) {
+  for (const side of activeSides()) {
     if (!side) continue;
     // I arena: ingen auto-respawn — runda måste avslutas och startas om manuellt.
     if (side.hero.dead && APP.gameMode !== 'arena1v1') {
@@ -10553,7 +10642,7 @@ function simulateAll(dt) {
   }
   // (Klassisk multiplayer-fjärrsidans input hanteras av servern numera.)
   // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
-  for (const side of [sides[1], sides[2]]) {
+  for (const side of activeSides()) {
     if (!side) continue;
     const cfg = SIDE_CFG[side.idx];
     if (side.hero.dead) {
@@ -10589,7 +10678,7 @@ function simulateAll(dt) {
   }
   const isArena = APP.gameMode === 'arena1v1';
   // Per-sida simulering
-  for (const side of [sides[1], sides[2]]) {
+  for (const side of activeSides()) {
     if (!side) continue;
     updateSkillCooldowns(side, dt);
     if (!isArena) {
