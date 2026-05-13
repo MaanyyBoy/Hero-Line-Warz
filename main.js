@@ -5601,7 +5601,7 @@ function checkMatchEnd() {
 // KAMERA
 // ============================================================
 
-const cameraOffset = new THREE.Vector3(0, 14, 11);
+const cameraOffset = new THREE.Vector3(0, 17, 14);
 const cameraTarget = new THREE.Vector3();
 
 function updateCamera(dt) {
@@ -6234,19 +6234,8 @@ function populateShop() {
 }
 
 function onItemPrimaryClick(itemId) {
-  const side = sides[APP.localSide];
-  if (!side) return;
-  const def = ITEM_TYPES[itemId];
-  if (!def) return;
-  const existing = side.inventory.find(it => it.itemId === itemId);
-  if (!existing && def.variants) {
-    // Öppna variant-picker
-    shopState.variantPickerOpenFor = itemId;
-    refreshShopUI();
-    return;
-  }
-  // Ej variant-item, eller redan ägt → buy/upgrade direkt
-  sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
+  // Öppna detalj-modalen i stället för att köpa direkt.
+  openItemShopDetail(itemId);
 }
 
 function onVariantClick(itemId, variantId) {
@@ -6384,7 +6373,240 @@ function refreshShopUI() {
 
 populateShop();
 
-function updateShop() { refreshShopUI(); }
+function updateShop() {
+  refreshShopUI();
+  if (isdState.itemId) refreshItemShopDetail();
+}
+
+// ---- Item-shop detalj-modal (klick på item → info + Buy/Upgrade) ----
+const isdEl = document.getElementById('item-shop-detail');
+const isdIconEl = document.getElementById('isd-icon');
+const isdNameEl = document.getElementById('isd-name');
+const isdLevelEl = document.getElementById('isd-level');
+const isdDescEl = document.getElementById('isd-desc');
+const isdVariantsEl = document.getElementById('isd-variants');
+const isdStatsCurEl = document.getElementById('isd-stats-current');
+const isdStatsNextEl = document.getElementById('isd-stats-next');
+const isdActiveEl = document.getElementById('isd-active');
+const isdBuyBtn = document.getElementById('isd-buy');
+const isdUpgradeBtn = document.getElementById('isd-upgrade');
+const isdCloseBtn = document.getElementById('isd-close');
+
+const isdState = { itemId: null, variantId: null };
+
+// Mappa stat-nycklar till svenska etiketter + formatering
+const STAT_LABELS = {
+  moveSpeedPct:    { label: 'Rörelse',         pct: true },
+  attackSpeedPct:  { label: 'Attackfart',      pct: true },
+  skillDmgPct:     { label: 'Skill-skada',     pct: true },
+  cdrPct:          { label: 'CDR',             pct: true },
+  dmgReductionPct: { label: 'Skadereduktion',  pct: true },
+  maxHpPct:        { label: 'Max HP',          pct: true },
+  critChancePct:   { label: 'Crit chans',      pct: true },
+  healPerSecPct:   { label: 'Heal per sek',    pct: true },
+  attackDmg:       { label: 'Attack-skada',    pct: false },
+  moveSpeed:       { label: 'Rörelse (flat)',  pct: false },
+  maxHp:           { label: 'Max HP (flat)',   pct: false },
+};
+
+function statsLinesHtml(stats) {
+  const lines = [];
+  for (const [k, v] of Object.entries(stats || {})) {
+    if (!v) continue;
+    const meta = STAT_LABELS[k] || { label: k, pct: k.endsWith('Pct') };
+    const valStr = meta.pct ? `+${(v * 100).toFixed(1)}%` : `+${v}`;
+    lines.push(`<div class="stat-line">${meta.label}: <strong>${valStr}</strong></div>`);
+  }
+  return lines.join('');
+}
+
+function openItemShopDetail(itemId) {
+  if (!ITEM_TYPES[itemId]) return;
+  isdState.itemId = itemId;
+  isdState.variantId = null;
+  refreshItemShopDetail();
+  if (isdEl) isdEl.classList.add('visible');
+}
+
+function closeItemShopDetail() {
+  isdState.itemId = null;
+  isdState.variantId = null;
+  if (isdEl) isdEl.classList.remove('visible');
+}
+
+function refreshItemShopDetail() {
+  const itemId = isdState.itemId;
+  if (!itemId) return;
+  const def = ITEM_TYPES[itemId];
+  if (!def) return;
+  const side = sides[APP.localSide];
+  const existing = side ? side.inventory.find(it => it.itemId === itemId) : null;
+  const subDef = existing ? itemDefForEntry(existing) : null;
+  const hasVariants = !!def.variants;
+  const needsVariantChoice = hasVariants && !existing;
+  // Vid uppgrade visas variant-info från existing.variantId. Vid köp valt
+  // i isdState.variantId.
+  const displayDef = subDef
+    ?? (needsVariantChoice && isdState.variantId ? def.variants[isdState.variantId] : def);
+
+  if (isdIconEl) isdIconEl.textContent = displayDef.icon || '?';
+  if (isdNameEl) isdNameEl.textContent = displayDef.name || def.name;
+  if (isdLevelEl) {
+    isdLevelEl.textContent = existing
+      ? `Lvl ${existing.level}${existing.level >= ITEM_MAX_LEVEL ? ' · MAX' : ` / ${ITEM_MAX_LEVEL}`}`
+      : 'Ej ägd';
+  }
+  if (isdDescEl) isdDescEl.textContent = displayDef.description || def.description || '';
+
+  // Variant-picker (om item har varianter och inte ägs)
+  if (needsVariantChoice) {
+    const buttons = Object.entries(def.variants).map(([vid, v]) => {
+      const sel = vid === isdState.variantId ? ' selected' : '';
+      return `<button class="var-btn${sel}" data-vid="${vid}">${v.icon || ''} ${v.name}<small>${v.description || ''}</small></button>`;
+    }).join('');
+    isdVariantsEl.innerHTML = `<div class="vt-title">VÄLJ VARIANT</div>${buttons}`;
+    isdVariantsEl.classList.remove('hidden');
+    isdVariantsEl.querySelectorAll('button[data-vid]').forEach(b => {
+      b.onclick = () => {
+        isdState.variantId = b.dataset.vid;
+        refreshItemShopDetail();
+      };
+    });
+  } else if (isdVariantsEl) {
+    isdVariantsEl.innerHTML = '';
+    isdVariantsEl.classList.add('hidden');
+  }
+
+  // Nuvarande stats (om ägd)
+  if (existing && subDef && typeof subDef.statsAtLevel === 'function') {
+    const cur = subDef.statsAtLevel(existing.level);
+    const html = statsLinesHtml(cur);
+    if (html) {
+      isdStatsCurEl.innerHTML = `<div class="stats-title">Nuvarande (Lvl ${existing.level})</div>${html}`;
+      isdStatsCurEl.classList.remove('hidden');
+    } else {
+      isdStatsCurEl.innerHTML = '';
+      isdStatsCurEl.classList.add('hidden');
+    }
+  } else if (isdStatsCurEl) {
+    isdStatsCurEl.innerHTML = '';
+    isdStatsCurEl.classList.add('hidden');
+  }
+
+  // Förhandsvisning: vad köp/uppgrade ger
+  if (isdStatsNextEl) {
+    let title = '';
+    let stats = null;
+    if (existing && existing.level < ITEM_MAX_LEVEL && subDef && subDef.statsAtLevel) {
+      title = `Efter uppgrade (Lvl ${existing.level + 1})`;
+      stats = subDef.statsAtLevel(existing.level + 1);
+    } else if (!existing) {
+      const previewDef = needsVariantChoice
+        ? (isdState.variantId ? def.variants[isdState.variantId] : null)
+        : def;
+      if (previewDef && typeof previewDef.statsAtLevel === 'function') {
+        title = 'Vid köp (Lvl 1)';
+        stats = previewDef.statsAtLevel(1);
+      }
+    }
+    const html = stats ? statsLinesHtml(stats) : '';
+    if (html) {
+      isdStatsNextEl.innerHTML = `<div class="stats-title">${title}</div>${html}`;
+      isdStatsNextEl.classList.remove('hidden');
+    } else {
+      isdStatsNextEl.innerHTML = '';
+      isdStatsNextEl.classList.add('hidden');
+    }
+  }
+
+  // Active-info (lvl 10 unlock)
+  if (isdActiveEl) {
+    const adef = (subDef && subDef.activeAtMax)
+              || (!existing && !needsVariantChoice && def.activeAtMax)
+              || (needsVariantChoice && isdState.variantId && def.variants[isdState.variantId].activeAtMax);
+    if (adef) {
+      const unlocked = existing && existing.level >= ITEM_MAX_LEVEL;
+      isdActiveEl.innerHTML =
+        `<div class="stats-title">ACTIVE — låses upp vid Lvl ${ITEM_MAX_LEVEL}</div>` +
+        `<div class="stat-line">${adef.description || ''}</div>` +
+        `<div class="stat-line" style="opacity:0.75">${adef.duration}s effekt · ${adef.cooldown}s cooldown` +
+        (unlocked ? ' · <span style="color:#aaffaa">UPPLÅST</span>' : '') + `</div>`;
+      isdActiveEl.classList.remove('hidden');
+    } else {
+      isdActiveEl.innerHTML = '';
+      isdActiveEl.classList.add('hidden');
+    }
+  }
+
+  // Knappstatus
+  const heroDead = side && side.hero && side.hero.dead;
+  const invFull = side && side.inventory.length >= INVENTORY_SLOTS;
+  if (isdBuyBtn) {
+    if (existing) {
+      isdBuyBtn.disabled = true;
+      isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
+    } else {
+      const variantOk = !needsVariantChoice || !!isdState.variantId;
+      const canAfford = side && side.gold >= ITEM_BUY_COST;
+      isdBuyBtn.disabled = heroDead || invFull || !variantOk || !canAfford;
+      const sub = invFull ? 'inventory full'
+                : !variantOk ? 'välj variant först'
+                : !canAfford ? `behöver ${ITEM_BUY_COST}g`
+                : `${ITEM_BUY_COST}g`;
+      isdBuyBtn.innerHTML = `Buy<small>${sub}</small>`;
+    }
+  }
+  if (isdUpgradeBtn) {
+    if (!existing) {
+      isdUpgradeBtn.disabled = true;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>kräver ägd</small>`;
+    } else if (existing.level >= ITEM_MAX_LEVEL) {
+      isdUpgradeBtn.disabled = true;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX nivå</small>`;
+    } else {
+      const cost = itemUpgradeCost(existing.level);
+      const canAfford = side && side.gold >= cost;
+      isdUpgradeBtn.disabled = heroDead || !canAfford;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>${cost}g · Lvl ${existing.level} → ${existing.level + 1}</small>`;
+    }
+  }
+}
+
+if (isdBuyBtn) {
+  isdBuyBtn.addEventListener('click', () => {
+    const itemId = isdState.itemId;
+    if (!itemId) return;
+    const def = ITEM_TYPES[itemId];
+    const side = sides[APP.localSide];
+    if (!def || !side) return;
+    const existing = side.inventory.find(it => it.itemId === itemId);
+    if (existing) return;
+    if (def.variants && !isdState.variantId) return;
+    sendOrApplyEvent({
+      type: 'shop', kind: 'item',
+      item: itemId,
+      ...(isdState.variantId ? { variant: isdState.variantId } : {}),
+    });
+    closeItemShopDetail();
+  });
+}
+if (isdUpgradeBtn) {
+  isdUpgradeBtn.addEventListener('click', () => {
+    const itemId = isdState.itemId;
+    if (!itemId) return;
+    const side = sides[APP.localSide];
+    if (!side) return;
+    const existing = side.inventory.find(it => it.itemId === itemId);
+    if (!existing) return;
+    if (existing.level >= ITEM_MAX_LEVEL) return;
+    sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
+    closeItemShopDetail();
+  });
+}
+if (isdCloseBtn) isdCloseBtn.addEventListener('click', closeItemShopDetail);
+if (isdEl) isdEl.addEventListener('click', (e) => {
+  if (e.target === isdEl) closeItemShopDetail();
+});
 
 // ============================================================
 // INVENTORY (4 slots längst ner i mitten) + tooltip

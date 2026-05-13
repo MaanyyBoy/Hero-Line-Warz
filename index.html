@@ -1041,6 +1041,117 @@
     }
     #hp-confirm:active:not(:disabled) { transform: scale(0.97); }
 
+    /* Item-shop-detail modal (öppnas när man trycker på item i shoppen) */
+    #item-shop-detail {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.72);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 220;
+      backdrop-filter: blur(3px);
+      padding: 16px;
+    }
+    #item-shop-detail.visible { display: flex; }
+    #isd-card {
+      background: linear-gradient(135deg, #18243d, #0c1424);
+      border: 2px solid rgba(180,200,255,0.6);
+      border-radius: 14px;
+      padding: 18px 20px 16px;
+      width: 100%;
+      max-width: 360px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+      color: #fff;
+      position: relative;
+      font: 13px/1.4 system-ui, sans-serif;
+    }
+    #isd-close {
+      position: absolute; top: 8px; right: 10px;
+      background: transparent; border: none; color: #fff;
+      font: 700 22px/1 system-ui, sans-serif; cursor: pointer;
+      opacity: 0.65;
+    }
+    #isd-close:hover { opacity: 1; }
+    #isd-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    #isd-icon {
+      width: 52px; height: 52px;
+      background: rgba(70,120,200,0.25);
+      border: 2px solid rgba(180,200,255,0.5);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font: 28px/1 system-ui, sans-serif;
+      flex-shrink: 0;
+    }
+    #isd-name { font: 700 18px/1.1 system-ui, sans-serif; color: #ffd34a; margin-bottom: 4px; }
+    #isd-level { font: 500 11px/1 ui-monospace, monospace; opacity: 0.78; letter-spacing: 0.5px; }
+    #isd-desc {
+      font-size: 12.5px; line-height: 1.45;
+      opacity: 0.92;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 7px;
+      margin-bottom: 10px;
+    }
+    #isd-variants {
+      display: flex; flex-direction: column; gap: 5px;
+      margin-bottom: 10px;
+    }
+    #isd-variants.hidden { display: none; }
+    #isd-variants .vt-title {
+      font: 700 10.5px/1 system-ui, sans-serif;
+      letter-spacing: 1.5px;
+      opacity: 0.7;
+      margin-bottom: 2px;
+    }
+    #isd-variants .var-btn {
+      background: rgba(60,90,160,0.6);
+      border: 1px solid rgba(180,200,255,0.45);
+      border-radius: 7px;
+      color: #fff;
+      font: 600 12px/1.2 system-ui, sans-serif;
+      padding: 7px 9px;
+      cursor: pointer;
+      text-align: left;
+    }
+    #isd-variants .var-btn small { display: block; font-weight: 400; opacity: 0.78; margin-top: 2px; font-size: 10.5px; }
+    #isd-variants .var-btn:hover { border-color: rgba(180,200,255,0.85); }
+    #isd-variants .var-btn.selected {
+      background: linear-gradient(135deg, #4a8fcf, #2a6fb0);
+      border-color: #ffd34a;
+      box-shadow: 0 0 10px rgba(255,211,74,0.35);
+    }
+    #isd-stats-current, #isd-stats-next, #isd-active {
+      padding: 7px 10px;
+      border-radius: 7px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    #isd-stats-current.hidden, #isd-stats-next.hidden, #isd-active.hidden { display: none; }
+    #isd-stats-current { background: rgba(40,60,90,0.5); border: 1px solid rgba(140,180,220,0.35); }
+    #isd-stats-next { background: rgba(40,80,50,0.45); border: 1px solid rgba(140,220,160,0.4); }
+    #isd-active { background: rgba(80,60,30,0.5); border: 1px solid rgba(255,211,74,0.5); }
+    .stats-title { font: 700 10.5px/1 system-ui, sans-serif; letter-spacing: 1.5px; opacity: 0.78; margin-bottom: 5px; }
+    #isd-stats-current .stats-title { color: #aaddff; }
+    #isd-stats-next .stats-title { color: #aaffaa; }
+    #isd-active .stats-title { color: #ffd34a; }
+    .stat-line { padding: 1px 0; opacity: 0.95; }
+    #isd-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .isd-btn {
+      flex: 1;
+      padding: 11px 12px !important;
+      font: 700 14px/1 system-ui, sans-serif !important;
+      letter-spacing: 0.6px;
+      border-radius: 8px;
+    }
+    #isd-buy { background: rgba(60,140,90,0.85); border-color: rgba(160,255,180,0.55); }
+    #isd-upgrade { background: rgba(140,90,60,0.85); border-color: rgba(255,200,140,0.55); }
+    .isd-btn small { display: block; font-weight: 400; font-size: 10.5px; opacity: 0.82; margin-top: 3px; }
+    .isd-btn:disabled {
+      background: rgba(40,40,50,0.6);
+      border-color: rgba(120,120,140,0.4);
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     /* Asset-loading-screen (visas innan lobbyn) */
     #asset-loading {
       position: fixed; inset: 0;
@@ -1235,6 +1346,28 @@
       <div class="status"></div>
     </div>
     <div class="tt-cost"></div>
+  </div>
+
+  <div id="item-shop-detail" class="hidden">
+    <div id="isd-card">
+      <button id="isd-close" aria-label="Stäng">×</button>
+      <div id="isd-header">
+        <div id="isd-icon"></div>
+        <div id="isd-headtext">
+          <div id="isd-name"></div>
+          <div id="isd-level"></div>
+        </div>
+      </div>
+      <div id="isd-desc"></div>
+      <div id="isd-variants" class="hidden"></div>
+      <div id="isd-stats-current" class="hidden"></div>
+      <div id="isd-stats-next" class="hidden"></div>
+      <div id="isd-active" class="hidden"></div>
+      <div id="isd-actions">
+        <button id="isd-buy" class="shop-btn isd-btn">Buy</button>
+        <button id="isd-upgrade" class="shop-btn isd-btn">Upgrade</button>
+      </div>
+    </div>
   </div>
 
   <div id="endgame">
