@@ -5216,6 +5216,14 @@ function hostCastEldklot(side, dirX, dirZ) {
   }
   // Arena: cone-damage mot orb om i kon
   applyConeDamageInArena(side.hero.x, side.hero.z, dirX, dirZ, FIREWAVE_LENGTH, FIREWAVE_HALF_ANGLE, directDmg, side.idx);
+  // Arena PvP: skada + DoT på opp.hero om hen är i konen
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+    if (inCone(opp.hero.x, opp.hero.z)) {
+      damageHero(opp, directDmg);
+      opp.hero.dotRemaining = Math.max(opp.hero.dotRemaining || 0, dotDuration);
+      opp.hero.dotPerSec = Math.max(opp.hero.dotPerSec || 0, dotDps);
+    }
+  }
 }
 
 function updateFireballs(side, dt) {
@@ -5335,12 +5343,15 @@ function hostCastFrostnova(side, ev) {
       if (frostHeal) novaDmgDealt += novaDmg;
     }
   }
-  // Arena: damage opp hero om i radius
-  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
+  // Arena: damage + freeze opp hero om i radius (bara under fight-fas)
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
     const dToHero = Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z);
     if (dToHero < NOVA_RADIUS) {
       damageHero(opp, novaDmg);
       if (frostHeal) novaDmgDealt += novaDmg;
+      // Frostnova fryser opp.hero i NOVA_FREEZE_TIME (CC-reduktion via ccReductionPct)
+      const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+      opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, NOVA_FREEZE_TIME * ccMul);
     }
   }
   // Apply Frost Vampirism heal
@@ -5448,6 +5459,22 @@ function updateBlackHolesSolo(side, dt) {
         const f = 1 - d / bhRadius;
         c.mesh.position.x += (dx / d) * pull * (0.4 + f * 0.6);
         c.mesh.position.z += (dz / d) * pull * (0.4 + f * 0.6);
+      }
+    }
+    // Arena: pull opp.hero mot center (CC-reduktion via ccReductionPct)
+    if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+      const dx = bh.x - opp.hero.x, dz = bh.z - opp.hero.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.15 && d < bhRadius) {
+        const f = 1 - d / bhRadius;
+        const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+        const pullEff = pull * (0.4 + f * 0.6) * ccMul;
+        const nx = opp.hero.x + (dx / d) * pullEff;
+        const nz = opp.hero.z + (dz / d) * pullEff;
+        if (isHeroWalkable(opp.idx, nx, nz)) { opp.hero.x = nx; opp.hero.z = nz; }
+        else if (isHeroWalkable(opp.idx, nx, opp.hero.z)) opp.hero.x = nx;
+        else if (isHeroWalkable(opp.idx, opp.hero.x, nz)) opp.hero.z = nz;
+        if (opp.mesh) { opp.mesh.position.x = opp.hero.x; opp.mesh.position.z = opp.hero.z; }
       }
     }
     // Snurra sfär
@@ -5596,6 +5623,15 @@ function updateVineTrapsSolo(side, dt) {
         c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         c.hp -= vt.dotPerSec * dt;
         if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    // Arena: root + DoT mot opp.hero om i radien (PvP)
+    if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+      const dx = opp.hero.x - vt.x, dz = opp.hero.z - vt.z;
+      if (dx * dx + dz * dz < r2) {
+        const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+        opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, VINE_TRAP_ROOT_REFRESH * ccMul);
+        damageHero(opp, vt.dotPerSec * dt);
       }
     }
     // Arena: vine-trap DoT mot orb
@@ -5827,6 +5863,17 @@ function updateHammersSolo(side, dt) {
         const lifesteal = (beforeHp - Math.max(0, arenaState.orb.hp)) * HAMMER_LIFESTEAL;
         if (!side.hero.dead && lifesteal > 0) {
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + lifesteal);
+        }
+      }
+    }
+    // Arena: hammer-hit på opp.hero (en gång per fas — ute/återresa)
+    const heroKey = 'hero_' + (h.returning ? 'r' : 'o');
+    if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && !h.hit.has(heroKey) && arenaState.phase === 'fight') {
+      if (Math.hypot(opp.hero.x - h.mesh.position.x, opp.hero.z - h.mesh.position.z) < HAMMER_RADIUS) {
+        h.hit.add(heroKey);
+        damageHero(opp, dmg);
+        if (!side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
         }
       }
     }
@@ -6531,8 +6578,10 @@ function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
   // Ice-block channel: kan inte röra sig
   if ((side.iceBlockRemaining || 0) > 0) return;
-  // Feared av motspelaren: kan inte agera/röra sig
+  // Feared/stunnad av motspelaren: kan inte agera/röra sig
   if ((side.heroFearTime || 0) > 0) return;
+  // Frusen/rotad av motspelaren (Frostnova / Vine Trap): kan inte röra sig
+  if ((side.hero.frozenTime || 0) > 0) return;
   // Magiker laser-beam ult: kan inte röra sig under cast
   if (side.laserBeam) return;
   const mag = Math.hypot(joyX, joyZ);
@@ -6575,14 +6624,16 @@ function applyEvent(side, ev) {
   // Ice-block channel: kan inte använda AA/skills (förutom item-activate som
   // hanteras separat — den tappar redan ice-block via cancel-flödet)
   const channelLocked = (side.iceBlockRemaining || 0) > 0;
-  // Feared av motspelaren: kan inte göra AA/skills
+  // Feared/stunnad av motspelaren: kan inte göra AA/skills
   const feared = (side.heroFearTime || 0) > 0;
+  // Frusen/rotad: kan inte cast:a skills heller
+  const frozen = (side.hero.frozenTime || 0) > 0;
   // Tauntad av motspelaren: kan inte cast:a skills, kan inte cancel:a AA
   const taunted = (side.hero.tauntedTime || 0) > 0;
   // Magiker laser-ult: kan inte göra AA eller andra skills
   const laserLocked = !!side.laserBeam;
   if (ev.type === 'aa') {
-    if (side.hero.dead || channelLocked || feared || laserLocked) return;
+    if (side.hero.dead || channelLocked || feared || frozen || laserLocked) return;
     // Tauntad: AA-target låses i maintainTargetLock, men låt event:et gå igenom
     // (maintainTargetLock skriver över targetId direkt — klienten ser inte flimmer)
     side.aaActive = true;
@@ -6604,7 +6655,7 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'skill') {
-    if (side.hero.dead || channelLocked || feared || laserLocked || taunted) return;
+    if (side.hero.dead || channelLocked || feared || frozen || laserLocked || taunted) return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -7782,6 +7833,18 @@ function updateAimIndicators() {
       // Gandulf Black Hole — cirkel med blackhole-radien
       const p = castGround(BLACKHOLE_CAST_DISTANCE);
       showCircle(p.x, p.z, BLACKHOLE_RADIUS, 0x9966ff);
+    }
+  } else if (aimState.key === 'r') {
+    // Ultimate-skills — siktning per hjälte
+    if (heroId === 'legolas') {
+      // Worldpiercer: jätte-pil med ~30m visuell sikt-linje i drag/facing-riktning
+      showLine(dirX, dirZ, 30);
+    } else if (heroId === 'magiker') {
+      // Arcane Beam: lång laser-linje (visa 20m så strålens väg syns)
+      showLine(dirX, dirZ, 20);
+    } else if (heroId === 'gimlu') {
+      // Berserker Rage: self-buff, visa rage-pulse-radien runt hero
+      showCircle(side.hero.x, side.hero.z, RAGE_PULSE_RADIUS, 0xff4422);
     }
   }
 }
@@ -11147,10 +11210,13 @@ function simulateAll(dt) {
       if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
     }
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
-    // Tick hero-CC (taunted av motspelaren)
+    // Tick hero-CC (taunted/frusen/rotad av motspelaren)
     if ((side.hero.tauntedTime || 0) > 0) {
       side.hero.tauntedTime = Math.max(0, side.hero.tauntedTime - dt);
       if (side.hero.tauntedTime === 0) side.hero.tauntedBy = 0;
+    }
+    if ((side.hero.frozenTime || 0) > 0) {
+      side.hero.frozenTime = Math.max(0, side.hero.frozenTime - dt);
     }
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
