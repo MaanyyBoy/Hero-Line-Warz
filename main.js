@@ -4748,6 +4748,22 @@ function maintainTargetLock(side) {
     }
     return null;
   }
+  // Taunt-lock: tauntad hero tvingas attackera taunter:s hero
+  if ((side.hero.tauntedTime || 0) > 0 && side.hero.tauntedBy) {
+    const tauntSide = sides[side.hero.tauntedBy];
+    if (tauntSide && !tauntSide.hero.dead) {
+      side.aaActive = true;
+      if (!arenaState.heroTargets) arenaState.heroTargets = {};
+      if (!arenaState.heroTargets[tauntSide.idx]) {
+        arenaState.heroTargets[tauntSide.idx] = {
+          id: -200 + tauntSide.idx, isArenaHero: true, sideIdx: tauntSide.idx,
+          get mesh() { return sides[this.sideIdx]?.mesh; },
+        };
+      }
+      side.targetId = arenaState.heroTargets[tauntSide.idx].id;
+      side.targetType = 'arena-hero';
+    }
+  }
   let target = resolveTargetEntity(side, opp);
   let isMonster = side.targetType === 'monster';
   const range = side.attackRange || HERO_ATTACK_RANGE;
@@ -4805,14 +4821,12 @@ function updateHeroAttack(side, dt) {
   if (hasTitans && side.attackCounter % 3 === 0) {
     side.titansBlockPending = true;
   }
-  const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(isAoE ? 0.28 : 0.18, 12, 8),
-    new THREE.MeshStandardMaterial({
-      color: isAoE ? 0xff66ff : 0xffdd55,
-      emissive: isAoE ? 0x882288 : 0x886611,
-      emissiveIntensity: isAoE ? 1.2 : 0.8,
-    })
-  );
+  // Crit-info räknas ut nedan men vi behöver det tidigare för mesh-färgen
+  const _preBuffActive = (side.legolusBuffRemaining || 0) > 0;
+  const _preCritCh = (side.critChancePct || 0) + (_preBuffActive ? LEGOLUS_BUFF_CRIT_PCT : 0)
+                     + (side.legolusDashBuffPending ? 1.0 : 0);
+  const _meshIsCrit = _preCritCh > 0.5;  // approx — visualen behöver inte vara perfekt synkad
+  const mesh = makeHeroAaProjectileMesh(side.heroId || 'magiker', isAoE, _meshIsCrit);
   mesh.position.set(side.hero.x, 1.5, side.hero.z);
   scene.add(mesh);
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
@@ -4859,10 +4873,12 @@ function updateHeroAttack(side, dt) {
     tryAdd(side.monsters, true);
     if (extras.length < LEGOLUS_SPLIT_EXTRAS && opp) tryAdd(opp.playerCreeps, false);
     for (const ex of extras) {
-      const m2 = new THREE.Mesh(
-        new THREE.SphereGeometry(0.16, 12, 8),
-        new THREE.MeshStandardMaterial({ color: 0xa8e060, emissive: 0x66aa30, emissiveIntensity: 1.0 })
-      );
+      const m2 = makeHeroAaProjectileMesh('legolas', false, false);
+      // Poison-pilar är mindre och har lila-grön emissive
+      m2.scale.setScalar(0.75);
+      m2.traverse(o => {
+        if (o.material && o.material.emissive) o.material.emissive.setHex(0x88dd44);
+      });
       m2.position.set(side.hero.x, 1.5, side.hero.z);
       scene.add(m2);
       side.projectiles.push({
@@ -4977,16 +4993,41 @@ function updateProjectiles(side, dt) {
       scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
     }
     const step = PROJECTILE_SPEED * dt;
-    p.mesh.position.x += (dx / dist) * step;
-    p.mesh.position.y += (dy / dist) * step;
-    p.mesh.position.z += (dz / dist) * step;
+    const nx = dx / dist, ny = dy / dist, nz = dz / dist;
+    p.mesh.position.x += nx * step;
+    p.mesh.position.y += ny * step;
+    p.mesh.position.z += nz * step;
+    // Orient mesh toward motion (för pilar/hammare). Sphere-projektiler spinner.
+    if (p.mesh.userData.orientToMotion) {
+      p.mesh.rotation.y = Math.atan2(nx, nz);
+      p.mesh.rotation.x = -Math.asin(Math.max(-1, Math.min(1, ny)));
+    } else if (p.mesh.userData.spin) {
+      p.mesh.rotation.z = (p.mesh.rotation.z || 0) + dt * 14;
+      p.mesh.rotation.x = (p.mesh.rotation.x || 0) + dt * 9;
+    }
+    // Trail-partikel var ~50ms: liten färgad puff som fadar ut
+    p.trailAccum = (p.trailAccum || 0) + dt;
+    if (p.trailAccum >= 0.045 && p.mesh.userData.trailColor !== undefined) {
+      p.trailAccum = 0;
+      spawnProjectileTrailPuff(p.mesh.position.x, p.mesh.position.y, p.mesh.position.z, p.mesh.userData.trailColor);
+    }
     // Arena: blockas av cover-props på vägen
     if (APP.gameMode === 'arena1v1' && isArenaCoverAt(p.mesh.position.x, p.mesh.position.z)) {
-      // Sprid en liten gnista vid träffen
       spawnHitSparkFx(p.mesh.position.x, p.mesh.position.y, p.mesh.position.z, 0xaaaaaa);
       scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
     }
   }
+}
+
+// Liten färgad puff som spawnar bakom flygande projektiler. Förlitar sig på combatFx-cleanup.
+function spawnProjectileTrailPuff(x, y, z, color) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(0.10, 6, 5),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55 })
+  );
+  m.position.set(x, y, z);
+  scene.add(m);
+  combatFx.push({ mesh: m, life: 0.28, maxLife: 0.28, kind: 'trail' });
 }
 
 // ============================================================
@@ -5082,15 +5123,39 @@ function hostCastEldklot(side, dirX, dirZ) {
   // Talent: Burning Lands — DoT-tid +2s
   const dotDuration = FIREWAVE_DOT_DURATION + (arenaHasTalent(side, 'm_fire_dot') ? 2 : 0);
   // Cone-mesh (ConeGeometry) — pekar i dx/dz, fade:as
-  const coneMat = new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
-  const coneMesh = new THREE.Mesh(new THREE.ConeGeometry(FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE), FIREWAVE_LENGTH, 16, 1, true), coneMat);
-  // ConeGeometry pekar uppåt. Rotera ner till horisontellt + rikta enligt dirX/dz.
-  coneMesh.rotation.x = -Math.PI / 2;
-  coneMesh.rotation.z = Math.atan2(-dirZ, dirX) + Math.PI / 2;
-  coneMesh.position.set(side.hero.x + dirX * (FIREWAVE_LENGTH / 2), 0.6, side.hero.z + dirZ * (FIREWAVE_LENGTH / 2));
-  scene.add(coneMesh);
+  // Cast-FX: stor orange burst vid hero + camera shake
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 1.4);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa44);
+  triggerCameraShake(0.18, 0.22);
+  // Cone-mesh — fyllt med inner-glow (gradient via 2 lager) och rörlig flicker
+  const coneRadius = FIREWAVE_LENGTH * Math.tan(FIREWAVE_HALF_ANGLE);
+  const grp = new THREE.Group();
+  const coneOuter = new THREE.Mesh(
+    new THREE.ConeGeometry(coneRadius, FIREWAVE_LENGTH, 20, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xff7a30, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  const coneInner = new THREE.Mesh(
+    new THREE.ConeGeometry(coneRadius * 0.66, FIREWAVE_LENGTH * 0.95, 18, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffdd66, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  grp.add(coneOuter); grp.add(coneInner);
+  // Glow point-light längs konens centrum
+  const fireLight = new THREE.PointLight(0xff7733, 2.2, 8);
+  fireLight.position.set(0, 0, 0);
+  grp.add(fireLight);
+  grp.rotation.x = -Math.PI / 2;
+  grp.rotation.z = Math.atan2(-dirZ, dirX) + Math.PI / 2;
+  grp.position.set(side.hero.x + dirX * (FIREWAVE_LENGTH / 2), 0.6, side.hero.z + dirZ * (FIREWAVE_LENGTH / 2));
+  scene.add(grp);
   side.fireWaves = side.fireWaves || [];
-  side.fireWaves.push({ mesh: coneMesh, life: FIREWAVE_EFFECT_LIFE, maxLife: FIREWAVE_EFFECT_LIFE });
+  side.fireWaves.push({ mesh: grp, light: fireLight, life: FIREWAVE_EFFECT_LIFE, maxLife: FIREWAVE_EFFECT_LIFE });
+  // Embers längs konens längd — små partiklar som stiger
+  for (let i = 0; i < 8; i++) {
+    const t = Math.random();
+    const ex = side.hero.x + dirX * FIREWAVE_LENGTH * t + (Math.random() - 0.5) * 1.0;
+    const ez = side.hero.z + dirZ * FIREWAVE_LENGTH * t + (Math.random() - 0.5) * 1.0;
+    spawnHitSparkFx(ex, 0.4 + Math.random() * 0.6, ez, 0xffaa33);
+  }
   // Skada alla i cone
   const inCone = (ex, ez) => {
     const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
@@ -5160,14 +5225,47 @@ function hostCastFrostnova(side, ev) {
   side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
   const opp = sides[3 - side.idx];
   const center = soloResolveSkillGroundTarget(side, ev || {}, NOVA_CAST_DISTANCE);
+  // Cast-FX vid hero + target — ger tydlig visuell signal var Frostnovan landar
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ddff, 1.0);
+  spawnSkillCastFx(center.x, center.z, 0xaaeeff, 1.2);
+  spawnShieldBurstFx(center.x, center.z, 0x66ccff);
+  triggerCameraShake(0.18, 0.22);
+  // Huvud-ring + inner glow + light
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.3, NOVA_RADIUS, 36),
-    new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(center.x, 0.08, center.z);
   scene.add(ring);
-  side.novaEffects.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
+  side.novaEffects.push({ mesh: ring, life: 0.7, maxLife: 0.7 });
+  // Inner frost-disk (semi-transparent), fade:as separat
+  const disk = new THREE.Mesh(
+    new THREE.CircleGeometry(NOVA_RADIUS * 0.85, 32),
+    new THREE.MeshBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  );
+  disk.rotation.x = -Math.PI / 2;
+  disk.position.set(center.x, 0.05, center.z);
+  scene.add(disk);
+  side.novaEffects.push({ mesh: disk, life: 0.7, maxLife: 0.7 });
+  // 6 is-shards som sticker upp + glittrar
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const r = NOVA_RADIUS * (0.55 + Math.random() * 0.3);
+    const sx = center.x + Math.cos(a) * r, sz = center.z + Math.sin(a) * r;
+    const shard = new THREE.Mesh(
+      new THREE.ConeGeometry(0.18, 0.55, 6),
+      new THREE.MeshStandardMaterial({ color: 0xccebff, emissive: 0x4488cc, emissiveIntensity: 1.0, transparent: true, opacity: 0.9 })
+    );
+    shard.position.set(sx, 0.0, sz);
+    scene.add(shard);
+    side.novaEffects.push({ mesh: shard, life: 0.7, maxLife: 0.7 });
+  }
+  // Kall point-light som pulserar ut
+  const frostLight = new THREE.PointLight(0x88ccff, 2.4, NOVA_RADIUS * 2.5);
+  frostLight.position.set(center.x, 1.2, center.z);
+  scene.add(frostLight);
+  side.novaEffects.push({ mesh: frostLight, life: 0.7, maxLife: 0.7, isLight: true });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   // Talent: Frost Vampirism — heal 15% av total damage done
   let novaDmgDealt = 0;
@@ -5221,14 +5319,34 @@ function updateNovaEffects(side, dt) {
   for (let i = side.novaEffects.length - 1; i >= 0; i--) {
     const n = side.novaEffects[i];
     n.life -= dt;
-    n.mesh.material.opacity = 0.7 * (n.life / n.maxLife);
+    const tNorm = Math.max(0, n.life / n.maxLife);
+    // Cache start-värdet vid första tick så vi inte multiplicerar in oss till 0
+    if (n.isLight && n.mesh.intensity !== undefined) {
+      if (n.baseIntensity === undefined) n.baseIntensity = n.mesh.intensity;
+      n.mesh.intensity = n.baseIntensity * tNorm;
+    } else if (n.mesh.material && n.mesh.material.transparent) {
+      if (n.baseOpacity === undefined || n.baseOpacity === 0) {
+        n.baseOpacity = n.mesh.material.opacity || 1;
+      }
+      n.mesh.material.opacity = n.baseOpacity * tNorm;
+    }
     if (n.life <= 0) { scene.remove(n.mesh); side.novaEffects.splice(i, 1); }
   }
-  // Fire Wave-cone fade ut
+  // Fire Wave-cone fade ut (gruppen innehåller 2 cone-meshar + 1 light)
   if (side.fireWaves) for (let i = side.fireWaves.length - 1; i >= 0; i--) {
     const fw = side.fireWaves[i];
     fw.life -= dt;
-    if (fw.mesh.material) fw.mesh.material.opacity = 0.6 * (fw.life / fw.maxLife);
+    const tNorm = Math.max(0, fw.life / fw.maxLife);
+    if (fw.mesh && fw.mesh.children) {
+      // Flicker via sinus + linear fade
+      const flicker = 0.85 + 0.15 * Math.sin(performance.now() * 0.025);
+      fw.mesh.children.forEach(c => {
+        if (c.material && c.material.transparent) {
+          c.material.opacity = (c === fw.mesh.children[0] ? 0.55 : 0.7) * tNorm * flicker;
+        }
+      });
+    }
+    if (fw.light) fw.light.intensity = 2.2 * tNorm * (0.8 + 0.2 * Math.sin(performance.now() * 0.04));
     if (fw.life <= 0) { scene.remove(fw.mesh); side.fireWaves.splice(i, 1); }
   }
   // Shatter-effekter
@@ -5342,7 +5460,10 @@ function hostCastLegolusVineTrap(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
   const center = soloResolveSkillGroundTarget(side, ev || {}, VINE_TRAP_CAST_DISTANCE);
-  // Visuell brun rot-ring + spinkar
+  // Cast-FX: grön burst vid hero + ground-impact vid target
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66cc44, 0.9);
+  spawnShieldBurstFx(center.x, center.z, 0x88dd55);
+  // Visuell brun rot-ring + spinkar + svag grön glow
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
     new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
@@ -5350,6 +5471,14 @@ function hostCastLegolusVineTrap(side, ev) {
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(center.x, 0.07, center.z);
   scene.add(ring);
+  // Grön mark-glöd som ligger kvar
+  const glow = new THREE.Mesh(
+    new THREE.CircleGeometry(VINE_TRAP_RADIUS, 32),
+    new THREE.MeshBasicMaterial({ color: 0x55cc44, transparent: true, opacity: 0.20, side: THREE.DoubleSide })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.set(center.x, 0.05, center.z);
+  scene.add(glow);
   // Småspikar/rötter på marken
   const spikes = [];
   for (let i = 0; i < 8; i++) {
@@ -5367,7 +5496,7 @@ function hostCastLegolusVineTrap(side, ev) {
   // Talent: Toxic Roots — DoT-skada dubbel
   const dotMul = arenaHasTalent(side, 'l_vine_dot') ? 2 : 1;
   side.vineTraps.push({
-    ring, spikes,
+    ring, spikes, glow,
     x: center.x, z: center.z,
     life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
     dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1) * dotMul,
@@ -5436,10 +5565,13 @@ function updateVineTrapsSolo(side, dt) {
     }
     // Arena: vine-trap DoT mot orb
     applyAoEDamageInArena(vt.x, vt.z, vt.radius, vt.dotPerSec * dt, side.idx);
-    // Fade ring + spikar
-    if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * (vt.life / vt.maxLife);
+    // Fade ring + spikar + glow
+    const fadeMul = vt.life / vt.maxLife;
+    if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * fadeMul;
+    if (vt.glow && vt.glow.material) vt.glow.material.opacity = 0.20 * fadeMul;
     if (vt.life <= 0) {
       if (vt.ring) scene.remove(vt.ring);
+      if (vt.glow) scene.remove(vt.glow);
       if (vt.spikes) for (const sp of vt.spikes) scene.remove(sp);
       side.vineTraps.splice(i, 1);
     }
@@ -5464,6 +5596,30 @@ function hostCastGimluTaunt(side) {
     const dx = c.mesh.position.x - side.hero.x, dz = c.mesh.position.z - side.hero.z;
     if (dx * dx + dz * dz < r2) c.tauntedTime = TAUNT_DURATION;
   }
+  // Taunt enemy hero — arena 1v1 (PvP) eller classic duel
+  const inDuel = !!duelState.active;
+  const inArenaFight = APP.gameMode === 'arena1v1' && arenaState.phase === 'fight';
+  if (opp && !opp.hero.dead && (inDuel || inArenaFight)) {
+    const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+      opp.hero.tauntedTime = TAUNT_DURATION * ccMul;
+      opp.hero.tauntedBy = side.idx;
+      // Lås opp:s AA-target på taunter:s hero (force-attack Gimlu).
+      // Skapa heroTarget lazy om det inte finns (annars triggas force-AA först
+      // när motspelaren gjort sin första AA — kan vara flera frames bort).
+      if (!arenaState.heroTargets) arenaState.heroTargets = {};
+      if (!arenaState.heroTargets[side.idx]) {
+        arenaState.heroTargets[side.idx] = {
+          id: -200 + side.idx, isArenaHero: true, sideIdx: side.idx,
+          get mesh() { return sides[this.sideIdx]?.mesh; },
+        };
+      }
+      opp.aaActive = true;
+      opp.targetId = arenaState.heroTargets[side.idx].id;
+      opp.targetType = 'arena-hero';
+    }
+  }
   // Visuell taunt-ring
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(TAUNT_RADIUS - 0.4, TAUNT_RADIUS, 48),
@@ -5473,6 +5629,9 @@ function hostCastGimluTaunt(side) {
   ring.position.set(side.hero.x, 0.1, side.hero.z);
   scene.add(ring);
   side.novaEffects.push({ mesh: ring, life: 0.7, maxLife: 0.7 });
+  // Cast-FX för dramatik
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xffaa55, 1.5);
+  triggerCameraShake(0.25, 0.3);
 }
 
 function hostCastGimluIronWill(side) {
@@ -6372,10 +6531,14 @@ function applyEvent(side, ev) {
   const channelLocked = (side.iceBlockRemaining || 0) > 0;
   // Feared av motspelaren: kan inte göra AA/skills
   const feared = (side.heroFearTime || 0) > 0;
+  // Tauntad av motspelaren: kan inte cast:a skills, kan inte cancel:a AA
+  const taunted = (side.hero.tauntedTime || 0) > 0;
   // Magiker laser-ult: kan inte göra AA eller andra skills
   const laserLocked = !!side.laserBeam;
   if (ev.type === 'aa') {
     if (side.hero.dead || channelLocked || feared || laserLocked) return;
+    // Tauntad: AA-target låses i maintainTargetLock, men låt event:et gå igenom
+    // (maintainTargetLock skriver över targetId direkt — klienten ser inte flimmer)
     side.aaActive = true;
     const t = findClosestHostile(side, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE);
     if (t) {
@@ -6389,12 +6552,13 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'aa-cancel') {
+    if (taunted) return;  // tauntad hero kan inte stänga av AA på taunter
     side.aaActive = false;
     side.targetId = 0; side.targetType = '';
     return;
   }
   if (ev.type === 'skill') {
-    if (side.hero.dead || channelLocked || feared || laserLocked) return;
+    if (side.hero.dead || channelLocked || feared || laserLocked || taunted) return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -9509,6 +9673,7 @@ function heroSnap(side) {
     ac: side.attackCounter || 0,
     g: side.gold || 0,
     ue: side.ultEnergy || 0,
+    tnt: +(side.hero.tauntedTime || 0).toFixed(2),
   };
 }
 
@@ -9530,6 +9695,7 @@ function applyHeroSnap(side, snap) {
   side.attackCounter = snap.ac;
   if (snap.g !== undefined) side.gold = snap.g;
   if (snap.ue !== undefined) side.ultEnergy = snap.ue;
+  if (snap.tnt !== undefined) side.hero.tauntedTime = snap.tnt;
   if (side.mesh) {
     side.mesh.position.x = snap.x;
     side.mesh.position.z = snap.z;
@@ -10812,6 +10978,11 @@ function simulateAll(dt) {
       if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
     }
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+    // Tick hero-CC (taunted av motspelaren)
+    if ((side.hero.tauntedTime || 0) > 0) {
+      side.hero.tauntedTime = Math.max(0, side.hero.tauntedTime - dt);
+      if (side.hero.tauntedTime === 0) side.hero.tauntedBy = 0;
+    }
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
     tickLingShield(side, dt);
@@ -10893,6 +11064,83 @@ function spawnSlashFx(x, z, color = 0xffd060) {
   combatFx.push({ mesh: plane, life: 0.22, maxLife: 0.22, kind: 'slash' });
 }
 
+// Skapar hero-specifik AA-projektil-mesh. Default fallback = klassisk gyllene sphere.
+// heroId: 'magiker' (frostbolt), 'legolas' (pil), 'gimlu' (hammare).
+// isAoE: true → större + lila (Magiker passive AoE).
+// isCrit: true → orange-rött glow-boost.
+function makeHeroAaProjectileMesh(heroId, isAoE, isCrit) {
+  const grp = new THREE.Group();
+  if (heroId === 'legolas') {
+    // Pil: brun cylinder-skaft + grön spets + 3 fjädrar bakåt.
+    const shaftMat = new THREE.MeshStandardMaterial({ color: 0x7a4a22, roughness: 0.7, emissive: 0x33aa33, emissiveIntensity: 0.45 });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.85, 8), shaftMat);
+    shaft.rotation.x = Math.PI / 2;
+    grp.add(shaft);
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0xddff88, emissive: 0x99dd44, emissiveIntensity: 1.4, metalness: 0.3 });
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.30, 8), tipMat);
+    tip.rotation.x = Math.PI / 2;
+    tip.position.z = 0.55;
+    grp.add(tip);
+    const featherMat = new THREE.MeshBasicMaterial({ color: isCrit ? 0xffaa44 : 0x88cc55, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+    for (let i = 0; i < 3; i++) {
+      const ang = (i / 3) * Math.PI * 2;
+      const f = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.20), featherMat);
+      f.position.set(Math.cos(ang) * 0.05, Math.sin(ang) * 0.05, -0.38);
+      f.rotation.z = ang;
+      grp.add(f);
+    }
+    grp.userData.orientToMotion = true;
+    grp.userData.trailColor = isCrit ? 0xffcc66 : 0xaaee66;
+    return grp;
+  }
+  if (heroId === 'gimlu') {
+    // Hammare: grått huvud (box) + brun handle (cylinder), roterar under flykt.
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xb8b8c0, metalness: 0.7, roughness: 0.35, emissive: 0xff5522, emissiveIntensity: isCrit ? 0.7 : 0.25 });
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.30, 0.28), headMat);
+    head.position.set(0, 0.18, 0);
+    grp.add(head);
+    const handleMat = new THREE.MeshStandardMaterial({ color: 0x7a4a22, roughness: 0.8 });
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.45, 8), handleMat);
+    handle.position.set(0, -0.10, 0);
+    grp.add(handle);
+    // Två röda "runor" på hammarhuvudets sidor
+    const runeMat = new THREE.MeshBasicMaterial({ color: 0xff6633, transparent: true, opacity: 0.95 });
+    for (const sx of [-1, 1]) {
+      const r = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.18), runeMat);
+      r.position.set(sx * 0.181, 0.18, 0);
+      r.rotation.y = Math.PI / 2;
+      grp.add(r);
+    }
+    grp.userData.spin = true;
+    grp.userData.trailColor = isCrit ? 0xff6622 : 0xddaa44;
+    return grp;
+  }
+  // Magiker: frostbolt — blå/cyan kärna + ytterskal av is-fragment, point-light.
+  const coreSize = isAoE ? 0.28 : 0.20;
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(coreSize, 1),
+    new THREE.MeshStandardMaterial({
+      color: isAoE ? 0xff77ff : 0xaaddff,
+      emissive: isAoE ? 0xaa44dd : 0x4488ff,
+      emissiveIntensity: isCrit ? 1.6 : 1.1,
+    })
+  );
+  grp.add(core);
+  // Tre is-fragment (mindre tetraedrar) runt kärnan
+  const fragMat = new THREE.MeshBasicMaterial({ color: 0xddeeff, transparent: true, opacity: 0.75 });
+  for (let i = 0; i < 3; i++) {
+    const f = new THREE.Mesh(new THREE.TetrahedronGeometry(0.08, 0), fragMat);
+    const a = (i / 3) * Math.PI * 2;
+    f.position.set(Math.cos(a) * coreSize * 1.4, Math.sin(a * 1.3) * 0.12, Math.sin(a) * coreSize * 1.4);
+    grp.add(f);
+  }
+  const lt = new THREE.PointLight(isAoE ? 0xaa66ff : 0x66bbff, 1.6, 4.5);
+  grp.add(lt);
+  grp.userData.spin = true;
+  grp.userData.trailColor = isAoE ? 0xcc66ff : 0x88ccff;
+  return grp;
+}
+
 function spawnHitSparkFx(x, y, z, color = 0xffaa44) {
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
   const burst = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), mat);
@@ -10957,6 +11205,9 @@ function tickCombatFx(dt) {
     } else if (e.kind === 'castRing') {
       e.mesh.scale.setScalar(1 + t * 1.8);
       if (e.mesh.material) e.mesh.material.opacity = 0.85 * (1 - t);
+    } else if (e.kind === 'trail') {
+      e.mesh.scale.setScalar(1 - t * 0.5);
+      if (e.mesh.material) e.mesh.material.opacity = 0.55 * (1 - t);
     }
   }
 }
