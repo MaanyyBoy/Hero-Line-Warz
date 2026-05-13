@@ -1496,6 +1496,11 @@ function inSideBase(idx, x, z) {
   return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
 }
 function isHeroWalkable(idx, x, z) {
+  // Arena: hero rör sig fritt inom arena-bounds (utanför är vägg)
+  if (APP.gameMode === 'arena1v1') {
+    const b = ARENA_CFG.bounds;
+    return x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ;
+  }
   const cfg = SIDE_CFG[idx];
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
   if (dx * dx + dz * dz < (TOWER_R + HERO_R) * (TOWER_R + HERO_R)) return false;
