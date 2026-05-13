@@ -6398,14 +6398,18 @@ function checkMatchEnd() {
 const cameraOffset = new THREE.Vector3(0, 17, 14);
 const cameraTarget = new THREE.Vector3();
 
+// Arena-läget får större kamera-distans så hela den dubblade banan syns
+const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 32, 26);
+
 function updateCamera(dt) {
   if (!sides[APP.localSide]) return;
   const hero = sides[APP.localSide].hero;
   // Klient (sida 2) = kamera spegelvänd
   const sign = (APP.localSide === 2) ? -1 : 1;
-  const desiredX = hero.x + cameraOffset.x * sign;
-  const desiredY = cameraOffset.y;
-  const desiredZ = hero.z + cameraOffset.z * sign;
+  const off = (APP.gameMode === 'arena1v1') ? ARENA_CAMERA_OFFSET : cameraOffset;
+  const desiredX = hero.x + off.x * sign;
+  const desiredY = off.y;
+  const desiredZ = hero.z + off.z * sign;
   // ~50 ms halflife — kameran följer responsivt men utan ryck
   const lerpK = 1 - Math.pow(0.5, dt / 0.05);
   camera.position.x += (desiredX - camera.position.x) * lerpK;
