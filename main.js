@@ -1308,6 +1308,91 @@ const RANGE_MONSTER_INTERVAL = 1.5;
 const RANGE_MONSTER_SPEED_RATIO = 0.75;
 const RANGE_MONSTER_HP_RATIO = 0.80;
 
+// ===== BOSS DEFS =====
+// 5 bossar (wave 10,20,30,40,50) med 3 skills var. Skills bygger på primitive-typer
+// som hanteras av startBossCast/tickBossCast. Svårighet skalar med wave (snabbare
+// CDs + fler hits + svårare patterns).
+// Mini-bossar i vanliga waves använder 1 av kommande bossens 3 skills.
+const BOSS_DEFS = {
+  10: {
+    name: 'Captain', scale: 3.5,
+    bodyTint: 0x6a85a8, auraColor: 0x1a2434, eyeColor: 0xff5533,
+    intro: 'Klubbväggen marscherar.',
+    skills: [
+      // Shield Bash — telegraph röd linje, sen dasha 7m fram + skada allt i linjen
+      { id: 'shieldBash', kind: 'lineDash', telegraph: 1.4, length: 7, width: 2.0, execTime: 0.5, dmgMul: 1.8, cd: 7.5 },
+      // Throwing Axe — långsam skillshot, lätt att dodga
+      { id: 'throwingAxe', kind: 'projectile', telegraph: 0.5, speed: 12, dmgMul: 1.5, radius: 0.7, range: 14, cd: 5.0 },
+      // Battle Roar — 5m AoE runt boss, telegraph 1.5s
+      { id: 'battleRoar', kind: 'groundCircle', telegraph: 1.4, radius: 5, dmgMul: 1.3, originSelf: true, slow: { dur: 2.0, mul: 0.6 }, cd: 9.0 },
+    ],
+  },
+  20: {
+    name: 'General', scale: 3.8,
+    bodyTint: 0x886a40, auraColor: 0x2a1c08, eyeColor: 0xffaa44,
+    intro: 'Krigsorder ekar över slagfältet.',
+    skills: [
+      // Lightning Strike — targetar hjältens nuvarande position, snabb tele
+      { id: 'lightningStrike', kind: 'groundCircle', telegraph: 1.0, radius: 2.8, dmgMul: 2.0, targetHero: true, cd: 5.5 },
+      // Spear Volley — 3 spjut i kon-spread
+      { id: 'spearVolley', kind: 'projectileMulti', telegraph: 0.7, count: 3, spreadAngle: Math.PI / 7, speed: 16, dmgMul: 1.3, radius: 0.7, range: 14, cd: 6.5 },
+      // War Stomp — STOR AoE runt boss
+      { id: 'warStomp', kind: 'groundCircle', telegraph: 1.3, radius: 6, dmgMul: 1.7, originSelf: true, knockback: 2.5, cd: 10.0 },
+    ],
+  },
+  30: {
+    name: 'Warlord', scale: 4.1,
+    bodyTint: 0xaa4030, auraColor: 0x331008, eyeColor: 0xffbb00,
+    intro: 'Marken sviktar under hans steg.',
+    skills: [
+      // Cleave Wave — 90° kon framför boss, 8m lång
+      { id: 'cleaveWave', kind: 'cone', telegraph: 1.0, length: 8, halfAngle: Math.PI / 3, dmgMul: 2.2, cd: 6.0 },
+      // Poison Pool — kastas på hjältens pos, lämnar DoT-pöl 6s
+      { id: 'poisonPool', kind: 'poolDot', telegraph: 1.0, radius: 3, duration: 6, dpsMul: 0.4, slow: { dur: 0.5, mul: 0.7 }, targetHero: true, cd: 7.5 },
+      // Earthquake — 5 random AoE-cirklar runt boss
+      { id: 'earthquake', kind: 'multiCircle', telegraph: 0.7, count: 5, spawnInterval: 0.55, radius: 2.5, dmgMul: 1.4, spread: 7, cd: 11.0 },
+    ],
+  },
+  40: {
+    name: 'Demon Prince', scale: 4.4,
+    bodyTint: 0x5a30a0, auraColor: 0x180830, eyeColor: 0xff44ff,
+    intro: 'Helvetet öppnar sina portar.',
+    skills: [
+      // Hellfire Beam — roterande sweep-beam, telegraph röd båge
+      { id: 'hellfireBeam', kind: 'sweepBeam', telegraph: 1.3, sweepDuration: 1.8, length: 12, halfAngle: Math.PI / 2, dpsMul: 1.4, cd: 10.0 },
+      // Inferno Strike — snabb hero-targetad, mindre radie men hög dmg
+      { id: 'infernoStrike', kind: 'groundCircle', telegraph: 0.8, radius: 2.2, dmgMul: 2.5, targetHero: true, leaveBurn: true, cd: 5.0 },
+      // Meteor Shower — 5 meteorer i 4s
+      { id: 'meteorShower', kind: 'multiCircle', telegraph: 0.9, count: 5, spawnInterval: 0.7, radius: 3.5, dmgMul: 2.0, spread: 11, cd: 13.0 },
+    ],
+  },
+  50: {
+    name: 'Drakkonungen', scale: 4.8,
+    bodyTint: 0x2a1a1a, auraColor: 0x080404, eyeColor: 0xff7700,
+    intro: 'Drakelden brinner ikapp natten.',
+    skills: [
+      // Dragon Breath — sustained kon-flam 2.5s
+      { id: 'dragonBreath', kind: 'sustainedCone', telegraph: 1.3, sustainDuration: 2.5, length: 12, halfAngle: Math.PI / 3.5, dpsMul: 1.6, cd: 8.5 },
+      // Wing Slam — stor AoE runt med knockback
+      { id: 'wingSlam', kind: 'groundCircle', telegraph: 1.0, radius: 5, dmgMul: 2.5, originSelf: true, knockback: 4.0, cd: 7.0 },
+      // Skyfire Rain — 8 meteorer i 6s
+      { id: 'skyfireRain', kind: 'multiCircle', telegraph: 0.7, count: 8, spawnInterval: 0.7, radius: 3.0, dmgMul: 1.8, spread: 13, cd: 15.0 },
+    ],
+  },
+};
+
+// Mappa wave-num → vilken boss kommer härnäst (för mini-bossar)
+function getNextBossDef(waveNum) {
+  if (waveNum % 10 === 0) return null;   // boss-wave själv
+  if (waveNum >= MAX_WAVES) return null;
+  const nextBossWave = (Math.floor((waveNum - 1) / 10) + 1) * 10;
+  return BOSS_DEFS[nextBossWave] || null;
+}
+// Mini-boss skill-rotation: roterar genom de 3 boss-skillsen per wave (% 3)
+function getMiniBossSkillIdx(waveNum) {
+  return (waveNum - 1) % 3;
+}
+
 function getWaveDef(waveNum) {
   if (waveNum < 1 || waveNum > MAX_WAVES) return null;
   const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
@@ -4277,6 +4362,45 @@ function hostSpawnWaveAtOnce(side, def) {
     for (; i < melee; i++) hostSpawnMonsterFromDef(side, lane, def, positions[i], 'melee');
     for (let j = 0; j < range; j++) hostSpawnMonsterFromDef(side, lane, def, positions[melee + j], 'range');
   }
+  // Mini-boss i lane 1: använder 1 av kommande bossens 3 skills som hint
+  const nextBoss = getNextBossDef(def.number);
+  if (nextBoss) {
+    const miniSkill = nextBoss.skills[getMiniBossSkillIdx(def.number)];
+    hostSpawnMiniBoss(side, def, nextBoss, miniSkill);
+  }
+}
+
+function hostSpawnMiniBoss(side, waveDef, bossDef, skill) {
+  const cfg = SIDE_CFG[side.idx];
+  const lane = ((waveDef.number - 1) % 2 === 0) ? 1 : 2;
+  const x = cfg.spawnX + 1.0;  // lite bakom
+  const z = cfg.laneZ[lane];
+  const mesh = makeMonsterMesh();
+  const scale = 1.85;
+  mesh.scale.set(scale, scale, scale);
+  // Tinta minibossen i bossens kropps-färg
+  applyMonsterTint(mesh, bossDef.bodyTint, 0.65);
+  attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, true);
+  attachHpBar(mesh, 2.0);
+  mesh.position.set(x, 0, z);
+  scene.add(mesh);
+  const hp = Math.round(waveDef.monsterHp * 4.5);
+  side.monsters.push({
+    id: nextEntityId++,
+    lane,
+    hp, maxHp: hp,
+    speed: waveDef.monsterSpeed * 0.9,
+    damage: Math.round(waveDef.monsterDmg * 1.6),
+    attackType: 'melee', attackRange: 1.4, attackInterval: 1.2,
+    pathIndex: 0, atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    isBoss: false, isMiniBoss: true,
+    bossName: bossDef.name + ' Acolyte',
+    bossSkills: [skill],
+    skillCds: [skill.cd * 0.5],   // första cast efter halv CD
+    activeCast: null,
+    bossDef,
+    mesh,
+  });
 }
 
 function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
@@ -4287,20 +4411,21 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
   const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
   const mesh = makeMonsterMesh();
-  if (def.isBoss) mesh.scale.set(1.6, 1.7, 1.6);
-  if (isRange) {
-    // Range-monster tintat grönaktigt så de syns annorlunda från melee
-    mesh.traverse(o => {
-      if (o.material && o.material.color && o.isMesh) {
-        o.material = o.material.clone();
-        o.material.color.setHex(0x5a7a4a);
-      }
-    });
+  // Boss-mesh: använd BOSS_DEFS för scale + tint + aura
+  let bossDef = null;
+  if (def.isBoss) {
+    bossDef = BOSS_DEFS[def.number] || BOSS_DEFS[10];
+    const scale = bossDef.scale;
+    mesh.scale.set(scale, scale, scale);
+    applyMonsterTint(mesh, bossDef.bodyTint, 0.85);
+    attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+  } else if (isRange) {
+    applyMonsterTint(mesh, 0x5a7a4a, 0.85);
   }
-  attachHpBar(mesh, def.isBoss ? 2.4 : 1.7);
+  attachHpBar(mesh, def.isBoss ? (bossDef ? bossDef.scale * 0.85 : 2.4) : 1.7);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
-  side.monsters.push({
+  const monster = {
     id: nextEntityId++,
     lane,
     hp, maxHp: hp,
@@ -4312,8 +4437,745 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: !!def.isBoss,
+    isMiniBoss: false,
     mesh,
+  };
+  if (def.isBoss && bossDef) {
+    monster.bossDef = bossDef;
+    monster.bossName = bossDef.name;
+    monster.bossSkills = bossDef.skills;
+    monster.skillCds = bossDef.skills.map(s => s.cd * 0.6);  // delayed initial CD
+    monster.activeCast = null;
+  }
+  side.monsters.push(monster);
+}
+
+// Tinta en monster-mesh utan att förstöra GLTF-material delat med andra instanser.
+function applyMonsterTint(mesh, colorHex, intensity = 0.85) {
+  mesh.traverse(o => {
+    if (o.material && o.material.color && o.isMesh) {
+      o.material = o.material.clone();
+      o.material.color.setHex(colorHex);
+      if (intensity > 0.9) o.material.color.lerp(new THREE.Color(0x000000), 1 - intensity);
+    }
   });
+}
+
+// Mörk smoke-aura runt boss/miniboss: rökig sfär + glödande ögon-light + cirkulerande
+// partikel-emitter. Lagras i mesh.userData.bossAura så ticken kan animera den.
+function attachBossAura(mesh, auraColor, eyeColor, scale, isMini = false) {
+  const aura = new THREE.Group();
+  aura.position.y = (isMini ? 0.5 : 1.0) * scale;
+  // Mörk halv-transparent rök-sfär runt kroppen
+  const smokeR = (isMini ? 0.6 : 1.1) * scale;
+  const smoke = new THREE.Mesh(
+    new THREE.SphereGeometry(smokeR, 18, 14),
+    new THREE.MeshBasicMaterial({ color: auraColor, transparent: true, opacity: isMini ? 0.20 : 0.30, depthWrite: false })
+  );
+  aura.add(smoke);
+  // Yttre rök (större, ljusare, fadar)
+  const outerR = smokeR * 1.5;
+  const outer = new THREE.Mesh(
+    new THREE.SphereGeometry(outerR, 16, 12),
+    new THREE.MeshBasicMaterial({ color: auraColor, transparent: true, opacity: isMini ? 0.08 : 0.13, depthWrite: false })
+  );
+  aura.add(outer);
+  // Glödande ögon-light vid huvudhöjd
+  const eyeLight = new THREE.PointLight(eyeColor, isMini ? 1.0 : 2.0, isMini ? 3 : 5);
+  eyeLight.position.set(0, scale * 0.35, 0);
+  aura.add(eyeLight);
+  // Liten ground-marker — mörk fläck under boss/miniboss
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(smokeR * 0.85, 24),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -(isMini ? 0.5 : 1.0) * scale + 0.05;
+  aura.add(ground);
+  mesh.add(aura);
+  mesh.userData.bossAura = {
+    group: aura, smoke, outer, eyeLight, ground,
+    puffAccum: 0,
+    auraColor, eyeColor, isMini, scale,
+  };
+}
+
+// ===== BOSS SKILL-SYSTEM =====
+// Per frame: ticka CDs, om aktiv cast → tick. Annars välj random ready skill.
+// Faser: 'telegraph' (visuell varning) → 'execute' (skada/projektil/dash/etc).
+function tickBossSkills(side, m, dt) {
+  if (m.hp <= 0 || side.hero.dead) {
+    if (m.activeCast) cancelBossCast(side, m);
+    return;
+  }
+  if (m.skillCds) {
+    for (let i = 0; i < m.skillCds.length; i++) m.skillCds[i] = Math.max(0, m.skillCds[i] - dt);
+  }
+  if (m.activeCast) {
+    tickBossCast(side, m, dt);
+    return;
+  }
+  // Bara casta om hjälten är någorlunda nära (annars är det lite konstigt)
+  const dh = Math.hypot(side.hero.x - m.mesh.position.x, side.hero.z - m.mesh.position.z);
+  if (dh > 18) return;  // för långt bort, vänta
+  if (!m.bossSkills || !m.skillCds) return;
+  // Plocka random ready-skill
+  const ready = [];
+  for (let i = 0; i < m.skillCds.length; i++) if (m.skillCds[i] <= 0) ready.push(i);
+  if (ready.length === 0) return;
+  const pick = ready[(Math.random() * ready.length) | 0];
+  startBossCast(side, m, m.bossSkills[pick], pick);
+}
+
+function startBossCast(side, m, skill, skillIdx) {
+  const hero = side.hero;
+  const bx = m.mesh.position.x, bz = m.mesh.position.z;
+  const dx = hero.x - bx, dz = hero.z - bz;
+  const dl = Math.hypot(dx, dz) || 1;
+  const dirX = dx / dl, dirZ = dz / dl;
+  const cast = {
+    skill, skillIdx,
+    phase: 'telegraph',
+    timer: skill.telegraph,
+    dirX, dirZ,
+    originX: bx, originZ: bz,
+    targetX: skill.targetHero ? hero.x : (skill.originSelf ? bx : bx + dirX * (skill.length || 5) / 2),
+    targetZ: skill.targetHero ? hero.z : (skill.originSelf ? bz : bz + dirZ * (skill.length || 5) / 2),
+    telegraphMesh: null,
+    extras: null,
+  };
+  m.activeCast = cast;
+  // Boss roterar mot target under telegraph
+  if (m.mesh) m.mesh.rotation.y = Math.atan2(dirX, dirZ);
+  spawnBossTelegraph(side, m, cast);
+}
+
+function tickBossCast(side, m, dt) {
+  const cast = m.activeCast;
+  cast.timer -= dt;
+  if (cast.phase === 'telegraph') {
+    tickBossTelegraph(side, m, cast, dt);
+    if (cast.timer <= 0) {
+      // Transition: cleanup telegraph, börja execute-fas
+      cleanupTelegraphMesh(cast);
+      bossExecuteSkill(side, m, cast);
+    }
+    return;
+  }
+  if (cast.phase === 'execute') {
+    tickBossExecute(side, m, cast, dt);
+    if (cast.timer <= 0 && (!cast.extras || cast.extras.done)) {
+      finishBossCast(side, m);
+    }
+  }
+}
+
+function cancelBossCast(side, m) {
+  if (!m.activeCast) return;
+  cleanupTelegraphMesh(m.activeCast);
+  cleanupExecuteMesh(m.activeCast);
+  m.activeCast = null;
+}
+
+function finishBossCast(side, m) {
+  const cast = m.activeCast;
+  if (!cast) return;
+  cleanupExecuteMesh(cast);
+  m.skillCds[cast.skillIdx] = cast.skill.cd;
+  m.activeCast = null;
+}
+
+function cleanupTelegraphMesh(cast) {
+  if (!cast.telegraphMesh) return;
+  cast.telegraphMesh.traverse(o => {
+    if (o.isMesh) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    }
+  });
+  scene.remove(cast.telegraphMesh);
+  cast.telegraphMesh = null;
+}
+
+function cleanupExecuteMesh(cast) {
+  if (!cast.extras) return;
+  const e = cast.extras;
+  if (e.meshes) for (const obj of e.meshes) {
+    if (obj.traverse) {
+      obj.traverse(o => {
+        if (o.isMesh) {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) o.material.dispose();
+        }
+      });
+    }
+    scene.remove(obj);
+  }
+}
+
+// ===== TELEGRAPHS =====
+// Visuell röd "varning" innan skill exekverar. Pulsar/expanderar för tydlighet.
+function spawnBossTelegraph(side, m, cast) {
+  const s = cast.skill;
+  const grp = new THREE.Group();
+  scene.add(grp);
+  cast.telegraphMesh = grp;
+  const matRed = () => new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false });
+  if (s.kind === 'groundCircle' || s.kind === 'poolDot') {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(s.radius * 0.92, s.radius, 40), matRed());
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(cast.targetX, 0.08, cast.targetZ);
+    grp.add(ring);
+    const disk = new THREE.Mesh(new THREE.CircleGeometry(s.radius, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+    disk.rotation.x = -Math.PI / 2;
+    disk.position.set(cast.targetX, 0.06, cast.targetZ);
+    grp.add(disk);
+  } else if (s.kind === 'lineDash') {
+    const w = s.width, l = s.length;
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, l),
+      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.set(cast.originX + cast.dirX * l / 2, 0.07, cast.originZ + cast.dirZ * l / 2);
+    plane.rotation.z = -Math.atan2(cast.dirX, cast.dirZ);
+    grp.add(plane);
+    const edge = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.15, l),
+      new THREE.MeshBasicMaterial({ color: 0xff7755, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    edge.rotation.x = -Math.PI / 2;
+    edge.position.copy(plane.position);
+    edge.rotation.z = plane.rotation.z;
+    grp.add(edge);
+  } else if (s.kind === 'cone' || s.kind === 'sustainedCone') {
+    const r = s.length;
+    const ang = s.halfAngle;
+    const segs = 14;
+    const geom = new THREE.BufferGeometry();
+    const verts = [0, 0, 0];
+    for (let i = 0; i <= segs; i++) {
+      const a = -ang + (2 * ang) * (i / segs);
+      verts.push(Math.sin(a) * r, 0, Math.cos(a) * r);
+    }
+    const idx = [];
+    for (let i = 1; i <= segs; i++) idx.push(0, i, i + 1);
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geom.setIndex(idx);
+    geom.computeVertexNormals();
+    const fan = new THREE.Mesh(geom, matRed());
+    fan.position.set(cast.originX, 0.07, cast.originZ);
+    fan.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
+    grp.add(fan);
+  } else if (s.kind === 'projectile' || s.kind === 'projectileMulti') {
+    // Liten röd "laddnings"-glow vid boss + svaga indicator-linjer per projektil
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff5533, transparent: true, opacity: 0.6, depthWrite: false }));
+    glow.position.set(cast.originX, 1.5, cast.originZ);
+    grp.add(glow);
+    const count = s.count || 1;
+    const spread = s.spreadAngle || 0;
+    for (let i = 0; i < count; i++) {
+      const off = count === 1 ? 0 : (-spread / 2 + spread * i / (count - 1));
+      const ang = Math.atan2(cast.dirX, cast.dirZ) + off;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(0.15, s.range || 14),
+        new THREE.MeshBasicMaterial({ color: 0xff5533, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+      line.rotation.x = -Math.PI / 2;
+      line.position.set(cast.originX + dx * (s.range || 14) / 2, 0.06, cast.originZ + dz * (s.range || 14) / 2);
+      line.rotation.z = -ang;
+      grp.add(line);
+    }
+  } else if (s.kind === 'sweepBeam') {
+    // Båge på marken som visar svep-arean
+    const r = s.length;
+    const ang = s.halfAngle;
+    const segs = 28;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.92, r, segs, 1, -ang, 2 * ang),
+      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(cast.originX, 0.08, cast.originZ);
+    ring.rotation.z = Math.atan2(cast.dirX, cast.dirZ);
+    grp.add(ring);
+  } else if (s.kind === 'multiCircle') {
+    // Visa bossens position som "incoming meteor storm" — liten central marker
+    const mark = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.9, 24),
+      new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.set(cast.originX, 0.08, cast.originZ);
+    grp.add(mark);
+  }
+}
+
+function tickBossTelegraph(side, m, cast, dt) {
+  // Pulsera telegraph-meshen för synlighet
+  if (!cast.telegraphMesh) return;
+  const t = performance.now() * 0.012;
+  const pulse = 0.5 + 0.5 * Math.sin(t);
+  cast.telegraphMesh.traverse(o => {
+    if (o.isMesh && o.material && o.material.transparent) {
+      o.material.userData = o.material.userData || {};
+      if (!('baseOpacity' in o.material.userData)) o.material.userData.baseOpacity = o.material.opacity;
+      o.material.opacity = Math.min(1, o.material.userData.baseOpacity * (0.6 + 0.5 * pulse));
+    }
+  });
+}
+
+// ===== EXECUTE =====
+// Triggar skill-effekten baserat på primitive-typ. Flyttar cast → execute-fas.
+function bossExecuteSkill(side, m, cast) {
+  const s = cast.skill;
+  cast.phase = 'execute';
+  if (s.kind === 'groundCircle') {
+    cast.timer = 0.45;   // visuell flash-tid
+    cast.extras = { meshes: [], done: true };
+    spawnGroundImpact(cast.targetX, cast.targetZ, s.radius, 0xff5533);
+    applyBossCircleDmg(side, m, cast);
+    if (s.knockback) applyBossKnockback(side, cast.targetX, cast.targetZ, s.radius, s.knockback);
+    if (s.leaveBurn) spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius * 0.7, 3.0, 0.3, 0xff7722);
+    return;
+  }
+  if (s.kind === 'lineDash') {
+    cast.timer = s.execTime || 0.5;
+    cast.extras = {
+      meshes: [],
+      done: false,
+      dashStartX: cast.originX, dashStartZ: cast.originZ,
+      dashEndX: cast.originX + cast.dirX * s.length,
+      dashEndZ: cast.originZ + cast.dirZ * s.length,
+      damaged: new Set(),
+    };
+    triggerCameraShake(0.20, 0.18);
+    return;
+  }
+  if (s.kind === 'projectile') {
+    spawnBossProjectile(side, m, cast.originX, cast.originZ, cast.dirX, cast.dirZ, s);
+    cast.timer = 0.05; cast.extras = { meshes: [], done: true };
+    return;
+  }
+  if (s.kind === 'projectileMulti') {
+    const count = s.count || 3;
+    const spread = s.spreadAngle || Math.PI / 6;
+    const baseAng = Math.atan2(cast.dirX, cast.dirZ);
+    for (let i = 0; i < count; i++) {
+      const off = count === 1 ? 0 : (-spread / 2 + spread * i / (count - 1));
+      const ang = baseAng + off;
+      spawnBossProjectile(side, m, cast.originX, cast.originZ, Math.sin(ang), Math.cos(ang), s);
+    }
+    cast.timer = 0.05; cast.extras = { meshes: [], done: true };
+    return;
+  }
+  if (s.kind === 'cone') {
+    cast.timer = 0.4;
+    cast.extras = { meshes: [], done: true };
+    spawnConeFlash(cast.originX, cast.originZ, cast.dirX, cast.dirZ, s.length, s.halfAngle, 0xff4422);
+    applyBossConeDmg(side, m, cast);
+    return;
+  }
+  if (s.kind === 'poolDot') {
+    cast.timer = 0.3;
+    cast.extras = { meshes: [], done: true };
+    spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius, s.duration, s.dpsMul, 0x66dd33, s.slow);
+    return;
+  }
+  if (s.kind === 'multiCircle') {
+    cast.timer = (s.count || 5) * (s.spawnInterval || 0.6) + 0.5;
+    cast.extras = {
+      meshes: [],
+      done: false,
+      spawned: 0,
+      spawnTimer: 0,
+      circles: [],
+    };
+    return;
+  }
+  if (s.kind === 'sweepBeam') {
+    cast.timer = s.sweepDuration;
+    cast.extras = {
+      meshes: [],
+      done: false,
+      startAng: Math.atan2(cast.dirX, cast.dirZ) - s.halfAngle,
+      endAng: Math.atan2(cast.dirX, cast.dirZ) + s.halfAngle,
+      damageTimer: 0,
+    };
+    spawnSweepBeamMesh(cast);
+    return;
+  }
+  if (s.kind === 'sustainedCone') {
+    cast.timer = s.sustainDuration;
+    cast.extras = {
+      meshes: [],
+      done: false,
+      damageTimer: 0,
+    };
+    spawnSustainedConeMesh(cast);
+    return;
+  }
+  cast.timer = 0.1; cast.extras = { meshes: [], done: true };
+}
+
+function tickBossExecute(side, m, cast, dt) {
+  const s = cast.skill;
+  if (s.kind === 'lineDash') {
+    const e = cast.extras;
+    const u = Math.min(1, 1 - cast.timer / (s.execTime || 0.5));
+    const cx = e.dashStartX + (e.dashEndX - e.dashStartX) * u;
+    const cz = e.dashStartZ + (e.dashEndZ - e.dashStartZ) * u;
+    m.mesh.position.x = cx;
+    m.mesh.position.z = cz;
+    // Skada allt nytt i bredd-band
+    applyBossLineDmg(side, m, cast, cx, cz);
+    if (cast.timer <= 0) e.done = true;
+    return;
+  }
+  if (s.kind === 'multiCircle') {
+    const e = cast.extras;
+    e.spawnTimer -= dt;
+    if (e.spawned < (s.count || 5) && e.spawnTimer <= 0) {
+      // Spawna en cirkel nära boss men random offset (hero som center om targetHero)
+      const cx = (s.targetHero ? side.hero.x : cast.originX) + (Math.random() - 0.5) * 2 * (s.spread || 6);
+      const cz = (s.targetHero ? side.hero.z : cast.originZ) + (Math.random() - 0.5) * 2 * (s.spread || 6);
+      const subCast = {
+        skill: { kind: 'groundCircle', radius: s.radius, dmgMul: s.dmgMul, telegraph: 0.7 },
+        targetX: cx, targetZ: cz,
+        originX: cx, originZ: cz,
+        dirX: 0, dirZ: 1,
+        telegraphMesh: null,
+        phase: 'telegraph', timer: 0.7,
+      };
+      spawnBossTelegraph(side, m, subCast);
+      e.circles.push(subCast);
+      e.spawnTimer = (s.spawnInterval || 0.6);
+      e.spawned++;
+    }
+    // Ticka sub-cirklar
+    for (let i = e.circles.length - 1; i >= 0; i--) {
+      const sub = e.circles[i];
+      sub.timer -= dt;
+      tickBossTelegraph(side, m, sub, dt);
+      if (sub.timer <= 0 && sub.phase === 'telegraph') {
+        sub.phase = 'done';
+        cleanupTelegraphMesh(sub);
+        spawnGroundImpact(sub.targetX, sub.targetZ, s.radius, 0xff6633);
+        applyBossCircleDmg(side, m, sub);
+      }
+      if (sub.phase === 'done' && sub.timer < -0.5) e.circles.splice(i, 1);
+    }
+    if (e.spawned >= (s.count || 5) && e.circles.length === 0) e.done = true;
+    return;
+  }
+  if (s.kind === 'sweepBeam') {
+    const e = cast.extras;
+    const u = Math.min(1, 1 - cast.timer / s.sweepDuration);
+    const curAng = e.startAng + (e.endAng - e.startAng) * u;
+    cast.dirX = Math.sin(curAng); cast.dirZ = Math.cos(curAng);
+    if (e.beamMesh) {
+      e.beamMesh.position.set(cast.originX + cast.dirX * s.length / 2, 1.0, cast.originZ + cast.dirZ * s.length / 2);
+      e.beamMesh.rotation.y = curAng;
+    }
+    e.damageTimer -= dt;
+    if (e.damageTimer <= 0) {
+      e.damageTimer = 0.2;
+      applyBossBeamDmg(side, m, cast, s.length, 1.4, s.dpsMul * 0.2);
+    }
+    if (cast.timer <= 0) e.done = true;
+    return;
+  }
+  if (s.kind === 'sustainedCone') {
+    const e = cast.extras;
+    e.damageTimer -= dt;
+    if (e.damageTimer <= 0) {
+      e.damageTimer = 0.3;
+      applyBossConeDmgRaw(side, m, cast, s.length, s.halfAngle, s.dpsMul * 0.3);
+    }
+    // Mesh pulsar
+    if (e.coneMesh && e.coneMesh.material) {
+      e.coneMesh.material.opacity = 0.55 + 0.30 * Math.sin(performance.now() * 0.015);
+    }
+    if (cast.timer <= 0) e.done = true;
+    return;
+  }
+}
+
+// ===== DAMAGE-APPLIERS =====
+function applyBossCircleDmg(side, m, cast) {
+  const s = cast.skill;
+  const dmg = m.damage * (s.dmgMul || 1);
+  // Hero
+  if (!side.hero.dead) {
+    if (Math.hypot(side.hero.x - cast.targetX, side.hero.z - cast.targetZ) < s.radius) {
+      damageHero(side, dmg);
+      if (s.slow) {
+        side.heroSlowMul = Math.min(side.heroSlowMul || 1, s.slow.mul);
+        side.heroSlowTime = Math.max(side.heroSlowTime || 0, s.slow.dur);
+      }
+    }
+  }
+}
+function applyBossConeDmg(side, m, cast) {
+  applyBossConeDmgRaw(side, m, cast, cast.skill.length, cast.skill.halfAngle, cast.skill.dmgMul);
+}
+function applyBossConeDmgRaw(side, m, cast, length, halfAngle, dmgMul) {
+  const dmg = m.damage * (dmgMul || 1);
+  if (!side.hero.dead) {
+    const dx = side.hero.x - cast.originX, dz = side.hero.z - cast.originZ;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.001 && d < length) {
+      const dot = (dx * cast.dirX + dz * cast.dirZ) / d;
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (ang < halfAngle) damageHero(side, dmg);
+    }
+  }
+}
+function applyBossLineDmg(side, m, cast, cx, cz) {
+  const s = cast.skill;
+  const dmg = m.damage * (s.dmgMul || 1);
+  const e = cast.extras;
+  if (!side.hero.dead && !e.damaged.has('hero')) {
+    const d = Math.hypot(side.hero.x - cx, side.hero.z - cz);
+    if (d < (s.width || 2) * 0.6) {
+      damageHero(side, dmg);
+      e.damaged.add('hero');
+    }
+  }
+}
+function applyBossBeamDmg(side, m, cast, length, width, dmg) {
+  const realDmg = m.damage * dmg;
+  if (!side.hero.dead) {
+    const dx = side.hero.x - cast.originX, dz = side.hero.z - cast.originZ;
+    const along = dx * cast.dirX + dz * cast.dirZ;
+    if (along > 0 && along < length) {
+      const perp = Math.abs(dx * (-cast.dirZ) + dz * cast.dirX);
+      if (perp < width) damageHero(side, realDmg);
+    }
+  }
+}
+function applyBossKnockback(side, x, z, radius, force) {
+  if (side.hero.dead) return;
+  const dx = side.hero.x - x, dz = side.hero.z - z;
+  const d = Math.hypot(dx, dz);
+  if (d >= radius || d < 0.01) return;
+  const nx = side.hero.x + (dx / d) * force;
+  const nz = side.hero.z + (dz / d) * force;
+  if (isHeroWalkable(side.idx, nx, nz)) {
+    side.hero.x = nx; side.hero.z = nz;
+    if (side.mesh) side.mesh.position.set(nx, 0, nz);
+  }
+}
+
+// ===== VISUAL HELPERS =====
+function spawnGroundImpact(x, z, radius, color = 0xff5533) {
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.5, radius, 36),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.1, z);
+  scene.add(ring);
+  combatFx.push({ mesh: ring, life: 0.45, maxLife: 0.45, kind: 'impact' });
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.95, 32),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }));
+  disk.rotation.x = -Math.PI / 2;
+  disk.position.set(x, 0.09, z);
+  scene.add(disk);
+  combatFx.push({ mesh: disk, life: 0.40, maxLife: 0.40, kind: 'impact' });
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * radius * 0.9;
+    spawnHitSparkFx(x + Math.cos(a) * r, 0.4 + Math.random() * 0.8, z + Math.sin(a) * r, color);
+  }
+  triggerCameraShake(0.15, 0.15);
+}
+
+function spawnConeFlash(x, z, dx, dz, length, halfAngle, color) {
+  const segs = 14;
+  const geom = new THREE.BufferGeometry();
+  const verts = [0, 0, 0];
+  for (let i = 0; i <= segs; i++) {
+    const a = -halfAngle + 2 * halfAngle * (i / segs);
+    verts.push(Math.sin(a) * length, 0, Math.cos(a) * length);
+  }
+  const idx = [];
+  for (let i = 1; i <= segs; i++) idx.push(0, i, i + 1);
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geom.setIndex(idx);
+  geom.computeVertexNormals();
+  const fan = new THREE.Mesh(geom,
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+  fan.position.set(x, 0.1, z);
+  fan.rotation.y = Math.atan2(dx, dz);
+  scene.add(fan);
+  combatFx.push({ mesh: fan, life: 0.4, maxLife: 0.4, kind: 'cone-flash' });
+  triggerCameraShake(0.22, 0.20);
+}
+
+function spawnBossProjectile(side, m, x, z, dx, dz, skill) {
+  side.bossProjectiles = side.bossProjectiles || [];
+  const dmg = m.damage * (skill.dmgMul || 1);
+  const grp = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0xff4422, emissive: 0xff3311, emissiveIntensity: 1.4 }));
+  grp.add(head);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.7, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7 }));
+  tail.rotation.x = Math.PI / 2;
+  tail.position.z = -0.5;
+  grp.add(tail);
+  grp.rotation.y = Math.atan2(dx, dz);
+  grp.position.set(x, 1.1, z);
+  scene.add(grp);
+  side.bossProjectiles.push({
+    mesh: grp, x, z, dx, dz,
+    speed: skill.speed || 14,
+    damage: dmg,
+    radius: skill.radius || 0.8,
+    range: skill.range || 14,
+    traveled: 0,
+  });
+}
+
+function tickBossProjectiles(side, dt) {
+  if (!side.bossProjectiles) return;
+  for (let i = side.bossProjectiles.length - 1; i >= 0; i--) {
+    const p = side.bossProjectiles[i];
+    const step = p.speed * dt;
+    p.x += p.dx * step; p.z += p.dz * step; p.traveled += step;
+    p.mesh.position.set(p.x, 1.1, p.z);
+    spawnProjectileTrailPuff(p.x, 1.0, p.z, 0xff7733);
+    // Träffa hjälte
+    if (!side.hero.dead && Math.hypot(side.hero.x - p.x, side.hero.z - p.z) < p.radius + 0.45) {
+      damageHero(side, p.damage);
+      if (p.mesh.geometry) p.mesh.geometry.dispose?.();
+      p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
+      scene.remove(p.mesh);
+      side.bossProjectiles.splice(i, 1);
+      continue;
+    }
+    if (p.traveled > p.range) {
+      p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
+      scene.remove(p.mesh);
+      side.bossProjectiles.splice(i, 1);
+    }
+  }
+}
+
+function spawnPoolDot(side, m, x, z, radius, duration, dpsMul, color = 0x66dd33, slow = null) {
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.85, radius, 36),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  grp.add(ring);
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius, 32),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.40, side: THREE.DoubleSide, depthWrite: false }));
+  disk.rotation.x = -Math.PI / 2;
+  grp.add(disk);
+  grp.position.set(x, 0.07, z);
+  scene.add(grp);
+  side.bossPools = side.bossPools || [];
+  side.bossPools.push({
+    mesh: grp, x, z, radius,
+    life: duration, maxLife: duration,
+    dps: m.damage * dpsMul,
+    tickAccum: 0,
+    slow,
+    color,
+  });
+}
+
+function tickBossPools(side, dt) {
+  if (!side.bossPools) return;
+  for (let i = side.bossPools.length - 1; i >= 0; i--) {
+    const p = side.bossPools[i];
+    p.life -= dt;
+    p.tickAccum += dt;
+    // Skada hjälten var 0.5s om i pöl
+    if (p.tickAccum >= 0.5) {
+      p.tickAccum -= 0.5;
+      if (!side.hero.dead && Math.hypot(side.hero.x - p.x, side.hero.z - p.z) < p.radius) {
+        damageHero(side, p.dps * 0.5);
+        if (p.slow) {
+          side.heroSlowMul = Math.min(side.heroSlowMul || 1, p.slow.mul);
+          side.heroSlowTime = Math.max(side.heroSlowTime || 0, p.slow.dur);
+        }
+      }
+    }
+    // Spawna gröna bubblor
+    if (Math.random() < 0.4) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * p.radius * 0.9;
+      spawnProjectileTrailPuff(p.x + Math.cos(a) * r, 0.3 + Math.random() * 0.5, p.z + Math.sin(a) * r, p.color);
+    }
+    // Fade ut mot slutet
+    const fade = Math.min(1, p.life / 0.8);
+    p.mesh.traverse(o => {
+      if (o.material && o.material.transparent) {
+        const base = o.material.userData?.baseOpacity || o.material.opacity;
+        o.material.userData = o.material.userData || { baseOpacity: o.material.opacity };
+        o.material.opacity = (o.material.userData.baseOpacity || 0.5) * fade;
+      }
+    });
+    if (p.life <= 0) {
+      p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
+      scene.remove(p.mesh);
+      side.bossPools.splice(i, 1);
+    }
+  }
+}
+
+function spawnSweepBeamMesh(cast) {
+  const s = cast.skill;
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, s.length, 14),
+    new THREE.MeshBasicMaterial({ color: 0xff4422, transparent: true, opacity: 0.85 }));
+  beam.rotation.x = Math.PI / 2;
+  beam.position.set(cast.originX + cast.dirX * s.length / 2, 1.0, cast.originZ + cast.dirZ * s.length / 2);
+  beam.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
+  scene.add(beam);
+  cast.extras.beamMesh = beam;
+  cast.extras.meshes = [beam];
+}
+
+function spawnSustainedConeMesh(cast) {
+  const s = cast.skill;
+  const r = s.length;
+  const ang = s.halfAngle;
+  const segs = 16;
+  const geom = new THREE.BufferGeometry();
+  const verts = [0, 0, 0];
+  for (let i = 0; i <= segs; i++) {
+    const a = -ang + 2 * ang * (i / segs);
+    verts.push(Math.sin(a) * r, 0, Math.cos(a) * r);
+  }
+  const idx = [];
+  for (let i = 1; i <= segs; i++) idx.push(0, i, i + 1);
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geom.setIndex(idx);
+  geom.computeVertexNormals();
+  const cone = new THREE.Mesh(geom,
+    new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+  cone.position.set(cast.originX, 0.12, cast.originZ);
+  cone.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
+  scene.add(cone);
+  cast.extras.coneMesh = cone;
+  cast.extras.meshes = [cone];
+}
+
+// Tickar aura: pulsering + sporadiska smoke-puffs i världen runt boss
+function tickBossAura(mesh, dt) {
+  const a = mesh.userData.bossAura;
+  if (!a) return;
+  const t = performance.now() * 0.0025;
+  if (a.smoke && a.smoke.material) a.smoke.material.opacity = (a.isMini ? 0.18 : 0.28) + 0.08 * Math.sin(t);
+  if (a.outer && a.outer.material) a.outer.material.opacity = (a.isMini ? 0.07 : 0.11) + 0.05 * Math.sin(t * 0.7 + 1);
+  if (a.eyeLight) a.eyeLight.intensity = (a.isMini ? 0.9 : 1.8) + 0.4 * Math.sin(t * 1.4);
+  if (a.smoke) a.smoke.rotation.y += dt * 0.4;
+  if (a.outer) a.outer.rotation.y -= dt * 0.25;
+  // Spawnar rök-puffs runt boss var ~0.18s (mini var ~0.4s)
+  const interval = a.isMini ? 0.4 : 0.18;
+  a.puffAccum = (a.puffAccum || 0) + dt;
+  while (a.puffAccum >= interval) {
+    a.puffAccum -= interval;
+    const ang = Math.random() * Math.PI * 2;
+    const r = (a.isMini ? 0.5 : 1.0) * a.scale * (0.7 + Math.random() * 0.4);
+    const px = mesh.position.x + Math.cos(ang) * r;
+    const pz = mesh.position.z + Math.sin(ang) * r;
+    const py = (a.isMini ? 0.3 : 0.6) * a.scale + Math.random() * 0.5 * a.scale;
+    spawnProjectileTrailPuff(px, py, pz, a.auraColor);
+  }
 }
 
 function updateMonsters(side, dt) {
@@ -4342,7 +5204,9 @@ function updateMonsters(side, dt) {
       if (m.poisonRemaining <= 0) m.poisonStacks = 0;
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
-    // Frusen: hoppa över movement + attack
+    // Boss/miniboss: aura-tick varje frame
+    if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
+    // Frusen: hoppa över movement + attack + boss-skills
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
       continue;
@@ -4353,6 +5217,11 @@ function updateMonsters(side, dt) {
     }
     // Taunted: tvinga chase
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
+    // Boss/miniboss-skill: under cast pausar normal AI
+    if (m.bossSkills) {
+      tickBossSkills(side, m, dt);
+      if (m.activeCast) continue;
+    }
 
     // Nått tornet?
     const dxT = towerPos.x - m.mesh.position.x;
@@ -4633,10 +5502,19 @@ function updateCreepProjectiles(side, dt) {
 function hostKillMonster(side, idx, byPlayerSide) {
   const m = side.monsters[idx];
   if (!m) return;
+  // Rensa aktiv cast + dess telegraph-mesh
+  if (m.activeCast) {
+    cleanupTelegraphMesh(m.activeCast);
+    cleanupExecuteMesh(m.activeCast);
+    m.activeCast = null;
+  }
   scene.remove(m.mesh);
   side.monsters.splice(idx, 1);
-  if (byPlayerSide) { byPlayerSide.gold += GOLD_PER_KILL; gainXp(byPlayerSide, MONSTER_XP_REWARD); }
-  else { side.gold += GOLD_PER_KILL; gainXp(side, MONSTER_XP_REWARD); }
+  // Boss-belöning: 5× guld + XP
+  const goldReward = m.isBoss ? GOLD_PER_KILL * 5 : (m.isMiniBoss ? GOLD_PER_KILL * 2 : GOLD_PER_KILL);
+  const xpReward = m.isBoss ? MONSTER_XP_REWARD * 5 : (m.isMiniBoss ? MONSTER_XP_REWARD * 2 : MONSTER_XP_REWARD);
+  if (byPlayerSide) { byPlayerSide.gold += goldReward; gainXp(byPlayerSide, xpReward); }
+  else { side.gold += goldReward; gainXp(side, xpReward); }
 }
 
 function minionBounty(creep) {
@@ -11642,6 +12520,8 @@ function simulateAll(dt) {
     tickLingShield(side, dt);
     tickIceBlock(side, dt);
     tickFearWave(side, dt);
+    tickBossProjectiles(side, dt);
+    tickBossPools(side, dt);
     // Ult-energy passiv gain + ult-tick (laser/rage/arrows)
     if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
     tickUltimates(side, dt);
