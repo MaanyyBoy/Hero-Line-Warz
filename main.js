@@ -1447,61 +1447,57 @@ function getNextBossDef(waveNum) {
   return BOSS_DEFS[nextBossWave] || null;
 }
 
-// ===== BOSS WARS — dedikerade boss-fights, co-op upp till 3 spelare =====
-// Återanvänder BOSS_DEFS (samma 5 bossar som i wave-systemet) men med skalade
-// HP/dmg per svårighetsgrad och dedikerad arena-scen.
+// ===== BOSS WARS — dedikerade RAID-bossar, co-op upp till 3 spelare =====
+// Återanvänder BOSS_DEFS (samma 5 bossar som i wave-systemet) men med MASSIVT
+// skalade HP/dmg för raid-känsla. Bossar 1–3 har 2 phases: vid 50% HP knockback +
+// stun, bossen flyger upp + landar med NYA skills (revealas live, inte i beskrivning).
 const BOSS_WARS_DEFS = [
   {
     tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
-    desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker — bra att börja med för att lära sig boss-mekaniker.',
-    hp: 800, dmgScale: 1.0,
-    mechanics: [
-      'Telegraferade attacker — alla skills har 1+ sek röd varning på marken/luften innan de slår',
-      'Långsam rörelse — du kan kite honom om du blir lågt på HP',
-      'Inga särskilda passiver',
-    ],
+    desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker. Bra att börja med — men gå inte in oförberedd, han har en överraskning vid 50% HP.',
+    hp: 5000, dmgScale: 1.0, hasPhase2: true,
   },
   {
     tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
-    desc: 'Krigsstrateg som öppnar med ranged-attacker och stänger med AoE-knockback. Mer aggressiv än Captain.',
-    hp: 1500, dmgScale: 1.3,
-    mechanics: [
-      'Targetar din nuvarande position med Lightning Strike — flytta dig sista sekunden',
-      'Spear Volley är 3-spjut spread — sidesteppa diagonalt',
-      'War Stomp har knockback — håll avstånd från bossens center',
-    ],
+    desc: 'Krigsstrateg som blandar ranged-attacker med AoE-stomp. Mer aggressiv än Captain. Räkna med att läget förändras mid-fight.',
+    hp: 8000, dmgScale: 1.3, hasPhase2: true,
   },
   {
     tier: 3, wave: 30, name: 'Warlord', diff: 'Hard', diffClass: 'hard',
-    desc: 'Brutal närstrid + poison-zoner som denyar terräng. Här börjar boss-fighten kräva mer aktiv positionering.',
-    hp: 2500, dmgScale: 1.6,
-    mechanics: [
-      'Cleave Wave är en 8m kon framåt — gå bakom bossen för att undvika',
-      'Poison Pool lämnar en DoT-zon i 6s — undvik att stå i den även efter explosion',
-      'Earthquake spawnar 5 AoE-cirklar i rad runt bossen — håll dig rörlig',
-    ],
+    desc: 'Brutal närstrid + poison-zoner som denyar terräng. Tål mycket och slår hårt. Något säger oss att han inte stannar på samma skill-set hela fighten...',
+    hp: 13000, dmgScale: 1.6, hasPhase2: true,
   },
   {
     tier: 4, wave: 40, name: 'Demon Prince', diff: 'Extreme', diffClass: 'extreme',
-    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt.',
-    hp: 4000, dmgScale: 2.0,
-    mechanics: [
-      'Hellfire Beam sveper 180° över 1.8s — gå BAKOM bossen där den just har svept',
-      'Inferno Strike targetar dig + lämnar burning-zon i 3s — flytta efter träff',
-      'Meteor Shower regnar 5 meteorer slumpvis i arenan — håll dig rörlig kontinuerligt',
-    ],
+    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt — straffar en miss med en stor HP-bit.',
+    hp: 20000, dmgScale: 2.0, hasPhase2: false,
   },
   {
     tier: 5, wave: 50, name: 'Drakkonungen', diff: 'Nightmare', diffClass: 'nightmare',
-    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate boss-test.',
-    hp: 6000, dmgScale: 2.5,
-    mechanics: [
-      'Dragon Breath är en 2.5s sustained kon-flam (12m räckvidd) — kom bakom snabbt',
-      'Wing Slam har 5m AoE + 4m knockback — kicker dig ut ur arena-kanten',
-      'Skyfire Rain är 8 meteorer över 6s — kombinera med dodge av andra skills',
-    ],
+    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate raid-test — räkna med 5+ minuter om ditt team är skickliga.',
+    hp: 30000, dmgScale: 2.5, hasPhase2: false,
   },
 ];
+
+// Phase 2 skill-sets för bossar 1, 2, 3. Bossen byter helt skill-array vid 50% HP.
+// Nya skills behåller telegraph-feel men är hårdare/mer komplexa.
+const BOSS_WARS_PHASE2_SKILLS = {
+  10: [   // Captain Phase 2 — full berserk
+    { id: 'berserkerCharge', kind: 'lineDash', telegraph: 0.9, length: 12, width: 2.5, execTime: 0.5, dmgMul: 2.5, cd: 5.5 },
+    { id: 'whirlwindStrike', kind: 'groundCircle', telegraph: 1.0, radius: 4.5, dmgMul: 1.5, originSelf: true, slow: { dur: 1.5, mul: 0.55 }, cd: 6.5 },
+    { id: 'warCry', kind: 'groundCircle', telegraph: 1.8, radius: 10, dmgMul: 1.8, originSelf: true, knockback: 2.0, cd: 12.0 },
+  ],
+  20: [   // General Phase 2 — storm + artillery
+    { id: 'stormCall', kind: 'multiCircle', telegraph: 0.8, count: 8, spawnInterval: 0.45, radius: 2.8, dmgMul: 1.5, spread: 9, cd: 13.0 },
+    { id: 'heavyArtillery', kind: 'projectileMulti', telegraph: 0.6, count: 5, spreadAngle: Math.PI / 5, speed: 18, dmgMul: 1.8, radius: 0.9, range: 18, cd: 7.5 },
+    { id: 'shieldWall', kind: 'groundCircle', telegraph: 1.2, radius: 7, dmgMul: 2.0, originSelf: true, knockback: 3.5, cd: 9.0 },
+  ],
+  30: [   // Warlord Phase 2 — tectonic + toxic
+    { id: 'tectonicSlam', kind: 'groundCircle', telegraph: 1.4, radius: 10, dmgMul: 2.5, originSelf: true, knockback: 2.0, cd: 10.0 },
+    { id: 'toxicCloud', kind: 'poolDot', telegraph: 1.0, radius: 5, duration: 8, dpsMul: 0.6, slow: { dur: 1.0, mul: 0.6 }, targetHero: true, cd: 8.0 },
+    { id: 'boulderHurl', kind: 'projectile', telegraph: 0.5, speed: 18, dmgMul: 2.2, radius: 1.5, range: 22, cd: 5.5 },
+  ],
+};
 
 // Hämta boss-def + skalad data för en given tier (1-5)
 function getBossWarsDef(tier) {
@@ -3675,8 +3671,9 @@ function spawnBossWarsBoss(side, tier) {
   scene.add(mesh);
   const hp = bossInfo.hp;
   const dmg = Math.round(28 * bossInfo.dmgScale);
+  const bossId = nextEntityId++;
   side.monsters.push({
-    id: nextEntityId++,
+    id: bossId,
     lane: 1,
     hp, maxHp: hp,
     speed: 1.6,
@@ -3693,8 +3690,52 @@ function spawnBossWarsBoss(side, tier) {
     bossSkills: bossDef.skills,
     skillCds: bossDef.skills.map(s => s.cd * 0.4),  // första cast snabbare
     activeCast: null,
+    // 2-phase tracking (gäller bossar 1, 2, 3 — phase2Skills definierat per wave)
+    bossPhase: 1,
+    phase2Skills: BOSS_WARS_PHASE2_SKILLS[bossInfo.wave] || null,
+    phaseTransitionRemaining: 0,   // sek av "fly up + land"-animation (>0 = oattacker-bar)
     mesh,
   });
+  side.bossWarsBossId = bossId;   // för säker check i checkMatchEnd
+}
+
+// Phase-transition: trigga vid 50% HP. Push back + stun heroes, boss flyger upp,
+// landar med nya skills.
+function triggerBossPhaseTransition(side, boss) {
+  if (!boss || boss.bossPhase !== 1 || !boss.phase2Skills) return;
+  boss.bossPhase = 2;
+  // Avbryt eventuell pågående cast och rensa dess visuals
+  if (boss.activeCast) {
+    cleanupTelegraphMesh(boss.activeCast);
+    cleanupExecuteMesh(boss.activeCast);
+    boss.activeCast = null;
+  }
+  // Push-back + stun alla aktiva heroes i bossWars
+  for (const idx of [1, 2, 3, 4]) {
+    const s = sides[idx];
+    if (!s || s.hero.dead) continue;
+    // Stun 3s — använd frozenTime som hård-stun
+    s.hero.frozenTime = Math.max(s.hero.frozenTime || 0, 3.0);
+    // Push back 6m från bossen
+    const dx = s.hero.x - boss.mesh.position.x;
+    const dz = s.hero.z - boss.mesh.position.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const nx = s.hero.x + (dx / d) * 6;
+    const nz = s.hero.z + (dz / d) * 6;
+    s.hero.x = nx;
+    s.hero.z = nz;
+    if (s.mesh) s.mesh.position.set(nx, 0, nz);
+    spawnSkillCastFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44aa, 4.0);
+  }
+  // Boss flyger upp + landar (~2.5s total). Under den tiden tar bossen ingen skada
+  // (phaseTransitionRemaining > 0). Vi animerar y-pos i monster-loopen.
+  boss.phaseTransitionRemaining = 2.5;
+  boss.phaseTransitionTotal = 2.5;
+  // Byt skill-set när transition är klar (sker i tick)
+  boss._pendingPhase2 = true;
+  // Visuell shake + burst
+  triggerCameraShake(0.6, 0.6);
+  spawnShieldBurstFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44ff);
 }
 
 let arenaOrbMesh = null;     // Three.js Group för orb
@@ -5773,6 +5814,36 @@ function updateMonsters(side, dt) {
     }
     // Taunted: tvinga chase
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
+    // Boss Wars phase-transition (bossar 1, 2, 3 vid 50% HP) — invulnerable +
+    // flyger upp/landar med nya skills. Hoppa över all normal AI under transition.
+    if (m.isBossWarsBoss && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * 0.5) {
+      triggerBossPhaseTransition(side, m);
+    }
+    if ((m.phaseTransitionRemaining || 0) > 0) {
+      m.phaseTransitionRemaining = Math.max(0, m.phaseTransitionRemaining - dt);
+      // Animera y-position: bågformig flyg-upp + land
+      const total = m.phaseTransitionTotal || 2.5;
+      const u = 1 - m.phaseTransitionRemaining / total;   // 0 → 1
+      // Sinus-båge: y peaks vid u=0.5
+      const peakY = 7.0;
+      m.mesh.position.y = Math.sin(u * Math.PI) * peakY;
+      // Spinn medan i luften
+      m.mesh.rotation.y += dt * 4.5;
+      // Vid landning: byt skill-set + reset
+      if (m.phaseTransitionRemaining <= 0 && m._pendingPhase2) {
+        m._pendingPhase2 = false;
+        m.bossSkills = m.phase2Skills;
+        m.skillCds = m.phase2Skills.map(s => s.cd * 0.4);
+        m.mesh.position.y = 0;
+        m.mesh.rotation.y = 0;
+        // Boost dmg lite för phase 2 (raid-känsla)
+        m.damage = Math.round(m.damage * 1.25);
+        // Visuell landningsburst
+        spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 8, 0xff44aa);
+        triggerCameraShake(0.5, 0.5);
+      }
+      continue;   // Skip all normal monster AI under transition
+    }
     // Boss/miniboss-skill: under cast pausar normal AI
     if (m.bossSkills) {
       tickBossSkills(side, m, dt);
@@ -6514,6 +6585,12 @@ function updateProjectiles(side, dt) {
         }
         scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
       }
+      // Boss Wars phase-transition: bossen invulnerable medan han flyger upp/landar
+      if (p.target.isBossWarsBoss && (p.target.phaseTransitionRemaining || 0) > 0) {
+        spawnCcText(p.target.mesh, 'IMMUNE');
+        scene.remove(p.mesh); side.projectiles.splice(i, 1);
+        continue;
+      }
       // Applicera poison-stack INNAN damage
       if (p.appliesPoison) {
         p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
@@ -6651,6 +6728,11 @@ function soloShatter(side, opp, x, z) {
 function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
   const m = side.monsters[mIdx];
   if (!m || m.hp <= 0) return;
+  // Boss Wars phase-transition: bossen är invulnerable medan han flyger upp/landar
+  if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) {
+    spawnCcText(m.mesh, 'IMMUNE');
+    return;
+  }
   if ((m.frozenTime || 0) > 0) {
     soloShatter(side, opp, m.mesh.position.x, m.mesh.position.z);
     m.frozenTime = 0;
@@ -9465,6 +9547,9 @@ function checkMatchEnd() {
     if (!APP.bossWars || !APP.bossWars.started) return;
     const s = sides[1];
     if (!s) return;
+    // Extra säkerhet: kräv att boss faktiskt spawnats (bossId satt i spawnBossWarsBoss).
+    // Förhindrar VINST om någon edge-case lurar started=true innan boss finns.
+    if (!s.bossWarsBossId) return;
     if (s.hero.dead) {
       matchState.gameOver = true;
       matchState.winner = 2;          // "boss" vann
@@ -14091,23 +14176,26 @@ function openBossDetail(tier) {
     dragonBreath: 'Dragon Breath', wingSlam: 'Wing Slam', skyfireRain: 'Skyfire Rain',
   };
   const skillDescs = {
-    shieldBash: 'Telegraferad röd linje 7m fram, sen dashar bossen genom och skadar allt i banan.',
-    throwingAxe: 'Långsam skillshot — yxan flyger 14m rakt fram. Dodga genom att gå åt sidan.',
-    battleRoar: '5m AoE-radie runt bossen, slowar 60% i 2s efter träff.',
-    lightningStrike: 'Targetar din NUVARANDE position med 2.8m AoE. Flytta dig sista sekunden.',
-    spearVolley: '3 spjut i en kon-spread framåt. Dodga genom diagonal-rörelse.',
-    warStomp: '6m AoE runt bossen med KNOCKBACK 2.5m. Håll avstånd från center.',
-    cleaveWave: '90° kon, 8m lång framåt. Gå bakom bossen för att undvika.',
-    poisonPool: 'Kastas på din position, lämnar 6s DoT-pöl (3m radie) som tickar 40% dmg + slow.',
-    earthquake: '5 random AoE-cirklar (2.5m) spawnas i sekvens runt bossen över 3s.',
-    hellfireBeam: 'Roterande beam-sweep 180° över 1.8s. Räckvidd 12m, halv-vinkel 90°.',
-    infernoStrike: 'Snabb telegraferad strike (0.8s) på din pos, lämnar brand-zon 3s efter.',
-    meteorShower: '5 meteorer slumpvis i arenan över 4s. Håll dig rörlig konstant.',
-    dragonBreath: 'Sustained kon-flam 2.5s (12m, smal kon). DPS-tick var 0.3s. Kom bakom!',
-    wingSlam: '5m AoE runt med stor 4m knockback. Kan kasta dig ut ur arenan!',
-    skyfireRain: '8 meteorer regnar över 6s (3m radie/styck). Konstant rörelse krävs.',
+    shieldBash: 'Dashar 7m framåt och skadar allt i banan.',
+    throwingAxe: 'Kastar en yxa rakt fram (14m räckvidd).',
+    battleRoar: '5m AoE-radie runt bossen, applicerar 60% slow i 2s.',
+    lightningStrike: 'Targetar din nuvarande position med 2.8m AoE-skada.',
+    spearVolley: 'Kastar 3 spjut i en kon-spread framåt.',
+    warStomp: '6m AoE runt bossen med 2.5m knockback.',
+    cleaveWave: '90° kon framåt, 8m lång.',
+    poisonPool: 'Kastar en pöl på din position som tickar DoT + slow i 6s (3m radie).',
+    earthquake: '5 slumpmässiga AoE-cirklar (2.5m) spawnas i sekvens runt bossen.',
+    hellfireBeam: 'Roterande beam-sweep 180° över 1.8s (12m räckvidd).',
+    infernoStrike: 'Snabb telegraferad AoE-strike på din position + brinnande zon 3s.',
+    meteorShower: '5 meteorer landar slumpvis runt bossen över 4s.',
+    dragonBreath: 'Sustained kon-flam 2.5s (12m räckvidd, smal kon, DPS-tick var 0.3s).',
+    wingSlam: '5m AoE runt bossen + 4m knockback.',
+    skyfireRain: '8 meteorer regnar över 6s (3m radie per meteor).',
   };
   const body = document.getElementById('boss-detail-body');
+  const phase2Hint = b.hasPhase2
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 vid 50% HP</strong> — bossen byter taktik. Vad som händer får du upptäcka själv.</div>`
+    : '';
   let html = `
     <h2>${b.name}</h2>
     <div class="bd-meta">Tier ${b.tier} · ${b.diff} · ${b.hp} HP · damage scale ${b.dmgScale}×</div>
@@ -14116,9 +14204,7 @@ function openBossDetail(tier) {
   for (const s of skills) {
     html += `<div class="bd-skill"><div class="bd-skill-name">${skillNames[s.id] || s.id}</div><div class="bd-skill-desc">${skillDescs[s.id] || ''}</div></div>`;
   }
-  html += `<div style="font: 700 13px/1 system-ui, sans-serif; color: #aa66ff; letter-spacing: 1.5px; margin: 18px 0 6px;">🧠 MECHANICS</div><ul style="margin: 0; padding-left: 22px; font: 400 13px/1.55 system-ui, sans-serif;">`;
-  for (const m of b.mechanics) html += `<li>${m}</li>`;
-  html += `</ul>`;
+  html += phase2Hint;
   body.innerHTML = html;
   // Spara vald tier till fight-knappen
   const fightBtn = document.getElementById('btn-boss-detail-fight');
@@ -14134,6 +14220,10 @@ function bossWarsStartFight(tier) {
   APP.gameMode = 'bosswars';
   APP.arenaTeamSize = 1;
   APP.bossWars = { active: true, tier, started: false };
+  // Force-reset så ev. gammal matchState från tidigare match inte hänger kvar
+  matchState.gameOver = false;
+  matchState.gameWon = false;
+  matchState.winner = 0;
   closeBossDetail();
   showHeroPick('solo');
 }
