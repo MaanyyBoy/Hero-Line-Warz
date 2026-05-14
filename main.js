@@ -9455,8 +9455,11 @@ const matchState = { gameOver: false, gameWon: false, winner: 0 };
 
 function checkMatchEnd() {
   if (matchState.gameOver) return;
-  // Boss Wars: vinn = boss död, förlust = hjälte död
+  // Boss Wars: vinn = boss död, förlust = hjälte död.
+  // Vänta tills bossen faktiskt spawnats — annars triggas vinst direkt under
+  // hero-pick eftersom sides[1].monsters fortfarande är tom.
   if (APP.gameMode === 'bosswars') {
+    if (!APP.bossWars || !APP.bossWars.started) return;
     const s = sides[1];
     if (!s) return;
     if (s.hero.dead) {
@@ -13849,6 +13852,8 @@ function enterPlayPhase() {
     }
     // Spawna boss
     spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
+    // Markera match som startad — först nu får checkMatchEnd avgöra utgång
+    APP.bossWars.started = true;
   } else {
     arenaSceneGroup.visible = false;
     bossWarsSceneGroup.visible = false;
@@ -14115,7 +14120,7 @@ function closeBossDetail() {
 function bossWarsStartFight(tier) {
   APP.gameMode = 'bosswars';
   APP.arenaTeamSize = 1;
-  APP.bossWars = { active: true, tier };
+  APP.bossWars = { active: true, tier, started: false };
   closeBossDetail();
   showHeroPick('solo');
 }
