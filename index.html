@@ -719,7 +719,102 @@
       background: linear-gradient(135deg, rgba(200,80,80,0.95), rgba(150,40,40,0.95));
       border-color: rgba(255,180,180,0.75);
     }
+    .lobby-btn.mode-btn.bosswars {
+      background: linear-gradient(135deg, rgba(150,60,180,0.95), rgba(80,30,120,0.95));
+      border-color: rgba(220,150,255,0.75);
+    }
     .lobby-btn.mode-btn:hover { transform: translateY(-2px); }
+    /* Boss-pick: grid med 5 kort */
+    #boss-pick-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 12px;
+      max-width: 880px;
+      width: min(880px, 92vw);
+      margin: 6px auto;
+    }
+    .boss-card {
+      background: linear-gradient(135deg, rgba(80,40,120,0.85), rgba(40,20,60,0.85));
+      border: 2px solid rgba(180,120,220,0.5);
+      border-radius: 12px;
+      padding: 14px 12px;
+      cursor: pointer;
+      transition: transform 0.1s, border-color 0.12s;
+      text-align: center;
+    }
+    .boss-card:hover { border-color: rgba(220,180,255,0.9); transform: translateY(-3px); }
+    .boss-card .bc-tier {
+      font: 700 11px/1 system-ui, sans-serif;
+      letter-spacing: 1.5px;
+      color: #aa66ff;
+      margin-bottom: 6px;
+    }
+    .boss-card .bc-name {
+      font: 800 18px/1.1 system-ui, sans-serif;
+      color: #ffd34a;
+      margin-bottom: 6px;
+    }
+    .boss-card .bc-diff {
+      font: 600 12px/1.1 system-ui, sans-serif;
+      margin-bottom: 8px;
+    }
+    .boss-card .bc-diff.easy { color: #88ee77; }
+    .boss-card .bc-diff.medium { color: #ffd055; }
+    .boss-card .bc-diff.hard { color: #ff7755; }
+    .boss-card .bc-diff.extreme { color: #ff4455; }
+    .boss-card .bc-diff.nightmare { color: #cc44ff; }
+    .boss-card .bc-hp {
+      font: 500 11px/1 system-ui, sans-serif;
+      opacity: 0.75;
+    }
+    /* Boss detail-modal */
+    #boss-detail-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.78);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 700;
+      padding: 20px;
+    }
+    #boss-detail-modal.hidden { display: none; }
+    #boss-detail-card {
+      background: linear-gradient(135deg, #2a1840, #150820);
+      border: 2px solid rgba(200,140,255,0.55);
+      border-radius: 14px;
+      padding: 22px 26px;
+      width: min(560px, 94vw);
+      max-height: 88vh;
+      overflow-y: auto;
+      color: #fff;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+    }
+    #boss-detail-card h2 {
+      margin: 0 0 6px;
+      font: 800 28px/1.1 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 1px;
+    }
+    #boss-detail-card .bd-meta {
+      font: 600 13px/1.4 system-ui, sans-serif;
+      opacity: 0.85;
+      margin-bottom: 16px;
+    }
+    #boss-detail-card .bd-skill {
+      background: rgba(60,40,90,0.55);
+      border-left: 3px solid #aa66ff;
+      padding: 8px 12px;
+      margin: 8px 0;
+      border-radius: 0 8px 8px 0;
+    }
+    #boss-detail-card .bd-skill-name {
+      font: 700 14px/1.2 system-ui, sans-serif;
+      color: #ddc680;
+      margin-bottom: 3px;
+    }
+    #boss-detail-card .bd-skill-desc {
+      font: 400 12.5px/1.4 system-ui, sans-serif;
+      opacity: 0.92;
+    }
     .lobby-btn {
       background: rgba(60,120,200,0.85);
       color: #fff;
@@ -1644,11 +1739,29 @@
     <div class="lobby-panel visible" id="lobby-main">
       <button class="lobby-btn mode-btn" id="btn-mode-line">⚔ Line Wars</button>
       <button class="lobby-btn mode-btn arena" id="btn-mode-arena">🏟 Arena Wars</button>
+      <button class="lobby-btn mode-btn bosswars" id="btn-mode-boss">👹 Boss Wars</button>
 
       <div class="lobby-section misc">More</div>
       <button class="lobby-btn secondary" id="btn-heroes">Heroes</button>
       <button class="lobby-btn secondary" id="btn-items">Items</button>
       <button class="lobby-btn secondary" id="btn-howto">How to Play</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-boss-pick">
+      <div style="font-size: 26px; color: #aa44ff; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">👹 Boss Wars</div>
+      <div class="sub" style="margin-bottom: 14px;">Välj boss att möta — co-op upp till 3 spelare (kommer)</div>
+      <div id="boss-pick-grid"></div>
+      <button class="lobby-btn secondary" id="btn-boss-back" style="margin-top: 18px;">← Tillbaka</button>
+    </div>
+
+    <div id="boss-detail-modal" class="hidden">
+      <div id="boss-detail-card">
+        <button class="lobby-btn secondary browser-back" id="btn-boss-detail-back">← Tillbaka</button>
+        <div id="boss-detail-body"></div>
+        <div style="text-align: center; margin-top: 18px;">
+          <button class="lobby-btn" id="btn-boss-detail-fight" style="background: rgba(170,60,170,0.85); border-color: rgba(220,150,255,0.7);">⚔ Möt denna boss</button>
+        </div>
+      </div>
     </div>
 
     <div class="lobby-panel" id="lobby-line-team">

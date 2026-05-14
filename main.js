@@ -1446,6 +1446,67 @@ function getNextBossDef(waveNum) {
   const nextBossWave = (Math.floor((waveNum - 1) / 10) + 1) * 10;
   return BOSS_DEFS[nextBossWave] || null;
 }
+
+// ===== BOSS WARS — dedikerade boss-fights, co-op upp till 3 spelare =====
+// Återanvänder BOSS_DEFS (samma 5 bossar som i wave-systemet) men med skalade
+// HP/dmg per svårighetsgrad och dedikerad arena-scen.
+const BOSS_WARS_DEFS = [
+  {
+    tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
+    desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker — bra att börja med för att lära sig boss-mekaniker.',
+    hp: 800, dmgScale: 1.0,
+    mechanics: [
+      'Telegraferade attacker — alla skills har 1+ sek röd varning på marken/luften innan de slår',
+      'Långsam rörelse — du kan kite honom om du blir lågt på HP',
+      'Inga särskilda passiver',
+    ],
+  },
+  {
+    tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
+    desc: 'Krigsstrateg som öppnar med ranged-attacker och stänger med AoE-knockback. Mer aggressiv än Captain.',
+    hp: 1500, dmgScale: 1.3,
+    mechanics: [
+      'Targetar din nuvarande position med Lightning Strike — flytta dig sista sekunden',
+      'Spear Volley är 3-spjut spread — sidesteppa diagonalt',
+      'War Stomp har knockback — håll avstånd från bossens center',
+    ],
+  },
+  {
+    tier: 3, wave: 30, name: 'Warlord', diff: 'Hard', diffClass: 'hard',
+    desc: 'Brutal närstrid + poison-zoner som denyar terräng. Här börjar boss-fighten kräva mer aktiv positionering.',
+    hp: 2500, dmgScale: 1.6,
+    mechanics: [
+      'Cleave Wave är en 8m kon framåt — gå bakom bossen för att undvika',
+      'Poison Pool lämnar en DoT-zon i 6s — undvik att stå i den även efter explosion',
+      'Earthquake spawnar 5 AoE-cirklar i rad runt bossen — håll dig rörlig',
+    ],
+  },
+  {
+    tier: 4, wave: 40, name: 'Demon Prince', diff: 'Extreme', diffClass: 'extreme',
+    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt.',
+    hp: 4000, dmgScale: 2.0,
+    mechanics: [
+      'Hellfire Beam sveper 180° över 1.8s — gå BAKOM bossen där den just har svept',
+      'Inferno Strike targetar dig + lämnar burning-zon i 3s — flytta efter träff',
+      'Meteor Shower regnar 5 meteorer slumpvis i arenan — håll dig rörlig kontinuerligt',
+    ],
+  },
+  {
+    tier: 5, wave: 50, name: 'Drakkonungen', diff: 'Nightmare', diffClass: 'nightmare',
+    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate boss-test.',
+    hp: 6000, dmgScale: 2.5,
+    mechanics: [
+      'Dragon Breath är en 2.5s sustained kon-flam (12m räckvidd) — kom bakom snabbt',
+      'Wing Slam har 5m AoE + 4m knockback — kicker dig ut ur arena-kanten',
+      'Skyfire Rain är 8 meteorer över 6s — kombinera med dodge av andra skills',
+    ],
+  },
+];
+
+// Hämta boss-def + skalad data för en given tier (1-5)
+function getBossWarsDef(tier) {
+  return BOSS_WARS_DEFS.find(b => b.tier === tier) || BOSS_WARS_DEFS[0];
+}
 // Mini-bossar spawnar bara på jämna waves (2,4,6,8 / 12,14,16,18 / etc).
 // Skill-rotation per tier: 1:a even-waven i tier → skill 0, 2:a → 1, 3:e → 2, 4:e → 0.
 function shouldSpawnMiniBoss(waveNum) {
@@ -1681,6 +1742,10 @@ function isHeroWalkable(idx, x, z) {
     if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return false;
     if (isArenaCoverAt(x, z)) return false;
     return true;
+  }
+  // Boss Wars: cirkulär platform, fri rörelse inom radius
+  if (APP.gameMode === 'bosswars') {
+    return isBossWarsPos(x, z);
   }
   const cfg = SIDE_CFG[idx];
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
@@ -3279,6 +3344,7 @@ const APP = {
   gameMode: 'classic',    // 'classic' (Line Wars) | 'arena1v1'
   arenaTeamSize: 1,       // 1 (1v1) eller 2 (2v2) — antal hjältar per team
   arenaBot: { active: false, difficulty: null },  // arena solo vs AI
+  bossWars: { active: false, tier: 0 },           // boss wars solo (eller 3-spelare co-op kommande)
   localSide: 1,           // 1, 2, 3 eller 4 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
   ws: null,               // WebSocket till relay-servern (host + client)
@@ -3547,6 +3613,89 @@ const arenaSceneGroup = new THREE.Group();
 arenaSceneGroup.visible = false;
 arenaSceneGroup.userData.isArena = true;
 scene.add(arenaSceneGroup);
+
+// === BOSS WARS ARENA ===
+// Stor flat stenplatta vid (0, BOSSWARS_CZ) — basic utan detaljer (user iterates senare)
+const BOSSWARS_CX = 0;
+const BOSSWARS_CZ = 90;
+const BOSSWARS_RADIUS = 25;
+const bossWarsSceneGroup = new THREE.Group();
+bossWarsSceneGroup.visible = false;
+bossWarsSceneGroup.userData.isBossWars = true;
+scene.add(bossWarsSceneGroup);
+let bossWarsBuilt = false;
+
+function buildBossWarsScene() {
+  if (bossWarsBuilt) return;
+  // Stor platt cirkulär stenplatta — bas-fundament
+  const platMat = new THREE.MeshStandardMaterial({ color: 0x6a5a44, roughness: 0.88, metalness: 0.1 });
+  const platform = new THREE.Mesh(new THREE.CylinderGeometry(BOSSWARS_RADIUS, BOSSWARS_RADIUS + 0.5, 0.4, 64), platMat);
+  platform.position.set(BOSSWARS_CX, 0.2, BOSSWARS_CZ);
+  platform.receiveShadow = true;
+  platform.castShadow = true;
+  bossWarsSceneGroup.add(platform);
+  // Övre yta — något ljusare för subtle "topp"-känsla
+  const topMat = new THREE.MeshStandardMaterial({ color: 0x7a6a4e, roughness: 0.92 });
+  const top = new THREE.Mesh(new THREE.CircleGeometry(BOSSWARS_RADIUS - 0.2, 64), topMat);
+  top.rotation.x = -Math.PI / 2;
+  top.position.set(BOSSWARS_CX, 0.41, BOSSWARS_CZ);
+  top.receiveShadow = true;
+  bossWarsSceneGroup.add(top);
+  // Outer-edge dark ring (för visuell definition)
+  const edge = new THREE.Mesh(
+    new THREE.RingGeometry(BOSSWARS_RADIUS - 0.6, BOSSWARS_RADIUS - 0.05, 64),
+    new THREE.MeshBasicMaterial({ color: 0x2a2218, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  edge.rotation.x = -Math.PI / 2;
+  edge.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
+  bossWarsSceneGroup.add(edge);
+  bossWarsBuilt = true;
+}
+
+function isBossWarsPos(x, z) {
+  const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
+  return (dx * dx + dz * dz) < (BOSSWARS_RADIUS - 0.5) * (BOSSWARS_RADIUS - 0.5);
+}
+
+// Spawnar boss-wars-bossen i centrum av platformen. Återanvänder BOSS_DEFS
+// + boss-skill-systemet (tickBossSkills/tickBossAura) som redan funkar för waves.
+function spawnBossWarsBoss(side, tier) {
+  if (!side) return;
+  const bossInfo = getBossWarsDef(tier);
+  if (!bossInfo) return;
+  const bossDef = BOSS_DEFS[bossInfo.wave];
+  if (!bossDef) return;
+  const mesh = makeMonsterMesh();
+  const scale = bossDef.scale;
+  mesh.scale.set(scale, scale, scale);
+  applyMonsterTint(mesh, bossDef.bodyTint, 0.85);
+  attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+  attachHpBar(mesh, bossDef.scale * 0.85);
+  mesh.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
+  scene.add(mesh);
+  const hp = bossInfo.hp;
+  const dmg = Math.round(28 * bossInfo.dmgScale);
+  side.monsters.push({
+    id: nextEntityId++,
+    lane: 1,
+    hp, maxHp: hp,
+    speed: 1.6,
+    damage: dmg,
+    attackType: 'melee',
+    attackRange: 1.6,
+    attackInterval: 1.2,
+    pathIndex: 0,
+    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: true,
+    isBoss: true, isMiniBoss: false,
+    isBossWarsBoss: true,
+    bossDef,
+    bossName: bossDef.name,
+    bossSkills: bossDef.skills,
+    skillCds: bossDef.skills.map(s => s.cd * 0.4),  // första cast snabbare
+    activeCast: null,
+    mesh,
+  });
+}
 
 let arenaOrbMesh = null;     // Three.js Group för orb
 let arenaOrbLight = null;
@@ -5646,7 +5795,9 @@ function updateMonsters(side, dt) {
     const distHero = Math.hypot(dxh, dzh);
     if (!heroAlive) m.chasing = false;
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
-    else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
+    else if (m.chasing && distHero > MONSTER_LEASH_RANGE && !m.isBossWarsBoss) m.chasing = false;
+    // Boss Wars: bossen jagar ALLTID hjälten oavsett avstånd
+    if (m.isBossWarsBoss && heroAlive) m.chasing = true;
 
     m.atkCd = Math.max(0, m.atkCd - dt);
     const mAtkRange = m.attackRange || 1.2;
@@ -9304,6 +9455,24 @@ const matchState = { gameOver: false, gameWon: false, winner: 0 };
 
 function checkMatchEnd() {
   if (matchState.gameOver) return;
+  // Boss Wars: vinn = boss död, förlust = hjälte död
+  if (APP.gameMode === 'bosswars') {
+    const s = sides[1];
+    if (!s) return;
+    if (s.hero.dead) {
+      matchState.gameOver = true;
+      matchState.winner = 2;          // "boss" vann
+      matchState.gameWon = false;
+    } else {
+      const bossAlive = s.monsters.some(m => m.isBossWarsBoss);
+      if (!bossAlive) {
+        matchState.gameOver = true;
+        matchState.winner = 1;        // spelaren vann
+        matchState.gameWon = true;
+      }
+    }
+    return;
+  }
   if (sides[1] && sides[1].tower.hp <= 0) {
     matchState.gameOver = true;
     matchState.winner = 2;
@@ -9394,9 +9563,16 @@ function updateHud() {
     endgameEl.classList.toggle('win', won);
     endgameEl.classList.toggle('lose', !won);
     endgameTitle.textContent = won ? 'VINST!' : 'FÖRLUST';
-    endgameInfo.textContent = won
-      ? `Du krossade motståndarens torn på wave ${side.wave.current}.`
-      : `Ditt torn föll på wave ${side.wave.current}.`;
+    if (APP.gameMode === 'bosswars') {
+      const bossInfo = getBossWarsDef(APP.bossWars && APP.bossWars.tier || 1);
+      endgameInfo.textContent = won
+        ? `Du besegrade ${bossInfo.name} (Tier ${bossInfo.tier} · ${bossInfo.diff})!`
+        : `${bossInfo.name} besegrade dig. Försök igen!`;
+    } else {
+      endgameInfo.textContent = won
+        ? `Du krossade motståndarens torn på wave ${side.wave.current}.`
+        : `Ditt torn föll på wave ${side.wave.current}.`;
+    }
     return;
   }
   const opp = sides[3 - APP.localSide];
@@ -11593,7 +11769,9 @@ function refreshShopUI() {
 
   // I arena: shop tillgänglig under prep-fasen (köpa items innan match)
   const isArenaPrep = APP.gameMode === 'arena1v1' && arenaState.phase === 'prep';
-  const showShop = isArenaPrep || (inBase && APP.gameMode !== 'arena1v1');
+  // Boss Wars: ingen shop
+  const isBossWars = APP.gameMode === 'bosswars';
+  const showShop = !isBossWars && (isArenaPrep || (inBase && APP.gameMode !== 'arena1v1'));
   if (shopContainerEl) shopContainerEl.classList.toggle('visible', showShop);
   if (!showShop) collapseShopPanels();
 }
@@ -13299,8 +13477,9 @@ const lobbyArenaWarsEl = document.getElementById('lobby-arena-wars');
 const lobbyLineTeamEl = document.getElementById('lobby-line-team');
 const lobbyArenaTeamEl = document.getElementById('lobby-arena-team');
 const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
+const lobbyBossPickEl = document.getElementById('lobby-boss-pick');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -13315,6 +13494,7 @@ function showLobbyPanel(which) {
   else if (which === 'line-team') lobbyLineTeamEl.classList.add('visible');
   else if (which === 'arena-team') lobbyArenaTeamEl.classList.add('visible');
   else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
+  else if (which === 'boss-pick') lobbyBossPickEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -13644,8 +13824,34 @@ function enterPlayPhase() {
       hideArenaEnd();
       hideArenaCountdown();
     }
+  } else if (APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.active) {
+    // Boss Wars: bygg flat platform, sätt hjälte lvl 30, spawna vald boss
+    buildBossWarsScene();
+    bossWarsSceneGroup.visible = true;
+    arenaSceneGroup.visible = false;
+    for (const idx of [1]) {
+      const s = sides[idx];
+      if (!s) continue;
+      s.level = 30;
+      s.xp = 0;
+      s.xpToNext = xpForLevel(30);
+      // Placera hjälten vid kanten av plattformen (mot center)
+      s.hero.x = BOSSWARS_CX - (BOSSWARS_RADIUS - 4);
+      s.hero.z = BOSSWARS_CZ;
+      s.hero.facingX = 1; s.hero.facingZ = 0;
+      s.hero.hp = s.hero.maxHp;
+      s.hero.dead = false;
+      s.hero.respawnTimer = 0;
+      if (s.mesh) {
+        s.mesh.position.set(s.hero.x, 0, s.hero.z);
+        s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+      }
+    }
+    // Spawna boss
+    spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
   } else {
     arenaSceneGroup.visible = false;
+    bossWarsSceneGroup.visible = false;
   }
   // Recompute stats för solo (MP får från servern)
   if (APP.mode === 'solo') {
@@ -13831,6 +14037,102 @@ const btnLineTeamBack = document.getElementById('btn-line-team-back');
 if (btnLineTeamBack) btnLineTeamBack.addEventListener('click', () => showLobbyPanel('main'));
 const btnLine1v1 = document.getElementById('btn-line-1v1');
 if (btnLine1v1) btnLine1v1.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('line-wars'); });
+// ---- Boss Wars ----
+function bossWarsShow() {
+  APP.gameMode = 'bosswars';
+  APP.bossWars = { active: false, tier: 0 };  // reset tills användaren picker boss
+  renderBossPickGrid();
+  showLobbyPanel('boss-pick');
+}
+function renderBossPickGrid() {
+  const grid = document.getElementById('boss-pick-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (const b of BOSS_WARS_DEFS) {
+    const card = document.createElement('div');
+    card.className = 'boss-card';
+    card.innerHTML = `
+      <div class="bc-tier">TIER ${b.tier}</div>
+      <div class="bc-name">${b.name}</div>
+      <div class="bc-diff ${b.diffClass}">${b.diff}</div>
+      <div class="bc-hp">${b.hp} HP</div>`;
+    card.addEventListener('click', () => openBossDetail(b.tier));
+    grid.appendChild(card);
+  }
+}
+function openBossDetail(tier) {
+  const b = getBossWarsDef(tier);
+  if (!b) return;
+  const def = BOSS_DEFS[b.wave];
+  const skills = def ? def.skills : [];
+  const skillNames = {
+    shieldBash: 'Shield Bash', throwingAxe: 'Throwing Axe', battleRoar: 'Battle Roar',
+    lightningStrike: 'Lightning Strike', spearVolley: 'Spear Volley', warStomp: 'War Stomp',
+    cleaveWave: 'Cleave Wave', poisonPool: 'Poison Pool', earthquake: 'Earthquake',
+    hellfireBeam: 'Hellfire Beam', infernoStrike: 'Inferno Strike', meteorShower: 'Meteor Shower',
+    dragonBreath: 'Dragon Breath', wingSlam: 'Wing Slam', skyfireRain: 'Skyfire Rain',
+  };
+  const skillDescs = {
+    shieldBash: 'Telegraferad röd linje 7m fram, sen dashar bossen genom och skadar allt i banan.',
+    throwingAxe: 'Långsam skillshot — yxan flyger 14m rakt fram. Dodga genom att gå åt sidan.',
+    battleRoar: '5m AoE-radie runt bossen, slowar 60% i 2s efter träff.',
+    lightningStrike: 'Targetar din NUVARANDE position med 2.8m AoE. Flytta dig sista sekunden.',
+    spearVolley: '3 spjut i en kon-spread framåt. Dodga genom diagonal-rörelse.',
+    warStomp: '6m AoE runt bossen med KNOCKBACK 2.5m. Håll avstånd från center.',
+    cleaveWave: '90° kon, 8m lång framåt. Gå bakom bossen för att undvika.',
+    poisonPool: 'Kastas på din position, lämnar 6s DoT-pöl (3m radie) som tickar 40% dmg + slow.',
+    earthquake: '5 random AoE-cirklar (2.5m) spawnas i sekvens runt bossen över 3s.',
+    hellfireBeam: 'Roterande beam-sweep 180° över 1.8s. Räckvidd 12m, halv-vinkel 90°.',
+    infernoStrike: 'Snabb telegraferad strike (0.8s) på din pos, lämnar brand-zon 3s efter.',
+    meteorShower: '5 meteorer slumpvis i arenan över 4s. Håll dig rörlig konstant.',
+    dragonBreath: 'Sustained kon-flam 2.5s (12m, smal kon). DPS-tick var 0.3s. Kom bakom!',
+    wingSlam: '5m AoE runt med stor 4m knockback. Kan kasta dig ut ur arenan!',
+    skyfireRain: '8 meteorer regnar över 6s (3m radie/styck). Konstant rörelse krävs.',
+  };
+  const body = document.getElementById('boss-detail-body');
+  let html = `
+    <h2>${b.name}</h2>
+    <div class="bd-meta">Tier ${b.tier} · ${b.diff} · ${b.hp} HP · damage scale ${b.dmgScale}×</div>
+    <p style="margin: 0 0 14px; font: 400 14px/1.5 system-ui, sans-serif; opacity: 0.92;">${b.desc}</p>
+    <div style="font: 700 13px/1 system-ui, sans-serif; color: #aa66ff; letter-spacing: 1.5px; margin: 14px 0 6px;">⚔ SKILLS</div>`;
+  for (const s of skills) {
+    html += `<div class="bd-skill"><div class="bd-skill-name">${skillNames[s.id] || s.id}</div><div class="bd-skill-desc">${skillDescs[s.id] || ''}</div></div>`;
+  }
+  html += `<div style="font: 700 13px/1 system-ui, sans-serif; color: #aa66ff; letter-spacing: 1.5px; margin: 18px 0 6px;">🧠 MECHANICS</div><ul style="margin: 0; padding-left: 22px; font: 400 13px/1.55 system-ui, sans-serif;">`;
+  for (const m of b.mechanics) html += `<li>${m}</li>`;
+  html += `</ul>`;
+  body.innerHTML = html;
+  // Spara vald tier till fight-knappen
+  const fightBtn = document.getElementById('btn-boss-detail-fight');
+  if (fightBtn) fightBtn.dataset.tier = String(tier);
+  const modal = document.getElementById('boss-detail-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+function closeBossDetail() {
+  const modal = document.getElementById('boss-detail-modal');
+  if (modal) modal.classList.add('hidden');
+}
+function bossWarsStartFight(tier) {
+  APP.gameMode = 'bosswars';
+  APP.arenaTeamSize = 1;
+  APP.bossWars = { active: true, tier };
+  closeBossDetail();
+  showHeroPick('solo');
+}
+const btnModeBoss = document.getElementById('btn-mode-boss');
+if (btnModeBoss) btnModeBoss.addEventListener('click', bossWarsShow);
+const btnBossBack = document.getElementById('btn-boss-back');
+if (btnBossBack) btnBossBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.bossWars = { active: false, tier: 0 }; showLobbyPanel('main'); });
+const btnBossDetailBack = document.getElementById('btn-boss-detail-back');
+if (btnBossDetailBack) btnBossDetailBack.addEventListener('click', closeBossDetail);
+const btnBossDetailFight = document.getElementById('btn-boss-detail-fight');
+if (btnBossDetailFight) btnBossDetailFight.addEventListener('click', () => {
+  const tier = parseInt(btnBossDetailFight.dataset.tier || '1', 10);
+  bossWarsStartFight(tier);
+});
+const bossDetailModal = document.getElementById('boss-detail-modal');
+if (bossDetailModal) bossDetailModal.addEventListener('click', (e) => { if (e.target === bossDetailModal) closeBossDetail(); });
+
 const btnArenaTeamBack = document.getElementById('btn-arena-team-back');
 if (btnArenaTeamBack) btnArenaTeamBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('main'); });
 const btnArena1v1Mode = document.getElementById('btn-arena-1v1');
@@ -13869,8 +14171,8 @@ function simulateAll(dt) {
   // Hjälte-respawn
   for (const side of activeSides()) {
     if (!side) continue;
-    // I arena: ingen auto-respawn — runda måste avslutas och startas om manuellt.
-    if (side.hero.dead && APP.gameMode !== 'arena1v1') {
+    // I arena + boss wars: ingen auto-respawn — match avslutas vid hero-död
+    if (side.hero.dead && APP.gameMode !== 'arena1v1' && APP.gameMode !== 'bosswars') {
       side.hero.respawnTimer -= dt;
       if (side.hero.respawnTimer <= 0) respawnHero(side);
     }
@@ -13933,15 +14235,19 @@ function simulateAll(dt) {
     }
   }
   const isArena = APP.gameMode === 'arena1v1';
+  const isBossWars = APP.gameMode === 'bosswars';
   // Per-sida simulering
   for (const side of activeSides()) {
     if (!side) continue;
     updateSkillCooldowns(side, dt);
-    if (!isArena) {
+    if (!isArena && !isBossWars) {
       updateWaves(side, dt);
       updateMonsters(side, dt);
       updatePlayerCreeps(side, dt);
       updateCreepProjectiles(side, dt);
+    } else if (isBossWars) {
+      // Boss Wars: bara monster-tick (för boss-AI), inga waves/creeps
+      updateMonsters(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
@@ -13978,6 +14284,7 @@ function simulateAll(dt) {
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
+  // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }
 
 function tickIncome(side, dt) {
