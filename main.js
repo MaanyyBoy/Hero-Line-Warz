@@ -3575,6 +3575,10 @@ function activeSides() {
   if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
     return [sides[1], sides[2], sides[3], sides[4]].filter(s => s);
   }
+  // Boss Wars MP: 3 hjältar
+  if (APP.gameMode === 'bosswars' && bossMpState && bossMpState.matchActive) {
+    return [sides[1], sides[2], sides[3]].filter(s => s);
+  }
   return [sides[1], sides[2]].filter(s => s);
 }
 
@@ -5848,16 +5852,24 @@ function tickBossExecute(side, m, cast, dt) {
 }
 
 // ===== DAMAGE-APPLIERS =====
+// I boss-wars co-op (MP) ska boss-skills träffa ALLA hjältar inom AoE,
+// inte bara sides[1]. Helper:
+function bossWarsTargets(side) {
+  if (bossMpState && bossMpState.matchActive && APP.gameMode === 'bosswars') {
+    return [sides[1], sides[2], sides[3]].filter(s => s);
+  }
+  return [side];
+}
 function applyBossCircleDmg(side, m, cast) {
   const s = cast.skill;
   const dmg = m.damage * (s.dmgMul || 1);
-  // Hero
-  if (!side.hero.dead) {
-    if (Math.hypot(side.hero.x - cast.targetX, side.hero.z - cast.targetZ) < s.radius) {
-      damageHero(side, dmg);
+  for (const tgt of bossWarsTargets(side)) {
+    if (tgt.hero.dead) continue;
+    if (Math.hypot(tgt.hero.x - cast.targetX, tgt.hero.z - cast.targetZ) < s.radius) {
+      damageHero(tgt, dmg);
       if (s.slow) {
-        side.heroSlowMul = Math.min(side.heroSlowMul || 1, s.slow.mul);
-        side.heroSlowTime = Math.max(side.heroSlowTime || 0, s.slow.dur);
+        tgt.heroSlowMul = Math.min(tgt.heroSlowMul || 1, s.slow.mul);
+        tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, s.slow.dur);
       }
     }
   }
@@ -5867,13 +5879,14 @@ function applyBossConeDmg(side, m, cast) {
 }
 function applyBossConeDmgRaw(side, m, cast, length, halfAngle, dmgMul) {
   const dmg = m.damage * (dmgMul || 1);
-  if (!side.hero.dead) {
-    const dx = side.hero.x - cast.originX, dz = side.hero.z - cast.originZ;
+  for (const tgt of bossWarsTargets(side)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
     const d = Math.hypot(dx, dz);
     if (d > 0.001 && d < length) {
       const dot = (dx * cast.dirX + dz * cast.dirZ) / d;
       const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-      if (ang < halfAngle) damageHero(side, dmg);
+      if (ang < halfAngle) damageHero(tgt, dmg);
     }
   }
 }
@@ -5881,35 +5894,41 @@ function applyBossLineDmg(side, m, cast, cx, cz) {
   const s = cast.skill;
   const dmg = m.damage * (s.dmgMul || 1);
   const e = cast.extras;
-  if (!side.hero.dead && !e.damaged.has('hero')) {
-    const d = Math.hypot(side.hero.x - cx, side.hero.z - cz);
+  for (const tgt of bossWarsTargets(side)) {
+    if (tgt.hero.dead) continue;
+    const key = 'hero' + tgt.idx;
+    if (e.damaged.has(key)) continue;
+    const d = Math.hypot(tgt.hero.x - cx, tgt.hero.z - cz);
     if (d < (s.width || 2) * 0.6) {
-      damageHero(side, dmg);
-      e.damaged.add('hero');
+      damageHero(tgt, dmg);
+      e.damaged.add(key);
     }
   }
 }
 function applyBossBeamDmg(side, m, cast, length, width, dmg) {
   const realDmg = m.damage * dmg;
-  if (!side.hero.dead) {
-    const dx = side.hero.x - cast.originX, dz = side.hero.z - cast.originZ;
+  for (const tgt of bossWarsTargets(side)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
     const along = dx * cast.dirX + dz * cast.dirZ;
     if (along > 0 && along < length) {
       const perp = Math.abs(dx * (-cast.dirZ) + dz * cast.dirX);
-      if (perp < width) damageHero(side, realDmg);
+      if (perp < width) damageHero(tgt, realDmg);
     }
   }
 }
 function applyBossKnockback(side, x, z, radius, force) {
-  if (side.hero.dead) return;
-  const dx = side.hero.x - x, dz = side.hero.z - z;
-  const d = Math.hypot(dx, dz);
-  if (d >= radius || d < 0.01) return;
-  const nx = side.hero.x + (dx / d) * force;
-  const nz = side.hero.z + (dz / d) * force;
-  if (isHeroWalkable(side.idx, nx, nz)) {
-    side.hero.x = nx; side.hero.z = nz;
-    if (side.mesh) side.mesh.position.set(nx, 0, nz);
+  for (const tgt of bossWarsTargets(side)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - x, dz = tgt.hero.z - z;
+    const d = Math.hypot(dx, dz);
+    if (d >= radius || d < 0.01) continue;
+    const nx = tgt.hero.x + (dx / d) * force;
+    const nz = tgt.hero.z + (dz / d) * force;
+    if (isHeroWalkable(tgt.idx, nx, nz)) {
+      tgt.hero.x = nx; tgt.hero.z = nz;
+      if (tgt.mesh) tgt.mesh.position.set(nx, 0, nz);
+    }
   }
 }
 
@@ -5992,9 +6011,17 @@ function tickBossProjectiles(side, dt) {
     p.x += p.dx * step; p.z += p.dz * step; p.traveled += step;
     p.mesh.position.set(p.x, 1.1, p.z);
     spawnProjectileTrailPuff(p.x, 1.0, p.z, 0xff7733);
-    // Träffa hjälte
-    if (!side.hero.dead && Math.hypot(side.hero.x - p.x, side.hero.z - p.z) < p.radius + 0.45) {
-      damageHero(side, p.damage);
+    // Träffa hjälte (i co-op: alla 3)
+    let hit = false;
+    for (const tgt of bossWarsTargets(side)) {
+      if (tgt.hero.dead) continue;
+      if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius + 0.45) {
+        damageHero(tgt, p.damage);
+        hit = true;
+        break;
+      }
+    }
+    if (hit) {
       if (p.mesh.geometry) p.mesh.geometry.dispose?.();
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
@@ -6038,14 +6065,17 @@ function tickBossPools(side, dt) {
     const p = side.bossPools[i];
     p.life -= dt;
     p.tickAccum += dt;
-    // Skada hjälten var 0.5s om i pöl
+    // Skada hjälten var 0.5s om i pöl (co-op: alla 3)
     if (p.tickAccum >= 0.5) {
       p.tickAccum -= 0.5;
-      if (!side.hero.dead && Math.hypot(side.hero.x - p.x, side.hero.z - p.z) < p.radius) {
-        damageHero(side, p.dps * 0.5);
-        if (p.slow) {
-          side.heroSlowMul = Math.min(side.heroSlowMul || 1, p.slow.mul);
-          side.heroSlowTime = Math.max(side.heroSlowTime || 0, p.slow.dur);
+      for (const tgt of bossWarsTargets(side)) {
+        if (tgt.hero.dead) continue;
+        if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius) {
+          damageHero(tgt, p.dps * 0.5);
+          if (p.slow) {
+            tgt.heroSlowMul = Math.min(tgt.heroSlowMul || 1, p.slow.mul);
+            tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, p.slow.dur);
+          }
         }
       }
     }
@@ -6139,12 +6169,27 @@ function updateMonsters(side, dt) {
   // motståndarens playerCreeps (som är i samma arena).
   const oppIdx = 3 - side.idx;
   const opp = sides[oppIdx];
-  const heroX = side.hero.x, heroZ = side.hero.z;
-  const heroAlive = !side.hero.dead;
   const towerPos = SIDE_CFG[side.idx].tower;
+  // Boss Wars MP co-op: bossen ska jaga närmsta levande hjälte av alla 3
+  const bwCoOp = bossMpState && bossMpState.matchActive && APP.gameMode === 'bosswars';
 
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
+    // Per-monster mål: default = side.hero. För boss-wars co-op-boss: närmsta levande hjälte.
+    let heroX = side.hero.x, heroZ = side.hero.z;
+    let heroAlive = !side.hero.dead;
+    let targetSide = side;
+    if (bwCoOp && m.isBossWarsBoss) {
+      let best = null, bestDist = Infinity;
+      for (const idx of [1, 2, 3]) {
+        const s = sides[idx];
+        if (!s || s.hero.dead) continue;
+        const dd = (s.hero.x - m.mesh.position.x) ** 2 + (s.hero.z - m.mesh.position.z) ** 2;
+        if (dd < bestDist) { bestDist = dd; best = s; }
+      }
+      if (best) { heroX = best.hero.x; heroZ = best.hero.z; heroAlive = true; targetSide = best; }
+      else heroAlive = false;
+    }
 
     // DoT-tick (Fire Wave)
     if ((m.dotRemaining || 0) > 0) {
@@ -6233,9 +6278,9 @@ function updateMonsters(side, dt) {
     const mAtkRange = m.attackRange || 1.2;
     const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroAlive && distHero < mAtkRange && m.atkCd <= 0) {
-      damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
+      damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = mAtkInterval;
-      spawnSlashFx(side.hero.x, side.hero.z, 0xff5544);
+      spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
       // Trigga attack-animation på boss-mesh
       if (m.mesh) m.mesh.userData.attackTrigger = true;
     }
@@ -9954,18 +9999,35 @@ function checkMatchEnd() {
     if (!APP.bossWars || !APP.bossWars.started) return;
     const s = sides[1];
     if (!s) return;
-    // Extra säkerhet: kräv att boss faktiskt spawnats (bossId satt i spawnBossWarsBoss).
-    // Förhindrar VINST om någon edge-case lurar started=true innan boss finns.
     if (!s.bossWarsBossId) return;
+    // MP co-op: förlust = ALLA hjältar är döda (klassisk raid). Vinst = boss död.
+    if (bossMpState.matchActive) {
+      const heroes = [sides[1], sides[2], sides[3]].filter(Boolean);
+      const allDead = heroes.length > 0 && heroes.every(h => h.hero.dead);
+      const bossAlive = s.monsters.some(m => m.isBossWarsBoss);
+      if (allDead) {
+        matchState.gameOver = true;
+        matchState.winner = 2;
+        matchState.gameWon = false;
+        if (bossMpState.role === 'host') sendGameMsg({ t: 'b-end', won: false });
+      } else if (!bossAlive) {
+        matchState.gameOver = true;
+        matchState.winner = 1;
+        matchState.gameWon = true;
+        if (bossMpState.role === 'host') sendGameMsg({ t: 'b-end', won: true });
+      }
+      return;
+    }
+    // Solo: existing logic
     if (s.hero.dead) {
       matchState.gameOver = true;
-      matchState.winner = 2;          // "boss" vann
+      matchState.winner = 2;
       matchState.gameWon = false;
     } else {
       const bossAlive = s.monsters.some(m => m.isBossWarsBoss);
       if (!bossAlive) {
         matchState.gameOver = true;
-        matchState.winner = 1;        // spelaren vann
+        matchState.winner = 1;
         matchState.gameWon = true;
       }
     }
@@ -12910,6 +12972,16 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
 }
 
 function sendOrApplyEvent(ev) {
+  // Boss Wars MP-klient: events buffras och skickas till host i b-input
+  if (bossMpState.matchActive && bossMpState.role === 'client') {
+    bossMpState.pendingEvents.push(ev);
+    return;
+  }
+  // Boss Wars MP-host: applicera lokalt (host kör auth-sim)
+  if (bossMpState.matchActive && bossMpState.role === 'host') {
+    applyEvent(sides[APP.localSide], ev);
+    return;
+  }
   if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
     // Solo + arena-host kör simulering lokalt — applicera event direkt
     applyEvent(sides[APP.localSide], ev);
@@ -12975,12 +13047,130 @@ function maybeSendClientInput(now) {
   flushClientInput();
 }
 
-// Boss Wars MP: in-match state sync (WIP — för nu fungerar lobby + start, men
-// klienter spawnar in en EGEN solo-match efter b-start så alla 3 möter bossen
-// parallellt. Full co-op-sync (boss + 3 hjältar i samma simulering) kommer senare.)
-function applyBossWarsState(_msg) {
-  // No-op placeholder. När host börjar broadcasta b-state med boss + hero
-  // snapshots så implementeras applikationen här (jfr applyArenaState).
+// ============================================================
+// Boss Wars MP: in-match state sync (host-auktoritativ)
+// ============================================================
+// Host kör hela simuleringen, broadcastar state ~30 Hz. Klienterna
+// renderar mottagen state och skickar input. Match-end avgörs av host.
+
+// Bygger en snapshot för ett MP-boss-wars-state-meddelande
+function buildBossWarsSnap() {
+  // Hero snapshots för alla 3 sides (alla som existerar)
+  const h = {};
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (s) h[idx] = heroSnap(s);
+  }
+  // Boss snapshot: hitta isBossWarsBoss-monstret i sides[1].monsters
+  let boss = null;
+  const hostSide = sides[1];
+  if (hostSide && hostSide.monsters) {
+    const b = hostSide.monsters.find(m => m.isBossWarsBoss);
+    if (b) {
+      boss = {
+        x: +b.x.toFixed(2),
+        z: +b.z.toFixed(2),
+        hp: Math.round(b.hp),
+        mh: b.maxHp,
+        ph: b.bossPhase || 1,
+        pt: +(b.phaseTransitionRemaining || 0).toFixed(2),
+        // Aktivt skill-cast: räcker med name + faas + remaining tid + center-pos
+        c: b.activeCast ? {
+          n: b.activeCast.skillId || '',
+          ph: b.activeCast.phase || 'tel',     // 'tel' | 'exec'
+          t: +(b.activeCast.timeRemaining || 0).toFixed(2),
+          x: b.activeCast.targetX != null ? +b.activeCast.targetX.toFixed(2) : null,
+          z: b.activeCast.targetZ != null ? +b.activeCast.targetZ.toFixed(2) : null,
+        } : null,
+      };
+    }
+  }
+  return { h, b: boss, t: APP.bossWars && APP.bossWars.tier || 1 };
+}
+
+function broadcastBossWarsState() {
+  if (bossMpState.role !== 'host' || !bossMpState.matchActive || !wsOpen()) return;
+  const snap = buildBossWarsSnap();
+  sendGameMsg({
+    t: 'b-state',
+    h: snap.h,
+    b: snap.b,
+    tr: snap.t,
+  });
+}
+
+function applyBossWarsState(msg) {
+  // Bara klienter applicerar denna; host kör auth-sim
+  if (bossMpState.role !== 'client' || !bossMpState.matchActive) return;
+  // Hero-snapshots — sätt position, hp, level för alla 3 sides
+  if (msg.h) {
+    for (const idx of [1, 2, 3]) {
+      const snap = msg.h[idx];
+      const s = sides[idx];
+      if (s && snap) applyHeroSnap(s, snap);
+    }
+  }
+  // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
+  if (msg.b && sides[1]) {
+    const hostSide = sides[1];
+    let boss = hostSide.monsters && hostSide.monsters.find(m => m.isBossWarsBoss);
+    if (!boss && !hostSide._bossSpawnRequested) {
+      // Idempotens-guard: säkerställ att spawnBossWarsBoss bara körs en gång
+      // på klienten även om b-state-meddelanden anländer snabbare än
+      // monsters-arrayen uppdateras.
+      hostSide._bossSpawnRequested = true;
+      spawnBossWarsBoss(hostSide, msg.tr || 1);
+      boss = hostSide.monsters.find(m => m.isBossWarsBoss);
+    } else if (!boss) {
+      // Spawn pågår, hoppa över denna tick
+      return;
+    }
+    if (boss) {
+      // Sätt _target för interpolation; smoothEntityMeshes lerpar dit
+      if (!boss.mesh._target) boss.mesh._target = new THREE.Vector3();
+      boss.mesh._target.set(msg.b.x, 0, msg.b.z);
+      boss.x = msg.b.x;
+      boss.z = msg.b.z;
+      boss.hp = msg.b.hp;
+      boss.maxHp = msg.b.mh;
+      boss.bossPhase = msg.b.ph || 1;
+      boss.phaseTransitionRemaining = msg.b.pt || 0;
+      // Skill-cast: bara minimal visning av aktiv cast (telegraph/exec)
+      // Detaljerade FX/projektiler syncas inte än — clients ser bara att
+      // bossen "kastar något" via aktiv cast-info.
+    }
+  }
+}
+
+// Klient → host: skicka local input (joystick + events) ~45 Hz
+function sendBossWarsInput() {
+  if (bossMpState.role !== 'client' || !bossMpState.matchActive || !wsOpen()) return;
+  const raw = readLocalJoystick();
+  const dir = screenToWorld(raw.x, raw.z);
+  const evs = bossMpState.pendingEvents;
+  bossMpState.pendingEvents = [];
+  sendGameMsg({
+    t: 'b-input',
+    p: bossMpState.peerIdx,
+    jx: +dir.x.toFixed(3),
+    jz: +dir.z.toFixed(3),
+    ev: evs,
+  });
+}
+
+// Host: applicera mottagen klient-input i simulateAll-loopen
+function applyBossWarsRemoteInputs(dt) {
+  if (bossMpState.role !== 'host' || !bossMpState.matchActive) return;
+  for (const idx of [2, 3]) {
+    const ri = bossMpState.remoteInput[idx];
+    const s = sides[idx];
+    if (!s || !ri) continue;
+    applyMovement(s, ri.jx || 0, ri.jz || 0, dt);
+    if (Array.isArray(ri.ev) && ri.ev.length) {
+      for (const ev of ri.ev) applyEvent(s, ev);
+      ri.ev = [];
+    }
+  }
 }
 function handleNetworkMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
@@ -13029,11 +13219,28 @@ function handleNetworkMessage(msg) {
   }
   // Boss Wars MP-meddelanden (3-spelar co-op)
   if (msg.t === 'b-start' && bossMpState.active && bossMpState.role === 'client') {
-    // Host triggade match-start — klient går också till sin lokala boss-pick.
-    // Full in-match co-op-sync är WIP, så varje spelare möter bossen separat
-    // efter lobby:n (alla 3 har dock samtidig start).
-    bossMpFinishLobby();
-    bossWarsShowPick();
+    // Host gick till boss-pick. Vi stannar på wait-panel tills b-launch kommer.
+    if (bossMpState.waitMsgEl) bossMpState.waitMsgEl.textContent = 'Hosten väljer boss och förbereder sig... vänta...';
+    return;
+  }
+  if (msg.t === 'b-launch' && bossMpState.active && bossMpState.role === 'client') {
+    bossMpClientEnterMatch(msg);
+    return;
+  }
+  if (msg.t === 'b-state' && bossMpState.active && bossMpState.role === 'client' && bossMpState.matchActive) {
+    applyBossWarsState(msg);
+    return;
+  }
+  if (msg.t === 'b-input' && bossMpState.active && bossMpState.role === 'host' && bossMpState.matchActive) {
+    const idx = msg.p;
+    if (idx === 2 || idx === 3) bossMpState.remoteInput[idx] = msg;
+    return;
+  }
+  if (msg.t === 'b-end' && bossMpState.active && bossMpState.role === 'client') {
+    // Host detekterade match-slut → klient triggar samma end-screen
+    matchState.gameOver = true;
+    matchState.gameWon = !!msg.won;
+    matchState.winner = msg.won ? 1 : 0;
     return;
   }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
@@ -13986,6 +14193,49 @@ function updateBossPrepButton() {
 function startBossWarsFightAfterPrep() {
   const prepEl = document.getElementById('boss-prep');
   if (prepEl) prepEl.classList.add('hidden');
+  // MP-host: broadcasta b-launch så klienterna kan sätta upp samma match.
+  // Viktig ordning: sätt matchActive EFTER enterPlayPhase så broadcastBossWarsState
+  // inte kan trigga innan sides[1] (+boss) är klar.
+  const isMpHostLaunch = bossMpState.active && bossMpState.role === 'host';
+  if (isMpHostLaunch) {
+    sendGameMsg({
+      t: 'b-launch',
+      tier: APP.bossWars.tier || 1,
+      hostHero: heroPickState.selected || 'magiker',
+    });
+    // setupMatch/enterPlayPhase behöver veta att MP är aktiv (för 3-side-setup).
+    // Sätt så enterPlayPhase plockar upp det; nolla send-timestamps så första
+    // broadcast inte fyrar förrän efter en frame.
+    bossMpState.matchActive = true;
+    bossMpState.lastStateSent = performance.now() / 1000;
+  }
+  enterPlayPhase();
+}
+
+// Klient tar emot b-launch → sätt tier + entera matchen som renderer.
+// Hjälte default = Magikern, talents/items tomma (per-klient prep är en
+// framtida iteration).
+function bossMpClientEnterMatch(msg) {
+  bossMpState.matchActive = true;
+  APP.gameMode = 'bosswars';
+  APP.bossWars = {
+    active: true,
+    tier: msg.tier || 1,
+    started: false,
+    selectedTalents: [],
+    selectedItems: [],
+  };
+  heroPickState.selected = 'magiker';
+  matchState.gameOver = false;
+  matchState.gameWon = false;
+  matchState.winner = 0;
+  // Dölj lobby + ev. pick/prep
+  lobbyEl.classList.add('hidden');
+  if (heroPickEl) heroPickEl.classList.add('hidden');
+  const prepEl = document.getElementById('boss-prep');
+  if (prepEl) prepEl.classList.add('hidden');
+  // Sätt upp match som "solo" — vi får 3 sides via boss-MP-extender i enterPlayPhase
+  setupMatch('solo');
   enterPlayPhase();
 }
 // Bind start-button (en gång vid init)
@@ -14521,25 +14771,52 @@ function enterPlayPhase() {
     buildBossWarsScene();
     bossWarsSceneGroup.visible = true;
     arenaSceneGroup.visible = false;
-    for (const idx of [1]) {
+    // MP: skapa sides[2] och sides[3] för de andra peers (3-hero co-op).
+    // I solo förblir det bara sides[1].
+    if (bossMpState.matchActive) {
+      if (!sides[2]) sides[2] = createSide(2);
+      if (!sides[3]) sides[3] = createSide(3);
+      sides[2].heroId = 'magiker';
+      sides[3].heroId = 'magiker';
+      swapHeroMeshIfNeeded(sides[2]);
+      swapHeroMeshIfNeeded(sides[3]);
+    }
+    const _tier = (APP.bossWars && APP.bossWars.tier) || 1;
+    const _map = BOSSWARS_MAPS[_tier] || BOSSWARS_MAPS[1];
+    let spawnOffsetX = BOSSWARS_RADIUS - 4;
+    if (_map.shape === 'square') spawnOffsetX = (BOSSWARS_RADIUS * Math.SQRT2) / 2 - 3.5;
+    else if (_map.shape === 'cross') spawnOffsetX = (BOSSWARS_RADIUS * 1.8) / 2 - 3.5;
+    // Spawn-positioner per peer
+    const spawnPoints = {
+      1: { x: BOSSWARS_CX - spawnOffsetX, z: BOSSWARS_CZ },
+      2: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ - spawnOffsetX * 0.6 },
+      3: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ + spawnOffsetX * 0.6 },
+    };
+    const activeIdxs = bossMpState.matchActive ? [1, 2, 3] : [1];
+    for (const idx of activeIdxs) {
       const s = sides[idx];
       if (!s) continue;
-      // Applicera valda talents + items från prep-panelen
-      s.bossWarsTalents = (APP.bossWars.selectedTalents || []).slice();
-      s.bossWarsItems = (APP.bossWars.selectedItems || []).slice();
-      s.phoenixReviveAvailable = true;   // re-enable så recomputeSideStats kan checka
+      // Talents/items: host's prep gäller bara host's hjälte; andras tomma
+      if (bossMpState.matchActive) {
+        const isLocalHero = (idx === bossMpState.peerIdx);
+        if (isLocalHero) {
+          s.bossWarsTalents = (APP.bossWars.selectedTalents || []).slice();
+          s.bossWarsItems = (APP.bossWars.selectedItems || []).slice();
+        } else {
+          s.bossWarsTalents = [];
+          s.bossWarsItems = [];
+        }
+      } else {
+        s.bossWarsTalents = (APP.bossWars.selectedTalents || []).slice();
+        s.bossWarsItems = (APP.bossWars.selectedItems || []).slice();
+      }
+      s.phoenixReviveAvailable = true;
       s.level = 30;
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
-      // Placera hjälten vid kanten av plattformen — shape-aware så hero spawnar
-      // inom walkable area (bugfix: square/cross hade trångare bounds än circle)
-      const _tier = (APP.bossWars && APP.bossWars.tier) || 1;
-      const _map = BOSSWARS_MAPS[_tier] || BOSSWARS_MAPS[1];
-      let spawnOffsetX = BOSSWARS_RADIUS - 4;
-      if (_map.shape === 'square') spawnOffsetX = (BOSSWARS_RADIUS * Math.SQRT2) / 2 - 3.5;
-      else if (_map.shape === 'cross') spawnOffsetX = (BOSSWARS_RADIUS * 1.8) / 2 - 3.5;
-      s.hero.x = BOSSWARS_CX - spawnOffsetX;
-      s.hero.z = BOSSWARS_CZ;
+      const sp = spawnPoints[idx] || spawnPoints[1];
+      s.hero.x = sp.x;
+      s.hero.z = sp.z;
       s.hero.facingX = 1; s.hero.facingZ = 0;
       s.hero.hp = s.hero.maxHp;
       s.hero.dead = false;
@@ -14549,10 +14826,15 @@ function enterPlayPhase() {
         s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
       }
     }
-    // Spawna boss
-    spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
+    // Spawna boss — bara host (eller solo) gör det. Klienter får boss via b-state.
+    const isMpClient = bossMpState.matchActive && bossMpState.role === 'client';
+    if (!isMpClient) {
+      spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
+    }
     // Markera match som startad — först nu får checkMatchEnd avgöra utgång
     APP.bossWars.started = true;
+    // MP: anpassa APP.localSide så camera/HUD följer lokal hero
+    if (bossMpState.matchActive) APP.localSide = bossMpState.peerIdx;
   } else {
     arenaSceneGroup.visible = false;
     bossWarsSceneGroup.visible = false;
@@ -14605,6 +14887,7 @@ if (optionsOverlayEl) {
 
 function returnToLobby() {
   closeOptionsOverlay();
+  bossMpCleanupAfterMatch();   // ingen-op om inte aktiv
   closeRelay();
   pendingHostCode = null;
   // Städar alla 4 sidor (2v2 kan ha sides[3]/[4])
@@ -14937,17 +15220,23 @@ function bossWarsLeaveLobby() {
 function bossWarsHostStartMatch() {
   if (bossMpState.role !== 'host') return;
   if (bossMpState.peersTotal < bossMpState.maxPeers) return;
-  // Skicka start-signal till båda klienter
+  // Berätta för klienterna att host nu går till boss-pick. Klienterna stannar
+  // kvar på wait-panelen tills host broadcastar b-launch.
   sendGameMsg({ t: 'b-start' });
-  // Liten paus så msg hinner gå ut innan vi stänger relay:n
-  setTimeout(() => { bossMpFinishLobby(); bossWarsShowPick(); }, 150);
+  bossWarsShowPick();   // Host väljer boss + prep ensam; clients väntar
 }
-function bossMpFinishLobby() {
-  // Just nu: in-match sync är WIP — varje spelare fortsätter solo mot bossen
-  // efter lobby:n. Stäng relay så vi inte hänger på en död anslutning.
-  closeRelay();
+function bossMpCleanupAfterMatch() {
+  // Anropas från returnToLobby — nolla allt boss-MP-state.
+  // No-op om inte aktiv.
+  if (!bossMpState.active && !bossMpState.matchActive) return;
   bossMpState.active = false;
   bossMpState.matchActive = false;
+  bossMpState.peerIdx = 1;
+  bossMpState.hostTier = 0;
+  bossMpState.remoteInput = { 2: null, 3: null };
+  bossMpState.pendingEvents = [];
+  bossMpState.lastStateSent = 0;
+  bossMpState.lastInputSent = 0;
 }
 // Wire up boss-MP-knappar
 const btnBossStart = document.getElementById('btn-boss-start-match');
@@ -15067,6 +15356,10 @@ function simulateAll(dt) {
         ri.events = [];
       }
     }
+  }
+  // Boss Wars MP host: applicera klienternas senaste input på sides[2] och sides[3]
+  if (bossMpState.matchActive && bossMpState.role === 'host') {
+    applyBossWarsRemoteInputs(dt);
   }
   // Arena solo vs bot: driv sides[2] med AI
   if (APP.gameMode === 'arena1v1' && APP.mode === 'solo' && sides[2] && sides[2].isBot && arenaState.phase === 'fight') {
@@ -15912,7 +16205,17 @@ function tick() {
   const now = performance.now() / 1000;
   resetFxPopupBudget();
 
-  if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
+  // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state
+  const isBossMpClient = bossMpState.matchActive && bossMpState.role === 'client';
+  const isBossMpHost = bossMpState.matchActive && bossMpState.role === 'host';
+  if (isBossMpClient) {
+    // Klient skickar input till host ~45 Hz
+    if (now - bossMpState.lastInputSent > INPUT_SEND_INTERVAL) {
+      bossMpState.lastInputSent = now;
+      sendBossWarsInput();
+    }
+    smoothEntityMeshes(dt);
+  } else if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
     // Solo + arena-host kör simulationen lokalt
     if (!matchState.gameOver) simulateAll(dt);
   } else if (isMpMode()) {
@@ -15926,6 +16229,13 @@ function tick() {
     if (now - APP.lastStateSent > ARENA_STATE_SEND_INTERVAL) {
       APP.lastStateSent = now;
       broadcastArenaState();
+    }
+  }
+  // Boss Wars MP host broadcastar state till klienterna ~30 Hz
+  if (isBossMpHost && wsOpen()) {
+    if (now - bossMpState.lastStateSent > (1 / 30)) {
+      bossMpState.lastStateSent = now;
+      broadcastBossWarsState();
     }
   }
   // Arena state-machine (host kör; client följer a-state)
