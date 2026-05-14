@@ -9438,7 +9438,10 @@ function showArenaEnd(winnerIdx, isMatchEnd) {
       aeTitleEl.classList.remove('win', 'lose');
     }
     aeInfoEl.textContent = `Slutresultat: ${arenaState.wins[1]} – ${arenaState.wins[2]}`;
-    if (aeContinueBtn) aeContinueBtn.textContent = 'Tillbaka till lobby';
+    if (aeContinueBtn) {
+      aeContinueBtn.textContent = 'Tillbaka till lobby';
+      aeContinueBtn.style.display = '';   // återställ — kan ha gömts av round-end
+    }
   } else {
     if (winnerIdx === 0) {
       aeTitleEl.textContent = 'Draw';
@@ -9510,11 +9513,14 @@ function renderTalentsGrid() {
     const picked = chosen.has(t.id);
     const div = document.createElement('div');
     div.className = 'talent-card' + (picked ? ' picked' : (points <= 0 ? ' disabled' : ''));
+    div.title = picked ? 'Klicka för att ångra' : (points > 0 ? 'Klicka för att välja' : 'Inga poäng kvar');
     div.innerHTML = `
       <div class="tc-icon">${t.icon || '✦'}</div>
       <div class="tc-name">${t.name}</div>
       <div class="tc-desc">${t.desc}</div>`;
-    if (!picked) {
+    // Picked talents kan klickas för att ångras + refunda poäng. Disabled (inga
+    // poäng + ej picked) gör inget.
+    if (picked || points > 0) {
       div.addEventListener('click', () => onTalentPick(t.id));
     }
     apTalentsGridEl.appendChild(div);
@@ -9523,18 +9529,26 @@ function renderTalentsGrid() {
 
 function onTalentPick(talentId) {
   const tStat = arenaState.talents[APP.localSide];
-  if (!tStat || tStat.points <= 0) return;
-  if (tStat.chosen.includes(talentId)) return;
-  // Optimistisk local-pick — host:ens nästa a-state bekräftar
-  tStat.chosen.push(talentId);
-  tStat.points -= 1;
+  if (!tStat) return;
+  const idx = tStat.chosen.indexOf(talentId);
+  let remove = false;
+  if (idx >= 0) {
+    // Ångra valet — refunda poäng
+    tStat.chosen.splice(idx, 1);
+    tStat.points += 1;
+    remove = true;
+  } else {
+    if (tStat.points <= 0) return;
+    tStat.chosen.push(talentId);
+    tStat.points -= 1;
+  }
   const side = sides[APP.localSide];
   if (side) recomputeArenaSideStats(side);
   renderTalentsGrid();
   updateArenaPrepUI();
   // Skicka till host om vi är klient
   if (isArenaMp() && APP.mode === 'client') {
-    sendGameMsg({ t: 'a-talent', side: APP.localSide, talentId });
+    sendGameMsg({ t: 'a-talent', side: APP.localSide, talentId, remove });
   }
 }
 
@@ -11279,9 +11293,15 @@ function handleNetworkMessage(msg) {
   }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
     const t = arenaState.talents[msg.side];
-    if (t && t.points > 0 && !t.chosen.includes(msg.talentId)) {
-      t.chosen.push(msg.talentId);
-      t.points -= 1;
+    if (t) {
+      const idx = t.chosen.indexOf(msg.talentId);
+      if (msg.remove && idx >= 0) {
+        t.chosen.splice(idx, 1);
+        t.points += 1;
+      } else if (!msg.remove && idx < 0 && t.points > 0) {
+        t.chosen.push(msg.talentId);
+        t.points -= 1;
+      }
       const s = sides[msg.side];
       if (s) recomputeArenaSideStats(s);
     }
