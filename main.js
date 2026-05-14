@@ -3897,6 +3897,56 @@ function startArenaRound(roundNum) {
     // Reset shield-state — refresh-timern triggar omedelbart vid fight-start
     s.lingShieldHp = 0;
     s.lingShieldRefreshTimer = 0.5;  // kort delay så shield-pop syns
+    // Reset ALLA skill-CDs + ult-energy + ult-buffs/timers så varje runda startar fräsch
+    if (s.skills) {
+      if (s.skills.q) s.skills.q.cd = 0;
+      if (s.skills.f) s.skills.f.cd = 0;
+      if (s.skills.e) s.skills.e.cd = 0;
+    }
+    s.ultEnergy = 0;
+    s.legolusUltBuff = 0;
+    s.legolusBuffRemaining = 0;
+    s.legolusDashBuffPending = false;
+    s.rageRemaining = 0;
+    s.berserkRemaining = 0;
+    s.whirlwindRemaining = 0;
+    s.aragurnShoutBuff = 0;
+    s.aragurnAllyShoutBuff = 0;
+    s.aragurnShoutDebuff = 0;
+    s.aragurnShoutHealRemaining = 0;
+    if (s.mesh) s.mesh.scale.set(1, 1, 1);
+    // Rensa kvar-stående projektiler/aktiva ult-effekter från förra rundan
+    if (s.bigArrows && s.bigArrows.length) {
+      for (const arr of s.bigArrows) { if (arr.mesh) scene.remove(arr.mesh); }
+      s.bigArrows = [];
+    }
+    if (s.hammers && s.hammers.length) {
+      for (const h of s.hammers) { if (h.mesh) scene.remove(h.mesh); }
+      s.hammers = [];
+    }
+    if (s.fireballs && s.fireballs.length) {
+      for (const f of s.fireballs) { if (f.mesh) scene.remove(f.mesh); }
+      s.fireballs = [];
+    }
+    if (s.aragurnLeap) {
+      if (s.aragurnLeap.indicator) {
+        if (s.aragurnLeap.indicator.material) s.aragurnLeap.indicator.material.dispose();
+        if (s.aragurnLeap.indicator.geometry) s.aragurnLeap.indicator.geometry.dispose();
+        scene.remove(s.aragurnLeap.indicator);
+      }
+      s.aragurnLeap = null;
+    }
+    if (s.berserkSwordMesh) {
+      s.berserkSwordMesh.traverse(o => {
+        if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
+      });
+      scene.remove(s.berserkSwordMesh);
+      s.berserkSwordMesh = null;
+    }
+    if (s.soulDrain || s.soulDrainBeam) {
+      if (typeof removeSoulDrainBeam === 'function') removeSoulDrainBeam(s);
+      s.soulDrain = null;
+    }
     // Arena-gold: +200 per runda (alla sidor)
     s.gold = (s.gold || 0) + ARENA_GOLD_PER_ROUND;
   }
@@ -8032,6 +8082,23 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.heroFearTime || 0) > 0) return;
   // Frusen/rotad av motspelaren (Frostnova / Vine Trap): kan inte röra sig
   if ((side.hero.frozenTime || 0) > 0) return;
+  // Tauntad av Gimlu: tappar kontroll — auto-walk till Gimlu och kan inte ändra
+  // riktning. Existing applyEvent-block stoppar skills, maintainTargetLock tvingar
+  // AA på taunter. Här override:as joystick-input med auto-walk.
+  if ((side.hero.tauntedTime || 0) > 0 && side.hero.tauntedBy) {
+    const tSide = sides[side.hero.tauntedBy];
+    if (tSide && !tSide.hero.dead) {
+      const dx = tSide.hero.x - side.hero.x;
+      const dz = tSide.hero.z - side.hero.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.8) {
+        joyX = dx / d; joyZ = dz / d;
+      } else {
+        // Stå still nära taunter (han attackerar då via AA-lock)
+        joyX = 0; joyZ = 0;
+      }
+    }
+  }
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
@@ -10608,6 +10675,23 @@ function hostCastAragurnLeap(side, ev) {
     tx = side.hero.x + (dx / d) * LEAP_MAX_DISTANCE;
     tz = side.hero.z + (dz / d) * LEAP_MAX_DISTANCE;
   }
+  // Clamp inom walkable area — om utanför banan, sök tillbaka mot hero
+  if (!isHeroWalkable(side.idx, tx, tz)) {
+    const sx = side.hero.x, sz = side.hero.z;
+    const ddx = sx - tx, ddz = sz - tz;
+    const dl = Math.hypot(ddx, ddz);
+    if (dl > 0.01) {
+      const nx = ddx / dl, nz = ddz / dl;
+      let found = false;
+      for (let step = 0.5; step <= dl; step += 0.5) {
+        const px = tx + nx * step, pz = tz + nz * step;
+        if (isHeroWalkable(side.idx, px, pz)) {
+          tx = px; tz = pz; found = true; break;
+        }
+      }
+      if (!found) { tx = sx; tz = sz; }   // fallback: stå still
+    }
+  }
   side.aragurnLeap = {
     remaining: LEAP_TRAVEL_TIME,
     startX: side.hero.x, startZ: side.hero.z,
@@ -10792,8 +10876,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyQ') castLocalSkill('q', side.hero.facingX, side.hero.facingZ, true);
   if (e.code === 'KeyE') castLocalSkill('e', side.hero.facingX, side.hero.facingZ, true);
   if (e.code === 'KeyF') castLocalSkill('f', 0, 0, true);
-  if (e.code === 'KeyR') castLocalSkill('r', side.hero.facingX, side.hero.facingZ, true);
-  if (e.code === 'Space' || e.code === 'KeyA') { e.preventDefault?.(); triggerAA(); }
+  // Spacebar (eller R) = ultimate
+  if (e.code === 'Space' || e.code === 'KeyR') { e.preventDefault?.(); castLocalSkill('r', side.hero.facingX, side.hero.facingZ, true); }
+  if (e.code === 'KeyA') { e.preventDefault?.(); triggerAA(); }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -11847,7 +11932,7 @@ function readLocalJoystick() {
 let lastInputJoy = { x: 0, z: 0 };
 const INPUT_SEND_INTERVAL = 1 / 30;   // 30 Hz input
 const STATE_SEND_INTERVAL = 1 / 20;   // 20 Hz state
-const ARENA_STATE_SEND_INTERVAL = 1 / 15;  // 15 Hz arena overlay-state
+const ARENA_STATE_SEND_INTERVAL = 1 / 30;  // 30 Hz arena state (höjd från 15 Hz för smoothness)
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
