@@ -1377,12 +1377,12 @@ const BOSS_DEFS = {
     bodyTint: 0x6a85a8, auraColor: 0x1a2434, eyeColor: 0xff5533,
     intro: 'Klubbväggen marscherar.',
     skills: [
-      // Shield Bash — telegraph röd linje, sen dasha 7m fram + skada allt i linjen
-      { id: 'shieldBash', kind: 'lineDash', telegraph: 1.4, length: 7, width: 2.0, execTime: 0.5, dmgMul: 1.8, cd: 7.5 },
-      // Throwing Axe — långsam skillshot, lätt att dodga
-      { id: 'throwingAxe', kind: 'projectile', telegraph: 0.5, speed: 12, dmgMul: 1.5, radius: 0.7, range: 14, cd: 5.0 },
-      // Battle Roar — 5m AoE runt boss, telegraph 1.5s
-      { id: 'battleRoar', kind: 'groundCircle', telegraph: 1.4, radius: 5, dmgMul: 1.3, originSelf: true, slow: { dur: 2.0, mul: 0.6 }, cd: 9.0 },
+      // Shield Bash — telegraph röd linje, sen dasha 11m fram + skada allt i linjen
+      { id: 'shieldBash', kind: 'lineDash', telegraph: 1.4, length: 11, width: 3.2, execTime: 0.5, dmgMul: 2.2, cd: 7.5 },
+      // Throwing Axe — skillshot
+      { id: 'throwingAxe', kind: 'projectile', telegraph: 0.5, speed: 14, dmgMul: 1.8, radius: 1.0, range: 18, cd: 5.0 },
+      // Battle Roar — 7m AoE runt boss
+      { id: 'battleRoar', kind: 'groundCircle', telegraph: 1.4, radius: 7.5, dmgMul: 1.6, originSelf: true, slow: { dur: 2.5, mul: 0.5 }, cd: 9.0 },
     ],
   },
   20: {
@@ -1390,12 +1390,12 @@ const BOSS_DEFS = {
     bodyTint: 0x886a40, auraColor: 0x2a1c08, eyeColor: 0xffaa44,
     intro: 'Krigsorder ekar över slagfältet.',
     skills: [
-      // Lightning Strike — targetar hjältens nuvarande position, snabb tele
-      { id: 'lightningStrike', kind: 'groundCircle', telegraph: 1.0, radius: 2.8, dmgMul: 2.0, targetHero: true, cd: 5.5 },
+      // Lightning Strike — targetar hjältens nuvarande position
+      { id: 'lightningStrike', kind: 'groundCircle', telegraph: 1.0, radius: 4.2, dmgMul: 2.4, targetHero: true, cd: 5.5 },
       // Spear Volley — 3 spjut i kon-spread
-      { id: 'spearVolley', kind: 'projectileMulti', telegraph: 0.7, count: 3, spreadAngle: Math.PI / 7, speed: 16, dmgMul: 1.3, radius: 0.7, range: 14, cd: 6.5 },
+      { id: 'spearVolley', kind: 'projectileMulti', telegraph: 0.7, count: 4, spreadAngle: Math.PI / 6, speed: 18, dmgMul: 1.6, radius: 1.0, range: 18, cd: 6.5 },
       // War Stomp — STOR AoE runt boss
-      { id: 'warStomp', kind: 'groundCircle', telegraph: 1.3, radius: 6, dmgMul: 1.7, originSelf: true, knockback: 2.5, cd: 10.0 },
+      { id: 'warStomp', kind: 'groundCircle', telegraph: 1.3, radius: 9, dmgMul: 2.0, originSelf: true, knockback: 3.5, cd: 10.0 },
     ],
   },
   30: {
@@ -1403,12 +1403,12 @@ const BOSS_DEFS = {
     bodyTint: 0xaa4030, auraColor: 0x331008, eyeColor: 0xffbb00,
     intro: 'Marken sviktar under hans steg.',
     skills: [
-      // Cleave Wave — 90° kon framför boss, 8m lång
-      { id: 'cleaveWave', kind: 'cone', telegraph: 1.0, length: 8, halfAngle: Math.PI / 3, dmgMul: 2.2, cd: 6.0 },
-      // Poison Pool — kastas på hjältens pos, lämnar DoT-pöl 6s
-      { id: 'poisonPool', kind: 'poolDot', telegraph: 1.0, radius: 3, duration: 6, dpsMul: 0.4, slow: { dur: 0.5, mul: 0.7 }, targetHero: true, cd: 7.5 },
-      // Earthquake — 5 random AoE-cirklar runt boss
-      { id: 'earthquake', kind: 'multiCircle', telegraph: 0.7, count: 5, spawnInterval: 0.55, radius: 2.5, dmgMul: 1.4, spread: 7, cd: 11.0 },
+      // Cleave Wave — 90° kon framför boss, 12m lång
+      { id: 'cleaveWave', kind: 'cone', telegraph: 1.0, length: 12, halfAngle: Math.PI / 3, dmgMul: 2.6, cd: 6.0 },
+      // Poison Pool — kastas på hjältens pos, lämnar DoT-pöl 7s
+      { id: 'poisonPool', kind: 'poolDot', telegraph: 1.0, radius: 4.5, duration: 7, dpsMul: 0.6, slow: { dur: 0.8, mul: 0.6 }, targetHero: true, cd: 7.5 },
+      // Earthquake — 6 random AoE-cirklar runt boss
+      { id: 'earthquake', kind: 'multiCircle', telegraph: 0.7, count: 6, spawnInterval: 0.5, radius: 3.5, dmgMul: 1.7, spread: 9, cd: 11.0 },
     ],
   },
   40: {
@@ -1416,12 +1416,12 @@ const BOSS_DEFS = {
     bodyTint: 0x5a30a0, auraColor: 0x180830, eyeColor: 0xff44ff,
     intro: 'Helvetet öppnar sina portar.',
     skills: [
-      // Hellfire Beam — roterande sweep-beam, telegraph röd båge
-      { id: 'hellfireBeam', kind: 'sweepBeam', telegraph: 1.3, sweepDuration: 1.8, length: 12, halfAngle: Math.PI / 2, dpsMul: 1.4, cd: 10.0 },
-      // Inferno Strike — snabb hero-targetad, mindre radie men hög dmg
-      { id: 'infernoStrike', kind: 'groundCircle', telegraph: 0.8, radius: 2.2, dmgMul: 2.5, targetHero: true, leaveBurn: true, cd: 5.0 },
-      // Meteor Shower — 5 meteorer i 4s
-      { id: 'meteorShower', kind: 'multiCircle', telegraph: 0.9, count: 5, spawnInterval: 0.7, radius: 3.5, dmgMul: 2.0, spread: 11, cd: 13.0 },
+      // Hellfire Beam — roterande sweep-beam
+      { id: 'hellfireBeam', kind: 'sweepBeam', telegraph: 1.3, sweepDuration: 2.2, length: 16, halfAngle: Math.PI / 1.8, dpsMul: 1.8, cd: 10.0 },
+      // Inferno Strike — snabb hero-targetad
+      { id: 'infernoStrike', kind: 'groundCircle', telegraph: 0.8, radius: 3.2, dmgMul: 2.8, targetHero: true, leaveBurn: true, cd: 5.0 },
+      // Meteor Shower — 6 meteorer i 4s
+      { id: 'meteorShower', kind: 'multiCircle', telegraph: 0.9, count: 6, spawnInterval: 0.7, radius: 4.5, dmgMul: 2.4, spread: 13, cd: 13.0 },
     ],
   },
   50: {
@@ -1429,12 +1429,12 @@ const BOSS_DEFS = {
     bodyTint: 0x2a1a1a, auraColor: 0x080404, eyeColor: 0xff7700,
     intro: 'Drakelden brinner ikapp natten.',
     skills: [
-      // Dragon Breath — sustained kon-flam 2.5s
-      { id: 'dragonBreath', kind: 'sustainedCone', telegraph: 1.3, sustainDuration: 2.5, length: 12, halfAngle: Math.PI / 3.5, dpsMul: 1.6, cd: 8.5 },
-      // Wing Slam — stor AoE runt med knockback
-      { id: 'wingSlam', kind: 'groundCircle', telegraph: 1.0, radius: 5, dmgMul: 2.5, originSelf: true, knockback: 4.0, cd: 7.0 },
-      // Skyfire Rain — 8 meteorer i 6s
-      { id: 'skyfireRain', kind: 'multiCircle', telegraph: 0.7, count: 8, spawnInterval: 0.7, radius: 3.0, dmgMul: 1.8, spread: 13, cd: 15.0 },
+      // Dragon Breath — sustained kon-flam 2.5s, bredare
+      { id: 'dragonBreath', kind: 'sustainedCone', telegraph: 1.3, sustainDuration: 2.8, length: 16, halfAngle: Math.PI / 2.8, dpsMul: 2.0, cd: 8.5 },
+      // Wing Slam — STOR AoE runt med knockback
+      { id: 'wingSlam', kind: 'groundCircle', telegraph: 1.0, radius: 7.5, dmgMul: 3.0, originSelf: true, knockback: 5.0, cd: 7.0 },
+      // Skyfire Rain — 10 meteorer i 6s
+      { id: 'skyfireRain', kind: 'multiCircle', telegraph: 0.7, count: 10, spawnInterval: 0.6, radius: 4.0, dmgMul: 2.2, spread: 15, cd: 15.0 },
     ],
   },
 };
@@ -1455,27 +1455,27 @@ const BOSS_WARS_DEFS = [
   {
     tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
     desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker. Bra att börja med — men gå inte in oförberedd, han har en överraskning vid 50% HP.',
-    hp: 5000, dmgScale: 1.0, hasPhase2: true,
+    hp: 5000, dmgScale: 1.5, hasPhase2: true,
   },
   {
     tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
     desc: 'Krigsstrateg som blandar ranged-attacker med AoE-stomp. Mer aggressiv än Captain. Räkna med att läget förändras mid-fight.',
-    hp: 8000, dmgScale: 1.3, hasPhase2: true,
+    hp: 8000, dmgScale: 1.8, hasPhase2: true,
   },
   {
     tier: 3, wave: 30, name: 'Warlord', diff: 'Hard', diffClass: 'hard',
     desc: 'Brutal närstrid + poison-zoner som denyar terräng. Tål mycket och slår hårt. Något säger oss att han inte stannar på samma skill-set hela fighten...',
-    hp: 13000, dmgScale: 1.6, hasPhase2: true,
+    hp: 13000, dmgScale: 2.2, hasPhase2: true,
   },
   {
     tier: 4, wave: 40, name: 'Demon Prince', diff: 'Extreme', diffClass: 'extreme',
     desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt — straffar en miss med en stor HP-bit.',
-    hp: 20000, dmgScale: 2.0, hasPhase2: false,
+    hp: 20000, dmgScale: 2.8, hasPhase2: false,
   },
   {
     tier: 5, wave: 50, name: 'Drakkonungen', diff: 'Nightmare', diffClass: 'nightmare',
     desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate raid-test — räkna med 5+ minuter om ditt team är skickliga.',
-    hp: 30000, dmgScale: 2.5, hasPhase2: false,
+    hp: 30000, dmgScale: 3.5, hasPhase2: false,
   },
 ];
 
@@ -1483,19 +1483,19 @@ const BOSS_WARS_DEFS = [
 // Nya skills behåller telegraph-feel men är hårdare/mer komplexa.
 const BOSS_WARS_PHASE2_SKILLS = {
   10: [   // Captain Phase 2 — full berserk
-    { id: 'berserkerCharge', kind: 'lineDash', telegraph: 0.9, length: 12, width: 2.5, execTime: 0.5, dmgMul: 2.5, cd: 5.5 },
-    { id: 'whirlwindStrike', kind: 'groundCircle', telegraph: 1.0, radius: 4.5, dmgMul: 1.5, originSelf: true, slow: { dur: 1.5, mul: 0.55 }, cd: 6.5 },
-    { id: 'warCry', kind: 'groundCircle', telegraph: 1.8, radius: 10, dmgMul: 1.8, originSelf: true, knockback: 2.0, cd: 12.0 },
+    { id: 'berserkerCharge', kind: 'lineDash', telegraph: 0.9, length: 14, width: 3.5, execTime: 0.5, dmgMul: 3.0, cd: 5.5 },
+    { id: 'whirlwindStrike', kind: 'groundCircle', telegraph: 1.0, radius: 6.5, dmgMul: 1.8, originSelf: true, slow: { dur: 1.8, mul: 0.5 }, cd: 6.5 },
+    { id: 'warCry', kind: 'groundCircle', telegraph: 1.6, radius: 13, dmgMul: 2.2, originSelf: true, knockback: 3.0, cd: 12.0 },
   ],
   20: [   // General Phase 2 — storm + artillery
-    { id: 'stormCall', kind: 'multiCircle', telegraph: 0.8, count: 8, spawnInterval: 0.45, radius: 2.8, dmgMul: 1.5, spread: 9, cd: 13.0 },
-    { id: 'heavyArtillery', kind: 'projectileMulti', telegraph: 0.6, count: 5, spreadAngle: Math.PI / 5, speed: 18, dmgMul: 1.8, radius: 0.9, range: 18, cd: 7.5 },
-    { id: 'shieldWall', kind: 'groundCircle', telegraph: 1.2, radius: 7, dmgMul: 2.0, originSelf: true, knockback: 3.5, cd: 9.0 },
+    { id: 'stormCall', kind: 'multiCircle', telegraph: 0.8, count: 10, spawnInterval: 0.4, radius: 4.0, dmgMul: 1.8, spread: 11, cd: 13.0 },
+    { id: 'heavyArtillery', kind: 'projectileMulti', telegraph: 0.6, count: 6, spreadAngle: Math.PI / 4, speed: 20, dmgMul: 2.0, radius: 1.2, range: 22, cd: 7.5 },
+    { id: 'shieldWall', kind: 'groundCircle', telegraph: 1.0, radius: 10, dmgMul: 2.4, originSelf: true, knockback: 4.5, cd: 9.0 },
   ],
   30: [   // Warlord Phase 2 — tectonic + toxic
-    { id: 'tectonicSlam', kind: 'groundCircle', telegraph: 1.4, radius: 10, dmgMul: 2.5, originSelf: true, knockback: 2.0, cd: 10.0 },
-    { id: 'toxicCloud', kind: 'poolDot', telegraph: 1.0, radius: 5, duration: 8, dpsMul: 0.6, slow: { dur: 1.0, mul: 0.6 }, targetHero: true, cd: 8.0 },
-    { id: 'boulderHurl', kind: 'projectile', telegraph: 0.5, speed: 18, dmgMul: 2.2, radius: 1.5, range: 22, cd: 5.5 },
+    { id: 'tectonicSlam', kind: 'groundCircle', telegraph: 1.2, radius: 13, dmgMul: 3.0, originSelf: true, knockback: 3.0, cd: 10.0 },
+    { id: 'toxicCloud', kind: 'poolDot', telegraph: 0.9, radius: 7, duration: 9, dpsMul: 0.8, slow: { dur: 1.2, mul: 0.5 }, targetHero: true, cd: 8.0 },
+    { id: 'boulderHurl', kind: 'projectile', telegraph: 0.5, speed: 22, dmgMul: 2.6, radius: 2.0, range: 26, cd: 5.5 },
   ],
 };
 
@@ -3923,10 +3923,11 @@ function spawnBossWarsBoss(side, tier) {
   mesh.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
   scene.add(mesh);
   const hp = bossInfo.hp;
-  const dmg = Math.round(28 * bossInfo.dmgScale);
-  // Speed-skalning per tier (raid-bossar är inte snabba men jagar)
-  const tierSpeed = { 1: 2.2, 2: 2.5, 3: 2.7, 4: 2.9, 5: 3.1 };
-  const bossSpeed = tierSpeed[tier] || 2.5;
+  // Bumpad bas-dmg: 28 → 42. Bumpad dmgScale i BOSS_WARS_DEFS (1.5–3.5).
+  const dmg = Math.round(42 * bossInfo.dmgScale);
+  // Speed-skalning per tier — bossar JAGAR nu på riktigt (hero base 5.5–7.0)
+  const tierSpeed = { 1: 3.8, 2: 4.3, 3: 4.7, 4: 5.0, 5: 5.4 };
+  const bossSpeed = tierSpeed[tier] || 4.0;
   const bossId = nextEntityId++;
   side.monsters.push({
     id: bossId,
@@ -3935,8 +3936,8 @@ function spawnBossWarsBoss(side, tier) {
     speed: bossSpeed,
     damage: dmg,
     attackType: 'melee',
-    attackRange: 1.6,
-    attackInterval: 1.2,
+    attackRange: 2.4,           // bumpad så bossen kan slå utan att klistras in
+    attackInterval: 0.9,        // snabbare AA (1.2 → 0.9s)
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: true,
     isBoss: true, isMiniBoss: false,
@@ -5402,6 +5403,8 @@ function startBossCast(side, m, skill, skillIdx) {
     extras: null,
   };
   m.activeCast = cast;
+  // Trigga attack-animation på boss-mesh — gör att den visuellt "slår" när skill cast startar
+  if (m.mesh) m.mesh.userData.attackTrigger = true;
   // Boss roterar mot target under telegraph
   if (m.mesh) m.mesh.rotation.y = Math.atan2(dirX, dirZ);
   spawnBossTelegraph(side, m, cast);
@@ -5580,6 +5583,8 @@ function tickBossTelegraph(side, m, cast, dt) {
 function bossExecuteSkill(side, m, cast) {
   const s = cast.skill;
   cast.phase = 'execute';
+  // Re-trigga attack-animation vid execute så bossen "slår" när skadan faktiskt landar
+  if (m.mesh) m.mesh.userData.attackTrigger = true;
   if (s.kind === 'groundCircle') {
     cast.timer = 0.45;   // visuell flash-tid
     cast.extras = { meshes: [], done: true };
@@ -6137,6 +6142,8 @@ function updateMonsters(side, dt) {
       damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = mAtkInterval;
       spawnSlashFx(side.hero.x, side.hero.z, 0xff5544);
+      // Trigga attack-animation på boss-mesh
+      if (m.mesh) m.mesh.userData.attackTrigger = true;
     }
 
     // Om inte jagar hjälten — leta efter opp's playerCreeps i samma arena
@@ -9299,10 +9306,17 @@ function animateGltfCharacter(mesh, dt, side, type) {
       side._lastSkillCd[k] = cur;
     }
   }
+  // Attack-detektion (monster/boss): flagga sätts av updateMonsters/tickBossSkills
+  if (type === 'monster' && mesh.userData.attackTrigger) {
+    attackTrig = true;
+    mesh.userData.attackTrigger = false;
+  }
 
   if (attackTrig && clips.attack) {
-    playGltfAction(mesh, clips.attack, { once: true, fade: 0.08, timeScale: 1.4 });
-    st.attackTimer = HERO_ATTACK_DURATION;
+    // Monster/boss attack-clip håller längre + lite långsammare så slaget syns tydligt
+    const isBossMon = type === 'monster';
+    playGltfAction(mesh, clips.attack, { once: true, fade: 0.08, timeScale: isBossMon ? 1.0 : 1.4 });
+    st.attackTimer = isBossMon ? 0.7 : HERO_ATTACK_DURATION;
   }
 
   if (st.attackTimer > 0) {
