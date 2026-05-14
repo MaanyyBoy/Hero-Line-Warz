@@ -1503,6 +1503,37 @@ const BOSS_WARS_PHASE2_SKILLS = {
 function getBossWarsDef(tier) {
   return BOSS_WARS_DEFS.find(b => b.tier === tier) || BOSS_WARS_DEFS[0];
 }
+
+// ===== BOSS WARS — 10 TALENTS + 10 ITEMS för prep-fasen =====
+// Spelaren väljer 3 talents + 4 items innan striden. Talents stackar
+// stats additivt via recomputeSideStats. Items läggs i side.inventory.
+const BOSS_WARS_TALENTS = [
+  { id: 'bwt_hp',       icon: '💪', name: 'Iron Body',          desc: '+25% max HP',                stats: { maxHpPct: 0.25 } },
+  { id: 'bwt_as',       icon: '⚡', name: 'Quick Strikes',       desc: '+20% attack speed',          stats: { attackSpeedPct: 0.20 } },
+  { id: 'bwt_dmg',      icon: '⚔', name: 'Sharp Edge',          desc: '+12 attack damage',          stats: { attackDmg: 12 } },
+  { id: 'bwt_skill',    icon: '✨', name: 'Spellcraft',          desc: '+20% skill damage',          stats: { skillDmgPct: 0.20 } },
+  { id: 'bwt_cdr',      icon: '⏱', name: 'Cooldown Mastery',    desc: '+15% cooldown reduction',    stats: { cdrPct: 0.15 } },
+  { id: 'bwt_dr',       icon: '🛡', name: 'Iron Skin',           desc: '+18% damage reduction',      stats: { dmgReductionPct: 0.18 } },
+  { id: 'bwt_ls',       icon: '🩸', name: 'Bloodthirst',         desc: '+12% lifesteal på AA',       stats: {} /* applied via aaLifestealPct */, lifestealOnAa: 0.12 },
+  { id: 'bwt_crit',     icon: '🎯', name: 'Crit Master',         desc: '+15% crit chans, +25% crit dmg', stats: { critChancePct: 0.15 } /* crit dmg appliceras separat */, critDmgBonus: 0.25 },
+  { id: 'bwt_ms',       icon: '💨', name: 'Swift Runner',        desc: '+15% rörelsehastighet',      stats: { moveSpeedPct: 0.15 } },
+  { id: 'bwt_heal',     icon: '✚', name: 'Healing Aura',        desc: '+2% maxHP regen per sekund', stats: { healPerSecPct: 0.02 } },
+];
+
+// 10 nya items för Boss Wars. Varje item är en upgrad-version som ges direkt
+// (ingen guld-kostnad — användaren väljer 4 stycken).
+const BOSS_WARS_ITEMS = [
+  { id: 'bwi_blade',    icon: '🗡', name: 'Slayer Blade',         desc: '+15 AA dmg + 15% AS',         stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
+  { id: 'bwi_helm',     icon: '⛑', name: 'Helm of Vitality',     desc: '+35% maxHP',                  stats: { maxHpPct: 0.35 } },
+  { id: 'bwi_boots',    icon: '👢', name: 'Boots of Haste',       desc: '+25% rörelsehastighet',       stats: { moveSpeedPct: 0.25 } },
+  { id: 'bwi_cape',     icon: '🧥', name: 'Cape of Wards',        desc: '+20% damage reduction',       stats: { dmgReductionPct: 0.20 } },
+  { id: 'bwi_amulet',   icon: '🔮', name: 'Amulet of Power',      desc: '+30% skill damage',           stats: { skillDmgPct: 0.30 } },
+  { id: 'bwi_ring',     icon: '💍', name: 'Ring of Mastery',      desc: '+20% CDR + 15% AS',           stats: { cdrPct: 0.20, attackSpeedPct: 0.15 } },
+  { id: 'bwi_tome',     icon: '📖', name: 'Tome of Arcana',       desc: '+35% skill dmg + 15% maxHP',  stats: { skillDmgPct: 0.35, maxHpPct: 0.15 } },
+  { id: 'bwi_gauntlet', icon: '🥊', name: 'Berserker Gauntlet',   desc: '+18 AA dmg + 15% lifesteal',  stats: { attackDmg: 18 }, lifestealOnAa: 0.15 },
+  { id: 'bwi_crit',     icon: '💎', name: 'Crystal Eye',          desc: '+25% crit chans + 35% crit dmg', stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
+  { id: 'bwi_phoenix',  icon: '🔥', name: 'Phoenix Amulet',       desc: 'Revive en gång vid 50% HP (engångs)', stats: { maxHpPct: 0.10 }, phoenixRevive: true },
+];
 // Mini-bossar spawnar bara på jämna waves (2,4,6,8 / 12,14,16,18 / etc).
 // Skill-rotation per tier: 1:a even-waven i tier → skill 0, 2:a → 1, 3:e → 2, 4:e → 0.
 function shouldSpawnMiniBoss(waveNum) {
@@ -6398,6 +6429,15 @@ function gainXp(side, amount) {
 
 function killHero(side) {
   if (side.hero.dead) return;
+  // Boss Wars Phoenix Amulet: revive en gång vid 50% HP istället för att dö
+  if (side.phoenixReviveAvailable && APP.gameMode === 'bosswars') {
+    side.phoenixReviveAvailable = false;
+    side.hero.hp = Math.round(side.hero.maxHp * 0.5);
+    spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 3.0);
+    spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa44);
+    triggerCameraShake(0.4, 0.5);
+    return;   // hero överlever — INTE dead
+  }
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
   // Avbryt pågående ultimates vid död
@@ -6833,6 +6873,10 @@ function updateProjectiles(side, dt) {
           const k = opp.playerCreeps.indexOf(p.target);
           if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
         }
+      }
+      // Boss Wars AA-lifesteal (talent Bloodthirst / item Berserker Gauntlet)
+      if ((side.aaLifestealPct || 0) > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + _dmgApplied * side.aaLifestealPct);
       }
       // Legolus dash-buffed AA: 20% lifesteal + reset E-cd om kill
       if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
@@ -8411,6 +8455,15 @@ function recomputeSideStats(side) {
       addStats(def.activeAtMax.stats);
     }
   }
+  // Boss Wars talents + items — applicera stats från valda objekt
+  if (side.bossWarsTalents) for (const tid of side.bossWarsTalents) {
+    const t = BOSS_WARS_TALENTS.find(x => x.id === tid);
+    if (t && t.stats) addStats(t.stats);
+  }
+  if (side.bossWarsItems) for (const iid of side.bossWarsItems) {
+    const it = BOSS_WARS_ITEMS.find(x => x.id === iid);
+    if (it && it.stats) addStats(it.stats);
+  }
   // Ling & Lang lvl 10 shield-uppe: +AA range + AA dmg
   if ((side.lingShieldHp || 0) > 0) {
     attackDmgPct += LING_AA_DMG_BONUS;
@@ -8432,6 +8485,19 @@ function recomputeSideStats(side) {
   side.dmgReductionMul = Math.max(0.10, 1 - totalDR);
   side.critChancePct = Math.min(1, critChancePct);
   side.healPerSecPct = Math.max(0, healPerSecPct);
+  // Boss Wars-extras som inte är vanliga stats: AA-lifesteal + crit-dmg-bonus
+  let aaLifestealSum = 0, critDmgBonusSum = 0, hasPhoenix = false;
+  const _pushBwExtras = (def) => {
+    if (!def) return;
+    if (def.lifestealOnAa) aaLifestealSum += def.lifestealOnAa;
+    if (def.critDmgBonus) critDmgBonusSum += def.critDmgBonus;
+    if (def.phoenixRevive) hasPhoenix = true;
+  };
+  if (side.bossWarsTalents) for (const tid of side.bossWarsTalents) _pushBwExtras(BOSS_WARS_TALENTS.find(x => x.id === tid));
+  if (side.bossWarsItems) for (const iid of side.bossWarsItems) _pushBwExtras(BOSS_WARS_ITEMS.find(x => x.id === iid));
+  side.aaLifestealPct = aaLifestealSum;
+  side.critDmgMul = 2.0 + critDmgBonusSum;
+  side.phoenixReviveAvailable = hasPhoenix && (side.phoenixReviveAvailable !== false);   // sätts false när använt
   // Nya stats för items
   side.ccReductionPct = Math.min(0.9, ccReductionPct);
   side.skillLifestealPct = Math.max(0, skillLifestealPct);
@@ -13688,8 +13754,96 @@ function finishHeroPick() {
   }
   heroPickState.active = false;
   heroPickState.mode = null;
+  // Boss Wars: visa prep-panel innan matchen startar (välj 3 talents + 4 items)
+  if (APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.active) {
+    showBossWarsPrep();
+    return;
+  }
   enterPlayPhase();
 }
+
+// ===== Boss Wars prep — välj 3 talents + 4 items =====
+function showBossWarsPrep() {
+  if (heroPickEl) heroPickEl.classList.add('hidden');
+  const prepEl = document.getElementById('boss-prep');
+  if (!prepEl) { enterPlayPhase(); return; }
+  prepEl.classList.remove('hidden');
+  // Reset selection state
+  APP.bossWars.selectedTalents = [];
+  APP.bossWars.selectedItems = [];
+  renderBossPrepGrids();
+  updateBossPrepButton();
+}
+
+function renderBossPrepGrids() {
+  const tg = document.getElementById('bp-talents-grid');
+  const ig = document.getElementById('bp-items-grid');
+  if (!tg || !ig) return;
+  // Talents
+  tg.innerHTML = '';
+  const tSelected = new Set(APP.bossWars.selectedTalents || []);
+  const tFull = tSelected.size >= 3;
+  for (const t of BOSS_WARS_TALENTS) {
+    const picked = tSelected.has(t.id);
+    const div = document.createElement('div');
+    div.className = 'bp-card' + (picked ? ' selected' : (tFull ? ' disabled' : ''));
+    div.innerHTML = `<div class="bp-icon">${t.icon}</div><div class="bp-name">${t.name}</div><div class="bp-desc">${t.desc}</div>`;
+    if (picked || !tFull) div.addEventListener('click', () => toggleBossPrepTalent(t.id));
+    tg.appendChild(div);
+  }
+  // Items
+  ig.innerHTML = '';
+  const iSelected = new Set(APP.bossWars.selectedItems || []);
+  const iFull = iSelected.size >= 4;
+  for (const it of BOSS_WARS_ITEMS) {
+    const picked = iSelected.has(it.id);
+    const div = document.createElement('div');
+    div.className = 'bp-card' + (picked ? ' selected' : (iFull ? ' disabled' : ''));
+    div.innerHTML = `<div class="bp-icon">${it.icon}</div><div class="bp-name">${it.name}</div><div class="bp-desc">${it.desc}</div>`;
+    if (picked || !iFull) div.addEventListener('click', () => toggleBossPrepItem(it.id));
+    ig.appendChild(div);
+  }
+  // Status-text
+  const ts = document.getElementById('bp-talents-status');
+  const iS = document.getElementById('bp-items-status');
+  if (ts) ts.textContent = `(${tSelected.size}/3 valda)`;
+  if (iS) iS.textContent = `(${iSelected.size}/4 valda)`;
+}
+
+function toggleBossPrepTalent(id) {
+  const sel = APP.bossWars.selectedTalents = APP.bossWars.selectedTalents || [];
+  const idx = sel.indexOf(id);
+  if (idx >= 0) sel.splice(idx, 1);
+  else if (sel.length < 3) sel.push(id);
+  renderBossPrepGrids();
+  updateBossPrepButton();
+}
+function toggleBossPrepItem(id) {
+  const sel = APP.bossWars.selectedItems = APP.bossWars.selectedItems || [];
+  const idx = sel.indexOf(id);
+  if (idx >= 0) sel.splice(idx, 1);
+  else if (sel.length < 4) sel.push(id);
+  renderBossPrepGrids();
+  updateBossPrepButton();
+}
+function updateBossPrepButton() {
+  const btn = document.getElementById('bp-start-btn');
+  if (!btn) return;
+  const okT = (APP.bossWars.selectedTalents || []).length === 3;
+  const okI = (APP.bossWars.selectedItems || []).length === 4;
+  btn.disabled = !(okT && okI);
+  btn.textContent = (okT && okI) ? '⚔ Starta strid' : `Välj ${3 - (APP.bossWars.selectedTalents || []).length} talents + ${4 - (APP.bossWars.selectedItems || []).length} items`;
+}
+function startBossWarsFightAfterPrep() {
+  const prepEl = document.getElementById('boss-prep');
+  if (prepEl) prepEl.classList.add('hidden');
+  enterPlayPhase();
+}
+// Bind start-button (en gång vid init)
+(function bindBossPrepStart() {
+  const btn = document.getElementById('bp-start-btn');
+  if (btn) btn.addEventListener('click', startBossWarsFightAfterPrep);
+})();
 
 function showHeroPick(mode) {
   setupMatch(mode);  // Skapa sidor + sätt APP.mode INNAN pick visas
@@ -14150,13 +14304,17 @@ function enterPlayPhase() {
       hideArenaCountdown();
     }
   } else if (APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.active) {
-    // Boss Wars: bygg flat platform, sätt hjälte lvl 30, spawna vald boss
+    // Boss Wars: bygg flat platform, sätt hjälte lvl 30, applicera prep-val, spawna boss
     buildBossWarsScene();
     bossWarsSceneGroup.visible = true;
     arenaSceneGroup.visible = false;
     for (const idx of [1]) {
       const s = sides[idx];
       if (!s) continue;
+      // Applicera valda talents + items från prep-panelen
+      s.bossWarsTalents = (APP.bossWars.selectedTalents || []).slice();
+      s.bossWarsItems = (APP.bossWars.selectedItems || []).slice();
+      s.phoenixReviveAvailable = true;   // re-enable så recomputeSideStats kan checka
       s.level = 30;
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
