@@ -125,7 +125,7 @@ function relayBossWarsMessage(room, fromWs, envelope) {
   if (envelope.d && envelope.d.t === 'b-state' && fromWs !== room.host) return;
   if (envelope.d && envelope.d.t === 'b-start' && fromWs !== room.host) return;
   // Klient → host: bara dessa meddelanden går enkelriktat till host
-  const onlyToHost = envelope.d && envelope.d.t && (envelope.d.t === 'b-input' || envelope.d.t === 'b-pick' || envelope.d.t === 'b-hero-confirm');
+  const onlyToHost = envelope.d && envelope.d.t && (envelope.d.t === 'b-input' || envelope.d.t === 'b-pick' || envelope.d.t === 'b-hero-confirm' || envelope.d.t === 'b-ready');
   if (onlyToHost) {
     if (room.host && fromWs !== room.host) send(room.host, envelope);
     return;
