@@ -4517,7 +4517,6 @@ const SHRINK_DMG_PCT = 0.05;         // 5% maxHP per sek utanför
 const SHRINK_TICK_INTERVAL = 0.25;
 
 function resetArenaState() {
-  _lastRenderedLocalTalents = '';   // nolla render-cachen så ny match får fresh re-render
   arenaState.phase = 'idle';
   arenaState.roundNum = 0;
   arenaState.wins = { 1: 0, 2: 0 };
@@ -10877,9 +10876,6 @@ function renderTalentsGrid() {
   const side = sides[APP.localSide];
   const heroId = (side && side.heroId) || 'magiker';
   const talents = ARENA_TALENTS[heroId] || [];
-  // Uppdatera cachen så applyArenaState's dirty-check vet att vi just renderade
-  // (förhindrar onödig re-render direkt efter showArenaPrep/onTalentPick).
-  _lastRenderedLocalTalents = JSON.stringify(arenaState.talents[APP.localSide] || {});
   apTalentsGridEl.innerHTML = '';
   const chosen = new Set(arenaState.talents[APP.localSide]?.chosen || []);
   const points = arenaState.talents[APP.localSide]?.points || 0;
@@ -13403,9 +13399,6 @@ function broadcastArenaState() {
 }
 
 // Client: ta emot a-state och applicera lokalt
-// Cache: senast renderade talent-state för local side (JSON-strängifierad).
-// Används av applyArenaState för att skippa onödig DOM-rebuild av talent-grid.
-let _lastRenderedLocalTalents = '';
 function applyArenaState(msg) {
   if (APP.mode !== 'client' || !isArenaMp()) return;
   const prevPhase = arenaState.phase;
@@ -13534,19 +13527,14 @@ function applyArenaState(msg) {
   // Uppdatera prep-UI om i prep-fas (timer, points, ready)
   if (arenaState.phase === 'prep') {
     updateArenaPrepUI();
-    // VIKTIGT: kalla INTE renderTalentsGrid här. Den rebuildar hela DOM:en via
-    // innerHTML='', och vid 45 Hz state-broadcast (var 22 ms) skulle klickar
-    // bli "ätna" — användarens mouseDown→mouseUp spänner över flera renders
-    // och click-eventet landar på en detached DOM-nod. Grid renderas istället:
-    //   1) vid fasbyte till prep (showArenaPrep)
-    //   2) vid lokal klick (onTalentPick)
-    //   3) när host's talent-state faktiskt ändras för local side
-    // Punkt 3 hanteras nedan via dirty-check så vi bara renderar när nåt nytt.
-    const _localStr = JSON.stringify(arenaState.talents[APP.localSide] || {});
-    if (_localStr !== _lastRenderedLocalTalents) {
-      _lastRenderedLocalTalents = _localStr;
-      renderTalentsGrid();
-    }
+    // VIKTIGT: anropa INTE renderTalentsGrid här. Den rebuildar hela
+    // DOM:en via innerHTML='' och vid 45 Hz broadcast skulle klick-events
+    // ätas (mouseDown/Up spänner över flera renders → click landar på
+    // detached DOM-nod). Grid renderas explicit via:
+    //   1) showArenaPrep vid fas-transition till prep (täcker round-start +1)
+    //   2) onTalentPick vid lokal användarklick
+    // Points-display + ready-knapp uppdateras via updateArenaPrepUI utan
+    // att röra grid-DOM:en (säker mot click-eating).
   }
   // Recompute stats för lokal sida (talents kan ha ändrats)
   const localSide = sides[APP.localSide];
