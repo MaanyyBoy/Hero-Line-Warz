@@ -3328,44 +3328,115 @@ const ARENA_CFG = {
   // Cover-props: x/z är relativt arena-mitten. collision = AABB/cirkel som
   // blockar hero-rörelse + projektiler. Rotation påverkar utseendet men
   // collision-formen är axis-aligned (close enough för gameplay).
-  props: [
-    // Stenar — små punkt-cover spridda över banan
-    { type: 'rock', x: -14, z:  -9, rot: 0.3, collision: { shape: 'circle', radius: 1.1 } },
-    { type: 'rock', x: -12, z: -11, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
-    { type: 'rock', x:  14, z:   9, rot: -0.7, collision: { shape: 'circle', radius: 1.1 } },
-    { type: 'rock', x:  12, z:  11, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
-    { type: 'rock', x:  -4, z:  22, rot: 0.2, collision: { shape: 'circle', radius: 1.1 } },
-    { type: 'rock', x:   5, z: -23, rot: 0.9, collision: { shape: 'circle', radius: 1.1 } },
-    { type: 'rock', x:  18, z: -20, rot: 1.4, collision: { shape: 'circle', radius: 1.0 } },
-    { type: 'rock', x: -19, z:  19, rot: 0.6, collision: { shape: 'circle', radius: 1.0 } },
-
-    // Trasiga stenmurar — långa rektangulära block
-    { type: 'wall', x: -18, z:  15, rot: 0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-    { type: 'wall', x:  18, z: -15, rot: -0.10, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-    { type: 'wall', x: -26, z:  -3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
-    { type: 'wall', x:  26, z:   3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
-    { type: 'wall', x:   2, z: -16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-    { type: 'wall', x:  -2, z:  16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-
-    // Brutna pelare — punkt-cover
-    { type: 'pillar', x: -20, z: -16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-    { type: 'pillar', x:  20, z:  16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-    { type: 'pillar', x: -10, z:  22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-    { type: 'pillar', x:  10, z: -22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-    { type: 'pillar', x: -34, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-    { type: 'pillar', x:  34, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-
-    // Trasiga hästvagnar — stort cover
-    { type: 'wagon', x: -22, z:   8, rot: 0.7, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-    { type: 'wagon', x:  22, z:  -8, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-    { type: 'wagon', x:  -8, z: -24, rot: 1.8, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-
-    // Fallna torn — dramatiskt långt cover (~6 m, ligger ner)
-    { type: 'fallenTower', x:  -5, z:  -3, rot: 0.25, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-    { type: 'fallenTower', x:   5, z:   3, rot: 2.85, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-    { type: 'fallenTower', x:   8, z:  24, rot: 1.6, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
-  ],
+  // OBS: props sätts dynamiskt från ARENA_MAPS[arenaState.mapIdx]
+  props: [],
+  floorTint: 0x5a4a36,    // bas-färg (kan override:as per map)
 };
+
+// === ARENA MAPS — 3 olika layouts med olika hinder och teman ===
+const ARENA_MAPS = [
+  {
+    name: 'Desert Ruins',
+    desc: 'Klassisk öken-arena: stenar, murar, vagnar, fallna torn',
+    floorTint: 0x5a4a36,
+    props: [
+      // Stenar — små punkt-cover spridda över banan
+      { type: 'rock', x: -14, z:  -9, rot: 0.3, collision: { shape: 'circle', radius: 1.1 } },
+      { type: 'rock', x: -12, z: -11, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x:  14, z:   9, rot: -0.7, collision: { shape: 'circle', radius: 1.1 } },
+      { type: 'rock', x:  12, z:  11, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x:  -4, z:  22, rot: 0.2, collision: { shape: 'circle', radius: 1.1 } },
+      { type: 'rock', x:   5, z: -23, rot: 0.9, collision: { shape: 'circle', radius: 1.1 } },
+      { type: 'rock', x:  18, z: -20, rot: 1.4, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x: -19, z:  19, rot: 0.6, collision: { shape: 'circle', radius: 1.0 } },
+      // Trasiga stenmurar
+      { type: 'wall', x: -18, z:  15, rot: 0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall', x:  18, z: -15, rot: -0.10, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall', x: -26, z:  -3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+      { type: 'wall', x:  26, z:   3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+      { type: 'wall', x:   2, z: -16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall', x:  -2, z:  16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      // Brutna pelare
+      { type: 'pillar', x: -20, z: -16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  20, z:  16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x: -10, z:  22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  10, z: -22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x: -34, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  34, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      // Trasiga hästvagnar
+      { type: 'wagon', x: -22, z:   8, rot: 0.7, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x:  22, z:  -8, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x:  -8, z: -24, rot: 1.8, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      // Fallna torn
+      { type: 'fallenTower', x:  -5, z:  -3, rot: 0.25, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:   5, z:   3, rot: 2.85, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:   8, z:  24, rot: 1.6, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
+    ],
+  },
+  {
+    name: 'Stone Maze',
+    desc: 'Maze med smala korridorer av höga murar — täta cover-vinklar',
+    floorTint: 0x4a4234,
+    props: [
+      // Centralt zigzag-maze: 6 långa murar i mönster
+      { type: 'wall', x: -10, z:  -2, rot: 0, collision: { shape: 'box', halfX: 3.5, halfZ: 0.5 } },
+      { type: 'wall', x:  10, z:   2, rot: 0, collision: { shape: 'box', halfX: 3.5, halfZ: 0.5 } },
+      { type: 'wall', x: -20, z:   6, rot: 0, collision: { shape: 'box', halfX: 3.0, halfZ: 0.5 } },
+      { type: 'wall', x:  20, z:  -6, rot: 0, collision: { shape: 'box', halfX: 3.0, halfZ: 0.5 } },
+      { type: 'wall', x:  -3, z:  14, rot: 0, collision: { shape: 'box', halfX: 4.0, halfZ: 0.5 } },
+      { type: 'wall', x:   3, z: -14, rot: 0, collision: { shape: 'box', halfX: 4.0, halfZ: 0.5 } },
+      // Vertikala stop-murar
+      { type: 'wall', x: -15, z:  -8, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
+      { type: 'wall', x:  15, z:   8, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
+      { type: 'wall', x: -30, z:   0, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 3.5 } },
+      { type: 'wall', x:  30, z:   0, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 3.5 } },
+      { type: 'wall', x: -16, z:  22, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
+      { type: 'wall', x:  16, z: -22, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
+      // Hörn-pelare som blockerar diagonala line-of-sight
+      { type: 'pillar', x: -25, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  25, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x: -25, z:  18, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  25, z: -18, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  -8, z:  -8, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:   8, z:   8, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      // Få stenar för variation
+      { type: 'rock', x:  -2, z:  24, rot: 0.4, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x:   2, z: -24, rot: 1.1, collision: { shape: 'circle', radius: 1.0 } },
+    ],
+  },
+  {
+    name: 'Open Battlefield',
+    desc: 'Öppet slagfält — få stora cover-platser, hög rörelse-fokus',
+    floorTint: 0x4a3a2a,
+    props: [
+      // 4 stora fallna torn som "kapsuler" för cover
+      { type: 'fallenTower', x: -12, z:   0, rot: 0, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:  12, z:   0, rot: Math.PI, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:   0, z:  15, rot: 1.5708, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
+      { type: 'fallenTower', x:   0, z: -15, rot: 1.5708, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
+      // 4 vagnar i mellanavstånd
+      { type: 'wagon', x: -25, z:  12, rot: 0.5, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x:  25, z: -12, rot: -0.5, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x: -25, z: -12, rot: 1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x:  25, z:  12, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      // Enstaka stenar för line-of-sight breakage
+      { type: 'rock', x: -18, z:  22, rot: 0.7, collision: { shape: 'circle', radius: 1.2 } },
+      { type: 'rock', x:  18, z: -22, rot: 1.4, collision: { shape: 'circle', radius: 1.2 } },
+      { type: 'rock', x:   0, z:  25, rot: 0.0, collision: { shape: 'circle', radius: 1.2 } },
+      { type: 'rock', x:   0, z: -25, rot: 0.0, collision: { shape: 'circle', radius: 1.2 } },
+    ],
+  },
+];
+
+// Helper för att byta aktiv map (kopierar props från ARENA_MAPS[idx])
+function setArenaMap(idx) {
+  const safeIdx = Math.max(0, Math.min(ARENA_MAPS.length - 1, idx | 0));
+  ARENA_CFG.props = ARENA_MAPS[safeIdx].props;
+  ARENA_CFG.floorTint = ARENA_MAPS[safeIdx].floorTint;
+  return safeIdx;
+}
+// Initialisera till Map 0 vid start
+setArenaMap(0);
 
 const ARENA_ORB_MAX_HP = 100;
 const ARENA_ORB_SPAWN_DELAY = 0;       // spawnar direkt vid fight-start
@@ -3728,10 +3799,39 @@ function makeArenaBrazier() {
 
 const arenaBraziers = []; // för animation
 
+function clearArenaScene() {
+  while (arenaSceneGroup.children.length) {
+    const c = arenaSceneGroup.children[0];
+    c.traverse?.(o => {
+      if (o.isMesh) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+          else o.material.dispose();
+        }
+      }
+    });
+    arenaSceneGroup.remove(c);
+  }
+  arenaBraziers.length = 0;
+  arenaOrbBuilt = false;
+  arenaOrbMesh = null;
+  shrinkRingMesh = null;     // återskapas vid nästa shrink-tick
+  shrinkSmokeMesh = null;
+  arenaSceneGroup.userData.mapIdx = -1;
+}
+
 function buildArenaScene() {
-  if (arenaSceneGroup.children.length) return;  // bara en gång
+  const wantedMapIdx = (arenaState && arenaState.mapIdx) || 0;
+  if (arenaSceneGroup.children.length && arenaSceneGroup.userData.mapIdx === wantedMapIdx) return;
+  if (arenaSceneGroup.children.length) clearArenaScene();
+  setArenaMap(wantedMapIdx);
+  arenaSceneGroup.userData.mapIdx = wantedMapIdx;
   // Golv — dubbel storlek (100x70) med procedurell sand/sten-textur
-  const floorTex = makeNoiseTexture([90, 75, 56], 0.22, {
+  const tintR = (ARENA_CFG.floorTint >> 16) & 0xff;
+  const tintG = (ARENA_CFG.floorTint >> 8) & 0xff;
+  const tintB = ARENA_CFG.floorTint & 0xff;
+  const floorTex = makeNoiseTexture([tintR + 36, tintG + 32, tintB + 26], 0.22, {
     w: 256, h: 256, repeatX: 8, repeatY: 6,
     specks: 1800, speckColor: [40, 32, 24], streaks: false,
   });
@@ -3739,8 +3839,8 @@ function buildArenaScene() {
   const fc = document.createElement('canvas');
   fc.width = 512; fc.height = 384;
   const fctx = fc.getContext('2d');
-  // Bas-färg (mer beige sandig)
-  fctx.fillStyle = '#5a4a36';
+  // Bas-färg per map (tint från ARENA_CFG.floorTint)
+  fctx.fillStyle = `#${ARENA_CFG.floorTint.toString(16).padStart(6, '0')}`;
   fctx.fillRect(0, 0, fc.width, fc.height);
   // Bas-brus
   const baseTex = floorTex.image;
@@ -3857,10 +3957,24 @@ const arenaState = {
   },
   // Orb
   orb: { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 },
+  // Aktuell map — väljs innan match-start (random i solo, host väljer i MP)
+  mapIdx: 0,
+  // Battle-royale shrink-circle: börjar krympa 60s in i fight-fasen
+  shrinkRadius: 0,        // 0 = inte aktiv ännu
+  shrinkDamageAccum: 0,   // ticka skada var 0.25s utanför cirkeln
   endTimer: 0,
   roundWinner: 0,
   matchWinner: 0,
 };
+
+// Shrink-konfiguration: efter SHRINK_START_DELAY krymper circle linjärt till
+// SHRINK_FINAL_RADIUS över SHRINK_DURATION sekunder. Utanför = 5% maxHP/s skada.
+const SHRINK_START_DELAY = 60;       // 1 min countdown innan shrink börjar
+const SHRINK_INITIAL_RADIUS = 28;    // täcker arenan (bounds 88×56 → 28 ryms)
+const SHRINK_FINAL_RADIUS = 4;
+const SHRINK_DURATION = 60;          // krymper över 60s
+const SHRINK_DMG_PCT = 0.05;         // 5% maxHP per sek utanför
+const SHRINK_TICK_INTERVAL = 0.25;
 
 function resetArenaState() {
   arenaState.phase = 'idle';
@@ -3868,6 +3982,8 @@ function resetArenaState() {
   arenaState.wins = { 1: 0, 2: 0 };
   arenaState.prepTimer = 0;
   arenaState.fightTimer = 0;
+  arenaState.shrinkRadius = 0;
+  arenaState.shrinkDamageAccum = 0;
   arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   arenaState.talents = {
     1: { points: 0, chosen: [] },
@@ -3891,6 +4007,8 @@ function startArenaRound(roundNum) {
   arenaState.phase = 'prep';
   arenaState.prepTimer = ARENA_PREP_TIME;
   arenaState.fightTimer = 0;
+  arenaState.shrinkRadius = 0;
+  arenaState.shrinkDamageAccum = 0;
   arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   const idxs = arenaSideIdxs();
   // +1 talent-poäng per runda för alla aktiva sidor
@@ -4040,6 +4158,8 @@ function transitionArenaToStarting() {
 function transitionArenaToFight() {
   arenaState.phase = 'fight';
   arenaState.fightTimer = 0;
+  arenaState.shrinkRadius = 0;
+  arenaState.shrinkDamageAccum = 0;
   arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   hideArenaPrep();
   hideArenaCountdown();
@@ -4087,6 +4207,84 @@ function checkArenaRoundEnd() {
   if (!aAlive && !bAlive) { transitionArenaRoundEnd(0); return; }
   if (!aAlive) { transitionArenaRoundEnd(2); return; }     // team B vinner (rep idx)
   if (!bAlive && bMembers.length > 0) { transitionArenaRoundEnd(1); return; }  // team A vinner
+}
+
+// ===== SHRINK CIRCLE (battle-royale) =====
+// Klient-state för visuell smoke-mesh (rebuilt per match)
+let shrinkRingMesh = null;
+let shrinkSmokeMesh = null;
+
+function ensureShrinkMeshes() {
+  if (shrinkRingMesh) return;
+  // Boundary-ring på marken — ljusgrön ring som visar circle-edge
+  const ringGeom = new THREE.RingGeometry(0.94, 1.0, 64);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x88ff77, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+  });
+  shrinkRingMesh = new THREE.Mesh(ringGeom, ringMat);
+  shrinkRingMesh.rotation.x = -Math.PI / 2;
+  shrinkRingMesh.position.set(0, 0.12, ARENA_Z_OFFSET);
+  shrinkRingMesh.visible = false;
+  arenaSceneGroup.add(shrinkRingMesh);
+  // Smoke-vägg utanför circle — hollow cylinder med ljusgrön gradient
+  const smokeMat = new THREE.MeshBasicMaterial({
+    color: 0x66ee55, transparent: true, opacity: 0.30, side: THREE.BackSide, depthWrite: false,
+  });
+  const smokeGeom = new THREE.CylinderGeometry(1.0, 1.0, 6, 48, 1, true);
+  shrinkSmokeMesh = new THREE.Mesh(smokeGeom, smokeMat);
+  shrinkSmokeMesh.position.set(0, 3.0, ARENA_Z_OFFSET);
+  shrinkSmokeMesh.visible = false;
+  arenaSceneGroup.add(shrinkSmokeMesh);
+}
+
+function tickShrinkCircle(dt) {
+  // Aktivera efter SHRINK_START_DELAY sekunder i fight-fasen
+  const t = arenaState.fightTimer;
+  if (t < SHRINK_START_DELAY) {
+    arenaState.shrinkRadius = 0;
+    if (shrinkRingMesh) shrinkRingMesh.visible = false;
+    if (shrinkSmokeMesh) shrinkSmokeMesh.visible = false;
+    return;
+  }
+  ensureShrinkMeshes();
+  // Linjärt krymp från SHRINK_INITIAL_RADIUS → SHRINK_FINAL_RADIUS över SHRINK_DURATION
+  const elapsed = t - SHRINK_START_DELAY;
+  const u = Math.min(1, elapsed / SHRINK_DURATION);
+  const r = SHRINK_INITIAL_RADIUS - (SHRINK_INITIAL_RADIUS - SHRINK_FINAL_RADIUS) * u;
+  arenaState.shrinkRadius = r;
+  // Visuell mesh: skala ring + smoke-cylinder till nuvarande radie
+  if (shrinkRingMesh) {
+    shrinkRingMesh.visible = true;
+    shrinkRingMesh.scale.set(r, r, 1);
+    // Liten pulsering
+    const pulse = 1 + 0.04 * Math.sin(performance.now() * 0.005);
+    shrinkRingMesh.scale.x *= pulse;
+    shrinkRingMesh.scale.y *= pulse;
+  }
+  if (shrinkSmokeMesh) {
+    shrinkSmokeMesh.visible = true;
+    shrinkSmokeMesh.scale.set(r, 1, r);
+    shrinkSmokeMesh.rotation.y += dt * 0.3;
+    if (shrinkSmokeMesh.material) {
+      shrinkSmokeMesh.material.opacity = 0.28 + 0.10 * Math.sin(performance.now() * 0.003);
+    }
+  }
+  // Damage-tick: spelare utanför cirkeln tar 5% maxHP/sek
+  arenaState.shrinkDamageAccum = (arenaState.shrinkDamageAccum || 0) + dt;
+  while (arenaState.shrinkDamageAccum >= SHRINK_TICK_INTERVAL) {
+    arenaState.shrinkDamageAccum -= SHRINK_TICK_INTERVAL;
+    for (const idx of arenaSideIdxs()) {
+      const s = sides[idx];
+      if (!s || s.hero.dead) continue;
+      const dx = s.hero.x - 0;
+      const dz = s.hero.z - ARENA_Z_OFFSET;
+      const d = Math.hypot(dx, dz);
+      if (d > r) {
+        const dmg = s.hero.maxHp * SHRINK_DMG_PCT * SHRINK_TICK_INTERVAL;
+        damageHero(s, dmg);
+      }
+    }
+  }
 }
 
 function updateArenaOrb(dt) {
@@ -4255,6 +4453,7 @@ function tickArena(dt) {
   } else if (arenaState.phase === 'fight') {
     arenaState.fightTimer += dt;
     updateArenaOrb(dt);
+    tickShrinkCircle(dt);
     checkArenaRoundEnd();
   } else if (arenaState.phase === 'roundEnd') {
     arenaState.endTimer -= dt;
@@ -9877,7 +10076,8 @@ function updateArenaHud() {
 
 function updateArenaPrepUI() {
   if (!arenaPrepEl) return;
-  if (apTitleEl) apTitleEl.textContent = `Round ${arenaState.roundNum} · Prep`;
+  const mapName = (ARENA_MAPS[arenaState.mapIdx || 0] || ARENA_MAPS[0]).name;
+  if (apTitleEl) apTitleEl.textContent = `Round ${arenaState.roundNum} · ${mapName}`;
   if (apTimerEl) {
     apTimerEl.textContent = String(Math.ceil(arenaState.prepTimer));
     apTimerEl.classList.toggle('urgent', arenaState.prepTimer <= 10);
@@ -12224,6 +12424,9 @@ function broadcastArenaState() {
       2: { p: arenaState.talents[2].points, c: arenaState.talents[2].chosen.slice() },
     },
     o: { hp: arenaState.orb.hp, a: arenaState.orb.alive, sp: arenaState.orb.spawnTimer },
+    mp: arenaState.mapIdx || 0,
+    sr: +(arenaState.shrinkRadius || 0).toFixed(2),
+    ft: +(arenaState.fightTimer || 0).toFixed(2),
     h1: heroSnap(sides[1]),
     h2: heroSnap(sides[2]),
   });
@@ -12236,6 +12439,13 @@ function applyArenaState(msg) {
   const prevRound = arenaState.roundNum;
   arenaState.phase = msg.ph;
   arenaState.roundNum = msg.rn;
+  if (msg.mp !== undefined && arenaState.mapIdx !== msg.mp) {
+    arenaState.mapIdx = msg.mp;
+    // Bygg om arena-scenen med den valda mappen
+    if (arenaSceneGroup.userData.mapIdx !== msg.mp) buildArenaScene();
+  }
+  if (msg.sr !== undefined) arenaState.shrinkRadius = msg.sr;
+  if (msg.ft !== undefined) arenaState.fightTimer = msg.ft;
   // Använd numeriska keys för wins/ready så vi inte blandar med strings efter JSON-roundtrip
   arenaState.wins[1] = (msg.w && msg.w[1]) || 0;
   arenaState.wins[2] = (msg.w && msg.w[2]) || 0;
@@ -13591,6 +13801,8 @@ function arenaSoloStartWithBot(difficulty) {
   APP.gameMode = 'arena1v1';
   APP.arenaTeamSize = 1;
   APP.arenaBot = { active: true, difficulty };
+  // Solo: slumpa map (1 av 3)
+  arenaState.mapIdx = Math.floor(Math.random() * ARENA_MAPS.length);
   showHeroPick('solo');
 }
 const btnArenaHost = document.getElementById('btn-arena-host');
@@ -14587,6 +14799,8 @@ if (new URLSearchParams(location.search).get('test') === 'arena') {
     // Hoppa direkt till fight-fas så vi ser arena-scenen utan prep-overlay
     arenaState.phase = 'fight';
     arenaState.fightTimer = 0;
+  arenaState.shrinkRadius = 0;
+  arenaState.shrinkDamageAccum = 0;
     hideArenaPrep();
   };
   tryStart();
