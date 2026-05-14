@@ -12890,8 +12890,11 @@ const lobbyHowtoEl = document.getElementById('lobby-howto');
 const lobbyArenaBotEl = document.getElementById('lobby-arena-bot');
 const lobbyLineWarsEl = document.getElementById('lobby-line-wars');
 const lobbyArenaWarsEl = document.getElementById('lobby-arena-wars');
+const lobbyLineTeamEl = document.getElementById('lobby-line-team');
+const lobbyArenaTeamEl = document.getElementById('lobby-arena-team');
+const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -12903,6 +12906,9 @@ function showLobbyPanel(which) {
   else if (which === 'arena-bot') lobbyArenaBotEl.classList.add('visible');
   else if (which === 'line-wars') lobbyLineWarsEl.classList.add('visible');
   else if (which === 'arena-wars') lobbyArenaWarsEl.classList.add('visible');
+  else if (which === 'line-team') lobbyLineTeamEl.classList.add('visible');
+  else if (which === 'arena-team') lobbyArenaTeamEl.classList.add('visible');
+  else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -13406,15 +13412,40 @@ if (btnBotMedium) btnBotMedium.addEventListener('click', () => arenaSoloStartWit
 const btnBotHard = document.getElementById('btn-bot-hard');
 if (btnBotHard) btnBotHard.addEventListener('click', () => arenaSoloStartWithBot('hard'));
 
-// ---- Mode-knappar (Line Wars / Arena Wars) — visar submenyer ----
+// ---- Mode-knappar (Line Wars / Arena Wars) — visar team-väljare ----
 const btnModeLine = document.getElementById('btn-mode-line');
-if (btnModeLine) btnModeLine.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('line-wars'); });
+if (btnModeLine) btnModeLine.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('line-team'); });
 const btnModeArena = document.getElementById('btn-mode-arena');
-if (btnModeArena) btnModeArena.addEventListener('click', () => { APP.gameMode = 'arena1v1'; showLobbyPanel('arena-wars'); });
+if (btnModeArena) btnModeArena.addEventListener('click', () => { APP.gameMode = 'arena1v1'; showLobbyPanel('arena-team'); });
+
+// ---- Team-storlek-väljare ----
+const btnLineTeamBack = document.getElementById('btn-line-team-back');
+if (btnLineTeamBack) btnLineTeamBack.addEventListener('click', () => showLobbyPanel('main'));
+const btnLine1v1 = document.getElementById('btn-line-1v1');
+if (btnLine1v1) btnLine1v1.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('line-wars'); });
+const btnArenaTeamBack = document.getElementById('btn-arena-team-back');
+if (btnArenaTeamBack) btnArenaTeamBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('main'); });
+const btnArena1v1Mode = document.getElementById('btn-arena-1v1');
+if (btnArena1v1Mode) btnArena1v1Mode.addEventListener('click', () => { APP.gameMode = 'arena1v1'; APP.arenaTeamSize = 1; showLobbyPanel('arena-wars'); });
+const btnArena2v2Mode = document.getElementById('btn-arena-2v2');
+if (btnArena2v2Mode) btnArena2v2Mode.addEventListener('click', () => { APP.gameMode = 'arena1v1'; APP.arenaTeamSize = 2; showLobbyPanel('arena-2v2'); });
+
+// ---- Submenu-back-knappar ----
 const btnLineBack = document.getElementById('btn-line-back');
-if (btnLineBack) btnLineBack.addEventListener('click', () => showLobbyPanel('main'));
+if (btnLineBack) btnLineBack.addEventListener('click', () => showLobbyPanel('line-team'));
 const btnArenaBack = document.getElementById('btn-arena-back');
-if (btnArenaBack) btnArenaBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('main'); });
+if (btnArenaBack) btnArenaBack.addEventListener('click', () => { APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('arena-team'); });
+
+// ---- Arena 2v2-panel ----
+const btnArena2v2Solo = document.getElementById('btn-arena-2v2-solo');
+if (btnArena2v2Solo) btnArena2v2Solo.addEventListener('click', () => {
+  APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 2;
+  APP.arenaBot = { active: false, difficulty: null };
+  showHeroPick('solo');
+});
+const btnArena2v2Back = document.getElementById('btn-arena-2v2-back');
+if (btnArena2v2Back) btnArena2v2Back.addEventListener('click', () => { APP.arenaTeamSize = 1; showLobbyPanel('arena-team'); });
 
 // ============================================================
 // HUVUDLOOP

@@ -1651,22 +1651,49 @@
       <button class="lobby-btn secondary" id="btn-howto">How to Play</button>
     </div>
 
-    <div class="lobby-panel" id="lobby-line-wars">
+    <div class="lobby-panel" id="lobby-line-team">
       <div style="font-size: 26px; color: #ffd34a; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ Line Wars</div>
-      <div class="sub" style="margin-bottom: 18px;">Hero Line Wars · 1v1</div>
+      <div class="sub" style="margin-bottom: 18px;">Välj lagstorlek</div>
+      <button class="lobby-btn" id="btn-line-1v1">1 v 1</button>
+      <button class="lobby-btn" id="btn-line-2v2" disabled title="Kommer senare">2 v 2 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
+      <button class="lobby-btn" id="btn-line-3v3" disabled title="Kommer senare">3 v 3 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
+      <button class="lobby-btn secondary" id="btn-line-team-back" style="margin-top: 18px;">← Tillbaka</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-line-wars">
+      <div style="font-size: 26px; color: #ffd34a; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ Line Wars · 1v1</div>
+      <div class="sub" style="margin-bottom: 18px;">Hero Line Wars</div>
       <button class="lobby-btn" id="btn-host">Host Game</button>
       <button class="lobby-btn" id="btn-join">Join Game</button>
       <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
       <button class="lobby-btn secondary" id="btn-line-back" style="margin-top: 18px;">← Tillbaka</button>
     </div>
 
-    <div class="lobby-panel" id="lobby-arena-wars">
+    <div class="lobby-panel" id="lobby-arena-team">
       <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars</div>
+      <div class="sub" style="margin-bottom: 18px;">Välj lagstorlek</div>
+      <button class="lobby-btn" id="btn-arena-1v1" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">1 v 1</button>
+      <button class="lobby-btn" id="btn-arena-2v2" style="background: rgba(180,80,80,0.85); border-color: rgba(255,180,180,0.7);">2 v 2</button>
+      <button class="lobby-btn" id="btn-arena-3v3" disabled title="Kommer senare">3 v 3 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
+      <button class="lobby-btn secondary" id="btn-arena-team-back" style="margin-top: 18px;">← Tillbaka</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-arena-wars">
+      <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · 1v1</div>
       <div class="sub" style="margin-bottom: 18px;">Player vs Player · Best of 5</div>
       <button class="lobby-btn" id="btn-arena-host" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Host Game</button>
       <button class="lobby-btn" id="btn-arena-join" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Join Game</button>
       <button class="lobby-btn secondary" id="btn-arena-solo">Singleplayer</button>
       <button class="lobby-btn secondary" id="btn-arena-back" style="margin-top: 18px;">← Tillbaka</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-arena-2v2">
+      <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · 2v2</div>
+      <div class="sub" style="margin-bottom: 18px;">2 vs 2 · Best of 5</div>
+      <button class="lobby-btn" id="btn-arena-2v2-host" disabled title="Kräver server-utbyggnad för 4-peer rooms">Host Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
+      <button class="lobby-btn" id="btn-arena-2v2-join" disabled title="Kräver server-utbyggnad">Join Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
+      <button class="lobby-btn secondary" id="btn-arena-2v2-solo">Solo Practice <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">(du + 1 ally vs 2 fiender, du styr ett team)</small></button>
+      <button class="lobby-btn secondary" id="btn-arena-2v2-back" style="margin-top: 18px;">← Tillbaka</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-bot">
