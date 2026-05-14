@@ -13390,11 +13390,46 @@ function applyArenaState(msg) {
       sendGameMsg({ t: 'a-ready', side: APP.localSide, value: true });
     }
   }
-  // Talents (merge with optimistic local picks — server är auktoritativ)
-  arenaState.talents[1].points = msg.tal[1].p;
-  arenaState.talents[1].chosen = msg.tal[1].c.slice();
-  arenaState.talents[2].points = msg.tal[2].p;
-  arenaState.talents[2].chosen = msg.tal[2].c.slice();
+  // Talents — sticky local-authority för EGNA val + at-least-once retry för
+  // motsidans val. Bakgrund: vid 45 Hz state-broadcast kan en stale broadcast
+  // (skickad innan host hunnit få klientens a-talent) anlända mellan klick och
+  // bekräftelse — det skulle annars rulla tillbaka det optimistiska valet i UI:n.
+  const _localTalentSide = APP.localSide;
+  const _localChosenPrev = (arenaState.talents[_localTalentSide]?.chosen || []).slice();
+  // Motståndarens sida(or): host är auktoritativ, skriv över direkt.
+  for (const idx of [1, 2]) {
+    if (idx === _localTalentSide) continue;
+    if (msg.tal[idx]) {
+      arenaState.talents[idx].points = msg.tal[idx].p;
+      arenaState.talents[idx].chosen = msg.tal[idx].c.slice();
+    }
+  }
+  // Egen sida: jämför host-vy med lokal vy. Matchar de = accept host-punkter (täcker
+  // +1 vid round-start). Skiljer de sig = behåll lokal chosen, re-skicka diff-actions
+  // tills host hunnit applicera (idempotent på host-sidan).
+  if (msg.tal[_localTalentSide]) {
+    const hostChosen = msg.tal[_localTalentSide].c || [];
+    const hostSet = new Set(hostChosen);
+    const localSet = new Set(_localChosenPrev);
+    const equal = hostChosen.length === _localChosenPrev.length &&
+      _localChosenPrev.every(t => hostSet.has(t));
+    if (equal) {
+      arenaState.talents[_localTalentSide].points = msg.tal[_localTalentSide].p;
+    } else {
+      // Re-skicka actions för att täcka diff
+      for (const tid of _localChosenPrev) {
+        if (!hostSet.has(tid)) {
+          sendGameMsg({ t: 'a-talent', side: _localTalentSide, talentId: tid, remove: false });
+        }
+      }
+      for (const tid of hostChosen) {
+        if (!localSet.has(tid)) {
+          sendGameMsg({ t: 'a-talent', side: _localTalentSide, talentId: tid, remove: true });
+        }
+      }
+      // Behåll lokal chosen (skriv inte över); UI stannar synkad med användarens klick.
+    }
+  }
   // Orb
   const orbWasAlive = arenaState.orb.alive;
   arenaState.orb.hp = msg.o.hp;
