@@ -2028,7 +2028,7 @@ const HERO_GLTF_SCALE = {
   magiker: { x: 0.70, y: 0.82, z: 0.78 },
   legolas: { x: 0.70, y: 0.82, z: 0.78 },
   gimlu:   { x: 0.80, y: 0.88, z: 0.86 },  // Barbarian = lite större för tank-känsla
-  aragurn: { x: 0.78, y: 0.90, z: 0.82 },  // Knight, soldat-bygge
+  aragurn: { x: 0.95, y: 1.10, z: 0.98 },  // Knight, större + längre — soldat-bygge
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -2067,6 +2067,49 @@ function makeHeroMesh(idx, heroId) {
   grp.add(ring);
   grp.userData.sideRing = ring;
 
+  // Aragurn-specifik: alltid synligt stort svärd som sitter på högersidan, slår med
+  // det vid AA och spinner med det vid Whirlwind.
+  if ((heroId || '').toLowerCase() === 'aragurn') {
+    const sword = makeAragurnSword();
+    sword.position.set(0.45, 0.55, 0.1);   // höger sida av kroppen
+    sword.rotation.z = -0.35;
+    sword.rotation.x = 0.15;
+    grp.add(sword);
+    grp.userData.aragurnSword = sword;
+    grp.userData.aragurnSwordDefault = {
+      pos: sword.position.clone(),
+      rot: sword.rotation.clone(),
+    };
+  }
+
+  return grp;
+}
+
+// Aragurn-svärdet: stort sword-mesh, alltid synligt.
+function makeAragurnSword() {
+  const grp = new THREE.Group();
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdadcdf, metalness: 0.75, roughness: 0.28 });
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.10, 1.5, 0.03), bladeMat);
+  blade.position.y = 0.95;
+  grp.add(blade);
+  // Spets-tip på toppen
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.20, 6), bladeMat);
+  tip.position.y = 1.80;
+  grp.add(tip);
+  // Hilt (parerstång)
+  const guardMat = new THREE.MeshStandardMaterial({ color: 0x8a6a30, metalness: 0.6, roughness: 0.4 });
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.08, 0.10), guardMat);
+  guard.position.y = 0.20;
+  grp.add(guard);
+  // Grip
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x553311, roughness: 0.85 });
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.30, 10), gripMat);
+  grip.position.y = 0.05;
+  grp.add(grip);
+  // Pommel
+  const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), guardMat);
+  pommel.position.y = -0.12;
+  grp.add(pommel);
   return grp;
 }
 
@@ -4234,6 +4277,8 @@ function createSide(idx) {
     aragurnShoutBuff: 0,        // Aragurn F-buff på sig själv (bara DR): sek kvar
     aragurnAllyShoutBuff: 0,    // Aragurn F-buff på allierad: sek kvar (DR + MS)
     aragurnShoutDebuff: 0,      // Mottagar-buff "tar 20% mer skada" sek kvar (sätts på fiende)
+    aragurnShoutHealRemaining: 0,  // HoT-timer från War Shout (2s)
+    aragurnShoutHealPct: 0,        // 0.10 för Aragurn, 0.05 för allierad
     berserkRemaining: 0,        // Aragurn R: sek kvar (–50% AS, +150% AA dmg, cleave)
     berserkSwordMesh: null,     // Klient-visual: dubblat svärd + glow
     // Resurser
@@ -5640,6 +5685,13 @@ function killHero(side) {
     side.aragurnLeap = null;
   }
   if (side.whirlwindRemaining > 0) side.whirlwindRemaining = 0;
+  // Återställ Aragurn-svärd till default-position (var ute under whirlwind)
+  if (side.mesh && side.mesh.userData.aragurnSword && side.mesh.userData.aragurnSwordDefault) {
+    const sword = side.mesh.userData.aragurnSword;
+    const def = side.mesh.userData.aragurnSwordDefault;
+    sword.position.copy(def.pos);
+    sword.rotation.copy(def.rot);
+  }
   // I arena: behåll mesh synlig så GLTF death-animationen syns
   if (APP.gameMode !== 'arena1v1') {
     side.mesh.visible = false;
@@ -5855,15 +5907,48 @@ function updateHeroAttack(side, dt) {
   const dashLs = arenaHasTalent(side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL;
   // Aragurn passive (Last Stand) + berserk AA dmg multiplier
   const aragurnPassive = aragurnPassiveMul(side);
-  const berserkMul = (side.berserkRemaining || 0) > 0 ? BERSERK_AA_DMG_MUL : 1;
+  const berserkActive = (side.berserkRemaining || 0) > 0;
+  const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
+  const aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
-    damage: side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul, isAoE, isCrit,
+    damage: aaDmg, isAoE, isCrit,
     lifestealRatio: dashBuffed ? dashLs : 0,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
   });
+  // Aragurn Berserk: 100% cleave — varje AA träffar ALLA fiender inom AA-range
+  // (utöver huvudtarget). Extra projektiler spawnar mot var och en.
+  if (berserkActive && side.heroId === 'aragurn') {
+    const opp2 = sides[3 - side.idx];
+    const aaRange = side.attackRange || 4;
+    const cleaveExtras = [];
+    const cleaveSeen = new Set([target.entity]);
+    const tryAddCleave = (list, isMonster) => {
+      for (const e of list) {
+        if (cleaveSeen.has(e)) continue;
+        const dC = Math.hypot(e.mesh.position.x - side.hero.x, e.mesh.position.z - side.hero.z);
+        if (dC > aaRange + 0.5) continue;
+        cleaveExtras.push({ entity: e, isMonster });
+        cleaveSeen.add(e);
+      }
+    };
+    tryAddCleave(side.monsters, true);
+    if (opp2) tryAddCleave(opp2.playerCreeps, false);
+    for (const c of cleaveExtras) {
+      const m2 = makeHeroAaProjectileMesh('aragurn', false, false);
+      m2.scale.setScalar(0.85);
+      m2.position.set(side.hero.x, 1.5, side.hero.z);
+      scene.add(m2);
+      side.projectiles.push({
+        mesh: m2, target: c.entity, targetIsMonster: c.isMonster,
+        ownerSide: c.isMonster ? side : (sides[3 - side.idx] || side),
+        damage: aaDmg, isAoE: false, isCrit: false,
+        lifestealRatio: 0, legolusBuffed: false, appliesPoison: false,
+      });
+    }
+  }
   if (splitNow) {
     const opp = sides[3 - side.idx];
     const extras = [];
@@ -7976,7 +8061,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   else if (isHeroWalkable(side.idx, side.hero.x, nz)) side.hero.z = nz;
   side.mesh.position.x = side.hero.x;
   side.mesh.position.z = side.hero.z;
-  side.mesh.rotation.y = Math.atan2(ndx, ndz);
+  // Under whirlwind: rotation styrs av tickAragurnWhirlwind (snabb spinn).
+  // Annars: vänd mot rörelseriktningen.
+  if (!((side.whirlwindRemaining || 0) > 0)) {
+    side.mesh.rotation.y = Math.atan2(ndx, ndz);
+  }
 }
 
 function applyEvent(side, ev) {
@@ -8308,6 +8397,17 @@ function animateGltfCharacter(mesh, dt, side, type) {
   if (st.attackTimer > 0) {
     st.attackTimer -= dt;
     return; // håll kvar attack-clipet
+  }
+
+  // Aragurn whirlwind: kör attack-clip i loop istället för run/walk så det ser ut
+  // som en kontinuerlig snurr-svingning, oavsett om han springer eller står stilla.
+  if (side && side.heroId === 'aragurn' && (side.whirlwindRemaining || 0) > 0) {
+    if (clips.attack) {
+      playGltfAction(mesh, clips.attack, { fade: 0.08, timeScale: 2.0 });
+    } else if (clips.idle) {
+      playGltfAction(mesh, clips.idle);
+    }
+    return;
   }
 
   // Movement state
@@ -9852,6 +9952,15 @@ function tickUltimates(side, dt) {
   if ((side.aragurnShoutBuff || 0) > 0) side.aragurnShoutBuff = Math.max(0, side.aragurnShoutBuff - dt);
   if ((side.aragurnAllyShoutBuff || 0) > 0) side.aragurnAllyShoutBuff = Math.max(0, side.aragurnAllyShoutBuff - dt);
   if ((side.aragurnShoutDebuff || 0) > 0) side.aragurnShoutDebuff = Math.max(0, side.aragurnShoutDebuff - dt);
+  // War Shout HoT: tickar HP varje frame medan timern är aktiv
+  if ((side.aragurnShoutHealRemaining || 0) > 0 && !side.hero.dead) {
+    const healAmt = side.hero.maxHp * (side.aragurnShoutHealPct || 0) * dt;
+    if (healAmt > 0 && side.hero.hp < side.hero.maxHp) {
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+    }
+    side.aragurnShoutHealRemaining = Math.max(0, side.aragurnShoutHealRemaining - dt);
+    if (side.aragurnShoutHealRemaining <= 0) side.aragurnShoutHealPct = 0;
+  }
 }
 
 // === Magiker ult: Laser Beam ===
@@ -10294,6 +10403,10 @@ const SHOUT_SLOW_MUL = 0.80;                // 20% slow
 const SHOUT_ALLY_BUFF_DURATION = 4.0;
 const SHOUT_BUFF_DR = 0.20;                 // 20% damage reduction
 const SHOUT_BUFF_MS = 0.20;                 // 20% movement speed (bara allierade)
+const SHOUT_BUFF_RADIUS = 6.0;              // cirkel runt Aragurn för buff (skild från damage-konen)
+const SHOUT_HEAL_DURATION = 2.0;            // HoT i sek
+const SHOUT_HEAL_SELF_PCT = 0.10;           // Aragurn: 10% maxHP / sek
+const SHOUT_HEAL_ALLY_PCT = 0.05;           // ally: 5% maxHP / sek
 const LEAP_TRAVEL_TIME = 1.0;
 const LEAP_MAX_DISTANCE = 10.0;
 const LEAP_RADIUS = 4.55;                   // = BLACKHOLE_RADIUS
@@ -10308,9 +10421,10 @@ const BERSERK_SCALE = 1.25;                 // lite större hero
 // === Q: Whirlwind ===
 function hostCastAragurnWhirlwind(side) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
+  // Kan inte starta ny spin medan en pågår (CD räknar ner FÖRST efter spin slutat)
+  if ((side.whirlwindRemaining || 0) > 0) return;
   // Kan inte casta om stunnad — befintliga CC-locks i applyEvent fångar redan
   // frozen/feared/taunted. Whirlwind rensar resten (slow, etc) vid cast.
-  side.skills.q.cd = side.skills.q.max;
   side.whirlwindRemaining = WHIRLWIND_DURATION + (arenaHasTalent(side, 'a_spin_extend') ? 1.5 : 0);
   side.whirlwindTickAccum = 0;
   // Rensa befintlig slow / dot / taunt / fear / frozen (men stun ligger på frozen → kan inte casta)
@@ -10319,6 +10433,12 @@ function hostCastAragurnWhirlwind(side) {
   side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
   side.hero.tauntedTime = 0;
   side.heroFearTime = 0;
+  // Flytta svärdet UT från kroppen så det visuellt snurrar utanför hero
+  if (side.mesh && side.mesh.userData.aragurnSword) {
+    const sword = side.mesh.userData.aragurnSword;
+    sword.position.set(1.2, 1.0, 0);   // 1.2m ut åt sidan, 1.0m upp
+    sword.rotation.set(0, 0, Math.PI / 2);  // klingan horisontell, pekar utåt
+  }
   // Visuell start-burst
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddc680, 1.8);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffe399);
@@ -10337,7 +10457,8 @@ function tickAragurnWhirlwind(side, dt) {
   side.heroFearTime = 0;
   side.hero.dotRemaining = 0;
   side.hero.poisonRemaining = 0;
-  // Visuell rotation av hero-mesh (snabb spinning)
+  // Snabb spinn på hero-mesh (rotation.y override:as här, applyMovement skippar
+  // sin egen rotation under whirl). Svärdet är child så det snurrar med.
   if (side.mesh) side.mesh.rotation.y += dt * 18;
   while (side.whirlwindTickAccum >= WHIRLWIND_TICK && side.whirlwindRemaining > -WHIRLWIND_TICK) {
     side.whirlwindTickAccum -= WHIRLWIND_TICK;
@@ -10345,6 +10466,15 @@ function tickAragurnWhirlwind(side, dt) {
   }
   if (side.whirlwindRemaining <= 0) {
     side.whirlwindRemaining = 0;
+    // CD startar NU — först efter spin slutat (max innehåller redan CDR-reduktion)
+    side.skills.q.cd = side.skills.q.max;
+    // Återställ svärd till default-position
+    if (side.mesh && side.mesh.userData.aragurnSword && side.mesh.userData.aragurnSwordDefault) {
+      const sword = side.mesh.userData.aragurnSword;
+      const def = side.mesh.userData.aragurnSwordDefault;
+      sword.position.copy(def.pos);
+      sword.rotation.copy(def.rot);
+    }
   }
 }
 
@@ -10397,11 +10527,15 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   const halfAng = SHOUT_HALF_ANGLE * (rangeMul > 1 ? 1.15 : 1);
   // Visuell kon-flash + ljudvågringar
   spawnConeFlash(side.hero.x, side.hero.z, dirX, dirZ, length, halfAng, 0xffe399);
+  // Visuell buff-cirkel runt Aragurn (separat från damage-konen)
+  spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
   triggerCameraShake(0.18, 0.20);
   const passive = aragurnPassiveMul(side);
   const skillMul = passive * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
-  // Self-buff: bara DR (inte MS)
+  // Self-buff: bara DR (inte MS) + HoT 10%/s i 2s
   side.aragurnShoutBuff = SHOUT_ALLY_BUFF_DURATION;
+  side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
+  side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
   // Cone-träff på fiender
   const opp = sides[3 - side.idx];
   const inCone = (ex, ez) => {
@@ -10443,15 +10577,18 @@ function hostCastAragurnShout(side, dirX, dirZ) {
       opp.aragurnShoutDebuff = SHOUT_DEBUFF_DURATION;  // tar 20% mer skada
     }
   }
-  // Allierade hjältar i kon (2v2): buffa MS + DR
+  // Allierade hjältar inom CIRKEL runt Aragurn (inte cone) får buff + HoT
   if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
     const team = arenaTeamMates(arenaTeamOf(side.idx)) || [];
     for (const aidx of team) {
       if (aidx === side.idx) continue;
       const ally = sides[aidx];
       if (!ally || ally.hero.dead) continue;
-      if (inCone(ally.hero.x, ally.hero.z)) {
+      const dAlly = Math.hypot(ally.hero.x - side.hero.x, ally.hero.z - side.hero.z);
+      if (dAlly < SHOUT_BUFF_RADIUS) {
         ally.aragurnAllyShoutBuff = SHOUT_ALLY_BUFF_DURATION;
+        ally.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
+        ally.aragurnShoutHealPct = SHOUT_HEAL_ALLY_PCT;
       }
     }
   }
@@ -12116,12 +12253,12 @@ const HERO_INFO = {
   },
   aragurn: {
     skills: {
-      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn snurrar i 3 sekunder och skadar alla fiender inom 3m runt sig — 5% av deras max-HP per 0.5s. Han blir CC-immun (rensar alla CC förutom stun), och får +20% rörelsehastighet. Kan inte använda andra skills medan han spinner.' },
-      f: { name: 'War Shout', icon: '📣', desc: 'Skickar ut ett krigsskri i en kon framför sig (8m × 60°). Fiender: 15% max-HP direct damage, slowas 20% i 3s, tar 20% extra skada i 4s. Allierade hjältar i konen: +20% damage reduction och +20% movement speed i 4s. Aragurn själv får bara damage reduction-buffen (inte movement speed).' },
+      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn snurrar med svärdet utstärkt i 3 sekunder och skadar alla fiender inom 3m — 5% av deras max-HP per 0.5s. CC-immun (rensar alla CC förutom stun), +20% MS. Kan inte AA eller cast:a andra skills under spin. Cooldown börjar räknas FÖRST när spin är slut.' },
+      f: { name: 'War Shout', icon: '📣', desc: 'TVÅ separata zoner: KON framför Aragurn (8m × 120°) gör 15% max-HP damage + 20% slow (3s) + 20% mer skada taken (4s, mot hjältar). CIRKEL runt Aragurn (6m) ger buff till allierade hjältar: +20% damage reduction + +20% movement speed (4s) + HoT (5% maxHP/s i 2s). Aragurn själv: bara damage reduction-buff + HoT (10% maxHP/s i 2s).' },
       e: { name: 'Hero Leap', icon: '🦘', desc: 'Hoppa till en mark-targetad punkt — tar 1 sekund från cast till landning. AoE-landning (4.5m radie, samma som Black Hole). Fiender träffade: 20% max-HP damage + stunnas 1 sekund. Aragurn healar 10% av förlorad HP per fiende träffad.' },
     },
     passive: { name: 'Last Stand', icon: '🔥', desc: 'För varje 1% HP Aragurn saknar ökar hans skill- och auto-attack-damage med 0.5%. Vid 1% HP = +49.5% damage.' },
-    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 sekunders berserk-form: Aragurn blir lite större, hans svärd dubbleras i storlek och får en glödande aura. Han får −50% attack speed, men +150% AA-damage och 100% cleave/splash — varje AA träffar alla fiender inom hans AA-range, inte bara en target.' },
+    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 sekunders berserk-form: Aragurn blir lite större, hans svärd dubbleras i storlek och får en glödande aura. Han får −50% attack speed, men +150% AA-damage och 100% cleave/splash — varje AA träffar ALLA fiender inom hans AA-range, inte bara en target.' },
   },
 };
 
@@ -13413,6 +13550,22 @@ function makeHeroAaProjectileMesh(heroId, isAoE, isCrit) {
     }
     grp.userData.orientToMotion = true;
     grp.userData.trailColor = isCrit ? 0xffcc66 : 0xaaee66;
+    return grp;
+  }
+  if (heroId === 'aragurn') {
+    // Svärds-svep: liten roterande klinga som följer slaget (melee-känsla).
+    const bladeMat = new THREE.MeshStandardMaterial({ color: 0xeaeaea, metalness: 0.8, roughness: 0.25, emissive: isCrit ? 0xff7733 : 0xddc680, emissiveIntensity: isCrit ? 0.9 : 0.35 });
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.03), bladeMat);
+    grp.add(blade);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 5), bladeMat);
+    tip.position.y = 0.36;
+    grp.add(tip);
+    const guardMat = new THREE.MeshStandardMaterial({ color: 0x8a6a30, metalness: 0.5 });
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.06), guardMat);
+    guard.position.y = -0.30;
+    grp.add(guard);
+    grp.userData.spin = true;
+    grp.userData.trailColor = isCrit ? 0xff7733 : 0xffd388;
     return grp;
   }
   if (heroId === 'gimlu') {
