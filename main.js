@@ -3742,45 +3742,32 @@ function buildBossWarsScene() {
   const baseHex = '#' + map.color.toString(16).padStart(6, '0');
   fctx.fillStyle = baseHex;
   fctx.fillRect(0, 0, 512, 512);
-  // Mjuka stora variations-fläckar (radial gradients) för djup
-  for (let i = 0; i < 24; i++) {
+  // Slätare golv: färre + större + mjukare radial gradients, INGA sprickor
+  // (sprickorna gav synliga linjer som upplevdes "skrovligt").
+  const lightenHex = (hex, amt) => {
+    const r2 = Math.max(0, Math.min(255, ((hex >> 16) & 0xff) + amt * 255));
+    const g2 = Math.max(0, Math.min(255, ((hex >> 8) & 0xff) + amt * 255));
+    const b2 = Math.max(0, Math.min(255, (hex & 0xff) + amt * 255));
+    return `rgba(${r2|0},${g2|0},${b2|0},0.22)`;   // lägre alpha = mjukare
+  };
+  for (let i = 0; i < 10; i++) {
     const gx = Math.random() * 512, gy = Math.random() * 512;
-    const gr = 60 + Math.random() * 140;
+    const gr = 140 + Math.random() * 200;          // större blobs
     const g = fctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
-    const tone = Math.random() < 0.5 ? 0.15 : -0.15;
-    const lightenHex = (hex, amt) => {
-      const r2 = Math.max(0, Math.min(255, ((hex >> 16) & 0xff) + amt * 255));
-      const g2 = Math.max(0, Math.min(255, ((hex >> 8) & 0xff) + amt * 255));
-      const b2 = Math.max(0, Math.min(255, (hex & 0xff) + amt * 255));
-      return `rgba(${r2|0},${g2|0},${b2|0},0.4)`;
-    };
+    const tone = Math.random() < 0.5 ? 0.08 : -0.08;   // mindre kontrast
     g.addColorStop(0, lightenHex(map.color, tone));
     g.addColorStop(1, 'rgba(0,0,0,0)');
     fctx.fillStyle = g;
     fctx.fillRect(0, 0, 512, 512);
   }
-  // Diskreta sprickor — tunna mjuka linjer
-  fctx.strokeStyle = `rgba(${(map.edgeColor>>16)&0xff},${(map.edgeColor>>8)&0xff},${map.edgeColor&0xff},0.35)`;
-  fctx.lineWidth = 1.5;
-  fctx.lineCap = 'round';
-  for (let i = 0; i < 14; i++) {
-    fctx.beginPath();
-    let cx = Math.random() * 512, cy = Math.random() * 512;
-    fctx.moveTo(cx, cy);
-    for (let s = 0; s < 4; s++) {
-      cx += (Math.random() - 0.5) * 90;
-      cy += (Math.random() - 0.5) * 90;
-      fctx.lineTo(cx, cy);
-    }
-    fctx.stroke();
-  }
   const floorTex = new THREE.CanvasTexture(floorCanvas);
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(2, 2);
+  // Mindre repeat → större "klädd" yta per repeat = mindre synlig tiling
+  floorTex.repeat.set(1, 1);
   floorTex.colorSpace = THREE.SRGBColorSpace;
-  floorTex.magFilter = THREE.LinearFilter;          // ingen pixel-look
+  floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
-  floorTex.anisotropy = 8;
+  floorTex.anisotropy = 16;
   // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut
   const baseR = (map.shape === 'cross') ? r * 1.0 : r;
   const baseCyl = new THREE.Mesh(new THREE.CylinderGeometry(baseR, baseR + 0.5, 0.4, 48), new THREE.MeshStandardMaterial({ color: map.edgeColor, roughness: 0.92 }));
@@ -4004,14 +3991,18 @@ function spawnBossWarsBoss(side, tier) {
   const bossDef = BOSS_DEFS[bossInfo.wave];
   if (!bossDef) return;
   const mesh = makeMonsterMesh();
-  const scale = bossDef.scale;
+  // Boss 15% mindre — minska scale med 0.85x (per user request).
+  const scale = bossDef.scale * 0.85;
   mesh.scale.set(scale, scale, scale);
   // Tier-specifik tint (override:ar bossDef.bodyTint för werewolf/dracula/etc)
   const tierTints = { 1: 0x6a85a8, 2: 0x6a4a30, 3: 0xeeeae0, 4: 0xc8b8c8, 5: 0x3a2018 };
   applyMonsterTint(mesh, tierTints[tier] || bossDef.bodyTint, 0.85);
   attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
   attachBossWarsAccessories(mesh, tier, scale);
-  attachHpBar(mesh, bossDef.scale * 0.85);
+  attachHpBar(mesh, scale * 1.0);
+  // Boss-HP-bar är alltid synlig (raid-känsla — användaren ska kunna tracka HP
+  // även när bossen inte just blivit träffad).
+  if (mesh.userData) mesh.userData.hpBarHero = true;
   mesh.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
   // Lag-fix: stora boss-meshes castar inga shadows i boss-wars (för dyrt shadow-pass)
   mesh.traverse(o => {
@@ -6316,6 +6307,9 @@ function updateMonsters(side, dt) {
       spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
       // Trigga attack-animation på boss-mesh
       if (m.mesh) m.mesh.userData.attackTrigger = true;
+      // Räknare för boss-AA — syncas till klienter via b-state så klienter
+      // kan trigga visuell attack-animation lokalt (delta-detection).
+      if (m.isBossWarsBoss) m.aaCount = (m.aaCount || 0) + 1;
     }
 
     // Om inte jagar hjälten — leta efter opp's playerCreeps i samma arena
@@ -13125,12 +13119,23 @@ function buildBossWarsSnap() {
         mh: b.maxHp,
         ph: b.bossPhase || 1,
         pt: +(b.phaseTransitionRemaining || 0).toFixed(2),
-        c: b.activeCast ? {
-          n: b.activeCast.skillId || '',
-          ph: b.activeCast.phase || 'tel',
-          t: +(b.activeCast.timeRemaining || 0).toFixed(2),
-          x: b.activeCast.targetX != null ? +b.activeCast.targetX.toFixed(2) : null,
-          z: b.activeCast.targetZ != null ? +b.activeCast.targetZ.toFixed(2) : null,
+        aac: b.aaCount || 0,           // AA-räknare för klient-visual (delta-detect)
+        c: b.activeCast && b.activeCast.skill ? {
+          n: b.activeCast.skill.id || '',
+          k: b.activeCast.skill.kind || 'circle',
+          rad: b.activeCast.skill.radius || 0,
+          len: b.activeCast.skill.length || 0,
+          ha: b.activeCast.skill.halfAngle || 0,
+          w: b.activeCast.skill.width || 0,
+          ph: b.activeCast.phase || 'telegraph',
+          t: +(b.activeCast.timer || 0).toFixed(2),
+          tg: +(b.activeCast.skill.telegraph || 0).toFixed(2),
+          tx: b.activeCast.targetX != null ? +b.activeCast.targetX.toFixed(2) : null,
+          tz: b.activeCast.targetZ != null ? +b.activeCast.targetZ.toFixed(2) : null,
+          ox: b.activeCast.originX != null ? +b.activeCast.originX.toFixed(2) : null,
+          oz: b.activeCast.originZ != null ? +b.activeCast.originZ.toFixed(2) : null,
+          dx: b.activeCast.dirX != null ? +b.activeCast.dirX.toFixed(3) : null,
+          dz: b.activeCast.dirZ != null ? +b.activeCast.dirZ.toFixed(3) : null,
         } : null,
       };
     }
@@ -13190,13 +13195,71 @@ function applyBossWarsState(msg) {
         boss.mesh._target.x = msg.b.x;
         boss.mesh._target.z = msg.b.z;
       }
+      // Delta-detection för visual events (host kör auth-sim; klient triggar
+      // bara lokala visuals baserat på state-förändringar):
+
+      // 1) Damage popup när boss-HP minskar
+      const prevHp = boss._prevSyncedHp != null ? boss._prevSyncedHp : msg.b.hp;
+      if (msg.b.hp < prevHp - 0.5 && boss.mesh) {
+        spawnDamageText(boss.mesh, prevHp - msg.b.hp);
+      }
+      boss._prevSyncedHp = msg.b.hp;
+
+      // 2) Boss AA-trigger (för attack-animation)
+      const prevAac = boss._prevSyncedAac || 0;
+      const newAac = msg.b.aac || 0;
+      if (newAac > prevAac && boss.mesh.userData) {
+        boss.mesh.userData.attackTrigger = true;
+      }
+      boss._prevSyncedAac = newAac;
+
+      // 3) Boss skill telegraph — spawna lokal mesh när host startar ny cast
+      const newCast = msg.b.c;
+      const newCastKey = newCast ? `${newCast.n}|${newCast.ph}` : '';
+      const prevCastKey = boss._prevSyncedCastKey || '';
+      if (newCastKey !== prevCastKey) {
+        // Cleanup gammal telegraph-mesh
+        if (boss._syncedTelegraph) {
+          scene.remove(boss._syncedTelegraph);
+          boss._syncedTelegraph.traverse?.(o => {
+            if (o.geometry) o.geometry.dispose?.();
+            if (o.material) o.material.dispose?.();
+          });
+          boss._syncedTelegraph = null;
+        }
+        // Spawna ny om vi nu är i telegraph-fas
+        if (newCast && newCast.ph === 'telegraph' && newCast.n) {
+          const pseudoSkill = {
+            id: newCast.n,
+            kind: newCast.k || 'circle',
+            radius: newCast.rad || 0,
+            length: newCast.len || 0,
+            halfAngle: newCast.ha || 0,
+            width: newCast.w || 0,
+            telegraph: newCast.tg || 1,
+          };
+          const pseudoCast = {
+            skill: pseudoSkill,
+            phase: 'telegraph',
+            timer: newCast.t || 0,
+            dirX: newCast.dx != null ? newCast.dx : 0,
+            dirZ: newCast.dz != null ? newCast.dz : 1,
+            originX: newCast.ox != null ? newCast.ox : boss.mesh.position.x,
+            originZ: newCast.oz != null ? newCast.oz : boss.mesh.position.z,
+            targetX: newCast.tx,
+            targetZ: newCast.tz,
+            telegraphMesh: null,
+          };
+          spawnBossTelegraph(null, boss, pseudoCast);
+          boss._syncedTelegraph = pseudoCast.telegraphMesh;
+        }
+      }
+      boss._prevSyncedCastKey = newCastKey;
+
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
       boss.bossPhase = msg.b.ph || 1;
       boss.phaseTransitionRemaining = msg.b.pt || 0;
-      // Skill-cast: bara minimal visning av aktiv cast (telegraph/exec)
-      // Detaljerade FX/projektiler syncas inte än — clients ser bara att
-      // bossen "kastar något" via aktiv cast-info.
     }
   }
 }
@@ -13382,6 +13445,15 @@ function applyHeroSnap(side, snap) {
     ((APP.mode === 'client' && isArenaMp()) ||
      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))
   );
+  const isMpClientForVisuals = (
+    (APP.mode === 'client' && isArenaMp()) ||
+    (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')
+  );
+  // Capture prev values för delta-detection (AA-fire, skill-cast)
+  const prevAc = side.attackCounter || 0;
+  const prevQcd = side.skills?.q?.cd || 0;
+  const prevFcd = side.skills?.f?.cd || 0;
+  const prevEcd = side.skills?.e?.cd || 0;
 
   if (isLocalMpClient) {
     // Reconcile: snap till host om diff > 2.5 enheter (knockback, teleport, stun)
@@ -13452,6 +13524,15 @@ function applyHeroSnap(side, snap) {
     if (APP.gameMode !== 'arena1v1') {
       side.mesh.visible = !side.hero.dead;
     }
+  }
+  // Visual delta-detection: trigga lokala visuals när host's broadcast
+  // indikerar att hjälte just AAt eller castade skill. Endast på MP-client
+  // (host kör simulateAll → spawnar riktiga projektiler).
+  if (isMpClientForVisuals && side.mesh && !side.hero.dead) {
+    if ((snap.ac || 0) > prevAc) triggerClientVisualAA(side);
+    if ((snap.sk?.q || 0) > prevQcd + 0.5) triggerClientVisualSkill(side, 'q');
+    if ((snap.sk?.f || 0) > prevFcd + 0.5) triggerClientVisualSkill(side, 'f');
+    if ((snap.sk?.e || 0) > prevEcd + 0.5) triggerClientVisualSkill(side, 'e');
   }
 }
 
@@ -16059,6 +16140,37 @@ function spawnShieldBurstFx(x, z, color = 0x66c8ff) {
   combatFx.push({ mesh: ring, life: 0.55, maxLife: 0.55, kind: 'shieldBurst' });
 }
 
+// Klient-visual för MP: när host's broadcast indikerar att hjälte just AAt
+// (attackCounter ökade), spawna en visuell projektil som flyger framåt i
+// hero's facing-riktning. På HOST körs simulateAll och spawnar riktiga
+// projektiler; på CLIENT skippas simulateAll så vi behöver den här syntheten
+// för att användaren ska se "något" hända när de tappar AA.
+function triggerClientVisualAA(side) {
+  if (!side || !side.mesh || side.hero.dead) return;
+  const fx = side.hero.facingX || 0;
+  const fz = side.hero.facingZ || 1;
+  const heroId = side.heroId || 'magiker';
+  const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 12, 10),
+    new THREE.MeshBasicMaterial({ color: colors[heroId] || 0xffdc66, transparent: true, opacity: 0.95, depthWrite: false })
+  );
+  sphere.position.set(side.hero.x + fx * 0.5, 1.3, side.hero.z + fz * 0.5);
+  scene.add(sphere);
+  combatFx.push({
+    mesh: sphere, life: 0.4, maxLife: 0.4, kind: 'aaFly',
+    vx: fx * 20, vz: fz * 20,
+  });
+}
+
+// Klient-visual för skill-cast: cast-ring vid hero-position med skill-specifik
+// färg. Ej en projektil — bara feedback att "något" castades.
+function triggerClientVisualSkill(side, key) {
+  if (!side || !side.mesh || side.hero.dead) return;
+  const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff };
+  spawnSkillCastFx(side.hero.x, side.hero.z, colors[key] || 0xffdc66, 1.4);
+}
+
 function spawnSkillCastFx(x, z, color, radius = 0.6) {
   // Cast-ring som expanderar (för skills som inte annars har visuell start)
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
@@ -16097,6 +16209,10 @@ function tickCombatFx(dt) {
     } else if (e.kind === 'trail') {
       e.mesh.scale.setScalar(1 - t * 0.5);
       if (e.mesh.material) e.mesh.material.opacity = 0.55 * (1 - t);
+    } else if (e.kind === 'aaFly') {
+      e.mesh.position.x += (e.vx || 0) * dt;
+      e.mesh.position.z += (e.vz || 0) * dt;
+      if (e.mesh.material) e.mesh.material.opacity = 0.95 * (1 - t);
     }
   }
 }
