@@ -8,7 +8,7 @@ const engine = require('./game-engine.js');
 
 const PORT = process.env.PORT || 3000;
 const TICK_RATE = 30;                       // simuleringssteg per sekund
-const STATE_RATE = 20;                      // state-broadcasts per sekund
+const STATE_RATE = 30;                      // state-broadcasts per sekund (höjt från 20 för smoothness)
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
 // Grace-period när host disconnect:ar utan client. Rummet behålls så
@@ -118,6 +118,24 @@ function relayArenaMessage(room, fromWs, envelope) {
   if (peer) send(peer, envelope);
 }
 
+// Boss Wars MP relay (3-peer). Host broadcastar state till alla; klienter
+// skickar inputs till host. Vi skickar till ALLA peers utom avsändaren.
+function relayBossWarsMessage(room, fromWs, envelope) {
+  // Spoof-skydd: bara host får skicka 'b-state' och 'b-start'
+  if (envelope.d && envelope.d.t === 'b-state' && fromWs !== room.host) return;
+  if (envelope.d && envelope.d.t === 'b-start' && fromWs !== room.host) return;
+  // Klient → host: bara dessa meddelanden går enkelriktat till host
+  const onlyToHost = envelope.d && envelope.d.t && (envelope.d.t === 'b-input' || envelope.d.t === 'b-pick' || envelope.d.t === 'b-hero-confirm');
+  if (onlyToHost) {
+    if (room.host && fromWs !== room.host) send(room.host, envelope);
+    return;
+  }
+  // Annars broadcast till alla peers utom avsändaren
+  if (room.host && fromWs !== room.host) send(room.host, envelope);
+  if (room.client && fromWs !== room.client) send(room.client, envelope);
+  for (const c of room.clients) if (c !== fromWs) send(c, envelope);
+}
+
 wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
@@ -138,12 +156,19 @@ wss.on('connection', (ws) => {
     if (msg.t === 'host') {
       if (ws.roomCode) return;
       const code = genCode();
-      const room = { code, host: ws, client: null, game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null };
+      // maxPeers default 2 (klassisk + arena). Boss Wars host skickar 3 för 3-spelar-co-op.
+      const maxPeers = Math.max(2, Math.min(3, parseInt(msg.maxPeers, 10) || 2));
+      const room = {
+        code, host: ws, client: null,
+        clients: [],          // multi-peer: lista av extra klienter (utöver host)
+        maxPeers,
+        game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
+      };
       rooms.set(code, room);
       ws.role = 'host';
       ws.roomCode = code;
-      send(ws, { t: 'hosted', code });
-      console.log(`[${code}] hosted (rooms=${rooms.size})`);
+      send(ws, { t: 'hosted', code, maxPeers });
+      console.log(`[${code}] hosted maxPeers=${maxPeers} (rooms=${rooms.size})`);
     } else if (msg.t === 'reclaim') {
       // Host försöker återansluta till sitt gamla rum efter WS-disconnect
       if (ws.roomCode) return;
@@ -180,24 +205,46 @@ wss.on('connection', (ws) => {
         console.log(`[join-fail] code=${code} host gone`);
         return;
       }
-      if (room.client) {
+      const maxPeers = room.maxPeers || 2;
+      const peersNow = 1 + (room.client ? 1 : 0) + (room.clients ? room.clients.length : 0);
+      if (peersNow >= maxPeers) {
         send(ws, { t: 'join-error', msg: 'Rummet är fullt.' });
         return;
       }
-      room.client = ws;
-      ws.role = 'client';
+      // Klassisk 2-peer: använd room.client slot (kompatibel med befintlig kod).
+      // Multi-peer (3+): tilläggsklienter i room.clients[].
+      if (maxPeers <= 2) {
+        room.client = ws;
+        ws.role = 'client';
+      } else {
+        if (!room.client) {
+          room.client = ws;
+          ws.role = 'client';
+        } else {
+          room.clients.push(ws);
+          ws.role = 'client' + (1 + room.clients.length);   // 'client2', 'client3', ...
+        }
+      }
       ws.roomCode = code;
-      send(ws, { t: 'joined', code });
-      send(room.host, { t: 'peer-joined' });
-      console.log(`[${code}] client joined`);
-      // Båda inne — starta simulation
-      startGame(room);
+      const newPeersTotal = 1 + (room.client ? 1 : 0) + room.clients.length;
+      send(ws, { t: 'joined', code, peersTotal: newPeersTotal, maxPeers });
+      // Notify alla andra om peer-joined + nytt antal
+      const peerJoinedMsg = { t: 'peer-joined', peersTotal: newPeersTotal, maxPeers };
+      send(room.host, peerJoinedMsg);
+      for (const c of room.clients) if (c !== ws) send(c, peerJoinedMsg);
+      if (room.client && room.client !== ws) send(room.client, peerJoinedMsg);
+      console.log(`[${code}] peer joined (${newPeersTotal}/${maxPeers})`);
+      // 2-peer-rum: starta klassisk engine direkt (oförändrat beteende).
+      // 3-peer-rum: host bestämmer själv när matchen startar via separat 'start-match'-meddelande.
+      if (maxPeers <= 2) startGame(room);
     } else if (msg.t === 'msg') {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
       const payload = msg.d;
       if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
         relayArenaMessage(room, ws, msg);
+      } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
+        relayBossWarsMessage(room, ws, msg);
       } else {
         handleGameInput(room, ws, payload);
       }
@@ -220,14 +267,33 @@ function handleDisconnect(ws) {
   ws.role = null;
   if (!room) return;
 
-  // Host disconnect utan client → grace-period innan rumet stängs
-  if (room.host === ws && !room.client) {
+  // Host disconnect utan andra peers → grace-period
+  const peerCount = (room.client ? 1 : 0) + (room.clients ? room.clients.length : 0);
+  if (room.host === ws && peerCount === 0) {
     room.host = null;
     room.hostGoneAt = Date.now();
     console.log(`[${code}] host disconnected, grace ${HOST_GRACE_MS}ms`);
     return;
   }
-  // Annars normal stängning (client disconnect, eller host efter att client joinat)
+  // Multi-peer: en extra-klient lämnar → bara ta bort den, behåll rummet
+  if (room.maxPeers && room.maxPeers > 2 && ws !== room.host) {
+    let removed = false;
+    if (room.client === ws) { room.client = null; removed = true; }
+    if (room.clients) {
+      const idx = room.clients.indexOf(ws);
+      if (idx >= 0) { room.clients.splice(idx, 1); removed = true; }
+    }
+    if (removed) {
+      const newTotal = 1 + (room.client ? 1 : 0) + room.clients.length;
+      const leftMsg = { t: 'peer-left', peersTotal: newTotal, maxPeers: room.maxPeers };
+      if (room.host) send(room.host, leftMsg);
+      if (room.client) send(room.client, leftMsg);
+      for (const c of room.clients) send(c, leftMsg);
+      console.log(`[${code}] peer left (${newTotal}/${room.maxPeers})`);
+      return;
+    }
+  }
+  // Annars normal stängning (klassisk 2-peer eller host i multi-peer)
   closeRoomNow(room);
 }
 
@@ -244,11 +310,13 @@ function closeRoom(ws) {
 
 function closeRoomNow(room) {
   if (!rooms.has(room.code)) return;  // redan stängt
-  const other = room.client;
-  if (other && other !== room.host) {
-    send(other, { t: 'peer-left' });
-    other.roomCode = null;
-    other.role = null;
+  const all = [];
+  if (room.client && room.client !== room.host) all.push(room.client);
+  if (room.clients) for (const c of room.clients) all.push(c);
+  for (const ws of all) {
+    send(ws, { t: 'peer-left' });
+    ws.roomCode = null;
+    ws.role = null;
   }
   if (room.host) {
     send(room.host, { t: 'peer-left' });

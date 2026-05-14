@@ -2040,6 +2040,33 @@
       <div class="msg" id="lobby-join-msg"></div>
       <button class="lobby-btn secondary" id="btn-join-back">Tillbaka</button>
     </div>
+
+    <div class="lobby-panel" id="lobby-boss-host">
+      <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Boss Wars · Co-op Raid</div>
+      <div>Din rumskod (dela med två vänner):</div>
+      <div id="lobby-boss-code-display" style="font-size: 38px; font-weight: 800; letter-spacing: 6px; color: #ffd34a; margin: 8px 0;">----</div>
+      <div id="lobby-boss-peer-count" style="font-size: 18px; color: #aaccff; margin: 6px 0 12px 0;">Spelare: 1 / 3</div>
+      <div class="msg" id="lobby-boss-host-msg">Väntar på spelare...</div>
+      <button class="lobby-btn" id="btn-boss-start-match" disabled style="background: rgba(60,160,80,0.85); border-color: rgba(120,220,150,0.7); opacity: 0.5;">Starta matchen (3/3)</button>
+      <button class="lobby-btn danger" id="btn-boss-host-cancel">Avbryt</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-boss-join">
+      <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Join Boss Raid</div>
+      <div>Ange 4-tecken kod:</div>
+      <input id="lobby-boss-code-input" maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text" />
+      <button class="lobby-btn" id="btn-boss-join-connect">Anslut</button>
+      <div class="msg" id="lobby-boss-join-msg"></div>
+      <button class="lobby-btn secondary" id="btn-boss-join-back">Tillbaka</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-boss-wait">
+      <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Väntar i raid-rummet</div>
+      <div>Rumskod: <span id="lobby-boss-wait-code" style="color:#ffd34a;font-weight:800;letter-spacing:4px;">----</span></div>
+      <div id="lobby-boss-wait-count" style="font-size: 18px; color: #aaccff; margin: 12px 0;">Spelare: 1 / 3</div>
+      <div class="msg" id="lobby-boss-wait-msg">Väntar på att hosten startar matchen...</div>
+      <button class="lobby-btn danger" id="btn-boss-wait-leave">Lämna rum</button>
+    </div>
   </div>
 
   <div id="hud">

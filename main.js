@@ -9299,7 +9299,7 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 
 // Lerpar interpolerande meshes mot sitt _target varje frame.
 function smoothEntityMeshes(dt) {
-  const k = 1 - Math.pow(0.5, dt / 0.06);  // ~60 ms halflife
+  const k = 1 - Math.pow(0.5, dt / 0.035);  // ~35 ms halflife — snabbare interpolation = mindre upplevd lag
   // Hero-meshes (båda sidor)
   for (const sideIdx of [1, 2]) {
     const side = sides[sideIdx];
@@ -12940,9 +12940,9 @@ function readLocalJoystick() {
 // ============================================================
 
 let lastInputJoy = { x: 0, z: 0 };
-const INPUT_SEND_INTERVAL = 1 / 30;   // 30 Hz input
-const STATE_SEND_INTERVAL = 1 / 20;   // 20 Hz state
-const ARENA_STATE_SEND_INTERVAL = 1 / 30;  // 30 Hz arena state (höjd från 15 Hz för smoothness)
+const INPUT_SEND_INTERVAL = 1 / 45;   // 45 Hz input (höjt från 30 för låg latens)
+const STATE_SEND_INTERVAL = 1 / 30;   // 30 Hz state (höjt från 20 för smoothness)
+const ARENA_STATE_SEND_INTERVAL = 1 / 45;  // 45 Hz arena state (höjd från 30 Hz för låg latens)
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
@@ -12975,6 +12975,13 @@ function maybeSendClientInput(now) {
   flushClientInput();
 }
 
+// Boss Wars MP: in-match state sync (WIP — för nu fungerar lobby + start, men
+// klienter spawnar in en EGEN solo-match efter b-start så alla 3 möter bossen
+// parallellt. Full co-op-sync (boss + 3 hjältar i samma simulering) kommer senare.)
+function applyBossWarsState(_msg) {
+  // No-op placeholder. När host börjar broadcasta b-state med boss + hero
+  // snapshots så implementeras applikationen här (jfr applyArenaState).
+}
 function handleNetworkMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'st' && isMpMode() && APP.gameMode !== 'arena1v1') {
@@ -13018,6 +13025,30 @@ function handleNetworkMessage(msg) {
       // Om vi också är confirm:ade → starta direkt
       if (heroPickState.confirmed) finishHeroPick();
     }
+    return;
+  }
+  // Boss Wars MP-meddelanden (3-spelar co-op)
+  if (msg.t === 'b-start' && bossMpState.active && bossMpState.role === 'client') {
+    // Host triggade match-start — klient går också till sin lokala boss-pick.
+    // Full in-match co-op-sync är WIP, så varje spelare möter bossen separat
+    // efter lobby:n (alla 3 har dock samtidig start).
+    bossMpFinishLobby();
+    bossWarsShowPick();
+    return;
+  }
+  if (msg.t === 'b-tier' && bossMpState.active && bossMpState.role === 'client') {
+    // Host valde tier — klient mottar och kan visa info
+    if (APP.bossWars) APP.bossWars.tier = msg.tier;
+    return;
+  }
+  if (msg.t === 'b-state' && bossMpState.active && bossMpState.role === 'client') {
+    applyBossWarsState(msg);
+    return;
+  }
+  if (msg.t === 'b-input' && bossMpState.active && bossMpState.role === 'host') {
+    // Klient skickar joystick + events; host applicerar på rätt side
+    APP.remoteBossInput = APP.remoteBossInput || {};
+    if (msg.from) APP.remoteBossInput[msg.from] = msg;
     return;
   }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
@@ -14091,8 +14122,11 @@ const lobbyArenaTeamEl = document.getElementById('lobby-arena-team');
 const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
 const lobbyBossPickEl = document.getElementById('lobby-boss-pick');
 const lobbyBossModeEl = document.getElementById('lobby-boss-mode');
+const lobbyBossHostEl = document.getElementById('lobby-boss-host');
+const lobbyBossJoinEl = document.getElementById('lobby-boss-join');
+const lobbyBossWaitEl = document.getElementById('lobby-boss-wait');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -14109,6 +14143,9 @@ function showLobbyPanel(which) {
   else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
   else if (which === 'boss-pick') lobbyBossPickEl.classList.add('visible');
   else if (which === 'boss-mode') lobbyBossModeEl.classList.add('visible');
+  else if (which === 'boss-host') lobbyBossHostEl.classList.add('visible');
+  else if (which === 'boss-join') lobbyBossJoinEl.classList.add('visible');
+  else if (which === 'boss-wait') lobbyBossWaitEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -14164,6 +14201,60 @@ function handleRelayEnvelope(e) {
   let env;
   try { env = JSON.parse(e.data); } catch (_) { return; }
   if (!env || typeof env !== 'object') return;
+  // Boss Wars MP-flöde: separat hantering så vanlig hosted/joined-flow inte krockar
+  if (bossMpState.active) {
+    if (env.t === 'hosted') {
+      bossMpState.code = env.code;
+      if (bossMpState.codeDisplayEl) bossMpState.codeDisplayEl.textContent = env.code;
+      if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Dela koden med två vänner — väntar på spelare...';
+      updateBossPeerCount(1, env.maxPeers || 3);
+      return;
+    }
+    if (env.t === 'joined') {
+      if (bossMpState.waitCodeEl) bossMpState.waitCodeEl.textContent = env.code;
+      updateBossPeerCount(env.peersTotal || 2, env.maxPeers || 3);
+      showLobbyPanel('boss-wait');
+      return;
+    }
+    if (env.t === 'join-error') {
+      if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.innerHTML = `<span class="err">${env.msg || 'Kunde inte ansluta.'}</span>`;
+      closeRelay();
+      bossMpState.active = false;
+      return;
+    }
+    if (env.t === 'peer-joined') {
+      updateBossPeerCount(env.peersTotal || (bossMpState.peersTotal + 1), env.maxPeers || 3);
+      if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
+        bossMpState.hostMsgEl.textContent = (bossMpState.peersTotal >= bossMpState.maxPeers)
+          ? 'Alla är inne! Tryck "Starta matchen" när ni är redo.'
+          : `Spelare anslöt (${bossMpState.peersTotal}/${bossMpState.maxPeers}).`;
+      }
+      return;
+    }
+    if (env.t === 'peer-left') {
+      if (env.peersTotal !== undefined) {
+        updateBossPeerCount(env.peersTotal, env.maxPeers || bossMpState.maxPeers);
+        if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
+          bossMpState.hostMsgEl.textContent = `En spelare lämnade. Väntar på ${bossMpState.maxPeers - bossMpState.peersTotal} till...`;
+        }
+        return;
+      }
+      // Rummet stängdes (host försvann)
+      bossMpState.active = false;
+      if (APP.mode === 'host' || APP.mode === 'client') {
+        showLobbyError('Rummet stängdes.');
+        returnToLobby();
+      } else {
+        if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.innerHTML = '<span class="err">Rummet stängdes.</span>';
+        showLobbyPanel('boss-mode');
+      }
+      closeRelay();
+      return;
+    }
+    if (env.t === 'pong') { APP._lastPongMs = performance.now(); return; }
+    if (env.t === 'msg') { handleNetworkMessage(env.d); return; }
+    return;
+  }
   if (env.t === 'hosted') {
     onHosted(env.code);
   } else if (env.t === 'joined') {
@@ -14767,19 +14858,140 @@ function bossWarsStartFight(tier) {
 }
 const btnModeBoss = document.getElementById('btn-mode-boss');
 if (btnModeBoss) btnModeBoss.addEventListener('click', bossWarsShow);
+// ---- Boss Wars MP (3-spelar co-op via relay-server) ----
+const bossMpState = {
+  active: false,             // true när host-flow eller join-flow är igång
+  role: null,                // 'host' | 'client'
+  code: null,                // 4-tecken rumskod
+  peersTotal: 1,             // hur många i rummet just nu
+  maxPeers: 3,
+  codeDisplayEl: document.getElementById('lobby-boss-code-display'),
+  hostMsgEl: document.getElementById('lobby-boss-host-msg'),
+  hostCountEl: document.getElementById('lobby-boss-peer-count'),
+  startBtnEl: document.getElementById('btn-boss-start-match'),
+  codeInputEl: document.getElementById('lobby-boss-code-input'),
+  joinMsgEl: document.getElementById('lobby-boss-join-msg'),
+  waitCodeEl: document.getElementById('lobby-boss-wait-code'),
+  waitCountEl: document.getElementById('lobby-boss-wait-count'),
+  waitMsgEl: document.getElementById('lobby-boss-wait-msg'),
+};
+function updateBossPeerCount(n, max) {
+  bossMpState.peersTotal = n;
+  if (max) bossMpState.maxPeers = max;
+  const text = `Spelare: ${n} / ${bossMpState.maxPeers}`;
+  if (bossMpState.hostCountEl) bossMpState.hostCountEl.textContent = text;
+  if (bossMpState.waitCountEl) bossMpState.waitCountEl.textContent = text;
+  if (bossMpState.startBtnEl) {
+    const ready = (n >= bossMpState.maxPeers);
+    bossMpState.startBtnEl.disabled = !ready;
+    bossMpState.startBtnEl.style.opacity = ready ? '1' : '0.5';
+    bossMpState.startBtnEl.textContent = ready ? 'Starta matchen' : `Starta matchen (${n}/${bossMpState.maxPeers})`;
+  }
+}
+async function bossWarsHostGame() {
+  APP.gameMode = 'bosswars';
+  APP.bossWars = { active: true, tier: 0 };
+  bossMpState.active = true;
+  bossMpState.role = 'host';
+  bossMpState.code = null;
+  bossMpState.peersTotal = 1;
+  if (bossMpState.codeDisplayEl) bossMpState.codeDisplayEl.textContent = '----';
+  if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  updateBossPeerCount(1, 3);
+  showLobbyPanel('boss-host');
+  try {
+    await openRelay();
+  } catch (err) {
+    if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.innerHTML = `<span class="err">Kunde inte nå servern: ${err.message || 'okänt fel'}</span>`;
+    bossMpState.active = false;
+    return;
+  }
+  wsSendEnvelope({ t: 'host', maxPeers: 3 });
+  if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Skapar rum...';
+}
+async function bossWarsJoinGame() {
+  const code = (bossMpState.codeInputEl ? bossMpState.codeInputEl.value : '').trim().toUpperCase();
+  if (code.length !== 4) {
+    if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.innerHTML = '<span class="err">Koden måste vara 4 tecken.</span>';
+    return;
+  }
+  APP.gameMode = 'bosswars';
+  APP.bossWars = { active: true, tier: 0 };
+  bossMpState.active = true;
+  bossMpState.role = 'client';
+  bossMpState.code = code;
+  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  try {
+    await openRelay();
+  } catch (err) {
+    if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.innerHTML = `<span class="err">Kunde inte nå servern: ${err.message || 'okänt fel'}</span>`;
+    bossMpState.active = false;
+    return;
+  }
+  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Söker rummet...';
+  wsSendEnvelope({ t: 'join', code });
+}
+function bossWarsLeaveLobby() {
+  bossMpState.active = false;
+  bossMpState.role = null;
+  bossMpState.code = null;
+  closeRelay();
+  APP.gameMode = 'classic';
+  APP.bossWars = { active: false, tier: 0 };
+  showLobbyPanel('boss-mode');
+}
+function bossWarsHostStartMatch() {
+  if (bossMpState.role !== 'host') return;
+  if (bossMpState.peersTotal < bossMpState.maxPeers) return;
+  // Skicka start-signal till båda klienter
+  sendGameMsg({ t: 'b-start' });
+  // Liten paus så msg hinner gå ut innan vi stänger relay:n
+  setTimeout(() => { bossMpFinishLobby(); bossWarsShowPick(); }, 150);
+}
+function bossMpFinishLobby() {
+  // Just nu: in-match sync är WIP — varje spelare fortsätter solo mot bossen
+  // efter lobby:n. Stäng relay så vi inte hänger på en död anslutning.
+  closeRelay();
+  bossMpState.active = false;
+}
+// Wire up boss-MP-knappar
+const btnBossStart = document.getElementById('btn-boss-start-match');
+if (btnBossStart) btnBossStart.addEventListener('click', bossWarsHostStartMatch);
+const btnBossHostCancel = document.getElementById('btn-boss-host-cancel');
+if (btnBossHostCancel) btnBossHostCancel.addEventListener('click', bossWarsLeaveLobby);
+const btnBossJoinConnect = document.getElementById('btn-boss-join-connect');
+if (btnBossJoinConnect) btnBossJoinConnect.addEventListener('click', bossWarsJoinGame);
+const btnBossJoinBack = document.getElementById('btn-boss-join-back');
+if (btnBossJoinBack) btnBossJoinBack.addEventListener('click', () => { closeRelay(); bossMpState.active = false; showLobbyPanel('boss-mode'); });
+const btnBossWaitLeave = document.getElementById('btn-boss-wait-leave');
+if (btnBossWaitLeave) btnBossWaitLeave.addEventListener('click', bossWarsLeaveLobby);
+if (bossMpState.codeInputEl) {
+  bossMpState.codeInputEl.addEventListener('input', () => {
+    bossMpState.codeInputEl.value = bossMpState.codeInputEl.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  });
+  bossMpState.codeInputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') bossWarsJoinGame(); });
+}
+if (bossMpState.codeDisplayEl) {
+  bossMpState.codeDisplayEl.addEventListener('click', () => {
+    const code = bossMpState.codeDisplayEl.textContent.trim();
+    if (code && code !== '----' && navigator.clipboard) {
+      navigator.clipboard.writeText(code).then(() => {
+        if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = `Kopierat: ${code} — dela med vänner!`;
+      });
+    }
+  });
+}
+
 // Boss-mode panel: Host / Join / Info / Tillbaka
 const btnBossModeBack = document.getElementById('btn-boss-mode-back');
 if (btnBossModeBack) btnBossModeBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.bossWars = { active: false, tier: 0 }; showLobbyPanel('main'); });
 const btnBossHost = document.getElementById('btn-boss-host');
-if (btnBossHost) btnBossHost.addEventListener('click', () => {
-  // 3-player MP är inte implementerat än — gå till boss-pick (single-player fallback).
-  // När MP är klart byts detta till hostGame()-flow.
-  bossWarsShowPick();
-});
+if (btnBossHost) btnBossHost.addEventListener('click', () => { bossWarsHostGame(); });
 const btnBossJoin = document.getElementById('btn-boss-join');
 if (btnBossJoin) btnBossJoin.addEventListener('click', () => {
-  // Placeholder — 3-player join kommer när MP-rooms stödjer 3 peers.
-  alert('Join Game kommer när 3-spelar-MP är på plats. Använd Host Game just nu för att möta bossen.');
+  bossMpState.joinMsgEl && (bossMpState.joinMsgEl.textContent = '');
+  if (bossMpState.codeInputEl) { bossMpState.codeInputEl.value = ''; setTimeout(() => bossMpState.codeInputEl.focus(), 50); }
+  showLobbyPanel('boss-join');
 });
 const btnBossInfo = document.getElementById('btn-boss-info');
 if (btnBossInfo) btnBossInfo.addEventListener('click', openBossInfoModal);
