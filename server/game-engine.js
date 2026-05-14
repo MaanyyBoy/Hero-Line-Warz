@@ -188,7 +188,7 @@ const TOWER_MAX_HP = 50;
 // Fontän-aura: hero inom radius av egen fontän får regen + buff på output/defense/CDR/AS
 const FOUNTAIN_AURA_RADIUS = 4.5;
 const FOUNTAIN_AURA_RADIUS_SQ = FOUNTAIN_AURA_RADIUS * FOUNTAIN_AURA_RADIUS;
-const FOUNTAIN_AURA_REGEN_PCT = 0.02; // 2% av maxHp per sekund
+const FOUNTAIN_AURA_REGEN_PCT = 0.03; // 3% av maxHp per sekund
 const FOUNTAIN_AURA_PCT = 0.10;      // 10% till varje stat
 const FOUNTAIN_DMG_MUL = 1 + FOUNTAIN_AURA_PCT;
 const FOUNTAIN_DMG_REDUCTION_MUL = 1 - FOUNTAIN_AURA_PCT;
@@ -351,6 +351,21 @@ const SIDE_CFG = {
   2: { laneZ: { 1: -4, 2: -12 }, spawnX: -27, baseZRange: [-14.55, -0.5], tower: { x: 24, z: -8 }, heroSpawn: { x: 15, z: -8 } },
 };
 
+// Portal-feature: lvl-30 hero kan teleportera till motståndarens lanes för PvP-raid.
+const PORTAL_MAX_USES = 3;
+const PORTAL_COOLDOWN = 60;          // 1 minut mellan teleports
+const PORTAL_ENEMY_DURATION = 30;    // 30s i fiendens territorium
+const PORTAL_REQUIRED_LEVEL = 30;
+const PORTAL_ENTER_RADIUS = 1.3;
+const PORTAL_POS = {
+  1: { x: 26, z: 13 },   // side 1 portal i hörnet bakom torn (z=8)
+  2: { x: 26, z: -13 },  // side 2 spegelvänt
+};
+// Mål-punkt på motståndarens lanes (mitten av deras lane 1)
+const PORTAL_DEST = {
+  1: { x: 0, z: -8 },    // side 1 → opp:s (side 2) lane
+  2: { x: 0, z: 8 },     // side 2 → opp:s (side 1) lane
+};
 // === Walk-checks ===
 function inLane(x, z, centerZ) {
   return x >= -27.95 && x <= 11 && z >= centerZ - 2.85 && z <= centerZ + 2.85;
@@ -363,10 +378,19 @@ function inSideBase(idx, x, z) {
   const [zMin, zMax] = SIDE_CFG[idx].baseZRange;
   return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
 }
-function isHeroWalkable(idx, x, z) {
+function isHeroWalkable(idx, x, z, opts) {
   const cfg = SIDE_CFG[idx];
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
   if (dx * dx + dz * dz < (TOWER_R + HERO_R) * (TOWER_R + HERO_R)) return false;
+  // I fiendens territorium (portal-trip): tillåt opp:s lanes + base (men inte opp:s tower)
+  if (opts && opts.inEnemyTerritory) {
+    const oppIdx = 3 - idx;
+    const oppCfg = SIDE_CFG[oppIdx];
+    const oddx = x - oppCfg.tower.x, oddz = z - oppCfg.tower.z;
+    if (oddx * oddx + oddz * oddz < (TOWER_R + HERO_R) * (TOWER_R + HERO_R)) return false;
+    if (inSideBase(oppIdx, x, z) || inSideLanes(oppIdx, x, z)) return true;
+    // Annars faller den tillbaka till normal walkable (egen sida)
+  }
   return inSideBase(idx, x, z) || inSideLanes(idx, x, z);
 }
 function isArenaWalkable(x, z) {
@@ -609,6 +633,11 @@ function createSide(idx) {
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
     shield: 0,
+    // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
+    portalUsesLeft: PORTAL_MAX_USES,
+    portalCooldown: 0,
+    inEnemyTerritory: false,
+    enemyTerritoryTimer: 0,
     gold: 0,
     income: INCOME_BASE, incomeTimer: 0, incomeTickCount: 0,
     inventory: [],
@@ -1118,6 +1147,17 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
   return { x: tx, z: tz };
 }
 
+// Hero-vs-hero PvP är aktiv om duel pågår ELLER om någon hero är i fiendens territorium via portal
+function isHeroPvpActive(state) {
+  if (!state) return false;
+  if (state.duelActive) return true;
+  const s1 = state.sides && state.sides[1];
+  const s2 = state.sides && state.sides[2];
+  if (s1 && s1.inEnemyTerritory) return true;
+  if (s2 && s2.inEnemyTerritory) return true;
+  return false;
+}
+
 function findClosestHostile(side, opp, x, z, maxDist, state) {
   let best = null, bestDist = maxDist;
   // Under duel: opp.hero OCH duel-big-orb är giltiga targets
@@ -1131,6 +1171,11 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
       if (d < bestDist) { bestDist = d; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
     }
     return best;
+  }
+  // Portal-PvP: opp.hero blir target om någon sida är i fiendens territorium
+  if (state && isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
+    if (d < bestDist) { bestDist = d; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
   }
   for (const m of side.monsters) {
     const d = Math.hypot(m.x - x, m.z - z);
@@ -1146,7 +1191,7 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
 // Slå upp target-entitet — kan vara monster/creep/hero (hero under duel).
 function resolveTargetEntity(side, opp, state) {
   if (side.targetType === 'hero') {
-    if (state && state.duelActive && opp && !opp.hero.dead) return opp.hero;
+    if (state && isHeroPvpActive(state) && opp && !opp.hero.dead) return opp.hero;
     return null;
   }
   if (side.targetType === 'duelOrb') {
@@ -1557,7 +1602,7 @@ function castFrostnova(state, sideIdx, ev) {
       }
     }
   }
-  if (state.duelActive && opp && !opp.hero.dead) {
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     if (Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (opp.hero.frozenTime || 0) > 0;
       onGandulfSkillHit(side, opp.hero);
@@ -1629,7 +1674,7 @@ function updateBlackHoles(state, side, opp, dt) {
       }
     }
     // Suga in opp.hero under duel
-    if (state.duelActive && opp && !opp.hero.dead) {
+    if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
       const dx = bh.x - opp.hero.x, dz = bh.z - opp.hero.z;
       const d = Math.hypot(dx, dz);
       if (d > 0.15 && d < BLACKHOLE_RADIUS) {
@@ -1654,7 +1699,7 @@ function updateBlackHoles(state, side, opp, dt) {
           if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      if (state.duelActive && opp && !opp.hero.dead) {
+      if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
         if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
           onGandulfSkillHit(side, opp.hero);
           applySkillDamageToOppHero(state, side, opp, bh.explosionDmg);
@@ -1709,7 +1754,7 @@ function updateVineTraps(state, side, opp, dt) {
       }
     }
     // Duel: applicera även på opp.hero
-    if (state.duelActive && opp && !opp.hero.dead) {
+    if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
       const dx = opp.hero.x - vt.x, dz = opp.hero.z - vt.z;
       if (dx * dx + dz * dz < r2) {
         opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
@@ -1775,7 +1820,7 @@ function castGimluTaunt(state, sideIdx) {
     }
   }
   // Duel: tauntar opp.hero
-  if (state.duelActive && opp && !opp.hero.dead) {
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) opp.hero.tauntedTime = TAUNT_DURATION;
   }
@@ -1815,7 +1860,7 @@ function updateIronWill(state, side, opp, dt) {
           if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
-      if (state.duelActive && opp && !opp.hero.dead) {
+      if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
         const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
         if (ddx * ddx + ddz * ddz < r2) damageHero(opp, dmg);
       }
@@ -1922,7 +1967,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * strength * dt;
-  const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z);
+  const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
+  const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
   else if (check(side.hero.x, nz)) side.hero.z = nz;
@@ -1958,6 +2004,29 @@ function applyEvent(state, sideIdx, ev) {
   if (ev.type === 'hero-confirm') {
     if (state.phase !== 'pick') return;
     side.heroPickConfirmed = true;
+    return;
+  }
+  if (ev.type === 'portal') {
+    // Lvl-30-gated PvP-portal: teleporterar till motståndarens lanes i 30s
+    if (side.hero.dead) return;
+    if (side.inEnemyTerritory) return;        // redan där borta
+    if ((side.level || 1) < PORTAL_REQUIRED_LEVEL) return;
+    if ((side.portalUsesLeft || 0) <= 0) return;
+    if ((side.portalCooldown || 0) > 0) return;
+    if (state.duelActive) return;              // ingen portal under duel
+    // Måste stå på/intill portalen för att aktivera
+    const pp = PORTAL_POS[side.idx];
+    if (!pp) return;
+    const d = Math.hypot(side.hero.x - pp.x, side.hero.z - pp.z);
+    if (d > PORTAL_ENTER_RADIUS + 0.4) return;
+    // Teleport!
+    const dest = PORTAL_DEST[side.idx];
+    side.hero.x = dest.x;
+    side.hero.z = dest.z;
+    side.inEnemyTerritory = true;
+    side.enemyTerritoryTimer = PORTAL_ENEMY_DURATION;
+    side.portalUsesLeft -= 1;
+    side.portalCooldown = PORTAL_COOLDOWN;
     return;
   }
   if (ev.type === 'aa') {
@@ -2406,6 +2475,26 @@ function tickGame(state, dt) {
     if (someoneDead || state.duelMatchTimer <= 0) endDuel(state);
     return;
   }
+  // Portal-state tick (utanför duel)
+  for (const sideIdx of [1, 2]) {
+    const s = state.sides[sideIdx];
+    if (!s) continue;
+    if ((s.portalCooldown || 0) > 0) s.portalCooldown = Math.max(0, s.portalCooldown - dt);
+    if (s.inEnemyTerritory) {
+      s.enemyTerritoryTimer = Math.max(0, (s.enemyTerritoryTimer || 0) - dt);
+      // Hero dog i fiendens territorium ELLER 30s slut → tillbaka till egen fontän
+      if (s.hero.dead || s.enemyTerritoryTimer <= 0) {
+        const cfg = SIDE_CFG[sideIdx];
+        s.hero.x = cfg.heroSpawn.x;
+        s.hero.z = cfg.heroSpawn.z;
+        s.inEnemyTerritory = false;
+        s.enemyTerritoryTimer = 0;
+        // Reset AA-target så hero inte fastnar låst på opp.hero
+        s.targetId = 0; s.targetType = ''; s.targetX = 0; s.targetZ = 0;
+        s.aaActive = false;
+      }
+    }
+  }
   // Triggern: är det dags för nästa duel?
   if (state.duelCount < DUEL_MAX_COUNT && state.duelTimer > 0) {
     state.duelTimer = Math.max(0, state.duelTimer - dt);
@@ -2514,6 +2603,11 @@ function serializeSide(side) {
     inc: side.income,
     incT: +side.incomeTimer.toFixed(2),
     incC: side.incomeTickCount || 0,
+    // Portal-state
+    ptu: side.portalUsesLeft || 0,
+    ptc: +(side.portalCooldown || 0).toFixed(1),
+    pet: side.inEnemyTerritory ? 1 : 0,
+    petT: +(side.enemyTerritoryTimer || 0).toFixed(1),
     tu: side.tierUnlocks,
     inv: side.inventory.map(it => ({
       id: it.itemId,

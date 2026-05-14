@@ -199,10 +199,20 @@ preloadAllAssets();
 // ============================================================
 
 const towerMeshes = {};         // mappar sida → fontän-rig (kvar i gamla namnet pga refs i renderloop)
+const portalMeshes = {};        // mappar sida → portal-rig (klassisk line-wars PvP-portal, lvl-30-gated)
+// Portal-konstanter (matchar server)
+const PORTAL_POS = {
+  1: { x: 26, z: 13 },
+  2: { x: 26, z: -13 },
+};
+const PORTAL_REQUIRED_LEVEL = 30;
+const PORTAL_ENTER_RADIUS = 1.3;
+// Klient-tracking så vi inte spammar portal-events när hero står på portalen
+const portalTrigger = { lastSentMs: 0 };
 const campfires = {};           // sida → lägereld-rig (för flame-animation)
 const FOUNTAIN_AURA_RADIUS = 4.5; // meter — närhet till egen fontän för aura
 const FOUNTAIN_AURA_RADIUS_SQ = FOUNTAIN_AURA_RADIUS * FOUNTAIN_AURA_RADIUS;
-const FOUNTAIN_AURA_REGEN_PCT = 0.02; // 2% av maxHp per sekund
+const FOUNTAIN_AURA_REGEN_PCT = 0.03; // 3% av maxHp per sekund
 const FOUNTAIN_AURA_PCT = 0.10;
 const FOUNTAIN_DMG_MUL = 1 + FOUNTAIN_AURA_PCT;
 const FOUNTAIN_DMG_REDUCTION_MUL = 1 - FOUNTAIN_AURA_PCT;
@@ -853,6 +863,53 @@ const TEXTURES = {
   }
   towerMeshes[1] = makeFountain(24, 8,  0x4aa0ff);   // sida 1 = blå glöd
   towerMeshes[2] = makeFountain(24, -8, 0xff5a4a);   // sida 2 = varm glöd
+
+  // === PORTAL-VISUAL (lvl 30, lane-wars PvP-portal) ===
+  function makePortal(cx, cz, color) {
+    const grp = new THREE.Group();
+    // Bas-platta
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a2438, roughness: 0.7, metalness: 0.4 });
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.4, 0.18, 24), baseMat);
+    base.position.y = 0.09;
+    base.castShadow = true;
+    base.receiveShadow = true;
+    grp.add(base);
+    // Stående ring (kärna)
+    const ringMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.6, metalness: 0.6, roughness: 0.25 });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.10, 14, 36), ringMat);
+    ring.position.y = 1.2;
+    ring.rotation.x = Math.PI / 2;
+    grp.add(ring);
+    // Inre energi-disk (semi-transparent)
+    const diskMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+    const disk = new THREE.Mesh(new THREE.CircleGeometry(0.85, 28), diskMat);
+    disk.position.y = 1.2;
+    disk.rotation.x = Math.PI / 2;
+    grp.add(disk);
+    // Yttre halo
+    const haloMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false });
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.20, 12, 32), haloMat);
+    halo.position.y = 1.2;
+    halo.rotation.x = Math.PI / 2;
+    grp.add(halo);
+    // Glow-light
+    const light = new THREE.PointLight(color, 1.8, 6, 2);
+    light.position.set(0, 1.5, 0);
+    grp.add(light);
+    // Mark-aura (cirkel på marken)
+    const ground = new THREE.Mesh(
+      new THREE.RingGeometry(1.0, 1.4, 28),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0.20;
+    grp.add(ground);
+    grp.position.set(cx, 0, cz);
+    scene.add(grp);
+    return { group: grp, ring, disk, halo, light, ground };
+  }
+  portalMeshes[1] = makePortal(26, 13, 0x66ccff);     // sida 1 portal i hörnet bakom torn
+  portalMeshes[2] = makePortal(26, -13, 0xff6688);    // sida 2 portal
 
   // === TRAIL-FADE — stigar som fortsätter in i basen ===
   function makeTrailExtension(cx, cz, len = 5, w = 2.4, seed = 1) {
@@ -2067,11 +2124,12 @@ function makeHeroMesh(idx, heroId) {
   grp.add(ring);
   grp.userData.sideRing = ring;
 
-  // Aragurn-specifik: alltid synligt stort svärd som sitter på högersidan, slår med
-  // det vid AA och spinner med det vid Whirlwind.
+  // Aragurn-specifik: alltid synligt STORT svärd (4× större) som sitter på högersidan,
+  // slår med det vid AA och spinner med det vid Whirlwind.
   if ((heroId || '').toLowerCase() === 'aragurn') {
     const sword = makeAragurnSword();
-    sword.position.set(0.45, 0.55, 0.1);   // höger sida av kroppen
+    sword.scale.set(4, 4, 4);              // 4× större
+    sword.position.set(0.85, 1.0, 0.15);   // höger sida, högre upp pga storlek
     sword.rotation.z = -0.35;
     sword.rotation.x = 0.15;
     grp.add(sword);
@@ -2079,6 +2137,7 @@ function makeHeroMesh(idx, heroId) {
     grp.userData.aragurnSwordDefault = {
       pos: sword.position.clone(),
       rot: sword.rotation.clone(),
+      scale: sword.scale.clone(),
     };
   }
 
@@ -3897,13 +3956,14 @@ function startArenaRound(roundNum) {
     // Reset shield-state — refresh-timern triggar omedelbart vid fight-start
     s.lingShieldHp = 0;
     s.lingShieldRefreshTimer = 0.5;  // kort delay så shield-pop syns
-    // Reset ALLA skill-CDs + ult-energy + ult-buffs/timers så varje runda startar fräsch
+    // Reset ALLA skill-CDs + ult-buffs/timers så varje runda startar fräsch.
+    // Ult-energy BEHÅLLS mellan rundor — så om du fyllde 70% förra rundan börjar
+    // du nästa med 70% (matchar MLBB-stil "ultimate stays").
     if (s.skills) {
       if (s.skills.q) s.skills.q.cd = 0;
       if (s.skills.f) s.skills.f.cd = 0;
       if (s.skills.e) s.skills.e.cd = 0;
     }
-    s.ultEnergy = 0;
     s.legolusUltBuff = 0;
     s.legolusBuffRemaining = 0;
     s.legolusDashBuffPending = false;
@@ -8755,6 +8815,11 @@ function applyRemoteState(state) {
     side.income = sData.inc ?? side.income;
     side.incomeTimer = sData.incT ?? side.incomeTimer;
     if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
+    // Portal-state (lvl-30 PvP-portal)
+    if (sData.ptu !== undefined) side.portalUsesLeft = sData.ptu;
+    if (sData.ptc !== undefined) side.portalCooldown = sData.ptc;
+    side.inEnemyTerritory = !!sData.pet;
+    side.enemyTerritoryTimer = sData.petT || 0;
     if (sData.tu) side.tierUnlocks = sData.tu;
     if (sData.inv) side.inventory = sData.inv.map(e => ({
       itemId: e.id,
@@ -14402,6 +14467,34 @@ function animateSceneProps(dt, now) {
       const base = inAura ? 0.55 : 0.18;
       const amp = inAura ? 0.20 : 0.07;
       f.auraRing.material.opacity = base + amp * Math.sin(now * (inAura ? 3.4 : 1.8) + idx);
+    }
+  }
+  // Portaler: animera ring + disk + halo, walk-onto-detection
+  const localSide = sides[APP.localSide];
+  for (const idx of [1, 2]) {
+    const p = portalMeshes[idx];
+    if (!p) continue;
+    if (p.ring) p.ring.rotation.z = now * 0.8;
+    if (p.disk) {
+      p.disk.material.opacity = 0.45 + 0.20 * Math.sin(now * 2.0 + idx);
+      p.disk.rotation.z = -now * 1.2;
+    }
+    if (p.halo) {
+      p.halo.rotation.z = now * 0.4;
+      const s = 1 + 0.06 * Math.sin(now * 1.5 + idx);
+      p.halo.scale.set(s, s, s);
+    }
+    if (p.light) p.light.intensity = 1.4 + 0.5 * Math.sin(now * 1.8 + idx);
+    if (p.ground) p.ground.material.opacity = 0.35 + 0.18 * Math.sin(now * 1.3 + idx);
+    // Walk-onto: bara lokal hero på sin egen portal aktiverar
+    if (localSide && idx === APP.localSide && !localSide.hero.dead && localSide.level >= PORTAL_REQUIRED_LEVEL) {
+      const pp = PORTAL_POS[idx];
+      const d = Math.hypot(localSide.hero.x - pp.x, localSide.hero.z - pp.z);
+      const nowMs = performance.now();
+      if (d < PORTAL_ENTER_RADIUS && nowMs - portalTrigger.lastSentMs > 800) {
+        portalTrigger.lastSentMs = nowMs;
+        sendOrApplyEvent({ type: 'portal' });
+      }
     }
   }
   // Lägereld: flammor flickrar i höjd och belysning
