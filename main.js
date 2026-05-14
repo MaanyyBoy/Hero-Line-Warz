@@ -13090,6 +13090,9 @@ function buildBossWarsSnap() {
 
 function broadcastBossWarsState() {
   if (bossMpState.role !== 'host' || !bossMpState.matchActive || !wsOpen()) return;
+  // Defensiv: vänta tills sides[1] + boss faktiskt finns. Skyddar mot
+  // edge-case där tick() fyrar mellan matchActive=true och enterPlayPhase().
+  if (!sides[1] || !sides[1].monsters || !sides[1].bossWarsBossId) return;
   const snap = buildBossWarsSnap();
   sendGameMsg({
     t: 'b-state',
@@ -13144,7 +13147,12 @@ function applyBossWarsState(msg) {
 
 // Klient → host: skicka local input (joystick + events) ~45 Hz
 function sendBossWarsInput() {
-  if (bossMpState.role !== 'client' || !bossMpState.matchActive || !wsOpen()) return;
+  if (bossMpState.role !== 'client' || !bossMpState.matchActive) return;
+  if (!wsOpen()) {
+    // WS nere — släng buffrade events så pendingEvents inte växer obegränsat
+    bossMpState.pendingEvents = [];
+    return;
+  }
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = bossMpState.pendingEvents;
@@ -13237,10 +13245,11 @@ function handleNetworkMessage(msg) {
     return;
   }
   if (msg.t === 'b-end' && bossMpState.active && bossMpState.role === 'client') {
-    // Host detekterade match-slut → klient triggar samma end-screen
+    // Host detekterade match-slut → klient triggar samma end-screen.
+    // Konvention: winner=1 = spelaren vann, winner=2 = bossen vann.
     matchState.gameOver = true;
     matchState.gameWon = !!msg.won;
-    matchState.winner = msg.won ? 1 : 0;
+    matchState.winner = msg.won ? 1 : 2;
     return;
   }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
@@ -14193,9 +14202,10 @@ function updateBossPrepButton() {
 function startBossWarsFightAfterPrep() {
   const prepEl = document.getElementById('boss-prep');
   if (prepEl) prepEl.classList.add('hidden');
-  // MP-host: broadcasta b-launch så klienterna kan sätta upp samma match.
-  // Viktig ordning: sätt matchActive EFTER enterPlayPhase så broadcastBossWarsState
-  // inte kan trigga innan sides[1] (+boss) är klar.
+  // MP-host: broadcasta b-launch + sätt matchActive INNAN enterPlayPhase så
+  // boss-wars-grenen där bygger sides[2]/sides[3] korrekt. Race med tick():
+  // inte möjlig i JS (single-thread) eftersom enterPlayPhase är synkron;
+  // dessutom guardar broadcastBossWarsState mot saknad boss explicit.
   const isMpHostLaunch = bossMpState.active && bossMpState.role === 'host';
   if (isMpHostLaunch) {
     sendGameMsg({
@@ -14203,9 +14213,6 @@ function startBossWarsFightAfterPrep() {
       tier: APP.bossWars.tier || 1,
       hostHero: heroPickState.selected || 'magiker',
     });
-    // setupMatch/enterPlayPhase behöver veta att MP är aktiv (för 3-side-setup).
-    // Sätt så enterPlayPhase plockar upp det; nolla send-timestamps så första
-    // broadcast inte fyrar förrän efter en frame.
     bossMpState.matchActive = true;
     bossMpState.lastStateSent = performance.now() / 1000;
   }
@@ -14216,6 +14223,9 @@ function startBossWarsFightAfterPrep() {
 // Hjälte default = Magikern, talents/items tomma (per-klient prep är en
 // framtida iteration).
 function bossMpClientEnterMatch(msg) {
+  // Idempotens-guard: om b-launch levereras två gånger (retransmit eller
+  // dubbel relay) ignoreras det andra anropet.
+  if (bossMpState.matchActive) return;
   bossMpState.matchActive = true;
   APP.gameMode = 'bosswars';
   APP.bossWars = {
@@ -14471,6 +14481,10 @@ function handleRelayEnvelope(e) {
     if (env.t === 'peer-left') {
       if (env.peersTotal !== undefined) {
         updateBossPeerCount(env.peersTotal, env.maxPeers || bossMpState.maxPeers);
+        // Nolla buffrad input för den som lämnade så host inte applicerar
+        // gammal input på en peer-slot som senare återanvänds av ny joiner.
+        bossMpState.remoteInput[2] = null;
+        bossMpState.remoteInput[3] = null;
         if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
           bossMpState.hostMsgEl.textContent = `En spelare lämnade. Väntar på ${bossMpState.maxPeers - bossMpState.peersTotal} till...`;
         }
