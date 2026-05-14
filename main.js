@@ -13061,23 +13061,23 @@ function buildBossWarsSnap() {
     const s = sides[idx];
     if (s) h[idx] = heroSnap(s);
   }
-  // Boss snapshot: hitta isBossWarsBoss-monstret i sides[1].monsters
+  // Boss snapshot: hitta isBossWarsBoss-monstret i sides[1].monsters.
+  // OBS: bossens position bor på mesh.position, inte på m.x/m.z (som projektiler har).
   let boss = null;
   const hostSide = sides[1];
-  if (hostSide && hostSide.monsters) {
+  if (hostSide && hostSide.monsters && hostSide.monsters.length) {
     const b = hostSide.monsters.find(m => m.isBossWarsBoss);
-    if (b) {
+    if (b && b.mesh) {
       boss = {
-        x: +b.x.toFixed(2),
-        z: +b.z.toFixed(2),
+        x: +b.mesh.position.x.toFixed(2),
+        z: +b.mesh.position.z.toFixed(2),
         hp: Math.round(b.hp),
         mh: b.maxHp,
         ph: b.bossPhase || 1,
         pt: +(b.phaseTransitionRemaining || 0).toFixed(2),
-        // Aktivt skill-cast: räcker med name + faas + remaining tid + center-pos
         c: b.activeCast ? {
           n: b.activeCast.skillId || '',
-          ph: b.activeCast.phase || 'tel',     // 'tel' | 'exec'
+          ph: b.activeCast.phase || 'tel',
           t: +(b.activeCast.timeRemaining || 0).toFixed(2),
           x: b.activeCast.targetX != null ? +b.activeCast.targetX.toFixed(2) : null,
           z: b.activeCast.targetZ != null ? +b.activeCast.targetZ.toFixed(2) : null,
@@ -13128,12 +13128,11 @@ function applyBossWarsState(msg) {
       // Spawn pågår, hoppa över denna tick
       return;
     }
-    if (boss) {
-      // Sätt _target för interpolation; smoothEntityMeshes lerpar dit
-      if (!boss.mesh._target) boss.mesh._target = new THREE.Vector3();
-      boss.mesh._target.set(msg.b.x, 0, msg.b.z);
-      boss.x = msg.b.x;
-      boss.z = msg.b.z;
+    if (boss && boss.mesh) {
+      // Bossens position bor på mesh.position — sätt den direkt (30 Hz state
+      // ger smooth-nog rörelse). Behåll y=0 så marken inte ändras.
+      boss.mesh.position.x = msg.b.x;
+      boss.mesh.position.z = msg.b.z;
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
       boss.bossPhase = msg.b.ph || 1;
