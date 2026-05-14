@@ -1282,6 +1282,7 @@ const HERO_DEFS = {
   magiker: { name: 'Gandulf', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
   legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
   gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
+  aragurn: { name: 'Aragurn', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -2020,12 +2021,14 @@ const HERO_GLTF_MAP = {
   magiker: 'mage',
   legolas: 'ranger',
   gimlu:   'barbarian',
+  aragurn: 'knight',
 };
 // Per-hero scale: {x,y,z}. X/Z mindre än Y → smalare silhuett (mindre lego-klump).
 const HERO_GLTF_SCALE = {
   magiker: { x: 0.70, y: 0.82, z: 0.78 },
   legolas: { x: 0.70, y: 0.82, z: 0.78 },
   gimlu:   { x: 0.80, y: 0.88, z: 0.86 },  // Barbarian = lite större för tank-känsla
+  aragurn: { x: 0.78, y: 0.90, z: 0.82 },  // Knight, soldat-bygge
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -3342,6 +3345,18 @@ const ARENA_TALENTS = {
     { id: 'g_iron_radius',icon: '🛡', name: 'Wrath Unleashed', desc: 'Iron Will explosionsradie +30%' },
     { id: 'g_hammer_full',icon: '🔨', name: 'Mighty Throw',    desc: 'Hammer återvänder med 100% skada (var 50%)' },
   ],
+  aragurn: [
+    // Stat-talents
+    { id: 'a_dmg',     icon: '⚔', name: 'Honed Blade',        desc: '+6 attack damage',      stats: { attackDmg: 6 } },
+    { id: 'a_hp',      icon: '💪', name: 'Battle Hardened',    desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
+    { id: 'a_as',      icon: '⚡', name: 'Swift Strikes',      desc: '+12% attack speed',     stats: { attackSpeedPct: 0.12 } },
+    { id: 'a_dr',      icon: '🛡', name: 'Plate Mastery',      desc: '+12% damage reduction', stats: { dmgReductionPct: 0.12 } },
+    { id: 'a_ms',      icon: '💨', name: 'Light Steps',        desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    // Skill-modifiers
+    { id: 'a_spin_extend', icon: '🌀', name: 'Endless Spin',  desc: 'Whirlwind pågår 1.5s längre (3s → 4.5s)' },
+    { id: 'a_shout_radius',icon: '📣', name: 'Booming Voice', desc: 'Shout-konen +30% längre och bredare' },
+    { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap healar +50% per träffad fiende (10%→15%)' },
+  ],
 };
 
 // Helper för att kolla om sidan valt en specifik talent i arenan
@@ -4212,6 +4227,15 @@ function createSide(idx) {
     rageHealAccum: 0,           // Gimlu: damage dealt under rage (för 20% heal)
     rageTickAccum: 0,           // Gimlu: 0.5s pulse-timer
     legolusUltBuff: 0,          // Legolas: sek kvar med +30% AS efter teleport
+    // Aragurn-state
+    whirlwindRemaining: 0,      // Aragurn Q: sek kvar med spin (CC-immun + MS-buff + tick-skada)
+    whirlwindTickAccum: 0,
+    aragurnLeap: null,          // Aragurn E: { remaining, startX, startZ, targetX, targetZ }
+    aragurnShoutBuff: 0,        // Aragurn F-buff på sig själv (bara DR): sek kvar
+    aragurnAllyShoutBuff: 0,    // Aragurn F-buff på allierad: sek kvar (DR + MS)
+    aragurnShoutDebuff: 0,      // Mottagar-buff "tar 20% mer skada" sek kvar (sätts på fiende)
+    berserkRemaining: 0,        // Aragurn R: sek kvar (–50% AS, +150% AA dmg, cleave)
+    berserkSwordMesh: null,     // Klient-visual: dubblat svärd + glow
     // Resurser
     gold: 0,
     income: INCOME_BASE,
@@ -5594,6 +5618,28 @@ function killHero(side) {
     removeSoulDrainBeam(side);
     side.soulDrain = null;
   }
+  // Aragurn ult: rensa svärds-aura + reset scale
+  if (side.berserkRemaining > 0) {
+    side.berserkRemaining = 0;
+    if (side.mesh) side.mesh.scale.set(1, 1, 1);
+  }
+  if (side.berserkSwordMesh) {
+    side.berserkSwordMesh.traverse(o => {
+      if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
+    });
+    scene.remove(side.berserkSwordMesh);
+    side.berserkSwordMesh = null;
+  }
+  // Aragurn leap: avbryt + rensa indikator
+  if (side.aragurnLeap) {
+    if (side.aragurnLeap.indicator) {
+      if (side.aragurnLeap.indicator.material) side.aragurnLeap.indicator.material.dispose();
+      if (side.aragurnLeap.indicator.geometry) side.aragurnLeap.indicator.geometry.dispose();
+      scene.remove(side.aragurnLeap.indicator);
+    }
+    side.aragurnLeap = null;
+  }
+  if (side.whirlwindRemaining > 0) side.whirlwindRemaining = 0;
   // I arena: behåll mesh synlig så GLTF death-animationen syns
   if (APP.gameMode !== 'arena1v1') {
     side.mesh.visible = false;
@@ -5754,6 +5800,8 @@ function maintainTargetLock(side) {
 function updateHeroAttack(side, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
+  // Aragurn under whirlwind / leap: ingen AA
+  if ((side.whirlwindRemaining || 0) > 0 || side.aragurnLeap) return;
   const target = maintainTargetLock(side);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
@@ -5805,10 +5853,13 @@ function updateHeroAttack(side, dt) {
   if (splitNow) side.legolusSplitPending = false;
   // Talent: Phantom Dash — lifesteal 20% → 50% när dash-buffed
   const dashLs = arenaHasTalent(side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL;
+  // Aragurn passive (Last Stand) + berserk AA dmg multiplier
+  const aragurnPassive = aragurnPassiveMul(side);
+  const berserkMul = (side.berserkRemaining || 0) > 0 ? BERSERK_AA_DMG_MUL : 1;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
-    damage: side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul, isAoE, isCrit,
+    damage: side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul, isAoE, isCrit,
     lifestealRatio: dashBuffed ? dashLs : 0,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
@@ -5856,8 +5907,10 @@ function updateHeroAttack(side, dt) {
   }
   // Legolas ult-buff: +30% AS efter teleport-träff
   const ultAsMul = (side.legolusUltBuff || 0) > 0 ? (1 + LEGOLUS_ULT_AS_BONUS) : 1;
+  // Aragurn berserk-buff: -50% AS (interval * 2)
+  const berserkAsMul = (side.berserkRemaining || 0) > 0 ? BERSERK_AS_MUL : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * berserkAsMul);
 }
 
 function updateProjectiles(side, dt) {
@@ -7641,7 +7694,13 @@ function damageHero(side, amount, isCrit = false) {
   const laserMul = side.laserBeam ? LASER_DR_MUL : 1;
   // Gimlu rage-ult: 50% DR
   const rageMul = (side.rageRemaining || 0) > 0 ? RAGE_DR_MUL : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul;
+  // Aragurn Shout-buff på self/ally: 20% DR
+  const shoutDrSelf = (side.aragurnShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
+  const shoutDrAlly = (side.aragurnAllyShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
+  // Aragurn Whirlwind CC-immun (samma som rage — soak alla CC) — DR-wise samma som vanlig
+  // Mottagar-debuff från Aragurn Shout: target tar +20% mer skada
+  const shoutDebuffMul = (side.aragurnShoutDebuff || 0) > 0 ? (1 + SHOUT_DEBUFF_DMG_TAKEN) : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * shoutDebuffMul;
   // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
   if ((side.lingShieldHp || 0) > 0 && final > 0) {
     if (side.lingShieldHp >= final) {
@@ -7903,9 +7962,13 @@ function applyMovement(side, joyX, joyZ, dt) {
   }
   // Ice-block post-exit self-buff: +50% MS
   const iceMsBuff = (side.iceBlockMsBuff || 0) > 0 ? 0.5 : 0;
+  // Aragurn whirlwind: +20% MS
+  const whirlMs = (side.whirlwindRemaining || 0) > 0 ? WHIRLWIND_MS_BUFF : 0;
+  // Aragurn allierad shout-buff: +20% MS (gäller bara allierade, INTE Aragurn själv)
+  const allyShoutMs = (side.aragurnAllyShoutBuff || 0) > 0 ? SHOUT_BUFF_MS : 0;
   // Ice-block applicerad slow från motspelaren
   const slowMul = (side.heroSlowMul || 1);
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff) * slowMul;
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs) * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -7936,8 +7999,11 @@ function applyEvent(side, ev) {
   const taunted = (side.hero.tauntedTime || 0) > 0;
   // Magiker laser-ult: kan inte göra AA eller andra skills
   const laserLocked = !!side.laserBeam;
+  // Aragurn whirlwind + leap: kan inte göra AA eller andra skills under
+  const whirlLocked = (side.whirlwindRemaining || 0) > 0;
+  const leapLocked = !!side.aragurnLeap;
   if (ev.type === 'aa') {
-    if (side.hero.dead || channelLocked || feared || frozen || laserLocked) return;
+    if (side.hero.dead || channelLocked || feared || frozen || laserLocked || whirlLocked || leapLocked) return;
     // Tauntad: AA-target låses i maintainTargetLock, men låt event:et gå igenom
     // (maintainTargetLock skriver över targetId direkt — klienten ser inte flimmer)
     side.aaActive = true;
@@ -7959,7 +8025,12 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'skill') {
+    // Aragurn Q (whirlwind) och E (leap) blockerar ALLA andra skills, men user-cast ult
+    // (R) tillåts under leap-flygning eftersom det vore frustrerande att blockas helt.
+    // Whirlwind blockerar dock allt utom när whirl själv expirerat.
     if (side.hero.dead || channelLocked || feared || frozen || laserLocked || taunted) return;
+    if (whirlLocked && ev.key !== 'q') return;   // bara den pågående Q tickar; ny cast skippas via cd
+    if (leapLocked && ev.key !== 'r') return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -7973,19 +8044,23 @@ function applyEvent(side, ev) {
     }
     const isLegolus = side.heroId === 'legolas';
     const isGimlu = side.heroId === 'gimlu';
+    const isAragurn = side.heroId === 'aragurn';
     if (ev.key === 'r') {
       hostCastUlt(side, dx, dz);
     } else if (ev.key === 'q') {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
       else if (isGimlu) hostCastGimluTaunt(side);
+      else if (isAragurn) hostCastAragurnWhirlwind(side);
       else hostCastSoulDrain(side, ev);
     } else if (ev.key === 'f') {
       if (isLegolus) hostCastLegolusBuff(side);
       else if (isGimlu) hostCastGimluIronWill(side);
+      else if (isAragurn) hostCastAragurnShout(side, dx, dz);
       else hostCastFrostnova(side, ev);
     } else if (ev.key === 'e') {
       if (isLegolus) hostCastLegolusDash(side, ev);
       else if (isGimlu) hostCastGimluHammer(side, dx, dz);
+      else if (isAragurn) hostCastAragurnLeap(side, ev);
       else hostCastBlink(side, ev);
     }
     return;
@@ -9269,6 +9344,45 @@ const SKILL_ICON_SVG = {
         </g>
       </svg>`,
   },
+  aragurn: {
+    q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <g stroke="#ccd8e0" stroke-width="2.4" fill="none" stroke-linecap="round">
+          <path d="M 20 4 Q 36 8 36 20 Q 36 32 20 36 Q 4 32 4 20 Q 4 8 20 4"/>
+          <path d="M 20 10 Q 28 12 30 20 Q 28 28 20 30 Q 12 28 10 20 Q 12 12 20 10"/>
+        </g>
+        <path d="M 20 12 L 22 20 L 20 28 L 18 20 Z" fill="#dadcdf" stroke="#666" stroke-width="0.6"/>
+        <circle cx="20" cy="20" r="1.6" fill="#ffd34a"/>
+      </svg>`,
+    f: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 6 14 L 6 26 L 14 22 L 14 18 Z" fill="#ddc090" stroke="#553311" stroke-width="1"/>
+        <g stroke="#ffe399" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.85">
+          <path d="M 16 20 L 22 20"/>
+          <path d="M 16 14 L 24 12"/>
+          <path d="M 16 26 L 24 28"/>
+          <path d="M 24 20 L 32 20"/>
+          <path d="M 24 12 L 30 8"/>
+          <path d="M 24 28 L 30 32"/>
+        </g>
+      </svg>`,
+    e: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <path d="M 8 32 Q 14 8 26 16 Q 30 22 32 30" stroke="#ffd34a" stroke-width="2.2" fill="none" stroke-dasharray="3 2" stroke-linecap="round"/>
+        <circle cx="8" cy="32" r="2.4" fill="#88aaff"/>
+        <circle cx="32" cy="30" r="3.5" fill="#ff7733" stroke="#aa3300" stroke-width="1"/>
+        <circle cx="32" cy="30" r="6" fill="none" stroke="#ffaa55" stroke-width="1" opacity="0.6"/>
+      </svg>`,
+    r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="sk-ar-blade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe6a0"/><stop offset="1" stop-color="#aa6622"/></linearGradient></defs>
+        <path d="M 18 4 L 22 4 L 24 26 L 16 26 Z" fill="url(#sk-ar-blade)" stroke="#553311" stroke-width="0.8"/>
+        <rect x="13" y="26" width="14" height="3" fill="#553311"/>
+        <rect x="18" y="29" width="4" height="7" fill="#aa6622"/>
+        <g stroke="#ff7733" stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.85">
+          <path d="M 7 18 L 13 16"/>
+          <path d="M 27 16 L 33 18"/>
+          <path d="M 5 26 L 10 26"/>
+          <path d="M 30 26 L 35 26"/>
+        </g>
+      </svg>`,
+  },
   gimlu: {
     r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
         <defs><radialGradient id="sk-gr-rage" cx="50%" cy="50%"><stop offset="0" stop-color="#ff4422"/><stop offset="0.7" stop-color="#cc2200"/><stop offset="1" stop-color="#660000"/></radialGradient></defs>
@@ -9713,12 +9827,13 @@ function hostCastUlt(side, dx, dz) {
   if (!side || side.hero.dead) return;
   if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
   // Förhindra dubbel-cast för alla heroes
-  if (side.laserBeam || (side.rageRemaining || 0) > 0 || (side.legolusUltBuff || 0) > 0) return;
+  if (side.laserBeam || (side.rageRemaining || 0) > 0 || (side.legolusUltBuff || 0) > 0 || (side.berserkRemaining || 0) > 0) return;
   side.ultEnergy = 0;
   const heroId = side.heroId || 'magiker';
   if (heroId === 'magiker') hostCastMagikerUlt(side, dx, dz);
   else if (heroId === 'legolas') hostCastLegolasUlt(side, dx, dz);
   else if (heroId === 'gimlu') hostCastGimluUlt(side);
+  else if (heroId === 'aragurn') hostCastAragurnUlt(side);
 }
 
 // Tick:ar pågående ultimates (laser-tick, rage-tick, etc).
@@ -9731,6 +9846,12 @@ function tickUltimates(side, dt) {
   if ((side.legolusUltBuff || 0) > 0) {
     side.legolusUltBuff = Math.max(0, side.legolusUltBuff - dt);
   }
+  if ((side.whirlwindRemaining || 0) > 0) tickAragurnWhirlwind(side, dt);
+  if (side.aragurnLeap) tickAragurnLeap(side, dt);
+  if ((side.berserkRemaining || 0) > 0) tickAragurnBerserk(side, dt);
+  if ((side.aragurnShoutBuff || 0) > 0) side.aragurnShoutBuff = Math.max(0, side.aragurnShoutBuff - dt);
+  if ((side.aragurnAllyShoutBuff || 0) > 0) side.aragurnAllyShoutBuff = Math.max(0, side.aragurnAllyShoutBuff - dt);
+  if ((side.aragurnShoutDebuff || 0) > 0) side.aragurnShoutDebuff = Math.max(0, side.aragurnShoutDebuff - dt);
 }
 
 // === Magiker ult: Laser Beam ===
@@ -10147,6 +10268,382 @@ function applyRagePulse(side) {
 function applyRageLifesteal(side, dmgDealt) {
   if ((side.rageRemaining || 0) <= 0 || dmgDealt <= 0 || side.hero.dead) return;
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmgDealt * RAGE_HEAL_PCT);
+}
+
+// ============================================================
+// ARAGURN — Warrior med STORT svärd
+// ============================================================
+// Q: Whirlwind — 3s spin, AoE-tick 5% maxHP per 0.5s, CC-immun + +20% MS
+// F: War Shout — kon-framåt, slowar/debuffar fiender, buffar allierade
+// E: Hero Leap — 1s mark-targetad leap, AoE-stun + heal per träffad
+// R: Berserk Form — 5s, -50% AS, +150% AA dmg, 100% cleave
+// Passive: per % HP lost → +0.5% skill+AA dmg
+
+const WHIRLWIND_DURATION = 3.0;
+const WHIRLWIND_TICK = 0.5;
+const WHIRLWIND_RADIUS = 3.0;
+const WHIRLWIND_DMG_PCT = 0.05;
+const WHIRLWIND_MS_BUFF = 0.20;
+const SHOUT_LENGTH = 8.0;
+const SHOUT_HALF_ANGLE = Math.PI / 3;      // 60° halv-vinkel = 120° kon (vidare)
+const SHOUT_DIRECT_DMG_PCT = 0.15;          // 15% av targets max-HP
+const SHOUT_DEBUFF_DURATION = 4.0;
+const SHOUT_DEBUFF_DMG_TAKEN = 0.20;        // tar 20% mer skada
+const SHOUT_SLOW_DURATION = 3.0;
+const SHOUT_SLOW_MUL = 0.80;                // 20% slow
+const SHOUT_ALLY_BUFF_DURATION = 4.0;
+const SHOUT_BUFF_DR = 0.20;                 // 20% damage reduction
+const SHOUT_BUFF_MS = 0.20;                 // 20% movement speed (bara allierade)
+const LEAP_TRAVEL_TIME = 1.0;
+const LEAP_MAX_DISTANCE = 10.0;
+const LEAP_RADIUS = 4.55;                   // = BLACKHOLE_RADIUS
+const LEAP_DMG_PCT = 0.20;                  // 20% maxHP
+const LEAP_STUN_TIME = 1.0;
+const LEAP_HEAL_LOST_PCT = 0.10;            // 10% av (maxHP - currentHP) per träffad fiende
+const BERSERK_DURATION = 5.0;
+const BERSERK_AS_MUL = 0.50;                // -50% attack speed (multiplier på interval = 1/0.5 = 2x slower)
+const BERSERK_AA_DMG_MUL = 2.50;            // +150% AA-damage
+const BERSERK_SCALE = 1.25;                 // lite större hero
+
+// === Q: Whirlwind ===
+function hostCastAragurnWhirlwind(side) {
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  // Kan inte casta om stunnad — befintliga CC-locks i applyEvent fångar redan
+  // frozen/feared/taunted. Whirlwind rensar resten (slow, etc) vid cast.
+  side.skills.q.cd = side.skills.q.max;
+  side.whirlwindRemaining = WHIRLWIND_DURATION + (arenaHasTalent(side, 'a_spin_extend') ? 1.5 : 0);
+  side.whirlwindTickAccum = 0;
+  // Rensa befintlig slow / dot / taunt / fear / frozen (men stun ligger på frozen → kan inte casta)
+  side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.hero.dotRemaining = 0; side.hero.dotPerSec = 0;
+  side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
+  side.hero.tauntedTime = 0;
+  side.heroFearTime = 0;
+  // Visuell start-burst
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddc680, 1.8);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffe399);
+  triggerCameraShake(0.15, 0.18);
+  // Initial tick direkt
+  applyWhirlwindTick(side);
+}
+
+function tickAragurnWhirlwind(side, dt) {
+  side.whirlwindRemaining = Math.max(0, side.whirlwindRemaining - dt);
+  side.whirlwindTickAccum += dt;
+  // CC-immun under spin: nollställ alla CC-fält varje frame
+  side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.hero.frozenTime = 0;
+  side.hero.tauntedTime = 0;
+  side.heroFearTime = 0;
+  side.hero.dotRemaining = 0;
+  side.hero.poisonRemaining = 0;
+  // Visuell rotation av hero-mesh (snabb spinning)
+  if (side.mesh) side.mesh.rotation.y += dt * 18;
+  while (side.whirlwindTickAccum >= WHIRLWIND_TICK && side.whirlwindRemaining > -WHIRLWIND_TICK) {
+    side.whirlwindTickAccum -= WHIRLWIND_TICK;
+    applyWhirlwindTick(side);
+  }
+  if (side.whirlwindRemaining <= 0) {
+    side.whirlwindRemaining = 0;
+  }
+}
+
+function applyWhirlwindTick(side) {
+  const opp = sides[3 - side.idx];
+  const ox = side.hero.x, oz = side.hero.z;
+  const skillMul = aragurnPassiveMul(side) * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (Math.hypot(m.mesh.position.x - ox, m.mesh.position.z - oz) < WHIRLWIND_RADIUS) {
+      const dmg = (m.maxHp || m.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      soloApplySkillDmgToMonster(side, opp, i, dmg);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (Math.hypot(c.mesh.position.x - ox, c.mesh.position.z - oz) < WHIRLWIND_RADIUS) {
+      const dmg = (c.maxHp || c.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      soloApplySkillDmgToCreep(side, opp, c, dmg);
+      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+  // Arena: orb + opp hero
+  if (APP.gameMode === 'arena1v1') {
+    if (arenaState.orb && arenaState.orb.alive) {
+      if (Math.hypot(ARENA_CFG.orb.x - ox, ARENA_CFG.orb.z - oz) < WHIRLWIND_RADIUS) {
+        damageArenaOrb(arenaState.orb.maxHp * WHIRLWIND_DMG_PCT * skillMul, side.idx);
+      }
+    }
+    if (opp && !opp.hero.dead && arenaState.phase === 'fight') {
+      if (Math.hypot(opp.hero.x - ox, opp.hero.z - oz) < WHIRLWIND_RADIUS) {
+        damageHero(opp, opp.hero.maxHp * WHIRLWIND_DMG_PCT * skillMul);
+      }
+    }
+  }
+  // Visuell spinn-FX
+  spawnHitSparkFx(ox + (Math.random() - 0.5) * WHIRLWIND_RADIUS * 0.7, 1.0, oz + (Math.random() - 0.5) * WHIRLWIND_RADIUS * 0.7, 0xffe399);
+}
+
+// === F: War Shout ===
+function hostCastAragurnShout(side, dirX, dirZ) {
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  const rangeMul = arenaHasTalent(side, 'a_shout_radius') ? 1.3 : 1.0;
+  const length = SHOUT_LENGTH * rangeMul;
+  const halfAng = SHOUT_HALF_ANGLE * (rangeMul > 1 ? 1.15 : 1);
+  // Visuell kon-flash + ljudvågringar
+  spawnConeFlash(side.hero.x, side.hero.z, dirX, dirZ, length, halfAng, 0xffe399);
+  triggerCameraShake(0.18, 0.20);
+  const passive = aragurnPassiveMul(side);
+  const skillMul = passive * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Self-buff: bara DR (inte MS)
+  side.aragurnShoutBuff = SHOUT_ALLY_BUFF_DURATION;
+  // Cone-träff på fiender
+  const opp = sides[3 - side.idx];
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > length || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < halfAng;
+  };
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
+    const dmg = (m.maxHp || m.hp) * SHOUT_DIRECT_DMG_PCT * skillMul;
+    soloApplySkillDmgToMonster(side, opp, i, dmg);
+    if (side.monsters[i] === m && m.hp > 0) {
+      m.slowMul = Math.min(m.slowMul || 1, SHOUT_SLOW_MUL);
+      m.slowTime = Math.max(m.slowTime || 0, SHOUT_SLOW_DURATION);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
+    const dmg = (c.maxHp || c.hp) * SHOUT_DIRECT_DMG_PCT * skillMul;
+    soloApplySkillDmgToCreep(side, opp, c, dmg);
+    if (c.hp > 0) {
+      c.slowMul = Math.min(c.slowMul || 1, SHOUT_SLOW_MUL);
+      c.slowTime = Math.max(c.slowTime || 0, SHOUT_SLOW_DURATION);
+    } else {
+      scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c));
+    }
+  }
+  // Arena: opp hero i kon
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+    if (inCone(opp.hero.x, opp.hero.z)) {
+      damageHero(opp, opp.hero.maxHp * SHOUT_DIRECT_DMG_PCT * skillMul);
+      const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+      opp.heroSlowMul = Math.min(opp.heroSlowMul || 1, 1 - (1 - SHOUT_SLOW_MUL) * ccMul);
+      opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, SHOUT_SLOW_DURATION);
+      opp.aragurnShoutDebuff = SHOUT_DEBUFF_DURATION;  // tar 20% mer skada
+    }
+  }
+  // Allierade hjältar i kon (2v2): buffa MS + DR
+  if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
+    const team = arenaTeamMates(arenaTeamOf(side.idx)) || [];
+    for (const aidx of team) {
+      if (aidx === side.idx) continue;
+      const ally = sides[aidx];
+      if (!ally || ally.hero.dead) continue;
+      if (inCone(ally.hero.x, ally.hero.z)) {
+        ally.aragurnAllyShoutBuff = SHOUT_ALLY_BUFF_DURATION;
+      }
+    }
+  }
+}
+
+// === E: Hero Leap ===
+function hostCastAragurnLeap(side, ev) {
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  // Mark-target: drag-position eller framåt
+  const center = soloResolveSkillGroundTarget(side, ev || {}, LEAP_MAX_DISTANCE);
+  // Begränsa max-distansen
+  const dx = center.x - side.hero.x, dz = center.z - side.hero.z;
+  const d = Math.hypot(dx, dz);
+  let tx = center.x, tz = center.z;
+  if (d > LEAP_MAX_DISTANCE) {
+    tx = side.hero.x + (dx / d) * LEAP_MAX_DISTANCE;
+    tz = side.hero.z + (dz / d) * LEAP_MAX_DISTANCE;
+  }
+  side.aragurnLeap = {
+    remaining: LEAP_TRAVEL_TIME,
+    startX: side.hero.x, startZ: side.hero.z,
+    targetX: tx, targetZ: tz,
+  };
+  // Mark-indikator där han ska landa
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(LEAP_RADIUS * 0.85, LEAP_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(tx, 0.08, tz);
+  scene.add(ring);
+  side.aragurnLeap.indicator = ring;
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xffaa55, 1.4);
+}
+
+function tickAragurnLeap(side, dt) {
+  const lp = side.aragurnLeap;
+  if (!lp) return;
+  lp.remaining -= dt;
+  const t = Math.min(1, 1 - lp.remaining / LEAP_TRAVEL_TIME);   // 0 → 1
+  // Bågformig bana: linjär XZ + parabel-höjd Y
+  const cx = lp.startX + (lp.targetX - lp.startX) * t;
+  const cz = lp.startZ + (lp.targetZ - lp.startZ) * t;
+  const cy = Math.sin(t * Math.PI) * 4.0;  // peak 4m hög
+  side.hero.x = cx;
+  side.hero.z = cz;
+  if (side.mesh) {
+    side.mesh.position.set(cx, cy, cz);
+    side.mesh.rotation.y = Math.atan2(lp.targetX - lp.startX, lp.targetZ - lp.startZ);
+  }
+  // Indikatorn pulserar starkare ju närmre landning
+  if (lp.indicator) {
+    lp.indicator.material.opacity = 0.5 + 0.45 * Math.sin(performance.now() * 0.02);
+    const scale = 1 + 0.08 * t;
+    lp.indicator.scale.set(scale, scale, 1);
+  }
+  if (lp.remaining <= 0) {
+    // Landning!
+    side.hero.x = lp.targetX; side.hero.z = lp.targetZ;
+    if (side.mesh) side.mesh.position.set(lp.targetX, 0, lp.targetZ);
+    if (lp.indicator) { scene.remove(lp.indicator); lp.indicator.material.dispose(); lp.indicator.geometry.dispose(); }
+    applyAragurnLeapImpact(side, lp.targetX, lp.targetZ);
+    side.aragurnLeap = null;
+  }
+}
+
+function applyAragurnLeapImpact(side, x, z) {
+  spawnGroundImpact(x, z, LEAP_RADIUS, 0xff7733);
+  triggerCameraShake(0.40, 0.45);
+  const opp = sides[3 - side.idx];
+  const passive = aragurnPassiveMul(side);
+  const skillMul = passive * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const healPctPerHit = LEAP_HEAL_LOST_PCT * (arenaHasTalent(side, 'a_leap_heal') ? 1.5 : 1.0);
+  let hitCount = 0;
+  // Monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z) < LEAP_RADIUS) {
+      const dmg = (m.maxHp || m.hp) * LEAP_DMG_PCT * skillMul;
+      soloApplySkillDmgToMonster(side, opp, i, dmg);
+      if (side.monsters[i] === m && m.hp > 0) m.frozenTime = Math.max(m.frozenTime || 0, LEAP_STUN_TIME);
+      hitCount++;
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (Math.hypot(c.mesh.position.x - x, c.mesh.position.z - z) < LEAP_RADIUS) {
+      const dmg = (c.maxHp || c.hp) * LEAP_DMG_PCT * skillMul;
+      soloApplySkillDmgToCreep(side, opp, c, dmg);
+      if (c.hp > 0) c.frozenTime = Math.max(c.frozenTime || 0, LEAP_STUN_TIME);
+      else { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      hitCount++;
+    }
+  }
+  // Arena: orb + opp hero
+  if (APP.gameMode === 'arena1v1') {
+    if (arenaState.orb && arenaState.orb.alive) {
+      if (Math.hypot(ARENA_CFG.orb.x - x, ARENA_CFG.orb.z - z) < LEAP_RADIUS) {
+        damageArenaOrb(arenaState.orb.maxHp * LEAP_DMG_PCT * skillMul, side.idx);
+        hitCount++;
+      }
+    }
+    if (opp && !opp.hero.dead && arenaState.phase === 'fight') {
+      if (Math.hypot(opp.hero.x - x, opp.hero.z - z) < LEAP_RADIUS) {
+        damageHero(opp, opp.hero.maxHp * LEAP_DMG_PCT * skillMul);
+        const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+        opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, LEAP_STUN_TIME * ccMul);
+        hitCount++;
+      }
+    }
+  }
+  // Heal per träffad fiende: 10% av FÖRLORAD HP (maxHP - currentHP)
+  if (hitCount > 0 && !side.hero.dead) {
+    const lostHp = side.hero.maxHp - side.hero.hp;
+    const heal = lostHp * healPctPerHit * hitCount;
+    if (heal > 0) {
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + heal);
+      spawnHeroHealText(side, heal);
+    }
+  }
+}
+
+// === R: Berserk Form ===
+function hostCastAragurnUlt(side) {
+  if (side.hero.dead) return;
+  side.berserkRemaining = BERSERK_DURATION;
+  if (side.mesh) side.mesh.scale.set(BERSERK_SCALE, BERSERK_SCALE, BERSERK_SCALE);
+  // Spawna stort glödande svärd som följer hero (visuell aura)
+  if (!side.berserkSwordMesh) {
+    const grp = new THREE.Group();
+    const blade = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 2.4, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xddc680, emissive: 0xff7733, emissiveIntensity: 1.6, metalness: 0.6, roughness: 0.3 })
+    );
+    blade.position.y = 1.4;
+    grp.add(blade);
+    const tipGlow = new THREE.PointLight(0xff7733, 2.4, 4);
+    tipGlow.position.y = 2.4;
+    grp.add(tipGlow);
+    const hilt = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.1, 0.1),
+      new THREE.MeshStandardMaterial({ color: 0x553311, metalness: 0.3 })
+    );
+    hilt.position.y = 0.25;
+    grp.add(hilt);
+    // Halo runt klingan
+    const halo = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.5, 2.6, 14),
+      new THREE.MeshBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.35, depthWrite: false })
+    );
+    halo.position.y = 1.4;
+    grp.add(halo);
+    grp.userData.halo = halo;
+    grp.userData.blade = blade;
+    grp.userData.tipGlow = tipGlow;
+    scene.add(grp);
+    side.berserkSwordMesh = grp;
+  }
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 2.2);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa55);
+  triggerCameraShake(0.30, 0.40);
+}
+
+function tickAragurnBerserk(side, dt) {
+  side.berserkRemaining = Math.max(0, side.berserkRemaining - dt);
+  if (side.berserkSwordMesh) {
+    side.berserkSwordMesh.position.set(side.hero.x + 0.6, 0, side.hero.z);
+    side.berserkSwordMesh.rotation.y = side.mesh ? side.mesh.rotation.y : 0;
+    const halo = side.berserkSwordMesh.userData.halo;
+    if (halo && halo.material) halo.material.opacity = 0.30 + 0.20 * Math.sin(performance.now() * 0.012);
+  }
+  if (side.berserkRemaining <= 0) {
+    if (side.mesh) side.mesh.scale.set(1, 1, 1);
+    if (side.berserkSwordMesh) {
+      side.berserkSwordMesh.traverse(o => {
+        if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
+      });
+      scene.remove(side.berserkSwordMesh);
+      side.berserkSwordMesh = null;
+    }
+  }
+}
+
+// === PASSIVE: Last Stand ===
+// Per 1% HP saknad → +0.5% skill + AA damage. Mul appliceras i Aragurns
+// skill-dmg (skillMul = aragurnPassiveMul × skillDmgMul) och AA via getter.
+function aragurnPassiveMul(side) {
+  if (side.heroId !== 'aragurn' || side.hero.dead) return 1;
+  const maxHp = side.hero.maxHp || 1;
+  const lostPct = Math.max(0, 1 - side.hero.hp / maxHp);   // 0..1
+  return 1 + lostPct * 0.5;   // 1.0 → 1.5 vid 0 HP
 }
 
 const keys = {};
@@ -11579,7 +12076,7 @@ const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
   { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
   { id: 'gimlu',     name: 'Gimlu',       role: 'Tank',         initial: 'Gi',  available: true  },
-  { id: 'hero-4',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'aragurn',   name: 'Aragurn',     role: 'Warrior',      initial: 'Ar',  available: true  },
   { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-7',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -11616,6 +12113,15 @@ const HERO_INFO = {
     },
     passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 20% damage reduction (alltid på).\n• Under 60% HP: + 5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 20% mer damage reduction (40% totalt) och var 3:e inkommande damage-instance blockas helt.' },
     ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 3.5% av targets max-HP i skada — totalt 35% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
+  },
+  aragurn: {
+    skills: {
+      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn snurrar i 3 sekunder och skadar alla fiender inom 3m runt sig — 5% av deras max-HP per 0.5s. Han blir CC-immun (rensar alla CC förutom stun), och får +20% rörelsehastighet. Kan inte använda andra skills medan han spinner.' },
+      f: { name: 'War Shout', icon: '📣', desc: 'Skickar ut ett krigsskri i en kon framför sig (8m × 60°). Fiender: 15% max-HP direct damage, slowas 20% i 3s, tar 20% extra skada i 4s. Allierade hjältar i konen: +20% damage reduction och +20% movement speed i 4s. Aragurn själv får bara damage reduction-buffen (inte movement speed).' },
+      e: { name: 'Hero Leap', icon: '🦘', desc: 'Hoppa till en mark-targetad punkt — tar 1 sekund från cast till landning. AoE-landning (4.5m radie, samma som Black Hole). Fiender träffade: 20% max-HP damage + stunnas 1 sekund. Aragurn healar 10% av förlorad HP per fiende träffad.' },
+    },
+    passive: { name: 'Last Stand', icon: '🔥', desc: 'För varje 1% HP Aragurn saknar ökar hans skill- och auto-attack-damage med 0.5%. Vid 1% HP = +49.5% damage.' },
+    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 sekunders berserk-form: Aragurn blir lite större, hans svärd dubbleras i storlek och får en glödande aura. Han får −50% attack speed, men +150% AA-damage och 100% cleave/splash — varje AA träffar alla fiender inom hans AA-range, inte bara en target.' },
   },
 };
 
@@ -11665,6 +12171,32 @@ function heroPortraitSVG(heroId) {
       <ellipse cx="50" cy="66" rx="11" ry="2.4" fill="#6e3a18"/>
       <circle cx="43" cy="60" r="1.6" fill="#1a1208"/>
       <circle cx="57" cy="60" r="1.6" fill="#1a1208"/>
+    </svg>`;
+  if (heroId === 'aragurn') return `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><radialGradient id="bg-ar" cx="50%" cy="40%"><stop offset="0%" stop-color="#5a3a28"/><stop offset="100%" stop-color="#15100a"/></radialGradient></defs>
+      <rect width="100" height="100" fill="url(#bg-ar)"/>
+      <path d="M 5 100 Q 50 60 95 100 Z" fill="#3a2a1c"/>
+      <!-- Stort svärd diagonal bakom -->
+      <line x1="18" y1="14" x2="58" y2="62" stroke="#553311" stroke-width="3"/>
+      <polygon points="20,12 30,8 26,18" fill="#cccccc" stroke="#666" stroke-width="0.8"/>
+      <line x1="22" y1="10" x2="56" y2="58" stroke="#dadcdf" stroke-width="3.5"/>
+      <line x1="55" y1="55" x2="63" y2="65" stroke="#553311" stroke-width="2.5"/>
+      <!-- Ansikte -->
+      <circle cx="55" cy="55" r="14" fill="#e0b894"/>
+      <!-- Halvlångt hår, lite vågigt -->
+      <path d="M 38 50 Q 38 32 55 30 Q 72 32 72 50 L 70 72 Q 64 64 56 64 Q 48 64 42 72 Z" fill="#3a2818"/>
+      <path d="M 42 60 Q 42 76 36 80 Q 41 78 44 70" fill="#3a2818"/>
+      <path d="M 68 60 Q 68 76 74 80 Q 69 78 66 70" fill="#3a2818"/>
+      <!-- Pannan / lockar -->
+      <path d="M 40 48 Q 47 38 55 40 Q 63 38 70 48 L 70 52 Q 60 44 50 50 Q 44 48 40 52 Z" fill="#3a2818"/>
+      <!-- Ögon -->
+      <ellipse cx="49" cy="56" rx="1.6" ry="2" fill="#1a1208"/>
+      <ellipse cx="61" cy="56" rx="1.6" ry="2" fill="#1a1208"/>
+      <!-- Lite skäggstubb -->
+      <path d="M 46 64 Q 55 70 64 64 Q 60 66 55 66 Q 50 66 46 64 Z" fill="#2a1808" opacity="0.7"/>
+      <!-- Skinnrustnings-axel -->
+      <path d="M 32 84 Q 55 76 78 84 L 78 100 L 32 100 Z" fill="#4a3a26"/>
     </svg>`;
   return null; // placeholder → caller använder fallback (initial)
 }
@@ -12391,7 +12923,7 @@ function setupMatch(mode) {
       sides[2].isBot = true;
       sides[2].botDifficulty = APP.arenaBot.difficulty || 'medium';
       // Random hero för boten (välj från tillgängliga)
-      const heroes = ['magiker', 'legolas', 'gimlu'];
+      const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
       sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
     }
   } else if (mode === 'host') {
