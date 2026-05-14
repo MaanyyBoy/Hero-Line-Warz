@@ -1455,27 +1455,27 @@ const BOSS_WARS_DEFS = [
   {
     tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
     desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker. Bra att börja med — men gå inte in oförberedd, han har en överraskning vid 50% HP.',
-    hp: 5000, dmgScale: 1.5, hasPhase2: true,
+    hp: 5000, dmgScale: 1.5, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
     desc: 'Krigsstrateg som blandar ranged-attacker med AoE-stomp. Mer aggressiv än Captain. Räkna med att läget förändras mid-fight.',
-    hp: 8000, dmgScale: 1.8, hasPhase2: true,
+    hp: 8000, dmgScale: 1.8, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 3, wave: 30, name: 'Warlord', diff: 'Hard', diffClass: 'hard',
     desc: 'Brutal närstrid + poison-zoner som denyar terräng. Tål mycket och slår hårt. Något säger oss att han inte stannar på samma skill-set hela fighten...',
-    hp: 13000, dmgScale: 2.2, hasPhase2: true,
+    hp: 13000, dmgScale: 2.2, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 4, wave: 40, name: 'Demon Prince', diff: 'Extreme', diffClass: 'extreme',
-    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt — straffar en miss med en stor HP-bit.',
-    hp: 20000, dmgScale: 2.8, hasPhase2: false,
+    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt — straffar en miss med en stor HP-bit. Något ondskefullt aktiveras vid 30% HP.',
+    hp: 20000, dmgScale: 2.8, hasPhase2: true, phaseThreshold: 0.3,
   },
   {
     tier: 5, wave: 50, name: 'Drakkonungen', diff: 'Nightmare', diffClass: 'nightmare',
-    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate raid-test — räkna med 5+ minuter om ditt team är skickliga.',
-    hp: 30000, dmgScale: 3.5, hasPhase2: false,
+    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate raid-test — räkna med 5+ minuter om ditt team är skickliga. När han når 30% HP utlöses apokalypsen.',
+    hp: 30000, dmgScale: 3.5, hasPhase2: true, phaseThreshold: 0.3,
   },
 ];
 
@@ -1496,6 +1496,16 @@ const BOSS_WARS_PHASE2_SKILLS = {
     { id: 'tectonicSlam', kind: 'groundCircle', telegraph: 1.2, radius: 13, dmgMul: 3.0, originSelf: true, knockback: 3.0, cd: 10.0 },
     { id: 'toxicCloud', kind: 'poolDot', telegraph: 0.9, radius: 7, duration: 9, dpsMul: 0.8, slow: { dur: 1.2, mul: 0.5 }, targetHero: true, cd: 8.0 },
     { id: 'boulderHurl', kind: 'projectile', telegraph: 0.5, speed: 22, dmgMul: 2.6, radius: 2.0, range: 26, cd: 5.5 },
+  ],
+  40: [   // Demon Prince Phase 2 — full helvete-läge
+    { id: 'demonicEruption', kind: 'multiCircle', telegraph: 0.8, count: 10, spawnInterval: 0.4, radius: 5, dmgMul: 2.8, spread: 15, cd: 12.0 },
+    { id: 'soulBurn', kind: 'poolDot', telegraph: 0.7, radius: 8, duration: 10, dpsMul: 1.0, slow: { dur: 1.5, mul: 0.5 }, targetHero: true, cd: 7.0 },
+    { id: 'hellfireStorm', kind: 'sweepBeam', telegraph: 1.0, sweepDuration: 3.0, length: 20, halfAngle: Math.PI / 1.6, dpsMul: 2.2, cd: 9.0 },
+  ],
+  50: [   // Drakkonungen Phase 2 — apokalyps
+    { id: 'infernalRoar', kind: 'groundCircle', telegraph: 1.1, radius: 14, dmgMul: 3.5, originSelf: true, knockback: 6.0, cd: 8.5 },
+    { id: 'dragonDive', kind: 'lineDash', telegraph: 0.8, length: 22, width: 4.0, execTime: 0.6, dmgMul: 4.0, cd: 7.0 },
+    { id: 'meteorApocalypse', kind: 'multiCircle', telegraph: 0.6, count: 16, spawnInterval: 0.35, radius: 4.5, dmgMul: 2.8, spread: 18, cd: 14.0 },
   ],
 };
 
@@ -3947,9 +3957,11 @@ function spawnBossWarsBoss(side, tier) {
     bossSkills: bossDef.skills,
     skillCds: bossDef.skills.map(s => s.cd * 0.4),  // första cast snabbare
     activeCast: null,
-    // 2-phase tracking (gäller bossar 1, 2, 3 — phase2Skills definierat per wave)
+    // 2-phase tracking (gäller alla 5 bossar nu — phase2Skills definierat per wave)
+    bossTier: tier,
     bossPhase: 1,
     phase2Skills: BOSS_WARS_PHASE2_SKILLS[bossInfo.wave] || null,
+    phaseThreshold: bossInfo.phaseThreshold || 0.5,
     phaseTransitionRemaining: 0,   // sek av "fly up + land"-animation (>0 = oattacker-bar)
     mesh,
   });
@@ -6079,9 +6091,9 @@ function updateMonsters(side, dt) {
     }
     // Taunted: tvinga chase
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
-    // Boss Wars phase-transition (bossar 1, 2, 3 vid 50% HP) — invulnerable +
-    // flyger upp/landar med nya skills. Hoppa över all normal AI under transition.
-    if (m.isBossWarsBoss && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * 0.5) {
+    // Boss Wars phase-transition — alla 5 bossar har phase 2 (tier 1-3 vid 50%,
+    // tier 4-5 vid 30%). Invulnerable + flyger upp/landar med nya skills.
+    if (m.isBossWarsBoss && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * (m.phaseThreshold || 0.5)) {
       triggerBossPhaseTransition(side, m);
     }
     if ((m.phaseTransitionRemaining || 0) > 0) {
@@ -14626,8 +14638,9 @@ function openBossDetail(tier) {
     skyfireRain: '8 meteorer regnar över 6s (3m radie per meteor).',
   };
   const body = document.getElementById('boss-detail-body');
+  const phase2Pct = Math.round((b.phaseThreshold || 0.5) * 100);
   const phase2Hint = b.hasPhase2
-    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 vid 50% HP</strong> — bossen byter taktik. Vad som händer får du upptäcka själv.</div>`
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 vid ${phase2Pct}% HP</strong> — bossen byter taktik. Vad som händer får du upptäcka själv.</div>`
     : '';
   let html = `
     <h2>${b.name}</h2>
