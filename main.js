@@ -13038,7 +13038,15 @@ function applyArenaState(msg) {
   const _localReady = arenaState.ready[APP.localSide];
   arenaState.ready[1] = !!(msg.rdy && msg.rdy[1]);
   arenaState.ready[2] = !!(msg.rdy && msg.rdy[2]);
-  if (_localReady) arenaState.ready[APP.localSide] = true;   // sticky local optimism
+  if (_localReady) {
+    arenaState.ready[APP.localSide] = true;   // sticky local optimism
+    // Om host:ens broadcast INTE har vår ready=true → host har inte fått vår
+    // a-ready-msg. Re-skicka. (Pattern: at-least-once delivery via retry varje
+    // state-tick tills host bekräftar.)
+    if (!msg.rdy || !msg.rdy[APP.localSide]) {
+      sendGameMsg({ t: 'a-ready', side: APP.localSide, value: true });
+    }
+  }
   // Talents (merge with optimistic local picks — server är auktoritativ)
   arenaState.talents[1].points = msg.tal[1].p;
   arenaState.talents[1].chosen = msg.tal[1].c.slice();
@@ -13970,8 +13978,9 @@ const lobbyLineTeamEl = document.getElementById('lobby-line-team');
 const lobbyArenaTeamEl = document.getElementById('lobby-arena-team');
 const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
 const lobbyBossPickEl = document.getElementById('lobby-boss-pick');
+const lobbyBossModeEl = document.getElementById('lobby-boss-mode');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -13987,6 +13996,7 @@ function showLobbyPanel(which) {
   else if (which === 'arena-team') lobbyArenaTeamEl.classList.add('visible');
   else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
   else if (which === 'boss-pick') lobbyBossPickEl.classList.add('visible');
+  else if (which === 'boss-mode') lobbyBossModeEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -14487,11 +14497,13 @@ if (itemDetailModal) itemDetailModal.addEventListener('click', (e) => { if (e.ta
 // ---- Arena Wars ----
 function hostArena() {
   APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 1;   // MP arena: alltid 1v1 (2v2 är solo-only än)
   APP.arenaBot = { active: false, difficulty: null };
   hostGame();
 }
 function joinArenaShow() {
   APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 1;   // MP arena: alltid 1v1
   APP.arenaBot = { active: false, difficulty: null };
   lobbyJoinMsgEl.textContent = '';
   showLobbyPanel('joining');
@@ -14538,9 +14550,21 @@ if (btnLine1v1) btnLine1v1.addEventListener('click', () => { APP.gameMode = 'cla
 // ---- Boss Wars ----
 function bossWarsShow() {
   APP.gameMode = 'bosswars';
-  APP.bossWars = { active: false, tier: 0 };  // reset tills användaren picker boss
+  APP.bossWars = { active: false, tier: 0 };  // reset
+  showLobbyPanel('boss-mode');
+}
+// Klick på Host Game från boss-mode-menyn → boss-pick (steg före riktig MP-host)
+function bossWarsShowPick() {
   renderBossPickGrid();
   showLobbyPanel('boss-pick');
+}
+function openBossInfoModal() {
+  const modal = document.getElementById('boss-info-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+function closeBossInfoModal() {
+  const modal = document.getElementById('boss-info-modal');
+  if (modal) modal.classList.add('hidden');
 }
 function renderBossPickGrid() {
   const grid = document.getElementById('boss-pick-grid');
@@ -14624,8 +14648,29 @@ function bossWarsStartFight(tier) {
 }
 const btnModeBoss = document.getElementById('btn-mode-boss');
 if (btnModeBoss) btnModeBoss.addEventListener('click', bossWarsShow);
+// Boss-mode panel: Host / Join / Info / Tillbaka
+const btnBossModeBack = document.getElementById('btn-boss-mode-back');
+if (btnBossModeBack) btnBossModeBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.bossWars = { active: false, tier: 0 }; showLobbyPanel('main'); });
+const btnBossHost = document.getElementById('btn-boss-host');
+if (btnBossHost) btnBossHost.addEventListener('click', () => {
+  // 3-player MP är inte implementerat än — gå till boss-pick (single-player fallback).
+  // När MP är klart byts detta till hostGame()-flow.
+  bossWarsShowPick();
+});
+const btnBossJoin = document.getElementById('btn-boss-join');
+if (btnBossJoin) btnBossJoin.addEventListener('click', () => {
+  // Placeholder — 3-player join kommer när MP-rooms stödjer 3 peers.
+  alert('Join Game kommer när 3-spelar-MP är på plats. Använd Host Game just nu för att möta bossen.');
+});
+const btnBossInfo = document.getElementById('btn-boss-info');
+if (btnBossInfo) btnBossInfo.addEventListener('click', openBossInfoModal);
+const btnBossInfoBack = document.getElementById('btn-boss-info-back');
+if (btnBossInfoBack) btnBossInfoBack.addEventListener('click', closeBossInfoModal);
+const bossInfoModal = document.getElementById('boss-info-modal');
+if (bossInfoModal) bossInfoModal.addEventListener('click', (e) => { if (e.target === bossInfoModal) closeBossInfoModal(); });
+// Boss-pick panel: tillbaka går till boss-mode-menyn (inte main)
 const btnBossBack = document.getElementById('btn-boss-back');
-if (btnBossBack) btnBossBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.bossWars = { active: false, tier: 0 }; showLobbyPanel('main'); });
+if (btnBossBack) btnBossBack.addEventListener('click', () => showLobbyPanel('boss-mode'));
 const btnBossDetailBack = document.getElementById('btn-boss-detail-back');
 if (btnBossDetailBack) btnBossDetailBack.addEventListener('click', closeBossDetail);
 const btnBossDetailFight = document.getElementById('btn-boss-detail-fight');
