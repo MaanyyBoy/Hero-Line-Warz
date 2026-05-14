@@ -3539,8 +3539,9 @@ const ARENA_ORB_SHIELD_PCT = 0.30;
 const ARENA_PREP_TIME = 60;
 const ARENA_ROUND_END_PAUSE = 4;
 const ARENA_BO5_WINS_NEEDED = 3;
-const ARENA_GOLD_PER_ROUND = 200;
-const ARENA_GOLD_WIN_BONUS = 500;
+const ARENA_GOLD_PER_ROUND = 250;          // alla får 250 vid round-end
+const ARENA_GOLD_WIN_BONUS = 500;          // winners får 500 extra
+const ARENA_GOLD_START = 400;              // start-gold per spelare i runda 1
 
 // Team-helpers för 2v2: side 1+3 = team A, side 2+4 = team B
 function arenaTeamOf(idx) { return (idx === 1 || idx === 3) ? 'A' : 'B'; }
@@ -4570,8 +4571,12 @@ function startArenaRound(roundNum) {
       if (typeof removeSoulDrainBeam === 'function') removeSoulDrainBeam(s);
       s.soulDrain = null;
     }
-    // Arena-gold: +200 per runda (alla sidor)
-    s.gold = (s.gold || 0) + ARENA_GOLD_PER_ROUND;
+    // Arena-gold: runda 1 startar med ARENA_GOLD_START, övriga rundor får +ARENA_GOLD_PER_ROUND
+    if (roundNum === 1) {
+      s.gold = ARENA_GOLD_START;
+    } else {
+      s.gold = (s.gold || 0) + ARENA_GOLD_PER_ROUND;
+    }
   }
   showArenaPrep();
 }
@@ -9063,7 +9068,11 @@ function applyEvent(side, ev) {
   }
   if (ev.type !== 'shop') return;
   if (side.hero.dead) return;
-  if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
+  // Arena prep + Boss Wars prep tillåter shop var som helst.
+  // Klassiskt line wars: kräver bas-position.
+  const isArenaPrep = APP.gameMode === 'arena1v1' && arenaState.phase === 'prep';
+  const isBossWars = APP.gameMode === 'bosswars';
+  if (!isArenaPrep && !isBossWars && !inSideBase(side.idx, side.hero.x, side.hero.z)) return;
 
   if (ev.kind === 'item') {
     const def = ITEM_TYPES[ev.item];
@@ -13024,8 +13033,12 @@ function applyArenaState(msg) {
   arenaState.endTimer = msg.et;
   arenaState.roundWinner = msg.rw;
   arenaState.matchWinner = msg.mw;
+  // Sync opp:s ready från host. Behåll LOKALA ready för own-side så klientens
+  // optimistiska "Ready ✓" inte överskrivs innan host hunnit få vår a-ready-msg.
+  const _localReady = arenaState.ready[APP.localSide];
   arenaState.ready[1] = !!(msg.rdy && msg.rdy[1]);
   arenaState.ready[2] = !!(msg.rdy && msg.rdy[2]);
+  if (_localReady) arenaState.ready[APP.localSide] = true;   // sticky local optimism
   // Talents (merge with optimistic local picks — server är auktoritativ)
   arenaState.talents[1].points = msg.tal[1].p;
   arenaState.talents[1].chosen = msg.tal[1].c.slice();
