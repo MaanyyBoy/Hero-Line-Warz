@@ -167,7 +167,8 @@ wss.on('connection', (ws) => {
       rooms.set(code, room);
       ws.role = 'host';
       ws.roomCode = code;
-      send(ws, { t: 'hosted', code, maxPeers });
+      ws.peerIdx = 1;          // host = peer 1
+      send(ws, { t: 'hosted', code, maxPeers, peerIdx: 1 });
       console.log(`[${code}] hosted maxPeers=${maxPeers} (rooms=${rooms.size})`);
     } else if (msg.t === 'reclaim') {
       // Host försöker återansluta till sitt gamla rum efter WS-disconnect
@@ -216,18 +217,21 @@ wss.on('connection', (ws) => {
       if (maxPeers <= 2) {
         room.client = ws;
         ws.role = 'client';
+        ws.peerIdx = 2;
       } else {
         if (!room.client) {
           room.client = ws;
           ws.role = 'client';
+          ws.peerIdx = 2;
         } else {
           room.clients.push(ws);
           ws.role = 'client' + (1 + room.clients.length);   // 'client2', 'client3', ...
+          ws.peerIdx = 2 + room.clients.length;             // 3, 4, ...
         }
       }
       ws.roomCode = code;
       const newPeersTotal = 1 + (room.client ? 1 : 0) + room.clients.length;
-      send(ws, { t: 'joined', code, peersTotal: newPeersTotal, maxPeers });
+      send(ws, { t: 'joined', code, peersTotal: newPeersTotal, maxPeers, peerIdx: ws.peerIdx });
       // Notify alla andra om peer-joined + nytt antal
       const peerJoinedMsg = { t: 'peer-joined', peersTotal: newPeersTotal, maxPeers };
       send(room.host, peerJoinedMsg);

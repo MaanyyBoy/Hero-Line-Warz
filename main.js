@@ -13036,21 +13036,6 @@ function handleNetworkMessage(msg) {
     bossWarsShowPick();
     return;
   }
-  if (msg.t === 'b-tier' && bossMpState.active && bossMpState.role === 'client') {
-    // Host valde tier — klient mottar och kan visa info
-    if (APP.bossWars) APP.bossWars.tier = msg.tier;
-    return;
-  }
-  if (msg.t === 'b-state' && bossMpState.active && bossMpState.role === 'client') {
-    applyBossWarsState(msg);
-    return;
-  }
-  if (msg.t === 'b-input' && bossMpState.active && bossMpState.role === 'host') {
-    // Klient skickar joystick + events; host applicerar på rätt side
-    APP.remoteBossInput = APP.remoteBossInput || {};
-    if (msg.from) APP.remoteBossInput[msg.from] = msg;
-    return;
-  }
   if (msg.t === 'a-talent' && APP.mode === 'host' && isArenaMp()) {
     const t = arenaState.talents[msg.side];
     if (t) {
@@ -14205,12 +14190,14 @@ function handleRelayEnvelope(e) {
   if (bossMpState.active) {
     if (env.t === 'hosted') {
       bossMpState.code = env.code;
+      bossMpState.peerIdx = env.peerIdx || 1;
       if (bossMpState.codeDisplayEl) bossMpState.codeDisplayEl.textContent = env.code;
       if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Dela koden med två vänner — väntar på spelare...';
       updateBossPeerCount(1, env.maxPeers || 3);
       return;
     }
     if (env.t === 'joined') {
+      bossMpState.peerIdx = env.peerIdx || 2;
       if (bossMpState.waitCodeEl) bossMpState.waitCodeEl.textContent = env.code;
       updateBossPeerCount(env.peersTotal || 2, env.maxPeers || 3);
       showLobbyPanel('boss-wait');
@@ -14865,6 +14852,13 @@ const bossMpState = {
   code: null,                // 4-tecken rumskod
   peersTotal: 1,             // hur många i rummet just nu
   maxPeers: 3,
+  peerIdx: 1,                // 1=host, 2=första klient, 3=andra klient
+  matchActive: false,        // true när vi är i en MP boss-match
+  hostTier: 0,               // tier som host valt och broadcastat
+  lastStateSent: 0,          // för broadcast-rate-limiting
+  lastInputSent: 0,          // för input-rate-limiting
+  remoteInput: { 2: null, 3: null },  // host: senaste input från klienter
+  pendingEvents: [],         // klient: events som väntar på att skickas till host
   codeDisplayEl: document.getElementById('lobby-boss-code-display'),
   hostMsgEl: document.getElementById('lobby-boss-host-msg'),
   hostCountEl: document.getElementById('lobby-boss-peer-count'),
@@ -14953,6 +14947,7 @@ function bossMpFinishLobby() {
   // efter lobby:n. Stäng relay så vi inte hänger på en död anslutning.
   closeRelay();
   bossMpState.active = false;
+  bossMpState.matchActive = false;
 }
 // Wire up boss-MP-knappar
 const btnBossStart = document.getElementById('btn-boss-start-match');
