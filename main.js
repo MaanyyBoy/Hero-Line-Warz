@@ -6604,7 +6604,7 @@ function spawnProjectileTrailPuff(x, y, z, color) {
 // ============================================================
 
 // Solo skill-helpers
-function soloResolveSkillGroundTarget(side, ev, defaultDistance) {
+function soloResolveSkillGroundTarget(side, ev, maxDistance) {
   if (ev && ev.tap === true && side.targetId) {
     const opp = sides[3 - side.idx];
     const t = resolveTargetEntity(side, opp);
@@ -6614,7 +6614,10 @@ function soloResolveSkillGroundTarget(side, ev, defaultDistance) {
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
-  return { x: side.hero.x + dx * defaultDistance, z: side.hero.z + dz * defaultDistance };
+  // Drag-fraktion (0..1) skalar avståndet — användaren bestämmer exakt vart inom max-range
+  // mag=undefined (keyboard/tap) → 1 (full distans). mag=0 → cast under hero.
+  const mag = (ev && typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+  return { x: side.hero.x + dx * maxDistance * mag, z: side.hero.z + dz * maxDistance * mag };
 }
 
 function soloShatter(side, opp, x, z) {
@@ -9821,12 +9824,15 @@ function updateAimIndicators() {
 
   const w = screenToWorld(aimState.dx, aimState.dz);
   const dragging = aimState.dragMag > AIM_THRESHOLD;
+  // Drag-magnitude som fraktion 0..1 — bestämmer avstånd inom max range
+  const dragFrac = Math.min(1, Math.max(0, aimState.dragMag / AIM_MAX_DRAG));
 
-  // Returnerar cast-position för en target-baserad skill given drag-distance.
-  // Drag: hero + drag-dir × dist. Tap-on-target: target's position. Annars: hero + facing × dist.
-  function castGround(dist) {
+  // Returnerar cast-position för en target-baserad skill given MAX-distance.
+  // Drag: hero + drag-dir × (drag-fraktion × maxDist) — så användaren bestämmer
+  // exakt vart, inom max-range. Tap-on-target: target's position. Annars: hero.
+  function castGround(maxDist) {
     let p;
-    if (dragging) p = { x: side.hero.x + w.x * dist, z: side.hero.z + w.z * dist };
+    if (dragging) p = { x: side.hero.x + w.x * (dragFrac * maxDist), z: side.hero.z + w.z * (dragFrac * maxDist) };
     else if (side.targetId && side.targetType) {
       if (APP.mode === 'solo') {
         const opp = sides[3 - side.idx];
@@ -9836,7 +9842,7 @@ function updateAimIndicators() {
         p = { x: side.targetX, z: side.targetZ };
       }
     }
-    if (!p) p = { x: side.hero.x + side.hero.facingX * dist, z: side.hero.z + side.hero.facingZ * dist };
+    if (!p) p = { x: side.hero.x + side.hero.facingX * maxDist, z: side.hero.z + side.hero.facingZ * maxDist };
     // Clamp till arenan under duel (matchar server-side clamp)
     if (duelState.active) {
       const dx = p.x - 0, dz = p.z - 35;
@@ -10363,6 +10369,9 @@ const aimState = {
   btnCx: 0, btnCy: 0, dx: 0, dz: 0, dragMag: 0,
 };
 const AIM_THRESHOLD = 16;
+// Max drag-distans i pixlar för full-range cast. Linjär skalning däremellan
+// (0 px = under hero, full = max range).
+const AIM_MAX_DRAG = 90;
 const SKILL_AIMABLE = { q: true, e: true, f: true, r: true };
 
 // ===== ARENA BOT (singleplayer) =====
@@ -11470,8 +11479,11 @@ function endSkillTouch(touch, cancelled) {
     } else {
       dx = side.hero.facingX; dz = side.hero.facingZ;
     }
+    // Drag-fraktion (0..1) — användaren styr cast-avstånd inom max-range.
+    // Tap (utan drag) = full räckvidd framåt (klassisk default).
+    const mag = isDrag ? Math.min(1, Math.max(0, aimState.dragMag / AIM_MAX_DRAG)) : 1;
     // tap=true om INTE drag — låter applyEvent leta upp target-aim
-    castLocalSkill(key, dx, dz, !isDrag);
+    castLocalSkill(key, dx, dz, !isDrag, mag);
   }
   aimState.touchId = null;
   aimState.key = null;
@@ -12385,19 +12397,20 @@ function screenToWorld(sx, sz) {
 }
 
 // castLocalSkill tar EMOT world-koord-riktning. tap=true betyder "ingen drag — använd target som aim om finns".
-function castLocalSkill(key, worldDx, worldDz, tap = false) {
+// mag (0..1) = drag-fraktion av max-range. 0 = under hero, 1 = full max-range.
+function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
   // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
   if (key === 'r') {
     if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
-    sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap });
+    sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
   }
   // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
   if (!isGimluE && side.skills[key].cd > 0) return;
-  sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap });
+  sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
 }
 
 function sendOrApplyEvent(ev) {
