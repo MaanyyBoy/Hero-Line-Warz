@@ -10,8 +10,19 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x14202c);
 scene.fog = new THREE.Fog(0x14202c, 30, 75);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Mobil-detection (touchskärm + smal viewport): sänk pixel-ratio och stäng
+// av antialias för bättre FPS. På desktop (mus + bred skärm) kör vi full
+// kvalitet.
+const isMobileDevice = (typeof window !== 'undefined') && (
+  ('ontouchstart' in window) || (navigator.maxTouchPoints > 0)
+) && (window.innerWidth < 1100);
+const renderer = new THREE.WebGLRenderer({
+  antialias: !isMobileDevice,
+  powerPreference: 'high-performance',
+});
+// Pixel-ratio cap 1.5 på mobil (retina-skärmar har devicePixelRatio 2-3 →
+// renderar 4-9× pixlar utan visuell vinst vid spel-zoom). Desktop kör 2x.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 // PCFShadowMap istället för PCFSoftShadowMap: cheaper sampling (4 taps vs 16),
@@ -4553,6 +4564,10 @@ function startArenaRound(roundNum) {
   arenaState.shrinkDamageAccum = 0;
   arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
   const idxs = arenaSideIdxs();
+  // Nolla shrink-circle damage-stackar vid round-start
+  for (const idx of idxs) {
+    if (sides[idx]) sides[idx].shrinkHitStacks = 0;
+  }
   // +1 talent-poäng per runda för alla aktiva sidor
   for (const idx of idxs) {
     if (!arenaState.talents[idx]) arenaState.talents[idx] = { points: 0, chosen: [] };
@@ -4783,26 +4798,20 @@ function ensureShrinkMeshes() {
   arenaSceneGroup.add(shrinkSmokeMesh);
 }
 
-function tickShrinkCircle(dt) {
-  // Aktivera efter SHRINK_START_DELAY sekunder i fight-fasen
-  const t = arenaState.fightTimer;
-  if (t < SHRINK_START_DELAY) {
-    arenaState.shrinkRadius = 0;
+// Visuell uppdatering av shrink-cirkel — körs både på host och klient så att
+// arena-clienten också ser cirkeln (annars syntes den bara hos host).
+// Läser arenaState.shrinkRadius (synkat via a-state) och uppdaterar meshes.
+function updateShrinkCircleVisual(dt) {
+  const r = arenaState.shrinkRadius || 0;
+  if (r <= 0) {
     if (shrinkRingMesh) shrinkRingMesh.visible = false;
     if (shrinkSmokeMesh) shrinkSmokeMesh.visible = false;
     return;
   }
   ensureShrinkMeshes();
-  // Linjärt krymp från SHRINK_INITIAL_RADIUS → SHRINK_FINAL_RADIUS över SHRINK_DURATION
-  const elapsed = t - SHRINK_START_DELAY;
-  const u = Math.min(1, elapsed / SHRINK_DURATION);
-  const r = SHRINK_INITIAL_RADIUS - (SHRINK_INITIAL_RADIUS - SHRINK_FINAL_RADIUS) * u;
-  arenaState.shrinkRadius = r;
-  // Visuell mesh: skala ring + smoke-cylinder till nuvarande radie
   if (shrinkRingMesh) {
     shrinkRingMesh.visible = true;
     shrinkRingMesh.scale.set(r, r, 1);
-    // Liten pulsering
     const pulse = 1 + 0.04 * Math.sin(performance.now() * 0.005);
     shrinkRingMesh.scale.x *= pulse;
     shrinkRingMesh.scale.y *= pulse;
@@ -4810,12 +4819,31 @@ function tickShrinkCircle(dt) {
   if (shrinkSmokeMesh) {
     shrinkSmokeMesh.visible = true;
     shrinkSmokeMesh.scale.set(r, 1, r);
-    shrinkSmokeMesh.rotation.y += dt * 0.3;
+    shrinkSmokeMesh.rotation.y += (dt || 0) * 0.3;
     if (shrinkSmokeMesh.material) {
       shrinkSmokeMesh.material.opacity = 0.28 + 0.10 * Math.sin(performance.now() * 0.003);
     }
   }
-  // Damage-tick: spelare utanför cirkeln tar 5% maxHP/sek
+}
+
+function tickShrinkCircle(dt) {
+  // Aktivera efter SHRINK_START_DELAY sekunder i fight-fasen
+  const t = arenaState.fightTimer;
+  if (t < SHRINK_START_DELAY) {
+    arenaState.shrinkRadius = 0;
+    updateShrinkCircleVisual(dt);
+    return;
+  }
+  // Linjärt krymp från SHRINK_INITIAL_RADIUS → SHRINK_FINAL_RADIUS över SHRINK_DURATION
+  const elapsed = t - SHRINK_START_DELAY;
+  const u = Math.min(1, elapsed / SHRINK_DURATION);
+  const r = SHRINK_INITIAL_RADIUS - (SHRINK_INITIAL_RADIUS - SHRINK_FINAL_RADIUS) * u;
+  arenaState.shrinkRadius = r;
+  updateShrinkCircleVisual(dt);
+  // Damage-tick: spelare utanför cirkeln tar SHRINK_DMG_PCT av maxHP/sek SOM
+  // BAS. Per damage-tick (var 0.25s) ökar deras "shrink-stacks" med 1 — varje
+  // stack ger +1% maxHP/sek extra damage (per user request: "ska öka med 1%
+  // max hp per damage taken från den"). Stackar nollställs vid round-end.
   arenaState.shrinkDamageAccum = (arenaState.shrinkDamageAccum || 0) + dt;
   while (arenaState.shrinkDamageAccum >= SHRINK_TICK_INTERVAL) {
     arenaState.shrinkDamageAccum -= SHRINK_TICK_INTERVAL;
@@ -4826,8 +4854,11 @@ function tickShrinkCircle(dt) {
       const dz = s.hero.z - ARENA_Z_OFFSET;
       const d = Math.hypot(dx, dz);
       if (d > r) {
-        const dmg = s.hero.maxHp * SHRINK_DMG_PCT * SHRINK_TICK_INTERVAL;
+        const stacks = s.shrinkHitStacks || 0;
+        const dmgPctTotal = SHRINK_DMG_PCT + stacks * 0.01;   // bas + 1% per stack
+        const dmg = s.hero.maxHp * dmgPctTotal * SHRINK_TICK_INTERVAL;
         damageHero(s, dmg);
+        s.shrinkHitStacks = stacks + 1;   // ökar för nästa tick
       }
     }
   }
@@ -13003,12 +13034,35 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
   if (key === 'r') {
     if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
+    // Optimistic: nollställ ultEnergy lokalt så användaren ser ult-ikonen
+    // återgå till tom direkt (utan att vänta på broadcast).
+    side._localUltCastAt = performance.now();
+    side.ultEnergy = 0;
+    // Visuell ult-feedback direkt (host's broadcast carry no fx för ult)
+    triggerClientVisualSkill(side, 'r');
     sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
   }
   // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
   if (!isGimluE && side.skills[key].cd > 0) return;
+  // Optimistic lokal cd: sätt cd till max direkt så användaren ser knappen
+  // gå på cooldown utan ~150 ms broadcast-fördröjning. Förhindrar också att
+  // click-spam genererar dropped duplicate-events (host hade redan satt cd
+  // på första). Sticky-stash i _localCastAt så applyHeroSnap inte snap:ar
+  // tillbaka till 0 under första ~500 ms efter klick (innan host-broadcast
+  // bekräftar).
+  if (!isGimluE) {
+    side.skills[key].cd = side.skills[key].max || 1;
+    side.skills[key]._localCastAt = performance.now();
+  }
+  // Trigga visuell skill-effekt direkt på klient (instant feedback).
+  // Host's broadcast carry inte fx-events — så vi vill INTE delta-trigga ovanpå
+  // när broadcast kommer (cd-jumpen kommer från local optimistic, inte ny info).
+  if ((APP.mode === 'client' && isArenaMp()) ||
+      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')) {
+    triggerClientVisualSkill(side, key);
+  }
   sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
 }
 
@@ -13058,7 +13112,10 @@ let lastInputJoy = { x: 0, z: 0 };
 // visuella smoothness som 45 Hz — men halva CPU + nätverk-pressen, vilket sänker
 // risken för spikes och stutters på Render's free-tier-server och högre RTT.
 const INPUT_SEND_INTERVAL = 1 / 30;        // 30 Hz input
-const ARENA_STATE_SEND_INTERVAL = 1 / 30;  // 30 Hz arena state (klient-interpolation lerpar 60 fps)
+// Arena state 20 Hz: matchar server-auktoritativ classic-MP-rate. Med 80 ms
+// halflife interpolation + klient-prediction känns det smooth. Lägre rate =
+// mindre nät+CPU-press = färre spikes på host's enhet och Render's free tier.
+const ARENA_STATE_SEND_INTERVAL = 1 / 20;
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
@@ -13449,11 +13506,12 @@ function applyHeroSnap(side, snap) {
     (APP.mode === 'client' && isArenaMp()) ||
     (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')
   );
-  // Capture prev values för delta-detection (AA-fire, skill-cast)
+  // Capture prev values för delta-detection (AA-fire, skill-cast, ult-cast)
   const prevAc = side.attackCounter || 0;
   const prevQcd = side.skills?.q?.cd || 0;
   const prevFcd = side.skills?.f?.cd || 0;
   const prevEcd = side.skills?.e?.cd || 0;
+  const prevUe = side.ultEnergy || 0;
 
   if (isLocalMpClient) {
     // Reconcile: snap till host om diff > 2.5 enheter (knockback, teleport, stun)
@@ -13485,12 +13543,40 @@ function applyHeroSnap(side, snap) {
   side.hero.dead = !!snap.d;
   side.shield = snap.sh;
   side.level = snap.lv;
-  side.skills.q.cd = snap.sk.q;
-  side.skills.f.cd = snap.sk.f;
-  side.skills.e.cd = snap.sk.e;
+  // Sticky-aware cd-update för Q/F/E: efter att klient klickat skill lokalt
+  // satte vi cd = max optimistiskt. Om broadcast bär lägre cd än vår lokala
+  // (host hade inte hunnit applicera när broadcasten skickades), behåll lokal
+  // i ~500 ms så klient inte snap:ar tillbaka cd → tillåter dubbel-klick.
+  // För OWN local side i MP: sticky check. Annars: trust host direkt.
+  const nowPerf = performance.now();
+  const isOwnLocalSide = (side.idx === APP.localSide && isMpClientForVisuals);
+  const setCdSticky = (k) => {
+    const skill = side.skills?.[k];
+    if (!skill || !snap.sk) return;
+    const snapCd = snap.sk[k] || 0;
+    if (isOwnLocalSide) {
+      const localCast = skill._localCastAt || 0;
+      const isRecent = nowPerf - localCast < 500;
+      if (isRecent && skill.cd > snapCd) {
+        // Keep local cd — host's broadcast hasn't caught up yet
+        return;
+      }
+    }
+    skill.cd = snapCd;
+  };
+  setCdSticky('q'); setCdSticky('f'); setCdSticky('e');
   side.attackCounter = snap.ac;
   if (snap.g !== undefined) side.gold = snap.g;
-  if (snap.ue !== undefined) side.ultEnergy = snap.ue;
+  // Ult-energy: sticky local optimism (om vi just castade ult lokalt och host's
+  // broadcast inte hunnit reflektera ännu, behåll vår 0). Annars trust host.
+  if (snap.ue !== undefined) {
+    const recentUlt = side._localUltCastAt && (nowPerf - side._localUltCastAt < 600);
+    if (recentUlt && snap.ue > (side.ultEnergy || 0)) {
+      // Keep local 0 — host hasn't seen our ult cast yet
+    } else {
+      side.ultEnergy = snap.ue;
+    }
+  }
   if (snap.tnt !== undefined) side.hero.tauntedTime = snap.tnt;
   // CC-state: applicerar ALLTID (även för lokal sida) så prediction respekterar
   // stun/freeze/fear/slow. Annars rör sig hjälten visuellt under CC, sen rycker
@@ -13533,6 +13619,12 @@ function applyHeroSnap(side, snap) {
     if ((snap.sk?.q || 0) > prevQcd + 0.5) triggerClientVisualSkill(side, 'q');
     if ((snap.sk?.f || 0) > prevFcd + 0.5) triggerClientVisualSkill(side, 'f');
     if ((snap.sk?.e || 0) > prevEcd + 0.5) triggerClientVisualSkill(side, 'e');
+    // Ult-cast detection: ultEnergy droppade markant från höjd till lågt
+    // (host konsumerade ult-meter). Trigger visual för andra peers — för own
+    // sida har triggerClientVisualSkill(side, 'r') redan fyrat i castLocalSkill.
+    if (prevUe > 40 && (snap.ue || 0) < prevUe - 30 && side.idx !== APP.localSide) {
+      triggerClientVisualSkill(side, 'r');
+    }
   }
 }
 
@@ -16164,11 +16256,30 @@ function triggerClientVisualAA(side) {
 }
 
 // Klient-visual för skill-cast: cast-ring vid hero-position med skill-specifik
-// färg. Ej en projektil — bara feedback att "något" castades.
+// färg + en projektil-blast som flyger framåt för synlig "kasta"-känsla.
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
-  const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff };
-  spawnSkillCastFx(side.hero.x, side.hero.z, colors[key] || 0xffdc66, 1.4);
+  const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff, r: 0xff44aa };
+  const color = colors[key] || 0xffdc66;
+  const radius = (key === 'r') ? 2.4 : 1.4;
+  spawnSkillCastFx(side.hero.x, side.hero.z, color, radius);
+  // Projektil-blast i facing-riktning för Q/E/R (de skickar något framåt).
+  // F är ofta self-cast (Frostnova/Iron Will) så bara cast-ring.
+  if (key === 'q' || key === 'e' || key === 'r') {
+    const fx = side.hero.facingX || 0;
+    const fz = side.hero.facingZ || 1;
+    const size = (key === 'r') ? 0.45 : 0.32;
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(size, 14, 12),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false })
+    );
+    sphere.position.set(side.hero.x + fx * 0.6, 1.3, side.hero.z + fz * 0.6);
+    scene.add(sphere);
+    combatFx.push({
+      mesh: sphere, life: 0.6, maxLife: 0.6, kind: 'aaFly',
+      vx: fx * 22, vz: fz * 22,
+    });
+  }
 }
 
 function spawnSkillCastFx(x, z, color, radius = 0.6) {
@@ -16644,9 +16755,11 @@ function tick() {
       broadcastArenaState();
     }
   }
-  // Boss Wars MP host broadcastar state till klienterna ~30 Hz
+  // Boss Wars MP host broadcastar state till klienterna ~20 Hz
+  // (klient-interpolation lerpar 60 fps, så 20 Hz räcker visuellt och sparar
+  // CPU+nätverk på host's enhet vilket är vanlig flaskhals)
   if (isBossMpHost && wsOpen()) {
-    if (now - bossMpState.lastStateSent > (1 / 30)) {
+    if (now - bossMpState.lastStateSent > (1 / 20)) {
       bossMpState.lastStateSent = now;
       broadcastBossWarsState();
     }
@@ -16654,6 +16767,12 @@ function tick() {
   // Arena state-machine (host kör; client följer a-state)
   if (APP.gameMode === 'arena1v1') {
     if (APP.mode === 'solo' || APP.mode === 'host') tickArena(dt);
+    // Klient: tickArena körs INTE (host-auth), men shrink-cirkelns visual måste
+    // uppdateras lokalt så klienten ser cirkeln. arenaState.shrinkRadius synkas
+    // via a-state.
+    else if (APP.mode === 'client' && arenaState.phase === 'fight') {
+      updateShrinkCircleVisual(dt);
+    }
   }
 
   tickMixers(dt);
