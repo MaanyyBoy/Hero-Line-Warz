@@ -1019,7 +1019,7 @@ const TEXTURES = {
   // === DUEL-ARENA (separat zon på z=35, utanför huvudkartan) ===
   (function buildDuelArena() {
     const ax = 0, az = 35;
-    const radius = 12;  // 30% större än 9
+    const radius = 14.4;  // 20% större (12 × 1.2)
     // Stenplattform — låg cylinder
     const platMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xc8b890, roughness: 0.85 });
     const platform = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius + 0.3, 0.3, 48), platMat);
@@ -8712,9 +8712,14 @@ function applyRemoteState(state) {
   if (duelState.active && !wasActive) {
     duelState.startBannerMs = performance.now() + 3000;
   }
-  // Sync duel pickup-orbs
-  if (duelState.active) syncDuelOrbsFromState(state.dO);
-  else if (wasActive) clearDuelOrbMeshes();
+  // Sync duel pickup-orbs + big duel-arena orb
+  if (duelState.active) {
+    syncDuelOrbsFromState(state.dO);
+    syncDuelBigOrbFromState(state.dBO);
+  } else if (wasActive) {
+    clearDuelOrbMeshes();
+    clearDuelBigOrbMesh();
+  }
   for (const idx of [1, 2]) {
     const sData = state.s[idx];
     if (!sData) continue;
@@ -12344,6 +12349,82 @@ function clearDuelOrbMeshes() {
   duelOrbMeshes.clear();
 }
 
+// Big duel-arena orb (samma koncept som arena1v1 orb): spawnar i mitten av
+// duel-arenan, 15s respawn efter kill, ger heal + shield till sista skadegivaren.
+let duelBigOrbMeshState = null;
+function ensureDuelBigOrbMesh() {
+  if (duelBigOrbMeshState) return duelBigOrbMeshState;
+  const grp = new THREE.Group();
+  // Core: glowing sphere — turkos som arena-orb
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.85, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0x55ffcc, emissive: 0x22aa88, emissiveIntensity: 1.4,
+      roughness: 0.25, metalness: 0.4,
+    })
+  );
+  core.position.y = 1.4;
+  core.castShadow = true;
+  grp.add(core);
+  // Halo-ring runt
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(1.2, 0.10, 10, 32),
+    new THREE.MeshBasicMaterial({ color: 0x88ffdd, transparent: true, opacity: 0.6 })
+  );
+  halo.position.y = 1.4;
+  halo.rotation.x = Math.PI / 2;
+  grp.add(halo);
+  // Ground-ring
+  const ground = new THREE.Mesh(
+    new THREE.RingGeometry(1.1, 1.5, 32),
+    new THREE.MeshBasicMaterial({ color: 0x55ffcc, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0.06;
+  grp.add(ground);
+  // Pointlight
+  const light = new THREE.PointLight(0x55ffcc, 1.4, 8, 2);
+  light.position.y = 1.4;
+  grp.add(light);
+  attachHpBar(grp, 2.4);
+  scene.add(grp);
+  duelBigOrbMeshState = { grp, core, halo, ground, light, age: 0 };
+  return duelBigOrbMeshState;
+}
+
+function syncDuelBigOrbFromState(bo) {
+  if (!bo) { clearDuelBigOrbMesh(); return; }
+  const mesh = ensureDuelBigOrbMesh();
+  mesh.grp.position.set(bo.x, 0, bo.z);
+  mesh.grp.visible = !!bo.a;
+  if (bo.a) {
+    // Uppdatera HP-bar via standard-helper
+    updateEntityHpBar(mesh.grp, bo.hp, bo.mh, performance.now() / 1000, 0);
+  } else if (mesh.grp.userData.hpBar) {
+    mesh.grp.userData.hpBar.visible = false;
+  }
+}
+
+function clearDuelBigOrbMesh() {
+  if (!duelBigOrbMeshState) return;
+  duelBigOrbMeshState.grp.traverse(o => {
+    if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
+  });
+  scene.remove(duelBigOrbMeshState.grp);
+  duelBigOrbMeshState = null;
+}
+
+function tickDuelBigOrbVisual(dt) {
+  if (!duelBigOrbMeshState || !duelBigOrbMeshState.grp.visible) return;
+  const m = duelBigOrbMeshState;
+  m.age = (m.age || 0) + dt;
+  m.core.rotation.y += dt * 1.2;
+  m.core.position.y = 1.4 + Math.sin(m.age * 2.3) * 0.10;
+  m.halo.rotation.z += dt * 1.7;
+  m.halo.scale.setScalar(1 + 0.06 * Math.sin(m.age * 3.0));
+  if (m.light) m.light.intensity = 1.2 + 0.5 * Math.sin(m.age * 2.5);
+}
+
 const HEROES = [
   { id: 'magiker',   name: 'Gandulf',     role: 'Mage',         initial: 'G',   available: true  },
   { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
@@ -14371,6 +14452,7 @@ function tick() {
   animateSceneProps(dt, now);
   tickAllHpBars();
   tickDuelOrbVisual(dt);
+  tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
   updateShieldAuras(now);
   checkShieldGain();

@@ -220,8 +220,13 @@ const DUEL_ANNOUNCE_TIME = 4;   // sek att visa vinnare efter duel
 // Arena ligger separat från huvudkartan (centrum z=35)
 const ARENA_CX = 0;
 const ARENA_CZ = 35;
-const ARENA_RADIUS = 12;   // ~30% större än 9
+const ARENA_RADIUS = 14.4;   // 12 × 1.2 — 20% större duel-arena
 const ARENA_VISUAL_RADIUS = ARENA_RADIUS;  // för klienten
+// Special-orb i duel-arenan (matchar arena1v1 orb-konceptet)
+const DUEL_BIG_ORB_MAX_HP = 100;
+const DUEL_BIG_ORB_RESPAWN = 15;
+const DUEL_BIG_ORB_HEAL_PCT = 0.30;
+const DUEL_BIG_ORB_SHIELD_PCT = 0.30;
 // Duel pickup orbs
 const DUEL_ORB_HEAL_PCT = 0.15;            // 15% av maxHP
 const DUEL_ORB_SPEED_BONUS = 0.30;         // +30% movement speed
@@ -1115,13 +1120,17 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
 
 function findClosestHostile(side, opp, x, z, maxDist, state) {
   let best = null, bestDist = maxDist;
-  // Under duel: bara opp:s hero räknas (creeps/monsters är frysta)
+  // Under duel: opp.hero OCH duel-big-orb är giltiga targets
   if (state && state.duelActive) {
     if (opp && !opp.hero.dead) {
       const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
-      if (d < bestDist) return { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx };
+      if (d < bestDist) { bestDist = d; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
     }
-    return null;
+    if (state.duelBigOrb && state.duelBigOrb.alive) {
+      const d = Math.hypot(state.duelBigOrb.x - x, state.duelBigOrb.z - z);
+      if (d < bestDist) { bestDist = d; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
+    }
+    return best;
   }
   for (const m of side.monsters) {
     const d = Math.hypot(m.x - x, m.z - z);
@@ -1140,6 +1149,10 @@ function resolveTargetEntity(side, opp, state) {
     if (state && state.duelActive && opp && !opp.hero.dead) return opp.hero;
     return null;
   }
+  if (side.targetType === 'duelOrb') {
+    if (state && state.duelActive && state.duelBigOrb && state.duelBigOrb.alive) return state.duelBigOrb;
+    return null;
+  }
   if (!side.targetId) return null;
   if (side.targetType === 'monster') {
     for (const m of side.monsters) if (m.id === side.targetId) return m;
@@ -1150,6 +1163,38 @@ function resolveTargetEntity(side, opp, state) {
     return null;
   }
   return null;
+}
+
+// Damage på big duel-orb. Vid kill: belöna lastDamager med heal + shield.
+function damageDuelBigOrb(state, amount, byIdx) {
+  const orb = state.duelBigOrb;
+  if (!orb || !orb.alive || amount <= 0) return;
+  orb.hp -= amount;
+  if (byIdx) orb.lastDamagerIdx = byIdx;
+  if (orb.hp <= 0) {
+    orb.hp = 0;
+    orb.alive = false;
+    orb.respawnTimer = DUEL_BIG_ORB_RESPAWN;
+    const winner = state.sides[orb.lastDamagerIdx];
+    if (winner && !winner.hero.dead) {
+      const heal = winner.hero.maxHp * DUEL_BIG_ORB_HEAL_PCT;
+      winner.hero.hp = Math.min(winner.hero.maxHp, winner.hero.hp + heal);
+      const shield = winner.hero.maxHp * DUEL_BIG_ORB_SHIELD_PCT;
+      winner.shield = Math.max(winner.shield || 0, shield);
+    }
+  }
+}
+
+function tickDuelBigOrb(state, dt) {
+  const orb = state.duelBigOrb;
+  if (!orb) return;
+  if (orb.alive) return;
+  orb.respawnTimer = Math.max(0, (orb.respawnTimer || 0) - dt);
+  if (orb.respawnTimer <= 0) {
+    orb.alive = true;
+    orb.hp = orb.maxHp;
+    orb.lastDamagerIdx = 0;
+  }
 }
 
 function maintainTargetLock(side, opp, state) {
@@ -1163,6 +1208,7 @@ function maintainTargetLock(side, opp, state) {
   let target = resolveTargetEntity(side, opp, state);
   let isMonster = side.targetType === 'monster';
   let isHero = side.targetType === 'hero';
+  let isDuelOrb = side.targetType === 'duelOrb';
   const range = side.attackRange || HERO_ATTACK_RANGE;
   if (target) {
     const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
@@ -1174,9 +1220,13 @@ function maintainTargetLock(side, opp, state) {
       target = t.entity;
       isMonster = !!t.isMonster;
       isHero = !!t.isHero;
+      isDuelOrb = !!t.isDuelOrb;
       if (isHero) {
         side.targetId = 0;
         side.targetType = 'hero';
+      } else if (isDuelOrb) {
+        side.targetId = 0;
+        side.targetType = 'duelOrb';
       } else {
         side.targetId = target.id;
         side.targetType = isMonster ? 'monster' : 'creep';
@@ -1188,7 +1238,7 @@ function maintainTargetLock(side, opp, state) {
   }
   side.targetX = target.x;
   side.targetZ = target.z;
-  return { entity: target, isMonster, isHero };
+  return { entity: target, isMonster, isHero, isDuelOrb };
 }
 
 function updateHeroAttack(state, side, opp, dt) {
@@ -1223,7 +1273,9 @@ function updateHeroAttack(state, side, opp, dt) {
     target: target.entity,
     targetIsMonster: !!target.isMonster,
     targetIsHero: !!target.isHero,
+    targetIsDuelOrb: !!target.isDuelOrb,
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
+    ownerSideIdx: side.idx,
     damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
     lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
     legolusBuffed: dashBuffed,
@@ -1284,6 +1336,9 @@ function updateProjectiles(state, side, opp, dt) {
       const ts = state.sides[p.targetSideIdx];
       targetAlive = ts && !ts.hero.dead;
       tp = ts ? ts.hero : null;
+    } else if (p.targetIsDuelOrb) {
+      targetAlive = state.duelBigOrb && state.duelBigOrb.alive;
+      tp = state.duelBigOrb;
     } else if (p.targetIsMonster) {
       targetAlive = side.monsters.includes(p.target);
       tp = p.target;
@@ -1311,6 +1366,12 @@ function updateProjectiles(state, side, opp, dt) {
       if (p.targetIsHero) {
         damageHero(state.sides[p.targetSideIdx], p.damage);
         if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
+      } else if (p.targetIsDuelOrb) {
+        const orb = state.duelBigOrb;
+        if (orb && orb.alive) {
+          damageDuelBigOrb(state, p.damage, p.ownerSideIdx || side.idx);
+          if (!orb.alive) killedTarget = true;
+        }
       } else {
         p.target.hp -= p.damage;
         if (p.target.hp <= 0) {
@@ -2137,11 +2198,17 @@ function startDuel(state) {
   queue.sort((a, b) => a.t - b.t);
   state.duelOrbQueue = queue;
   // Teleportera båda hjältar in i arenan, full HP, rensa CD och projektiler
-  // Större arena (radius 12) — placera spelarna 7m från centrum istället för 5
+  // Större arena (radius 14.4) — placera spelarna 8.4m från centrum (skalat 20%)
   const positions = [
-    { x: ARENA_CX - 7, z: ARENA_CZ },         // side 1: västra sidan
-    { x: ARENA_CX + 7, z: ARENA_CZ },         // side 2: östra sidan
+    { x: ARENA_CX - 8.4, z: ARENA_CZ },       // side 1: västra sidan
+    { x: ARENA_CX + 8.4, z: ARENA_CZ },       // side 2: östra sidan
   ];
+  // Big orb spawnar omedelbart vid duel-start, alive, full HP
+  state.duelBigOrb = {
+    x: ARENA_CX, z: ARENA_CZ,
+    hp: DUEL_BIG_ORB_MAX_HP, maxHp: DUEL_BIG_ORB_MAX_HP,
+    alive: true, respawnTimer: 0, lastDamagerIdx: 0,
+  };
   for (const idx of [1, 2]) {
     const s = state.sides[idx];
     if (!s) continue;
@@ -2277,6 +2344,7 @@ function endDuel(state) {
   state.duelOrbs = [];
   state.duelOrbQueue = [];
   state.duelArenaTime = 0;
+  state.duelBigOrb = null;   // rensa big-orb mellan dueler
   // Nästa duel om vi inte nått max
   state.duelTimer = state.duelCount < DUEL_MAX_COUNT ? DUEL_INTERVAL : Infinity;
 }
@@ -2328,8 +2396,9 @@ function tickGame(state, dt) {
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
     }
-    // Pickup-orbs (heal + speed)
+    // Pickup-orbs (heal + speed) + big duel-arena orb
     tickDuelOrbs(state, dt);
+    tickDuelBigOrb(state, dt);
     // Duel match timer
     state.duelMatchTimer = Math.max(0, state.duelMatchTimer - dt);
     const s1 = state.sides[1], s2 = state.sides[2];
@@ -2517,6 +2586,12 @@ function serializeState(state) {
     dW: state.duelLastWinner || 0,
     dAn: +(state.duelAnnounceTimer || 0).toFixed(2),
     dO: (state.duelOrbs || []).map(o => ({ i: o.id, k: o.type === 'heal' ? 'h' : 's', x: +o.x.toFixed(2), z: +o.z.toFixed(2) })),
+    dBO: state.duelBigOrb ? {
+      x: +state.duelBigOrb.x.toFixed(2), z: +state.duelBigOrb.z.toFixed(2),
+      hp: +state.duelBigOrb.hp.toFixed(1), mh: state.duelBigOrb.maxHp,
+      a: state.duelBigOrb.alive ? 1 : 0,
+      rt: +(state.duelBigOrb.respawnTimer || 0).toFixed(1),
+    } : null,
   };
 }
 
