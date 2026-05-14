@@ -1535,23 +1535,23 @@ const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
 const FIREWAVE_DOT_DURATION = 3.0;
 const FIREWAVE_EFFECT_LIFE = 0.6;
-const NOVA_RADIUS = 3.8 * 1.3;       // +30% range
+const NOVA_RADIUS = 3.8 * 1.3 * 0.8;       // +30% → -20% = 4.94 → 3.95
 const NOVA_DAMAGE = 10;
 const NOVA_FREEZE_TIME = 2.0;
-const NOVA_CAST_DISTANCE = 6 * 1.3;  // +30% cast-range
+const NOVA_CAST_DISTANCE = 6 * 1.3 * 0.8;  // +30% → -20% = 7.8 → 6.24
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
-const BLACKHOLE_RADIUS = 3.5 * 1.3;       // +30% radie
+const BLACKHOLE_RADIUS = 3.5 * 1.3 * 0.8;       // +30% → -20% = 4.55 → 3.64
 const BLACKHOLE_PULL_SPEED = 2.5;
 const BLACKHOLE_DURATION = 3.0;
 const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
 const BLACKHOLE_EXPLOSION_DMG = 30;
-const BLACKHOLE_CAST_DISTANCE = 8 * 1.3;  // +30% cast-range
+const BLACKHOLE_CAST_DISTANCE = 8 * 1.3 * 0.8;  // +30% → -20% = 10.4 → 8.32
 // Legolus
-const VINE_TRAP_RADIUS = 3.0 * 1.3;        // +30% radie
+const VINE_TRAP_RADIUS = 3.0 * 1.3 * 0.8;        // +30% → -20% = 3.9 → 3.12
 const VINE_TRAP_DURATION = 3.0;
 const VINE_TRAP_DOT_DPS = 8;
-const VINE_TRAP_CAST_DISTANCE = 7 * 1.3;   // +30% cast-range
+const VINE_TRAP_CAST_DISTANCE = 7 * 1.3 * 0.8;   // +30% → -20% = 9.1 → 7.28
 const VINE_TRAP_ROOT_REFRESH = 0.25;
 const LEGOLUS_BUFF_DURATION = 5.0;
 const LEGOLUS_BUFF_DMG_PCT = 0.10;
@@ -6897,6 +6897,7 @@ function hostCastBlink(side, ev) {
     explosionDmg: BLACKHOLE_EXPLOSION_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
     radius: BLACKHOLE_RADIUS * sizeMul,
     explosionRadius: BLACKHOLE_EXPLOSION_RADIUS * sizeMul,
+    dotTickAccum: 0,  // ticka 3% maxHP per sek på allt i radien
   });
 }
 
@@ -6949,6 +6950,40 @@ function updateBlackHolesSolo(side, dt) {
     // Pulse sphere scale based on life
     const t = 1 - bh.life / bh.maxLife;
     bh.sphere.scale.setScalar(1 + 0.3 * Math.sin(t * 20));
+    // DoT: 3% av maxHP per sekund på allt i radien (tickas var 0.5s = 1.5% per tick)
+    bh.dotTickAccum = (bh.dotTickAccum || 0) + dt;
+    while (bh.dotTickAccum >= 0.5) {
+      bh.dotTickAccum -= 0.5;
+      const tickDmgMul = gandulfSkillDmgMul(side);
+      for (let j = side.monsters.length - 1; j >= 0; j--) {
+        const m = side.monsters[j];
+        if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < bhRadius) {
+          const dmg = (m.maxHp || m.hp) * 0.015 * tickDmgMul;
+          soloApplySkillDmgToMonster(side, opp, j, dmg);
+        }
+      }
+      if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+        const c = opp.playerCreeps[j];
+        if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < bhRadius) {
+          const dmg = (c.maxHp || c.hp) * 0.015 * tickDmgMul;
+          soloApplySkillDmgToCreep(side, opp, c, dmg);
+          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      // Arena: orb + opp hero DoT
+      if (APP.gameMode === 'arena1v1') {
+        if (arenaState.orb && arenaState.orb.alive) {
+          if (Math.hypot(ARENA_CFG.orb.x - bh.x, ARENA_CFG.orb.z - bh.z) < bhRadius) {
+            damageArenaOrb(arenaState.orb.maxHp * 0.015 * tickDmgMul, side.idx);
+          }
+        }
+        if (opp && !opp.hero.dead && arenaState.phase === 'fight') {
+          if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < bhRadius) {
+            damageHero(opp, opp.hero.maxHp * 0.015 * tickDmgMul);
+          }
+        }
+      }
+    }
     if (bh.life <= 0) {
       // Explosion
       const dmgMul = gandulfSkillDmgMul(side);
@@ -7066,12 +7101,25 @@ function hostCastLegolusDash(side, ev) {
 }
 
 function updateVineTrapsSolo(side, dt) {
+  // Reset self-buff flagga FÖRST — sätts åter om hero står i sin egen trap (loopen nedan)
+  side.legolusInOwnTrap = false;
   if (!side.vineTraps || side.vineTraps.length === 0) return;
   const opp = sides[3 - side.idx];
   for (let i = side.vineTraps.length - 1; i >= 0; i--) {
     const vt = side.vineTraps[i];
     vt.life -= dt;
     const r2 = vt.radius * vt.radius;
+    // Self-buff: om Legolas själv står i sin egen vine trap → -20% dmg taken + 5% HP/s heal
+    if (!side.hero.dead) {
+      const ddx = side.hero.x - vt.x, ddz = side.hero.z - vt.z;
+      if (ddx * ddx + ddz * ddz < r2) {
+        side.legolusInOwnTrap = true;
+        const healAmt = side.hero.maxHp * 0.05 * dt;   // 5% maxHP/s
+        if (healAmt > 0 && side.hero.hp < side.hero.maxHp) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+        }
+      }
+    }
     // Apply DoT + root på entiteter i radien
     for (let j = side.monsters.length - 1; j >= 0; j--) {
       const m = side.monsters[j];
@@ -7832,10 +7880,12 @@ function damageHero(side, amount, isCrit = false) {
   // Aragurn Shout-buff på self/ally: 20% DR
   const shoutDrSelf = (side.aragurnShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
   const shoutDrAlly = (side.aragurnAllyShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
+  // Legolas i sin egen Vine Trap: -20% damage taken
+  const legolusTrapDr = side.legolusInOwnTrap ? 0.80 : 1;
   // Aragurn Whirlwind CC-immun (samma som rage — soak alla CC) — DR-wise samma som vanlig
   // Mottagar-debuff från Aragurn Shout: target tar +20% mer skada
   const shoutDebuffMul = (side.aragurnShoutDebuff || 0) > 0 ? (1 + SHOUT_DEBUFF_DMG_TAKEN) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * shoutDebuffMul;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * legolusTrapDr * shoutDebuffMul;
   // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
   if ((side.lingShieldHp || 0) > 0 && final > 0) {
     if (side.lingShieldHp >= final) {
@@ -10475,7 +10525,7 @@ const SHOUT_HEAL_DURATION = 2.0;            // HoT i sek
 const SHOUT_HEAL_SELF_PCT = 0.10;           // Aragurn: 10% maxHP / sek
 const SHOUT_HEAL_ALLY_PCT = 0.05;           // ally: 5% maxHP / sek
 const LEAP_TRAVEL_TIME = 1.0;
-const LEAP_MAX_DISTANCE = 10.0;
+const LEAP_MAX_DISTANCE = 10.0 * 1.15;     // +15% = 11.5m
 const LEAP_RADIUS = 4.55;                   // = BLACKHOLE_RADIUS
 const LEAP_DMG_PCT = 0.20;                  // 20% maxHP
 const LEAP_STUN_TIME = 1.0;
@@ -12313,14 +12363,14 @@ const HERO_INFO = {
     skills: {
       q: { name: 'Soul Drain', icon: '💀', desc: 'Kanalisera mot en target (tap för låst mål, eller närmaste fiende inom 10m). En grön själsbalk knyts mellan Gandulf och target — Gandulf får en pulsande mark-aura så länge drain är aktiv. 5 sekunders drain — varje sekund: 5% av targets max-HP i skada och Gandulf healas med samma mängd. Slow stackar med 10% per sekund (max 50%). Slow ligger kvar 1s efter sista tick. Om en minion (monster/creep) dör av drainen exploderar den i en grön shockwave (3.5m radie) som gör 50% av drain-skadan i AoE. Bryts om target dör eller springer >12m, eller om Gandulf får hård CC.' },
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
-      e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten. Vid slutet exploderar den i AoE-damage (4 m radie).' },
+      e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten och tickar 3% av deras max-HP per sekund medan de står i radien. Vid slutet exploderar den i AoE-damage (4 m radie).' },
     },
     passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Varje skill-träff på en fiende stackar en 3s buf: +5% skill-skada per hit, och ger en shield = 5% av max HP per hit (stackar additivt upp till max HP). Träffar du SAMMA mål med 3 skills får du dessutom en stor shield på 30% av max HP.' },
     ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Skjuter en kontinuerlig laserstråle rakt fram i 3 sekunder (60 m räckvidd, smal). Strålen tickar var 0.5 s och gör 15% av targets max-HP per tick — totalt 90% maxHP över hela varaktigheten. Träffar alla fiender, bossar, motståndarhjälte och arena-orb i strålens väg. Medan strålen är aktiv: 90% skadereduktion på Magikern, CC-immun (kan inte frysas/stunnas/tauntas) men kan röra sig fritt.' },
   },
   legolas: {
     skills: {
-      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Skjuter en pil i luften som regnar ner pilar över en 3 m radie zon i 3 sekunder. Gör inget direkt damage — bara DoT och rotar fiender på plats medan de är i zonen.' },
+      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Skjuter en pil i luften som regnar ner pilar över en zon i 3 sekunder. Gör inget direkt damage — bara DoT och rotar fiender på plats. Om Legolas själv står i sin egen trap får han 20% damage reduction och healar 5% av sin max-HP per sekund så länge han stannar i zonen.' },
       f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5 sekunders self-buff: +10% auto-attack damage, +10% crit chans, +30% crit damage.' },
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
     },
