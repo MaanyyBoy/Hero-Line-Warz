@@ -704,6 +704,22 @@
     .lobby-section.arena { color: #ff7755; border-bottom-color: rgba(255,119,85,0.4); }
     .lobby-section:first-child { margin-top: 4px; }
     .lobby-section.misc { color: #aabfdb; border-bottom-color: rgba(170,191,219,0.25); margin-top: 24px; }
+    /* Stora mode-knappar på hemskärmen (Line Wars / Arena Wars) */
+    .lobby-btn.mode-btn {
+      font: 800 22px/1.1 system-ui, sans-serif;
+      letter-spacing: 1.5px;
+      padding: 22px 40px;
+      min-width: 280px;
+      margin: 10px 6px;
+      background: linear-gradient(135deg, rgba(80,140,210,0.95), rgba(40,90,160,0.95));
+      border: 3px solid rgba(200,220,255,0.7);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    }
+    .lobby-btn.mode-btn.arena {
+      background: linear-gradient(135deg, rgba(200,80,80,0.95), rgba(150,40,40,0.95));
+      border-color: rgba(255,180,180,0.75);
+    }
+    .lobby-btn.mode-btn:hover { transform: translateY(-2px); }
     .lobby-btn {
       background: rgba(60,120,200,0.85);
       color: #fff;
@@ -1626,20 +1642,31 @@
     <h1>Hellborne Wars</h1>
 
     <div class="lobby-panel visible" id="lobby-main">
-      <div class="lobby-section">⚔ Line Wars</div>
-      <button class="lobby-btn" id="btn-host">Host Game</button>
-      <button class="lobby-btn" id="btn-join">Join Game</button>
-      <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
-
-      <div class="lobby-section arena">🏟 Arena Wars</div>
-      <button class="lobby-btn" id="btn-arena-host" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Host Game</button>
-      <button class="lobby-btn" id="btn-arena-join" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Join Game</button>
-      <button class="lobby-btn secondary" id="btn-arena-solo">Singleplayer</button>
+      <button class="lobby-btn mode-btn" id="btn-mode-line">⚔ Line Wars</button>
+      <button class="lobby-btn mode-btn arena" id="btn-mode-arena">🏟 Arena Wars</button>
 
       <div class="lobby-section misc">More</div>
       <button class="lobby-btn secondary" id="btn-heroes">Heroes</button>
       <button class="lobby-btn secondary" id="btn-items">Items</button>
       <button class="lobby-btn secondary" id="btn-howto">How to Play</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-line-wars">
+      <div style="font-size: 26px; color: #ffd34a; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ Line Wars</div>
+      <div class="sub" style="margin-bottom: 18px;">Hero Line Wars · 1v1</div>
+      <button class="lobby-btn" id="btn-host">Host Game</button>
+      <button class="lobby-btn" id="btn-join">Join Game</button>
+      <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
+      <button class="lobby-btn secondary" id="btn-line-back" style="margin-top: 18px;">← Tillbaka</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-arena-wars">
+      <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars</div>
+      <div class="sub" style="margin-bottom: 18px;">Player vs Player · Best of 5</div>
+      <button class="lobby-btn" id="btn-arena-host" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Host Game</button>
+      <button class="lobby-btn" id="btn-arena-join" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Join Game</button>
+      <button class="lobby-btn secondary" id="btn-arena-solo">Singleplayer</button>
+      <button class="lobby-btn secondary" id="btn-arena-back" style="margin-top: 18px;">← Tillbaka</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-bot">

@@ -12114,8 +12114,10 @@ const lobbyHeroesEl = document.getElementById('lobby-heroes');
 const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
 const lobbyArenaBotEl = document.getElementById('lobby-arena-bot');
+const lobbyLineWarsEl = document.getElementById('lobby-line-wars');
+const lobbyArenaWarsEl = document.getElementById('lobby-arena-wars');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -12125,6 +12127,8 @@ function showLobbyPanel(which) {
   else if (which === 'items') lobbyItemsEl.classList.add('visible');
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
   else if (which === 'arena-bot') lobbyArenaBotEl.classList.add('visible');
+  else if (which === 'line-wars') lobbyLineWarsEl.classList.add('visible');
+  else if (which === 'arena-wars') lobbyArenaWarsEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -12620,13 +12624,23 @@ if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
 const btnArenaSolo = document.getElementById('btn-arena-solo');
 if (btnArenaSolo) btnArenaSolo.addEventListener('click', arenaSoloShow);
 const btnArenaBotBack = document.getElementById('btn-arena-bot-back');
-if (btnArenaBotBack) btnArenaBotBack.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('main'); });
+if (btnArenaBotBack) btnArenaBotBack.addEventListener('click', () => { APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('arena-wars'); });
 const btnBotEasy = document.getElementById('btn-bot-easy');
 if (btnBotEasy) btnBotEasy.addEventListener('click', () => arenaSoloStartWithBot('easy'));
 const btnBotMedium = document.getElementById('btn-bot-medium');
 if (btnBotMedium) btnBotMedium.addEventListener('click', () => arenaSoloStartWithBot('medium'));
 const btnBotHard = document.getElementById('btn-bot-hard');
 if (btnBotHard) btnBotHard.addEventListener('click', () => arenaSoloStartWithBot('hard'));
+
+// ---- Mode-knappar (Line Wars / Arena Wars) — visar submenyer ----
+const btnModeLine = document.getElementById('btn-mode-line');
+if (btnModeLine) btnModeLine.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('line-wars'); });
+const btnModeArena = document.getElementById('btn-mode-arena');
+if (btnModeArena) btnModeArena.addEventListener('click', () => { APP.gameMode = 'arena1v1'; showLobbyPanel('arena-wars'); });
+const btnLineBack = document.getElementById('btn-line-back');
+if (btnLineBack) btnLineBack.addEventListener('click', () => showLobbyPanel('main'));
+const btnArenaBack = document.getElementById('btn-arena-back');
+if (btnArenaBack) btnArenaBack.addEventListener('click', () => { APP.gameMode = 'classic'; APP.arenaBot = { active: false, difficulty: null }; showLobbyPanel('main'); });
 
 // ============================================================
 // HUVUDLOOP
