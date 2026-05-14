@@ -1862,7 +1862,7 @@ function tickAllHpBars() {
     for (const idx of [1, 2]) {
       const s = sides[idx];
       if (!s) continue;
-      for (const m of s.monsters) updateEntityHpBar(m.mesh, m.hp, 10, now);
+      for (const m of s.monsters) updateEntityHpBar(m.mesh, m.hp, m.maxHp || 10, now);
       for (const c of s.playerCreeps) updateEntityHpBar(c.mesh, c.hp, c.maxHp, now);
     }
   } else {
@@ -3611,50 +3611,268 @@ arenaSceneGroup.userData.isArena = true;
 scene.add(arenaSceneGroup);
 
 // === BOSS WARS ARENA ===
-// Stor flat stenplatta vid (0, BOSSWARS_CZ) — basic utan detaljer (user iterates senare)
+// 5 olika maps (en per boss), 20% större än innan, olika former.
 const BOSSWARS_CX = 0;
 const BOSSWARS_CZ = 90;
-const BOSSWARS_RADIUS = 25;
+const BOSSWARS_RADIUS = 30;   // 25 × 1.2 = 30 (20% större)
+// Map-config per tier — shape, color-tema, ev. accent
+const BOSSWARS_MAPS = {
+  1: { name: 'Stone Arena',    shape: 'circle',  color: 0x6a5a44, edgeColor: 0x2a2218, accent: 0x9a8a6a },
+  2: { name: 'Forest Hollow',  shape: 'square',  color: 0x4a5a36, edgeColor: 0x1a2410, accent: 0x6a8a4a },
+  3: { name: 'Heavenly Cross', shape: 'cross',   color: 0xc8d4e0, edgeColor: 0x8090a0, accent: 0xffe8a0 },
+  4: { name: 'Bloodmoon Keep', shape: 'octagon', color: 0x3a2030, edgeColor: 0x100808, accent: 0x6a0a0a },
+  5: { name: 'Volcano Crater', shape: 'hexagon', color: 0x40180c, edgeColor: 0x100400, accent: 0xff5010 },
+};
 const bossWarsSceneGroup = new THREE.Group();
 bossWarsSceneGroup.visible = false;
 bossWarsSceneGroup.userData.isBossWars = true;
 scene.add(bossWarsSceneGroup);
-let bossWarsBuilt = false;
+
+function clearBossWarsScene() {
+  while (bossWarsSceneGroup.children.length) {
+    const c = bossWarsSceneGroup.children[0];
+    c.traverse?.(o => {
+      if (o.isMesh) {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
+          else o.material.dispose();
+        }
+      }
+    });
+    bossWarsSceneGroup.remove(c);
+  }
+  bossWarsSceneGroup.userData.builtForTier = -1;
+}
+
+// Bygger en shape-yta baserat på map.shape
+function makeBossWarsShapeMesh(shape, r, mat) {
+  if (shape === 'square') {
+    const side = r * Math.SQRT2;   // diagonal matchar circle-radius
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(side, side), mat);
+    plane.rotation.x = -Math.PI / 2;
+    return plane;
+  }
+  if (shape === 'hexagon') {
+    return new THREE.Mesh(new THREE.CircleGeometry(r, 6), mat);
+  }
+  if (shape === 'octagon') {
+    return new THREE.Mesh(new THREE.CircleGeometry(r, 8), mat);
+  }
+  if (shape === 'cross') {
+    // Plus/cross-form med två rektanglar
+    const grp = new THREE.Group();
+    const armLen = r * 1.8;
+    const armWidth = r * 0.85;
+    const a = new THREE.Mesh(new THREE.PlaneGeometry(armLen, armWidth), mat);
+    a.rotation.x = -Math.PI / 2;
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(armWidth, armLen), mat);
+    b.rotation.x = -Math.PI / 2;
+    grp.add(a); grp.add(b);
+    return grp;
+  }
+  // Default: cirkel
+  const c = new THREE.Mesh(new THREE.CircleGeometry(r, 64), mat);
+  c.rotation.x = -Math.PI / 2;
+  return c;
+}
 
 function buildBossWarsScene() {
-  if (bossWarsBuilt) return;
-  // Stor platt cirkulär stenplatta — bas-fundament
-  const platMat = new THREE.MeshStandardMaterial({ color: 0x6a5a44, roughness: 0.88, metalness: 0.1 });
-  const platform = new THREE.Mesh(new THREE.CylinderGeometry(BOSSWARS_RADIUS, BOSSWARS_RADIUS + 0.5, 0.4, 64), platMat);
-  platform.position.set(BOSSWARS_CX, 0.2, BOSSWARS_CZ);
-  platform.receiveShadow = true;
-  platform.castShadow = true;
-  bossWarsSceneGroup.add(platform);
-  // Övre yta — något ljusare för subtle "topp"-känsla
-  const topMat = new THREE.MeshStandardMaterial({ color: 0x7a6a4e, roughness: 0.92 });
-  const top = new THREE.Mesh(new THREE.CircleGeometry(BOSSWARS_RADIUS - 0.2, 64), topMat);
-  top.rotation.x = -Math.PI / 2;
-  top.position.set(BOSSWARS_CX, 0.41, BOSSWARS_CZ);
-  top.receiveShadow = true;
+  const tier = (APP.bossWars && APP.bossWars.tier) || 1;
+  if (bossWarsSceneGroup.userData.builtForTier === tier) return;
+  clearBossWarsScene();
+  bossWarsSceneGroup.userData.builtForTier = tier;
+  const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
+  const r = BOSSWARS_RADIUS;
+  // Stor platt platform — använd shape-specifik form. Lägg en cylinder under för djup.
+  const baseMat = new THREE.MeshStandardMaterial({ color: map.color, roughness: 0.88, metalness: 0.12 });
+  // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut
+  const baseR = (map.shape === 'cross') ? r * 1.0 : r;
+  const baseCyl = new THREE.Mesh(new THREE.CylinderGeometry(baseR, baseR + 0.5, 0.4, 48), new THREE.MeshStandardMaterial({ color: map.edgeColor, roughness: 0.92 }));
+  baseCyl.position.set(BOSSWARS_CX, 0.2, BOSSWARS_CZ);
+  baseCyl.receiveShadow = true;
+  baseCyl.castShadow = true;
+  bossWarsSceneGroup.add(baseCyl);
+  // Topp-yta i shape-form
+  const topMat = new THREE.MeshStandardMaterial({ color: map.color, roughness: 0.85, metalness: 0.1 });
+  const top = makeBossWarsShapeMesh(map.shape, r - 0.4, topMat);
+  top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
+  if (top.children?.length) {
+    top.children.forEach(c => { c.position.y = 0; c.receiveShadow = true; });
+  } else {
+    top.receiveShadow = true;
+  }
   bossWarsSceneGroup.add(top);
-  // Outer-edge dark ring (för visuell definition)
-  const edge = new THREE.Mesh(
-    new THREE.RingGeometry(BOSSWARS_RADIUS - 0.6, BOSSWARS_RADIUS - 0.05, 64),
-    new THREE.MeshBasicMaterial({ color: 0x2a2218, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
+  const accentRing = new THREE.Mesh(
+    new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
+    new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
   );
-  edge.rotation.x = -Math.PI / 2;
-  edge.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
-  bossWarsSceneGroup.add(edge);
-  bossWarsBuilt = true;
+  accentRing.rotation.x = -Math.PI / 2;
+  accentRing.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
+  bossWarsSceneGroup.add(accentRing);
+  // Inre cirkel
+  const innerDot = new THREE.Mesh(
+    new THREE.CircleGeometry(r * 0.18, 36),
+    new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+  );
+  innerDot.rotation.x = -Math.PI / 2;
+  innerDot.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
+  bossWarsSceneGroup.add(innerDot);
 }
 
 function isBossWarsPos(x, z) {
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
-  return (dx * dx + dz * dz) < (BOSSWARS_RADIUS - 0.5) * (BOSSWARS_RADIUS - 0.5);
+  const tier = (APP.bossWars && APP.bossWars.tier) || 1;
+  const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
+  const r = BOSSWARS_RADIUS - 0.5;
+  if (map.shape === 'square') {
+    const half = (r * Math.SQRT2) / 2;
+    return Math.abs(dx) < half && Math.abs(dz) < half;
+  }
+  if (map.shape === 'cross') {
+    const armLen = r * 1.8 / 2;
+    const armWidth = r * 0.85 / 2;
+    return (Math.abs(dx) < armLen && Math.abs(dz) < armWidth)
+        || (Math.abs(dx) < armWidth && Math.abs(dz) < armLen);
+  }
+  // hexagon/octagon/circle alla approxmas som cirkel för walkable
+  return (dx * dx + dz * dz) < r * r;
 }
 
 // Spawnar boss-wars-bossen i centrum av platformen. Återanvänder BOSS_DEFS
 // + boss-skill-systemet (tickBossSkills/tickBossAura) som redan funkar för waves.
+// Lägger tier-specifika kosmetiska delar på boss-meshen (varulvs-öron, ängel-
+// vingar, dracula-cape, drak-horn etc). Returerar gruppen så ev. animation kan
+// göras senare.
+function attachBossWarsAccessories(mesh, tier, scale) {
+  const grp = new THREE.Group();
+  // Höjd-faktor — accessoryer placeras relativt mesh-höjd (skel-warrior ~1.7m * scale)
+  const h = 1.5;   // local-units (mesh skalas globalt)
+  if (tier === 2) {
+    // Werewolf: ulv-öron (2 cones uppåt), klor på händer, svans
+    const furMat = new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.95 });
+    const earL = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.30, 8), furMat);
+    earL.position.set(-0.14, h * 1.1, 0); earL.rotation.z = 0.2;
+    grp.add(earL);
+    const earR = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.30, 8), furMat);
+    earR.position.set(0.14, h * 1.1, 0); earR.rotation.z = -0.2;
+    grp.add(earR);
+    // Svans (cylinder bakom)
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.7, 8), furMat);
+    tail.position.set(0, h * 0.4, -0.35); tail.rotation.x = 0.7;
+    grp.add(tail);
+    // Glow under munnen (snäcker)
+    const fangs = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.14, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    fangs.position.set(0, h * 0.92, 0.18); fangs.rotation.x = Math.PI;
+    grp.add(fangs);
+  } else if (tier === 3) {
+    // Archangel: en STOR svart vinge + en STOR röd vinge
+    function makeWing(color, side_) {
+      const w = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
+      // Stora fjäder-plan i 3 lager för volym
+      for (let i = 0; i < 3; i++) {
+        const fan = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.6 - i * 0.15), mat);
+        fan.position.set(side_ * 0.6, h * 0.5 + i * 0.45, -0.1);
+        fan.rotation.y = side_ * 0.5;
+        fan.rotation.z = side_ * 0.2;
+        w.add(fan);
+      }
+      // Yttre stort vinge-plan
+      const big = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.0), mat);
+      big.position.set(side_ * 1.5, h * 0.95, -0.2);
+      big.rotation.y = side_ * 0.6;
+      big.rotation.z = side_ * 0.45;
+      w.add(big);
+      return w;
+    }
+    grp.add(makeWing(0x080808, -1));   // vänster: svart
+    grp.add(makeWing(0xaa1010, 1));    // höger: röd
+    // Halo ovanför huvudet
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.30, 0.04, 10, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffe8a0, transparent: true, opacity: 0.9 })
+    );
+    halo.position.set(0, h * 1.25, 0);
+    halo.rotation.x = Math.PI / 2;
+    grp.add(halo);
+  } else if (tier === 4) {
+    // Dracula: bat-cape bakom + 2 små horn + skarpa fangs
+    const capeMat = new THREE.MeshStandardMaterial({ color: 0x110010, roughness: 0.9, side: THREE.DoubleSide });
+    // Cape som triangulär plan bakom
+    const cape = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.8), capeMat);
+    cape.position.set(0, h * 0.55, -0.35);
+    cape.rotation.x = -0.15;
+    grp.add(cape);
+    // Bat-wings-form (2 mindre triangulära "vingar" på sidorna)
+    for (const sx of [-1, 1]) {
+      const bw = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.3), capeMat);
+      bw.position.set(sx * 0.7, h * 0.7, -0.25);
+      bw.rotation.y = sx * 0.5;
+      bw.rotation.z = sx * 0.25;
+      grp.add(bw);
+    }
+    // 2 horn på huvudet
+    const hornMat = new THREE.MeshStandardMaterial({ color: 0x282028, roughness: 0.6, metalness: 0.5 });
+    const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.28, 8), hornMat);
+    hornL.position.set(-0.10, h * 1.15, 0); hornL.rotation.z = 0.3;
+    grp.add(hornL);
+    const hornR = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.28, 8), hornMat);
+    hornR.position.set(0.10, h * 1.15, 0); hornR.rotation.z = -0.3;
+    grp.add(hornR);
+    // Röda ögon glöd (extra punkt-ljus över befintliga aura)
+    const eyeLight = new THREE.PointLight(0xff0000, 1.5, 2.5);
+    eyeLight.position.set(0, h * 0.95, 0.18);
+    grp.add(eyeLight);
+  } else if (tier === 5) {
+    // Drake: stora gröna/röda drak-vingar + horn + svans + drak-mun
+    const wingMat = new THREE.MeshStandardMaterial({ color: 0x6a1a08, roughness: 0.7, side: THREE.DoubleSide });
+    for (const sx of [-1, 1]) {
+      // Stor drak-vinge per sida
+      for (let i = 0; i < 4; i++) {
+        const finger = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 2.5 - i * 0.4), wingMat);
+        finger.position.set(sx * (0.8 + i * 0.3), h * 0.9, -0.1);
+        finger.rotation.y = sx * 0.6;
+        finger.rotation.z = sx * (0.4 + i * 0.1);
+        grp.add(finger);
+      }
+    }
+    // Stora horn
+    const hornMat = new THREE.MeshStandardMaterial({ color: 0x402418, roughness: 0.5 });
+    for (const sx of [-1, 1]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.50, 10), hornMat);
+      horn.position.set(sx * 0.12, h * 1.10, -0.08);
+      horn.rotation.z = sx * 0.4;
+      horn.rotation.x = -0.3;
+      grp.add(horn);
+    }
+    // Svans (kedja av cylindrar)
+    const tailMat = new THREE.MeshStandardMaterial({ color: 0x401810, roughness: 0.85 });
+    for (let i = 0; i < 5; i++) {
+      const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.12 - i * 0.018, 0.15 - i * 0.02, 0.35, 8), tailMat);
+      seg.position.set(0, h * 0.4 + i * 0.04, -0.4 - i * 0.30);
+      seg.rotation.x = 0.4 + i * 0.05;
+      grp.add(seg);
+    }
+    // Drak-mun (eldglöd)
+    const fireGlow = new THREE.PointLight(0xff5010, 2.4, 3);
+    fireGlow.position.set(0, h * 0.92, 0.25);
+    grp.add(fireGlow);
+    // Brännhet käke (orange cylinder)
+    const jaw = new THREE.Mesh(
+      new THREE.SphereGeometry(0.10, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff7010, transparent: true, opacity: 0.85 })
+    );
+    jaw.position.set(0, h * 0.92, 0.22);
+    grp.add(jaw);
+  }
+  mesh.add(grp);
+  mesh.userData.bossWarsAccessories = grp;
+  return grp;
+}
+
 function spawnBossWarsBoss(side, tier) {
   if (!side) return;
   const bossInfo = getBossWarsDef(tier);
@@ -3664,19 +3882,25 @@ function spawnBossWarsBoss(side, tier) {
   const mesh = makeMonsterMesh();
   const scale = bossDef.scale;
   mesh.scale.set(scale, scale, scale);
-  applyMonsterTint(mesh, bossDef.bodyTint, 0.85);
+  // Tier-specifik tint (override:ar bossDef.bodyTint för werewolf/dracula/etc)
+  const tierTints = { 1: 0x6a85a8, 2: 0x6a4a30, 3: 0xeeeae0, 4: 0xc8b8c8, 5: 0x3a2018 };
+  applyMonsterTint(mesh, tierTints[tier] || bossDef.bodyTint, 0.85);
   attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+  attachBossWarsAccessories(mesh, tier, scale);
   attachHpBar(mesh, bossDef.scale * 0.85);
   mesh.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
   scene.add(mesh);
   const hp = bossInfo.hp;
   const dmg = Math.round(28 * bossInfo.dmgScale);
+  // Speed-skalning per tier (raid-bossar är inte snabba men jagar)
+  const tierSpeed = { 1: 2.2, 2: 2.5, 3: 2.7, 4: 2.9, 5: 3.1 };
+  const bossSpeed = tierSpeed[tier] || 2.5;
   const bossId = nextEntityId++;
   side.monsters.push({
     id: bossId,
     lane: 1,
     hp, maxHp: hp,
-    speed: 1.6,
+    speed: bossSpeed,
     damage: dmg,
     attackType: 'melee',
     attackRange: 1.6,
