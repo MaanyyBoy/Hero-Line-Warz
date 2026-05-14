@@ -1534,23 +1534,23 @@ const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
 const FIREWAVE_DOT_DURATION = 3.0;
 const FIREWAVE_EFFECT_LIFE = 0.6;
-const NOVA_RADIUS = 3.8;
+const NOVA_RADIUS = 3.8 * 1.3;       // +30% range
 const NOVA_DAMAGE = 10;
 const NOVA_FREEZE_TIME = 2.0;
-const NOVA_CAST_DISTANCE = 6;
+const NOVA_CAST_DISTANCE = 6 * 1.3;  // +30% cast-range
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
-const BLACKHOLE_RADIUS = 3.5;
+const BLACKHOLE_RADIUS = 3.5 * 1.3;       // +30% radie
 const BLACKHOLE_PULL_SPEED = 2.5;
 const BLACKHOLE_DURATION = 3.0;
 const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
 const BLACKHOLE_EXPLOSION_DMG = 30;
-const BLACKHOLE_CAST_DISTANCE = 8;
+const BLACKHOLE_CAST_DISTANCE = 8 * 1.3;  // +30% cast-range
 // Legolus
-const VINE_TRAP_RADIUS = 3.0;
+const VINE_TRAP_RADIUS = 3.0 * 1.3;        // +30% radie
 const VINE_TRAP_DURATION = 3.0;
 const VINE_TRAP_DOT_DPS = 8;
-const VINE_TRAP_CAST_DISTANCE = 7;
+const VINE_TRAP_CAST_DISTANCE = 7 * 1.3;   // +30% cast-range
 const VINE_TRAP_ROOT_REFRESH = 0.25;
 const LEGOLUS_BUFF_DURATION = 5.0;
 const LEGOLUS_BUFF_DMG_PCT = 0.10;
@@ -1572,7 +1572,7 @@ const TAUNT_HEAL_PER_SEC = 0.20;
 const IRON_WILL_DURATION = 3.0;
 const IRON_WILL_EXPLOSION_RADIUS = 6.0;
 const HAMMER_SPEED = 12;
-const HAMMER_RANGE = 9;
+const HAMMER_RANGE = 9 * 1.3;        // +30% kast-range
 const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
 const HAMMER_LIFESTEAL = 0.50;
@@ -7022,15 +7022,34 @@ function updateIronWillSolo(side, dt) {
 
 function hostCastGimluHammer(side, dirX, dirZ) {
   if (side.hero.dead) return;
-  // Teleport om hammer redan ute
+  // Teleport om hammer redan ute — fungerar i arena även om hammer landade
+  // i cover-prop genom att leta walkable position längs linjen tillbaka mot hero.
   if (side.hammers && side.hammers.length > 0) {
     const h = side.hammers[0];
-    if (isHeroWalkable(side.idx, h.mesh.position.x, h.mesh.position.z)) {
-      side.hero.x = h.mesh.position.x;
-      side.hero.z = h.mesh.position.z;
-      side.mesh.position.x = side.hero.x;
-      side.mesh.position.z = side.hero.z;
+    let tx = h.mesh.position.x, tz = h.mesh.position.z;
+    if (!isHeroWalkable(side.idx, tx, tz)) {
+      const sx = side.hero.x, sz = side.hero.z;
+      const dx = sx - tx, dz = sz - tz;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.01) {
+        const ddx = dx / d, ddz = dz / d;
+        let found = false;
+        for (let step = 0.4; step <= d; step += 0.4) {
+          const px = tx + ddx * step, pz = tz + ddz * step;
+          if (isHeroWalkable(side.idx, px, pz)) {
+            tx = px; tz = pz; found = true; break;
+          }
+        }
+        if (!found) { tx = sx; tz = sz; }
+      }
     }
+    side.hero.x = tx;
+    side.hero.z = tz;
+    side.mesh.position.x = tx;
+    side.mesh.position.z = tz;
+    // Liten teleport-FX där hammer låg
+    spawnSkillCastFx(h.mesh.position.x, h.mesh.position.z, 0xffaa44, 1.2);
+    spawnSkillCastFx(tx, tz, 0xffaa44, 1.2);
     scene.remove(h.mesh);
     side.hammers.splice(0, 1);
     return;
@@ -7335,6 +7354,15 @@ function itemUpgradeCost(currentLevel) {
 
 // Bas-cooldowns per skill (modifieras av CDR i recompute)
 const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
+// Per-hero overrides på enstaka skill-CDs (bryter med global SKILL_BASE_CD)
+const HERO_SKILL_CD = {
+  legolas: { e: 8.0 },  // Shadow Dash -2s
+};
+function heroSkillBaseCd(heroId, key) {
+  const ov = HERO_SKILL_CD[heroId];
+  if (ov && ov[key] !== undefined) return ov[key];
+  return SKILL_BASE_CD[key];
+}
 
 // Active-buff-parametrar
 const ACTIVE_DURATION = 5;       // sek
@@ -7448,9 +7476,9 @@ function recomputeSideStats(side) {
   }
 
   // Skill-cooldown-cap räknas via CDR (max-värdet sätts om så castcd sätter rätt)
-  side.skills.q.max = SKILL_BASE_CD.q * side.cdrMul;
-  side.skills.f.max = SKILL_BASE_CD.f * side.cdrMul;
-  side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
+  side.skills.q.max = heroSkillBaseCd(side.heroId, 'q') * side.cdrMul;
+  side.skills.f.max = heroSkillBaseCd(side.heroId, 'f') * side.cdrMul;
+  side.skills.e.max = heroSkillBaseCd(side.heroId, 'e') * side.cdrMul;
 }
 
 // ============================================================
