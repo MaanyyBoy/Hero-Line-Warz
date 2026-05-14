@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>Spel</title>
+  <title>Hellborne Wars</title>
   <style>
     :root {
       --skill-size: 72px;
@@ -23,7 +23,7 @@
     }
     canvas { display: block; touch-action: none; }
 
-    /* Spel-UI är dolt tills lobbyn är avklarad */
+    /* Hellborne-UI är dolt tills lobbyn är avklarad */
     body:not(.in-game) #hud,
     body:not(.in-game) #touch-ui,
     body:not(.in-game) #income-display,
@@ -683,11 +683,27 @@
     }
     #lobby.hidden { display: none; }
     #lobby h1 {
-      font-size: 36px; margin: 0 0 6px;
+      font-size: 42px; margin: 0 0 22px;
       color: #ff7733;
-      letter-spacing: 1px;
+      letter-spacing: 2px;
+      text-shadow: 0 0 18px rgba(255,119,51,0.5);
+      font-weight: 900;
     }
     #lobby .sub { opacity: 0.7; margin-bottom: 28px; font-size: 13px; }
+    /* Section-headers inom lobby-main för Line Wars / Arena Wars */
+    .lobby-section {
+      font: 800 18px/1.1 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 1.5px;
+      margin: 18px 0 10px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255,211,74,0.35);
+      min-width: 240px;
+      text-align: center;
+    }
+    .lobby-section.arena { color: #ff7755; border-bottom-color: rgba(255,119,85,0.4); }
+    .lobby-section:first-child { margin-top: 4px; }
+    .lobby-section.misc { color: #aabfdb; border-bottom-color: rgba(170,191,219,0.25); margin-top: 24px; }
     .lobby-btn {
       background: rgba(60,120,200,0.85);
       color: #fff;
@@ -1607,42 +1623,32 @@
 </head>
 <body>
   <div id="lobby">
-    <h1>SPEL</h1>
-    <div class="sub">Hero Line Wars · 1v1</div>
+    <h1>Hellborne Wars</h1>
 
     <div class="lobby-panel visible" id="lobby-main">
+      <div class="lobby-section">⚔ Line Wars</div>
       <button class="lobby-btn" id="btn-host">Host Game</button>
       <button class="lobby-btn" id="btn-join">Join Game</button>
-      <button class="lobby-btn" id="btn-arena" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">⚔ ARENA</button>
       <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
+
+      <div class="lobby-section arena">🏟 Arena Wars</div>
+      <button class="lobby-btn" id="btn-arena-host" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Host Game</button>
+      <button class="lobby-btn" id="btn-arena-join" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Join Game</button>
+      <button class="lobby-btn secondary" id="btn-arena-solo">Singleplayer</button>
+
+      <div class="lobby-section misc">More</div>
       <button class="lobby-btn secondary" id="btn-heroes">Heroes</button>
       <button class="lobby-btn secondary" id="btn-items">Items</button>
       <button class="lobby-btn secondary" id="btn-howto">How to Play</button>
     </div>
 
-    <div class="lobby-panel" id="lobby-arena-mode">
-      <div style="font-size: 28px; color: #ff7733; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ ARENA</div>
-      <div class="sub" style="margin-bottom: 18px;">Player vs Player · Best of 5</div>
-      <button class="lobby-btn" id="btn-arena-1v1">1 v 1</button>
-      <button class="lobby-btn" id="btn-arena-2v2">2 v 2</button>
-      <button class="lobby-btn" id="btn-arena-3v3" disabled title="Kommer senare">3 v 3 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-back" style="margin-top: 18px;">← Tillbaka</button>
-    </div>
-
-    <div class="lobby-panel" id="lobby-arena-1v1">
-      <div style="font-size: 24px; color: #ff7733; letter-spacing: 1px; font-weight: 800; margin-bottom: 14px;">ARENA · 1v1</div>
-      <button class="lobby-btn" id="btn-arena-host">Host Arena</button>
-      <button class="lobby-btn" id="btn-arena-join">Join Arena</button>
-      <button class="lobby-btn secondary" id="btn-arena-solo" style="margin-top: 12px; opacity: 0.85;">Solo Practice <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">(test alone)</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-1v1-back" style="margin-top: 18px;">← Tillbaka</button>
-    </div>
-
-    <div class="lobby-panel" id="lobby-arena-2v2">
-      <div style="font-size: 24px; color: #ff7733; letter-spacing: 1px; font-weight: 800; margin-bottom: 14px;">ARENA · 2v2</div>
-      <button class="lobby-btn" id="btn-arena-2v2-host" disabled title="Kräver server-utbyggnad för 4-peer rooms">Host 2v2 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
-      <button class="lobby-btn" id="btn-arena-2v2-join" disabled title="Kräver server-utbyggnad">Join 2v2 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-2v2-solo" style="margin-top: 12px; opacity: 0.85;">Solo Practice 2v2 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">(du + 1 ally vs 2 fiender, du styr ett team)</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-2v2-back" style="margin-top: 18px;">← Tillbaka</button>
+    <div class="lobby-panel" id="lobby-arena-bot">
+      <div style="font-size: 26px; color: #ff7733; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · Singleplayer</div>
+      <div class="sub" style="margin-bottom: 18px;">Välj svårighetsgrad för boten</div>
+      <button class="lobby-btn" id="btn-bot-easy" style="background: rgba(80,170,90,0.85); border-color: rgba(160,255,180,0.7);">Easy <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Lugn bot, casar sällan, lätt att dodga</small></button>
+      <button class="lobby-btn" id="btn-bot-medium" style="background: rgba(190,140,40,0.85); border-color: rgba(255,210,120,0.7);">Medium <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Aggressivare, strafar, kombo-skills</small></button>
+      <button class="lobby-btn" id="btn-bot-hard" style="background: rgba(180,40,40,0.85); border-color: rgba(255,140,140,0.7);">Hard <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Maxar skills, dodgar, kiter hårt</small></button>
+      <button class="lobby-btn secondary" id="btn-arena-bot-back" style="margin-top: 18px;">← Tillbaka</button>
     </div>
 
     <div class="lobby-panel" id="lobby-heroes">

@@ -3173,6 +3173,7 @@ const APP = {
   mode: 'lobby',          // 'lobby' | 'solo' | 'host' | 'client'
   gameMode: 'classic',    // 'classic' (Line Wars) | 'arena1v1'
   arenaTeamSize: 1,       // 1 (1v1) eller 2 (2v2) — antal hjältar per team
+  arenaBot: { active: false, difficulty: null },  // arena solo vs AI
   localSide: 1,           // 1, 2, 3 eller 4 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
   ws: null,               // WebSocket till relay-servern (host + client)
@@ -3779,6 +3780,25 @@ function startArenaRound(roundNum) {
   for (const idx of idxs) {
     if (!arenaState.talents[idx]) arenaState.talents[idx] = { points: 0, chosen: [] };
     arenaState.talents[idx].points += 1;
+  }
+  // Bot auto-pickar talents per svårighetsgrad (easy skippar, hard maxar)
+  for (const idx of idxs) {
+    const s = sides[idx];
+    if (!s || !s.isBot) continue;
+    const diff = s.botDifficulty || 'medium';
+    const skipChance = diff === 'easy' ? 1.0 : (diff === 'medium' ? 0.4 : 0.0);
+    const t = arenaState.talents[idx];
+    const talents = ARENA_TALENTS[s.heroId || 'magiker'] || [];
+    while (t.points > 0) {
+      // Random remaining talent
+      const remaining = talents.filter(tl => !t.chosen.includes(tl.id));
+      if (remaining.length === 0) break;
+      if (Math.random() < skipChance) break;  // skip på lägre svårighet
+      const pick = remaining[Math.floor(Math.random() * remaining.length)];
+      t.chosen.push(pick.id);
+      t.points -= 1;
+    }
+    if (typeof recomputeArenaSideStats === 'function') recomputeArenaSideStats(s);
   }
   // Återställ orb
   arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
@@ -9462,10 +9482,13 @@ function updateArenaPrepUI() {
   if (apPointsEl) apPointsEl.textContent = String(localTalents.points);
   if (apOppStatusEl) {
     const otherIdx = 3 - APP.localSide;
+    const opp = sides[otherIdx];
     const oppReady = arenaState.ready[otherIdx];
-    apOppStatusEl.textContent = sides[otherIdx]
-      ? (oppReady ? '· Motståndaren är redo' : '· Motståndaren väljer talents...')
-      : '· (Ingen motståndare)';
+    let txt;
+    if (!opp) txt = '· (Ingen motståndare)';
+    else if (opp.isBot) txt = `· Bot (${(opp.botDifficulty || 'medium').toUpperCase()}) väntar`;
+    else txt = oppReady ? '· Motståndaren är redo' : '· Motståndaren väljer talents...';
+    apOppStatusEl.textContent = txt;
   }
   // Uppdatera ready-knappen
   if (apReadyBtn) {
@@ -9547,6 +9570,116 @@ const aimState = {
 };
 const AIM_THRESHOLD = 16;
 const SKILL_AIMABLE = { q: true, e: true, f: true, r: true };
+
+// ===== ARENA BOT (singleplayer) =====
+// Driver sides[2] som AI när APP.arenaBot.active=true. 3 svårighetsgrader.
+const BOT_PARAMS = {
+  easy: {
+    preferredRange: 5.0, minRange: 2.5, jitter: 0.45,
+    strafeFreq: 0.5, aaInRange: 0.25,
+    skillRatePerSec: 0.25,         // ~1 skill per 4s
+    ultThreshold: 100, skillReactionMs: 800,
+  },
+  medium: {
+    preferredRange: 4.0, minRange: 2.0, jitter: 0.18,
+    strafeFreq: 0.9, aaInRange: 0.6,
+    skillRatePerSec: 0.7,          // ~1 skill per 1.4s
+    ultThreshold: 100, skillReactionMs: 350,
+  },
+  hard: {
+    preferredRange: 3.2, minRange: 1.6, jitter: 0.05,
+    strafeFreq: 1.4, aaInRange: 1.0,
+    skillRatePerSec: 1.6,          // ~1 skill per 0.6s
+    ultThreshold: 100, skillReactionMs: 120,
+  },
+};
+
+function tickArenaBot(side, dt) {
+  if (!side || side.hero.dead) return;
+  const enemy = sides[3 - side.idx];
+  if (!enemy) return;
+  // Frusen/rotad/feared/tauntad: AI skippar input — befintliga CC-systemet styr movement
+  if ((side.hero.frozenTime || 0) > 0) return;
+  if ((side.heroFearTime || 0) > 0) return;
+  if ((side.iceBlockRemaining || 0) > 0) return;
+  const diff = side.botDifficulty || APP.arenaBot?.difficulty || 'medium';
+  const p = BOT_PARAMS[diff] || BOT_PARAMS.medium;
+  // Mål: enemy hero. Om enemy död → stå still nära mitten.
+  let tx, tz, enemyAlive = !enemy.hero.dead;
+  if (enemyAlive) { tx = enemy.hero.x; tz = enemy.hero.z; }
+  else { tx = 0; tz = 35; }   // arena-mitt
+  const dx = tx - side.hero.x, dz = tz - side.hero.z;
+  const d = Math.hypot(dx, dz);
+  // Decision-cache: undvik att spamma applyEvent varje frame
+  side._botState = side._botState || { lastSkillMs: 0, lastAaMs: 0, strafePhase: Math.random() * Math.PI * 2 };
+  const bs = side._botState;
+  const nowMs = performance.now();
+  // === MOVEMENT ===
+  let moveX = 0, moveZ = 0;
+  if (d > 0.05) {
+    const nx = dx / d, nz = dz / d;
+    if (d > p.preferredRange + 0.4) {
+      moveX = nx; moveZ = nz;             // chase
+    } else if (d < p.minRange) {
+      moveX = -nx; moveZ = -nz;           // kite
+    } else {
+      // Strafa vinkelrätt
+      const phase = Math.sin(nowMs * 0.001 * p.strafeFreq + bs.strafePhase);
+      const side_ = phase > 0 ? 1 : -1;
+      moveX = -nz * side_; moveZ = nx * side_;
+    }
+    // Jitter för easier-bot
+    moveX += (Math.random() - 0.5) * p.jitter;
+    moveZ += (Math.random() - 0.5) * p.jitter;
+    const ml = Math.hypot(moveX, moveZ);
+    if (ml > 0.01) { moveX /= ml; moveZ /= ml; }
+  }
+  applyMovement(side, moveX, moveZ, dt);
+  // Vänd alltid mot fienden (för korrekt skill-aim)
+  if (enemyAlive && d > 0.01) {
+    side.hero.facingX = dx / d;
+    side.hero.facingZ = dz / d;
+  }
+  // === AA ===
+  const aaRange = side.attackRange || 4.0;
+  if (enemyAlive && d <= aaRange + 0.5) {
+    if (!side.aaActive && nowMs - bs.lastAaMs > 250) {
+      applyEvent(side, { type: 'aa' });
+      bs.lastAaMs = nowMs;
+    }
+  } else if (side.aaActive && d > aaRange + 2.0) {
+    // Out of range — släpp AA
+    applyEvent(side, { type: 'aa-cancel' });
+  }
+  // === SKILLS ===
+  if (!side.skills || !enemyAlive) return;
+  // Sannolikhet att casta skill: p.skillRatePerSec * dt
+  if (Math.random() < p.skillRatePerSec * dt && nowMs - bs.lastSkillMs > p.skillReactionMs) {
+    const candidates = [];
+    for (const k of ['q', 'f', 'e']) {
+      if (side.skills[k] && side.skills[k].cd <= 0) candidates.push(k);
+    }
+    if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX) candidates.push('r');
+    if (candidates.length === 0) return;
+    const k = candidates[Math.floor(Math.random() * candidates.length)];
+    const aimX = d > 0.01 ? dx / d : side.hero.facingX;
+    const aimZ = d > 0.01 ? dz / d : side.hero.facingZ;
+    // Sätt targetId/Type så tap-aim:ade skills (t.ex. Soul Drain) hittar opp-hero
+    if (arenaState && arenaState.heroTargets) {
+      const oppIdx = 3 - side.idx;
+      if (!arenaState.heroTargets[oppIdx]) {
+        arenaState.heroTargets[oppIdx] = {
+          id: -200 + oppIdx, isArenaHero: true, sideIdx: oppIdx,
+          get mesh() { return sides[this.sideIdx]?.mesh; },
+        };
+      }
+      side.targetId = arenaState.heroTargets[oppIdx].id;
+      side.targetType = 'arena-hero';
+    }
+    applyEvent(side, { type: 'skill', key: k, dx: aimX, dz: aimZ, tap: true });
+    bs.lastSkillMs = nowMs;
+  }
+}
 
 // Ult-energy: fills 0.5%/s passivt, +5% per skill-hit, +3% per AA-hit.
 // Vid 100% kan hero casta sin ultimate (key='r').
@@ -11980,11 +12113,9 @@ const lobbyCodeInputEl = document.getElementById('lobby-code-input');
 const lobbyHeroesEl = document.getElementById('lobby-heroes');
 const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
-const lobbyArenaModeEl = document.getElementById('lobby-arena-mode');
-const lobbyArena1v1El = document.getElementById('lobby-arena-1v1');
-const lobbyArena2v2El = document.getElementById('lobby-arena-2v2');
+const lobbyArenaBotEl = document.getElementById('lobby-arena-bot');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaModeEl, lobbyArena1v1El, lobbyArena2v2El]) {
+  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -11993,9 +12124,7 @@ function showLobbyPanel(which) {
   else if (which === 'heroes') lobbyHeroesEl.classList.add('visible');
   else if (which === 'items') lobbyItemsEl.classList.add('visible');
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
-  else if (which === 'arena-mode') lobbyArenaModeEl.classList.add('visible');
-  else if (which === 'arena-1v1') lobbyArena1v1El.classList.add('visible');
-  else if (which === 'arena-2v2') lobbyArena2v2El.classList.add('visible');
+  else if (which === 'arena-bot') lobbyArenaBotEl.classList.add('visible');
 }
 
 function showLobbyError(msg) {
@@ -12232,6 +12361,15 @@ function setupMatch(mode) {
       sides[3] = createSide(3);
       sides[4] = createSide(4);
     }
+    // Arena Wars Singleplayer vs bot: skapa sides[2] som bot-styrd
+    if (APP.gameMode === 'arena1v1' && APP.arenaBot && APP.arenaBot.active) {
+      sides[2] = createSide(2);
+      sides[2].isBot = true;
+      sides[2].botDifficulty = APP.arenaBot.difficulty || 'medium';
+      // Random hero för boten (välj från tillgängliga)
+      const heroes = ['magiker', 'legolas', 'gimlu'];
+      sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
+    }
   } else if (mode === 'host') {
     APP.localSide = 1;
     APP.twoSides = true;
@@ -12401,9 +12539,15 @@ function returnToLobby() {
   resetIncomeTickTracking();
 }
 
-document.getElementById('btn-host').addEventListener('click', hostGame);
+document.getElementById('btn-host').addEventListener('click', () => {
+  APP.gameMode = 'classic';
+  APP.arenaBot = { active: false, difficulty: null };
+  hostGame();
+});
 document.getElementById('btn-host-cancel').addEventListener('click', cancelHosting);
 document.getElementById('btn-join').addEventListener('click', () => {
+  APP.gameMode = 'classic';
+  APP.arenaBot = { active: false, difficulty: null };
   lobbyJoinMsgEl.textContent = '';
   showLobbyPanel('joining');
   setTimeout(() => lobbyCodeInputEl.focus(), 50);
@@ -12427,7 +12571,11 @@ lobbyCodeDisplayEl.addEventListener('click', () => {
     });
   }
 });
-document.getElementById('btn-solo').addEventListener('click', () => showHeroPick('solo'));
+document.getElementById('btn-solo').addEventListener('click', () => {
+  APP.gameMode = 'classic';
+  APP.arenaBot = { active: false, difficulty: null };
+  showHeroPick('solo');
+});
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
 document.getElementById('btn-howto').addEventListener('click', () => { renderHowto(); showLobbyPanel('howto'); });
@@ -12442,48 +12590,43 @@ if (btnItemDetailBack) btnItemDetailBack.addEventListener('click', closeItemDeta
 if (heroDetailModal) heroDetailModal.addEventListener('click', (e) => { if (e.target === heroDetailModal) closeHeroDetailModal(); });
 if (itemDetailModal) itemDetailModal.addEventListener('click', (e) => { if (e.target === itemDetailModal) closeItemDetailModal(); });
 
-// ---- Arena lobby ----
+// ---- Arena Wars ----
 function hostArena() {
   APP.gameMode = 'arena1v1';
+  APP.arenaBot = { active: false, difficulty: null };
   hostGame();
 }
 function joinArenaShow() {
   APP.gameMode = 'arena1v1';
+  APP.arenaBot = { active: false, difficulty: null };
   lobbyJoinMsgEl.textContent = '';
   showLobbyPanel('joining');
   setTimeout(() => lobbyCodeInputEl.focus(), 50);
 }
-function soloArenaStart() {
+function arenaSoloShow() {
+  // Visa difficulty-väljare innan vi startar bot-matchen
+  showLobbyPanel('arena-bot');
+}
+function arenaSoloStartWithBot(difficulty) {
   APP.gameMode = 'arena1v1';
   APP.arenaTeamSize = 1;
+  APP.arenaBot = { active: true, difficulty };
   showHeroPick('solo');
 }
-function soloArena2v2Start() {
-  APP.gameMode = 'arena1v1';
-  APP.arenaTeamSize = 2;
-  showHeroPick('solo');
-}
-const btnArena = document.getElementById('btn-arena');
-if (btnArena) btnArena.addEventListener('click', () => showLobbyPanel('arena-mode'));
-const btnArenaBack = document.getElementById('btn-arena-back');
-if (btnArenaBack) btnArenaBack.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('main'); });
-const btnArena1v1 = document.getElementById('btn-arena-1v1');
-if (btnArena1v1) btnArena1v1.addEventListener('click', () => showLobbyPanel('arena-1v1'));
-const btnArena1v1Back = document.getElementById('btn-arena-1v1-back');
-if (btnArena1v1Back) btnArena1v1Back.addEventListener('click', () => showLobbyPanel('arena-mode'));
 const btnArenaHost = document.getElementById('btn-arena-host');
 if (btnArenaHost) btnArenaHost.addEventListener('click', hostArena);
 const btnArenaJoin = document.getElementById('btn-arena-join');
 if (btnArenaJoin) btnArenaJoin.addEventListener('click', joinArenaShow);
 const btnArenaSolo = document.getElementById('btn-arena-solo');
-if (btnArenaSolo) btnArenaSolo.addEventListener('click', soloArenaStart);
-// 2v2 mode
-const btnArena2v2 = document.getElementById('btn-arena-2v2');
-if (btnArena2v2) btnArena2v2.addEventListener('click', () => showLobbyPanel('arena-2v2'));
-const btnArena2v2Back = document.getElementById('btn-arena-2v2-back');
-if (btnArena2v2Back) btnArena2v2Back.addEventListener('click', () => showLobbyPanel('arena-mode'));
-const btnArena2v2Solo = document.getElementById('btn-arena-2v2-solo');
-if (btnArena2v2Solo) btnArena2v2Solo.addEventListener('click', soloArena2v2Start);
+if (btnArenaSolo) btnArenaSolo.addEventListener('click', arenaSoloShow);
+const btnArenaBotBack = document.getElementById('btn-arena-bot-back');
+if (btnArenaBotBack) btnArenaBotBack.addEventListener('click', () => { APP.gameMode = 'classic'; showLobbyPanel('main'); });
+const btnBotEasy = document.getElementById('btn-bot-easy');
+if (btnBotEasy) btnBotEasy.addEventListener('click', () => arenaSoloStartWithBot('easy'));
+const btnBotMedium = document.getElementById('btn-bot-medium');
+if (btnBotMedium) btnBotMedium.addEventListener('click', () => arenaSoloStartWithBot('medium'));
+const btnBotHard = document.getElementById('btn-bot-hard');
+if (btnBotHard) btnBotHard.addEventListener('click', () => arenaSoloStartWithBot('hard'));
 
 // ============================================================
 // HUVUDLOOP
@@ -12521,6 +12664,10 @@ function simulateAll(dt) {
         ri.events = [];
       }
     }
+  }
+  // Arena solo vs bot: driv sides[2] med AI
+  if (APP.gameMode === 'arena1v1' && APP.mode === 'solo' && sides[2] && sides[2].isBot && arenaState.phase === 'fight') {
+    tickArenaBot(sides[2], dt);
   }
   // (Klassisk multiplayer-fjärrsidans input hanteras av servern numera.)
   // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
