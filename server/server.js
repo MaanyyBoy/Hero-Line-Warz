@@ -8,7 +8,10 @@ const engine = require('./game-engine.js');
 
 const PORT = process.env.PORT || 3000;
 const TICK_RATE = 30;                       // simuleringssteg per sekund
-const STATE_RATE = 30;                      // state-broadcasts per sekund (höjt från 20 för smoothness)
+// State-broadcast 20 Hz: klienter interpolerar mesh.position med 80 ms halflife,
+// så 20 Hz ger samma visuella smoothness som 30 Hz men sparar CPU + bandbredd
+// (viktigt på Render's free-tier-server).
+const STATE_RATE = 20;
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
 // Grace-period när host disconnect:ar utan client. Rummet behålls så

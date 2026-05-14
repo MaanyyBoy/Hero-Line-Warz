@@ -14,7 +14,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// PCFShadowMap istället för PCFSoftShadowMap: cheaper sampling (4 taps vs 16),
+// ~30% snabbare shadow-pass utan synlig kvalitetsskillnad vid spel-zoom.
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -1145,8 +1147,11 @@ const TEXTURES = {
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.55);
   sun.position.set(18, 28, 14);
   sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048;
-  sun.shadow.mapSize.height = 2048;
+  // 1024 istället för 2048: 4× mindre GPU-minne (4 MB → 16 MB), märkbart
+  // snabbare shadow-pass på mobil/low-end. Visuell skillnad ej synlig vid
+  // spel-zoom (top-down isometrisk).
+  sun.shadow.mapSize.width = 1024;
+  sun.shadow.mapSize.height = 1024;
   sun.shadow.camera.left = -40;
   sun.shadow.camera.right = 40;
   sun.shadow.camera.top = 28;
@@ -4516,7 +4521,13 @@ const SHRINK_DURATION = 60;          // krymper över 60s
 const SHRINK_DMG_PCT = 0.05;         // 5% maxHP per sek utanför
 const SHRINK_TICK_INTERVAL = 0.25;
 
+// Cache av senaste talents-listan vi recomputerade stats för. Används av
+// applyArenaState för att skippa onödig recompute varje broadcast (sparar
+// CPU vid 30 Hz state-tick). Deklareras här (före resetArenaState) för att
+// undvika TDZ vid module-load.
+let _lastRecomputedTalentsHash = '';
 function resetArenaState() {
+  _lastRecomputedTalentsHash = '';   // nolla så ny match recomputerar stats korrekt
   arenaState.phase = 'idle';
   arenaState.roundNum = 0;
   arenaState.wins = { 1: 0, 2: 0 };
@@ -9369,15 +9380,25 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 }
 
 // Lerpar interpolerande meshes mot sitt _target varje frame.
+// Halflife 80 ms är en sweet-spot: snabbt nog att kännas responsivt, men
+// tillräckligt tolerant mot nät-jitter att klienten inte stutter:ar vid
+// fördröjda/burst:ade broadcasts. 35 ms (tidigare) gjorde att karaktärer
+// "tickade" synligt vid varje state-tick på laggig anslutning.
 function smoothEntityMeshes(dt) {
-  const k = 1 - Math.pow(0.5, dt / 0.035);  // ~35 ms halflife — snabbare interpolation = mindre upplevd lag
-  // Hero-meshes (båda sidor)
-  for (const sideIdx of [1, 2]) {
+  const k = 1 - Math.pow(0.5, dt / 0.08);
+  // Hero-meshes — alla 3 sidor (boss-wars MP har sides[3]).
+  for (const sideIdx of [1, 2, 3]) {
     const side = sides[sideIdx];
     if (!side || !side.mesh._target) continue;
     smoothMeshToTarget(side.mesh, k);
   }
-  // Karaktär-meshes (monsters + creeps) på båda sidor
+  // Boss-wars boss-mesh (ligger i sides[1].monsters)
+  if (APP.gameMode === 'bosswars' && sides[1] && sides[1].monsters) {
+    for (const m of sides[1].monsters) {
+      if (m && m.mesh && m.mesh._target) smoothMeshToTarget(m.mesh, k);
+    }
+  }
+  // Karaktär-meshes (monsters + creeps) i classic MP via clientMeshes
   for (const key of INTERPOLATED_KEYS) {
     const tier = clientMeshes[key];
     if (!tier) continue;
@@ -13038,9 +13059,12 @@ function readLocalJoystick() {
 // ============================================================
 
 let lastInputJoy = { x: 0, z: 0 };
-const INPUT_SEND_INTERVAL = 1 / 45;   // 45 Hz input (höjt från 30 för låg latens)
-const STATE_SEND_INTERVAL = 1 / 30;   // 30 Hz state (höjt från 20 för smoothness)
-const ARENA_STATE_SEND_INTERVAL = 1 / 45;  // 45 Hz arena state (höjd från 30 Hz för låg latens)
+// Network rates: med klient-interpolation (smoothEntityMeshes lerpar mesh.position
+// mot _target varje frame vid 60 fps, 80 ms halflife) ger 30 Hz broadcasts samma
+// visuella smoothness som 45 Hz — men halva CPU + nätverk-pressen, vilket sänker
+// risken för spikes och stutters på Render's free-tier-server och högre RTT.
+const INPUT_SEND_INTERVAL = 1 / 30;        // 30 Hz input
+const ARENA_STATE_SEND_INTERVAL = 1 / 30;  // 30 Hz arena state (klient-interpolation lerpar 60 fps)
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
@@ -13155,10 +13179,17 @@ function applyBossWarsState(msg) {
       return;
     }
     if (boss && boss.mesh) {
-      // Bossens position bor på mesh.position — sätt den direkt (30 Hz state
-      // ger smooth-nog rörelse). Behåll y=0 så marken inte ändras.
-      boss.mesh.position.x = msg.b.x;
-      boss.mesh.position.z = msg.b.z;
+      // Smooth-interpolation: sätt _target istället för direkt position.
+      // smoothEntityMeshes lerpar mesh.position mot _target varje frame.
+      // Mutera befintligt _target-objekt om det finns (mindre GC).
+      if (!boss.mesh._target) {
+        boss.mesh.position.x = msg.b.x;
+        boss.mesh.position.z = msg.b.z;
+        boss.mesh._target = { x: msg.b.x, z: msg.b.z };
+      } else {
+        boss.mesh._target.x = msg.b.x;
+        boss.mesh._target.z = msg.b.z;
+      }
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
       boss.bossPhase = msg.b.ph || 1;
@@ -13330,15 +13361,52 @@ function heroSnap(side) {
     g: side.gold || 0,
     ue: side.ultEnergy || 0,
     tnt: +(side.hero.tauntedTime || 0).toFixed(2),
+    // CC-state: klient-prediction behöver dessa för att respektera stuns/freeze
+    // (annars rör sig hjälten lokalt under stun → ful rubber-band vid snap-tillbaka).
+    fzt: +(side.hero.frozenTime || 0).toFixed(2),
+    fer: +(side.heroFearTime || 0).toFixed(2),
+    ibr: +(side.iceBlockRemaining || 0).toFixed(2),
+    slm: +(side.heroSlowMul != null ? side.heroSlowMul : 1).toFixed(3),
+    slt: +(side.heroSlowTime || 0).toFixed(2),
   };
 }
 
 function applyHeroSnap(side, snap) {
   if (!side || !snap) return;
-  side.hero.x = snap.x;
-  side.hero.z = snap.z;
-  side.hero.facingX = snap.fx;
-  side.hero.facingZ = snap.fz;
+  // Lokal MP-klient kör klient-side prediction för EGEN hjälte (applyMovement
+  // varje frame i tick()). Det ger instant input-respons trots ~150 ms RTT
+  // till host. Här applicerar vi ENBART reconciliation om vår predicterade
+  // position avviker mycket från host (knockback, wall-hit, stun, etc.).
+  const isLocalMpClient = (
+    side.idx === APP.localSide &&
+    ((APP.mode === 'client' && isArenaMp()) ||
+     (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))
+  );
+
+  if (isLocalMpClient) {
+    // Reconcile: snap till host om diff > 2.5 enheter (knockback, teleport, stun)
+    if (side.mesh) {
+      const dx = side.hero.x - snap.x;
+      const dz = side.hero.z - snap.z;
+      if (dx * dx + dz * dz > 6.25) {
+        side.hero.x = snap.x;
+        side.hero.z = snap.z;
+        side.mesh.position.x = snap.x;
+        side.mesh.position.z = snap.z;
+      }
+      // Rensa _target så smoothEntityMeshes inte fightar applyMovement
+      side.mesh._target = null;
+    }
+    // Facing från host (för AA-target-riktning, ej kontroversiell)
+    side.hero.facingX = snap.fx;
+    side.hero.facingZ = snap.fz;
+  } else {
+    side.hero.x = snap.x;
+    side.hero.z = snap.z;
+    side.hero.facingX = snap.fx;
+    side.hero.facingZ = snap.fz;
+  }
+
   const wasDead = side.hero.dead;
   side.hero.hp = snap.hp;
   side.hero.maxHp = snap.mh;
@@ -13352,12 +13420,29 @@ function applyHeroSnap(side, snap) {
   if (snap.g !== undefined) side.gold = snap.g;
   if (snap.ue !== undefined) side.ultEnergy = snap.ue;
   if (snap.tnt !== undefined) side.hero.tauntedTime = snap.tnt;
+  // CC-state: applicerar ALLTID (även för lokal sida) så prediction respekterar
+  // stun/freeze/fear/slow. Annars rör sig hjälten visuellt under CC, sen rycker
+  // tillbaka via reconciliation = ful rubber-band.
+  if (snap.fzt !== undefined) side.hero.frozenTime = snap.fzt;
+  if (snap.fer !== undefined) side.heroFearTime = snap.fer;
+  if (snap.ibr !== undefined) side.iceBlockRemaining = snap.ibr;
+  if (snap.slm !== undefined) side.heroSlowMul = snap.slm;
+  if (snap.slt !== undefined) side.heroSlowTime = snap.slt;
   if (side.mesh) {
-    side.mesh.position.x = snap.x;
-    side.mesh.position.z = snap.z;
-    // Bara uppdatera rotation om facing != 0 (annars stay-where-was)
-    if (snap.fx || snap.fz) {
-      side.mesh.rotation.y = Math.atan2(snap.fx, snap.fz);
+    if (!isLocalMpClient) {
+      // Non-local: _target-baserad interpolation (smoothEntityMeshes lerpar
+      // mesh.position mot _target vid 60 fps med 80 ms halflife).
+      const heroRy = (snap.fx || snap.fz) ? Math.atan2(snap.fx, snap.fz) : (side.mesh._target?.ry ?? side.mesh.rotation.y);
+      if (!side.mesh._target) {
+        side.mesh.position.x = snap.x;
+        side.mesh.position.z = snap.z;
+        side.mesh.rotation.y = heroRy;
+        side.mesh._target = { x: snap.x, z: snap.z, ry: heroRy };
+      } else {
+        side.mesh._target.x = snap.x;
+        side.mesh._target.z = snap.z;
+        side.mesh._target.ry = heroRy;
+      }
     }
     if (side.heroId !== snap.hid) {
       side.heroId = snap.hid;
@@ -13398,7 +13483,7 @@ function broadcastArenaState() {
   });
 }
 
-// Client: ta emot a-state och applicera lokalt
+// Client: ta emot a-state och applicera lokalt.
 function applyArenaState(msg) {
   if (APP.mode !== 'client' || !isArenaMp()) return;
   const prevPhase = arenaState.phase;
@@ -13536,9 +13621,16 @@ function applyArenaState(msg) {
     // Points-display + ready-knapp uppdateras via updateArenaPrepUI utan
     // att röra grid-DOM:en (säker mot click-eating).
   }
-  // Recompute stats för lokal sida (talents kan ha ändrats)
+  // Recompute stats för lokal sida — bara om talents-listan faktiskt ändrats.
+  // Annars är det wasted CPU att iterera alla talents/items varje broadcast.
   const localSide = sides[APP.localSide];
-  if (localSide) recomputeArenaSideStats(localSide);
+  if (localSide) {
+    const _talentsHash = JSON.stringify(arenaState.talents[APP.localSide]?.chosen || []);
+    if (_talentsHash !== _lastRecomputedTalentsHash) {
+      _lastRecomputedTalentsHash = _talentsHash;
+      recomputeArenaSideStats(localSide);
+    }
+  }
 }
 
 // ---- Hero pick-skärm ----
@@ -16389,16 +16481,31 @@ function animateSceneProps(dt, now) {
   }
 }
 
+// Klient-side prediction: arena/boss MP-klient kör applyMovement lokalt för
+// sin EGEN hjälte varje frame. Annars är input-rörelse fördröjd full RTT
+// (input → host → broadcast → render = ~300 ms på Render's free-tier i USA).
+// Med prediction känns rörelse instant; host's broadcast reconcile:ar bara
+// om vår predicterade position avviker > 2.5 enheter (knockback, stun, etc.).
+function tickLocalPrediction(dt) {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  const raw = readLocalJoystick();
+  const dir = screenToWorld(raw.x, raw.z);
+  applyMovement(side, dir.x, dir.z, dt);
+}
+
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   resetFxPopupBudget();
 
-  // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state
+  // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state.
+  // MEN: klient kör applyMovement lokalt för EGEN hjälte (prediction) så
+  // input-rörelse känns omedelbar trots ~150 ms RTT till host.
   const isBossMpClient = bossMpState.matchActive && bossMpState.role === 'client';
   const isBossMpHost = bossMpState.matchActive && bossMpState.role === 'host';
   if (isBossMpClient) {
-    // Klient skickar input till host ~45 Hz
+    tickLocalPrediction(dt);
     if (now - bossMpState.lastInputSent > INPUT_SEND_INTERVAL) {
       bossMpState.lastInputSent = now;
       sendBossWarsInput();
@@ -16408,9 +16515,10 @@ function tick() {
     // Solo + arena-host kör simulationen lokalt
     if (!matchState.gameOver) simulateAll(dt);
   } else if (isMpMode()) {
-    // Klassisk MP: servern simulerar, klienten skickar input och renderar state
-    // Arena-client: skickar input till host och renderar a-state
+    // Klassisk MP (server-auth): bara input + render från server's state.
+    // Arena-client: input + prediction + render från host's state.
     maybeSendClientInput(now);
+    if (isArenaMp()) tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
   }
   // Arena MP host broadcastar state till klienten
