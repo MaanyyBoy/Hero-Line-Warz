@@ -6539,6 +6539,11 @@ function updateMonsters(side, dt) {
       if (m.poisonRemaining <= 0) m.poisonStacks = 0;
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
+    // Gandulf Soul Mark DoT (5% current HP/sek + healar caster)
+    if (m.gandulfMarkRemaining > 0) {
+      tickGandulfMarkClient(m, dt);
+      if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
+    }
     // Boss/miniboss: aura-tick varje frame
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
     // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
@@ -6722,6 +6727,11 @@ function updatePlayerCreeps(side, dt) {
       const s = c.poisonStacks;
       c.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
       if (c.poisonRemaining <= 0) c.poisonStacks = 0;
+      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Gandulf Soul Mark DoT
+    if (c.gandulfMarkRemaining > 0) {
+      tickGandulfMarkClient(c, dt);
       if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
     }
     // Frusen — hoppa över
@@ -9129,19 +9139,54 @@ function gandulfCdrMul(side) {
   // Kvar för bakåtkompabilitet — passive ger inte längre CDR
   return 1;
 }
+// Gandulf passive — Soul Mark: 3 OLIKA skills på samma target inom 3s → target
+// får DoT (5% current HP/sek i 3s) som även healar Gandulf 10% max HP/sek.
+// Ersätter tidigare shield-mekanik (5% per hit + 30% vid 3 hits).
+const GANDULF_MARK_DURATION = 3.0;
+const GANDULF_MARK_WINDOW = 3.0;
+const GANDULF_MARK_DOT_PCT = 0.05;
+const GANDULF_MARK_HEAL_PCT = 0.10;
+
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
   side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
-  // +5% maxHP shield per hit (stackar additivt, capad på maxHP).
-  // Popup hanteras av checkShieldGain (deltektion baserad på diff).
-  side.shield = Math.min(side.hero.maxHp, (side.shield || 0) + side.hero.maxHp * GANDULF_SHIELD_PER_HIT_PCT);
-  if (target && typeof target === 'object') {
-    target.gandulfHits = (target.gandulfHits || 0) + 1;
-    if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
-      const amt = side.hero.maxHp * GANDULF_SHIELD_PCT;
-      side.shield = Math.max(side.shield || 0, amt);
+  // Mark-tracking: 3 OLIKA skills på samma target inom 3s → applicera DoT/heal
+  if (target && typeof target === 'object' && target.id != null) {
+    const skillKey = side._currentSkillKey;
+    if (!skillKey) return;
+    const now = performance.now() / 1000;
+    if (!side._gandulfHits) side._gandulfHits = new Map();
+    let hits = side._gandulfHits.get(target.id);
+    if (!hits) { hits = []; side._gandulfHits.set(target.id, hits); }
+    const cutoff = now - GANDULF_MARK_WINDOW;
+    for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t < cutoff) hits.splice(i, 1);
+    if (hits.some(h => h.skill === skillKey)) return;
+    hits.push({ skill: skillKey, t: now });
+    if (hits.length >= 3) {
+      target.gandulfMarkRemaining = GANDULF_MARK_DURATION;
+      target.gandulfMarkCasterSideIdx = side.idx;
+      side._gandulfHits.delete(target.id);
     }
+  }
+}
+
+// Tick Soul Mark DoT på target. DoT skadar 5% current HP/sek + healar caster 10% maxHP/sek.
+// Anropas från solo monster/creep update-loopar.
+function tickGandulfMarkClient(target, dt) {
+  if (!target || !target.gandulfMarkRemaining || target.gandulfMarkRemaining <= 0) return;
+  if ((target.hp || 0) <= 0) { target.gandulfMarkRemaining = 0; return; }
+  target.gandulfMarkRemaining -= dt;
+  const dotDmg = target.hp * GANDULF_MARK_DOT_PCT * dt;
+  target.hp -= dotDmg;
+  const caster = sides[target.gandulfMarkCasterSideIdx];
+  if (caster && !caster.hero.dead) {
+    const heal = caster.hero.maxHp * GANDULF_MARK_HEAL_PCT * dt;
+    caster.hero.hp = Math.min(caster.hero.maxHp, caster.hero.hp + heal);
+  }
+  if (target.gandulfMarkRemaining <= 0) {
+    target.gandulfMarkRemaining = 0;
+    target.gandulfMarkCasterSideIdx = 0;
   }
 }
 
@@ -9573,6 +9618,12 @@ function applyEvent(side, ev) {
     // skulle annars fylla ult proportionellt till antal targets träffade).
     if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
       side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
+      // Gandulf Soul Mark passive: tracka vilken skill träffade target
+      side._currentSkillKey = ev.key;
+    } else if (ev.key === 'r') {
+      // Ult: räkna som sin egen skill för Soul Mark (annars stale Q/F/E-key
+      // från förra cast skulle göra ult-tickar bidra som "samma skill")
+      side._currentSkillKey = 'r';
     }
     if (ev.key === 'r') {
       hostCastUlt(side, dx, dz);

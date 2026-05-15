@@ -620,18 +620,57 @@ function gandulfCdrMul(side) {
   // Kvar för bakåtkompabilitet — passive ger inte längre CDR
   return 1;
 }
+// Gandulf passive — Soul Mark: 3 OLIKA skills på samma target inom 3s → target
+// får DoT (5% current HP/sek i 3s) som även healar Gandulf 10% max HP/sek.
+// Ersätter tidigare shield-mekanik (5% per hit + 30% vid 3 hits).
+const GANDULF_MARK_DURATION = 3.0;
+const GANDULF_MARK_WINDOW = 3.0;
+const GANDULF_MARK_DOT_PCT = 0.05;    // 5% current HP/sek
+const GANDULF_MARK_HEAL_PCT = 0.10;   // 10% Gandulfs max HP/sek
+
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
   side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
-  // +5% maxHP shield per hit (stackar additivt, capad på maxHP)
-  side.shield = Math.min(side.hero.maxHp, (side.shield || 0) + side.hero.maxHp * GANDULF_SHIELD_PER_HIT_PCT);
-  if (target && typeof target === 'object') {
-    target.gandulfHits = (target.gandulfHits || 0) + 1;
-    if (target.gandulfHits % GANDULF_SHIELD_HITS === 0) {
-      const amt = side.hero.maxHp * GANDULF_SHIELD_PCT;
-      side.shield = Math.max(side.shield || 0, amt);
+  // Mark-tracking: registrera vilken skill som träffade target. Vid 3 olika
+  // skills inom 3s → applicera DoT/heal-mark.
+  if (target && typeof target === 'object' && target.id != null) {
+    const skillKey = side._currentSkillKey;
+    if (!skillKey) return;
+    const now = Date.now() / 1000;
+    if (!side._gandulfHits) side._gandulfHits = new Map();
+    let hits = side._gandulfHits.get(target.id);
+    if (!hits) { hits = []; side._gandulfHits.set(target.id, hits); }
+    // Rensa entries äldre än 3s
+    const cutoff = now - GANDULF_MARK_WINDOW;
+    for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t < cutoff) hits.splice(i, 1);
+    // Skippa om denna skill redan registrerad i fönstret
+    if (hits.some(h => h.skill === skillKey)) return;
+    hits.push({ skill: skillKey, t: now });
+    if (hits.length >= 3) {
+      target.gandulfMarkRemaining = GANDULF_MARK_DURATION;
+      target.gandulfMarkCasterSideIdx = side.idx;
+      side._gandulfHits.delete(target.id);
     }
+  }
+}
+
+// Tick Soul Mark DoT på monster/creep/opp.hero. Anropas från update-loopar.
+// DoT skadar 5% current HP/sek, healar caster 10% max HP/sek.
+function tickGandulfMark(state, target, dt) {
+  if (!target || !target.gandulfMarkRemaining || target.gandulfMarkRemaining <= 0) return;
+  if ((target.hp || 0) <= 0) { target.gandulfMarkRemaining = 0; return; }
+  target.gandulfMarkRemaining -= dt;
+  const dotDmg = target.hp * GANDULF_MARK_DOT_PCT * dt;
+  target.hp -= dotDmg;
+  const caster = state.sides[target.gandulfMarkCasterSideIdx];
+  if (caster && !caster.hero.dead) {
+    const heal = caster.hero.maxHp * GANDULF_MARK_HEAL_PCT * dt;
+    caster.hero.hp = Math.min(caster.hero.maxHp, caster.hero.hp + heal);
+  }
+  if (target.gandulfMarkRemaining <= 0) {
+    target.gandulfMarkRemaining = 0;
+    target.gandulfMarkCasterSideIdx = 0;
   }
 }
 
@@ -1027,6 +1066,11 @@ function updateMonsters(state, side, opp, dt) {
       if (m.poisonRemaining <= 0) m.poisonStacks = 0;
       if (m.hp <= 0) { killMonster(side, i, side); continue; }
     }
+    // Gandulf Soul Mark DoT — 5% current HP/sek + healar caster 10% max HP/sek
+    if (m.gandulfMarkRemaining > 0) {
+      tickGandulfMark(state, m, dt);
+      if (m.hp <= 0) { killMonster(side, i, side); continue; }
+    }
     // Frusen: hoppa över movement + attack-cooldown
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -1392,6 +1436,11 @@ function updatePlayerCreeps(state, side, opp, dt) {
       const s = c.poisonStacks;
       c.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
       if (c.poisonRemaining <= 0) c.poisonStacks = 0;
+      if (c.hp <= 0) { side.playerCreeps.splice(i, 1); continue; }
+    }
+    // Gandulf Soul Mark DoT (klient renderar inte detta direkt — server tickar HP)
+    if (c.gandulfMarkRemaining > 0) {
+      tickGandulfMark(state, c, dt);
       if (c.hp <= 0) { side.playerCreeps.splice(i, 1); continue; }
     }
     // Frusen: hoppa över movement/attack
@@ -3090,6 +3139,9 @@ function applyEvent(state, sideIdx, ev) {
     // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,
     // och 5s lockout startar så ult-gain pausas.
     if (ev.key === 'r') {
+      // Säkerställ att ult-träffar (t.ex. Soul Drain-tick) räknas som 'r' i
+      // Gandulf Soul Mark-tracking istället för stale Q/F/E från förra cast.
+      side._currentSkillKey = 'r';
       if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX && (side._ultLockoutTime || 0) <= 0) {
         side.ultEnergy = 0;
         side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
@@ -3099,6 +3151,8 @@ function applyEvent(state, sideIdx, ev) {
     // Q/F/E skill-cast: reset per-cast ult-gain-budget så AoE-hits inte
     // proportionellt fyller ult (leap som träffar 20 mobs gav 100% direkt).
     side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
+    // Spara aktuell skill-key så onGandulfSkillHit kan tracka 3-olika-skills-mark
+    side._currentSkillKey = ev.key;
     // Om tap (ingen dx/dz), använd target som aim. Annars använd givet drag-riktning.
     let dx = ev.dx, dz = ev.dz;
     const useTargetAim = (ev.tap === true) && side.targetId;
