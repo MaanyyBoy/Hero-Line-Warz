@@ -5407,6 +5407,11 @@ function createSide(idx) {
     ironWillExplosions: [],
     legolusAaCounter: 0,
     legolusSplitPending: false,
+    // Shadow Volley (Legolus ult) state — solo/arena/boss tickas lokalt,
+    // line wars synkas via snap (lInv/lAa/TP).
+    legolusInvisRemaining: 0,
+    legolusUltAaPending: false,
+    thornPoolsLocal: [],
     gimluDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
@@ -6613,20 +6618,22 @@ function updateMonsters(side, dt) {
       continue;
     }
 
-    // Aggro mot hjälten
+    // Aggro mot hjälten. Legolus i Shadow Volley-invis ses ej av fiender —
+    // aggro/atk skippas (gäller Boss Wars-boss också, han tappar lock).
     const dxh = heroX - m.mesh.position.x;
     const dzh = heroZ - m.mesh.position.z;
     const distHero = Math.hypot(dxh, dzh);
-    if (!heroAlive) m.chasing = false;
+    const heroVisible = heroAlive && !((targetSide.legolusInvisRemaining || 0) > 0);
+    if (!heroVisible) m.chasing = false;
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE && !m.isBossWarsBoss) m.chasing = false;
-    // Boss Wars: bossen jagar ALLTID hjälten oavsett avstånd
-    if (m.isBossWarsBoss && heroAlive) m.chasing = true;
+    // Boss Wars: bossen jagar ALLTID hjälten oavsett avstånd (men förlorar lock om invis)
+    if (m.isBossWarsBoss && heroVisible) m.chasing = true;
 
     m.atkCd = Math.max(0, m.atkCd - dt);
     const mAtkRange = m.attackRange || 1.2;
     const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
-    if (heroAlive && distHero < mAtkRange && m.atkCd <= 0) {
+    if (heroVisible && distHero < mAtkRange && m.atkCd <= 0) {
       damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = mAtkInterval;
       spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
@@ -7026,6 +7033,9 @@ function respawnHero(side) {
   side.titansBlockPending = false;
   side.lingShieldHp = 0;
   side.lingShieldRefreshTimer = 0.5;
+  // Shadow Volley state: rensa invis + aaPending så hero inte är osynlig på respawn
+  side.legolusInvisRemaining = 0;
+  side.legolusUltAaPending = false;
 }
 
 // ============================================================
@@ -7138,7 +7148,10 @@ function maintainTargetLock(side) {
   }
   let target = resolveTargetEntity(side, opp);
   let isMonster = side.targetType === 'monster';
-  const range = side.attackRange || HERO_ATTACK_RANGE;
+  const baseRange = side.attackRange || HERO_ATTACK_RANGE;
+  // Shadow Volley empowered AA: dubbel range medan invis-ult-pending (klient-mirror av server).
+  const range = (side.heroId === 'legolas' && side.legolusUltAaPending)
+    ? baseRange * 2.0 : baseRange;
   if (target) {
     const tx = target.mesh.position.x, tz = target.mesh.position.z;
     const d = Math.hypot(tx - side.hero.x, tz - side.hero.z);
@@ -7222,10 +7235,20 @@ function updateHeroAttack(side, dt) {
   const aragurnPassive = aragurnPassiveMul(side);
   const berserkActive = (side.berserkRemaining || 0) > 0;
   const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
-  const aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul;
   // Berserk: 25% lifesteal på AA. Stackar additivt med dash-buff (annars dash overrider).
   const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
   const aaLifesteal = dashBuffed ? dashLs : berserkLs;
+  // Shadow Volley empowered AA: dmg = 25% target's maxHp + stun + thorn pool vid hit.
+  // Revealar Legolus direkt vid spawn av pilen.
+  const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
+  if (ultAaNow) {
+    const tEnt = target.entity;
+    const tMax = tEnt.maxHp || tEnt.hp || aaDmg;
+    aaDmg = tMax * 0.25;
+    side.legolusUltAaPending = false;
+    side.legolusInvisRemaining = 0;
+  }
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
@@ -7233,6 +7256,7 @@ function updateHeroAttack(side, dt) {
     lifestealRatio: aaLifesteal,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
+    legolusUltAa: ultAaNow,
   });
   // Aragurn Berserk: 100% cleave — varje AA träffar ALLA fiender inom AA-range
   // (utöver huvudtarget). Extra projektiler spawnar mot var och en.
@@ -7426,6 +7450,29 @@ function updateProjectiles(side, dt) {
             if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
           }
         }
+      }
+      // Shadow Volley empowered AA hit: stun target + nearby (1.5s) + thorn pool 3s.
+      if (p.legolusUltAa) {
+        const stun = 1.5, stunR = 2.5;
+        if (p.target && !isArenaHeroT && !isArenaOrbT) {
+          p.target.frozenTime = Math.max(p.target.frozenTime || 0, stun);
+        }
+        for (const m of side.monsters) {
+          if (m === p.target) continue;
+          if (Math.hypot(m.mesh.position.x - ix, m.mesh.position.z - iz) < stunR) {
+            m.frozenTime = Math.max(m.frozenTime || 0, stun);
+          }
+        }
+        if (opp) for (const c of opp.playerCreeps) {
+          if (c === p.target) continue;
+          if (Math.hypot(c.mesh.position.x - ix, c.mesh.position.z - iz) < stunR) {
+            c.frozenTime = Math.max(c.frozenTime || 0, stun);
+          }
+        }
+        if (opp && !opp.hero.dead && Math.hypot(opp.hero.x - ix, opp.hero.z - iz) < stunR) {
+          opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, stun);
+        }
+        spawnClientLocalThornPool(side, ix, iz);
       }
       scene.remove(p.mesh); side.projectiles.splice(i, 1); continue;
     }
@@ -9533,7 +9580,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const allyShoutMs = (side.aragurnAllyShoutBuff || 0) > 0 ? SHOUT_BUFF_MS : 0;
   // Ice-block applicerad slow från motspelaren
   const slowMul = (side.heroSlowMul || 1);
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs) * slowMul;
+  // Shadow Volley (Legolus ult): +20% movespeed under invis
+  const invisMs = (side.legolusInvisRemaining || 0) > 0 ? LEGOLUS_INVIS_SPEED_BONUS : 0;
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs) * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -9728,6 +9777,7 @@ const clientMeshes = {
   ironWillExplosions: new Map(),
   bossProjectiles: new Map(),
   bossPools: new Map(),
+  thornPools: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -10274,6 +10324,10 @@ function applyRemoteState(state) {
     // Legolus buff-status
     side.legolusBuffRemaining = sData.lbuf || 0;
     side.legolusDashBuffPending = !!sData.ldash;
+    // Shadow Volley ult-state (invis-timer + empowered-AA-flagga). Klient
+    // sätter hero-mesh-opacity nedan baserat på lInv.
+    side.legolusInvisRemaining = sData.lInv || 0;
+    side.legolusUltAaPending = !!sData.lAa;
     // Gimlu buff-status
     side.titansTauntRemaining = sData.taunt || 0;
     side.ironWillRemaining = sData.iw || 0;
@@ -10458,6 +10512,47 @@ function applyRemoteState(state) {
     if (vtMap && sData.VT) for (const vt of sData.VT) {
       const m = vtMap.get(vt.id);
       if (m && m.userData.vtRing) m.userData.vtRing.material.opacity = 0.65 * vt.life;
+    }
+    // Shadow Volley thorn pools (Legolus ult): grön disc med torn-spikes, AoE-ring.
+    clientReconcileEntities(idx, 'thornPools', sData.TP || [], (e) => {
+      const grp = new THREE.Group();
+      const r = (e && e.r) || 2.5;
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(r * 0.85, r, 36),
+        new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.08;
+      grp.add(ring);
+      const inner = new THREE.Mesh(
+        new THREE.CircleGeometry(r * 0.83, 28),
+        new THREE.MeshBasicMaterial({ color: 0x2a4818, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+      );
+      inner.rotation.x = -Math.PI / 2;
+      inner.position.y = 0.06;
+      grp.add(inner);
+      for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * Math.PI * 2;
+        const rad = r * (0.3 + Math.random() * 0.4);
+        const sp = new THREE.Mesh(
+          new THREE.ConeGeometry(0.10, 0.42, 6),
+          new THREE.MeshStandardMaterial({ color: 0x224410, roughness: 0.75 })
+        );
+        sp.position.set(Math.cos(ang) * rad, 0.20, Math.sin(ang) * rad);
+        sp.rotation.x = (Math.random() - 0.5) * 0.3;
+        grp.add(sp);
+      }
+      grp.userData.tpRing = ring;
+      grp.userData.tpInner = inner;
+      return grp;
+    });
+    const tpMap = clientMeshes.thornPools && clientMeshes.thornPools.get(idx);
+    if (tpMap && sData.TP) for (const tp of sData.TP) {
+      const m = tpMap.get(tp.id);
+      if (m && m.userData.tpRing) {
+        m.userData.tpRing.material.opacity = 0.70 * tp.life;
+        if (m.userData.tpInner) m.userData.tpInner.material.opacity = 0.45 * tp.life;
+      }
     }
     // Gimlu Hammers
     clientReconcileEntities(idx, 'hammers', sData.HM || [], () => {
@@ -11975,17 +12070,126 @@ function applyLaserBeamTick(side) {
   }
 }
 
-// === Legolas ult: Big Arrow + Teleport ===
+// === Legolas ult: Shadow Volley (invis + empowered next-AA + thorn pool) ===
+const LEGOLUS_INVIS_DURATION = 5.0;
+const LEGOLUS_INVIS_SPEED_BONUS = 0.20;
+const LEGOLUS_ULT_AA_STUN_DUR = 1.5;
+const LEGOLUS_ULT_AA_STUN_RADIUS = 2.5;
+const LEGOLUS_THORN_POOL_DURATION = 3.0;
+const LEGOLUS_THORN_POOL_TICK = 0.5;
+const LEGOLUS_THORN_POOL_DMG_PCT = 0.05;
+const LEGOLUS_THORN_POOL_RADIUS = 2.5;
+// Gamla Worldpiercer-konstanter — funktionerna nedan (_legacyHostCastLegolasUlt_UNUSED,
+// tickBigArrows, onLegolasUltHit, disposeArrowMesh) kallas aldrig längre eftersom
+// hostCastLegolasUlt inte spawnar bigArrows. Konstanter behövs för att kodgraf
+// ska parsa (death code). side.legolusUltBuff sätts aldrig — alltid 0.
 const ULT_ARROW_SPEED = 38;
-const ULT_ARROW_MAX_RANGE = 200;     // "global"
-const ULT_ARROW_LENGTH = 5.5;        // ~3 heroes (större och tydligare)
+const ULT_ARROW_MAX_RANGE = 200;
+const ULT_ARROW_LENGTH = 5.5;
 const ULT_ARROW_HIT_RADIUS = 1.8;
 const ULT_ARROW_STUN_DURATION = 1.0;
+const ULT_ARROW_TRAIL_INTERVAL = 0.025;
 const LEGOLUS_ULT_BUFF_DURATION = 5.0;
 const LEGOLUS_ULT_AS_BONUS = 0.30;
-const ULT_ARROW_TRAIL_INTERVAL = 0.025;  // sek mellan trail-spawns
 
+// Shadow Volley cast: invis 5s + +20% movespeed + empowered next-AA pending.
+// Pilen är vanlig AA-projektil men dmg=25%maxHp, stun nearby, lämnar thorn pool.
 function hostCastLegolasUlt(side, dx, dz) {
+  if (side.hero.dead) return;
+  side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
+  side.legolusUltAaPending = true;
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x44aa66, 1.6);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0x44aa66);
+  triggerCameraShake(0.15, 0.20);
+}
+
+// Spawnar en visuell thorn pool på (x,z) och tickar damage 5%maxHp/0.5s i 3s.
+// Server broadcastar TP via snap för line wars; denna används bara i solo/arena/boss.
+function spawnClientLocalThornPool(side, x, z) {
+  const grp = new THREE.Group();
+  const r = LEGOLUS_THORN_POOL_RADIUS;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(r * 0.85, r, 36),
+    new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.08;
+  grp.add(ring);
+  const inner = new THREE.Mesh(
+    new THREE.CircleGeometry(r * 0.83, 28),
+    new THREE.MeshBasicMaterial({ color: 0x2a4818, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  );
+  inner.rotation.x = -Math.PI / 2; inner.position.y = 0.06;
+  grp.add(inner);
+  for (let i = 0; i < 10; i++) {
+    const ang = (i / 10) * Math.PI * 2;
+    const rad = r * (0.3 + Math.random() * 0.4);
+    const sp = new THREE.Mesh(
+      new THREE.ConeGeometry(0.10, 0.42, 6),
+      new THREE.MeshStandardMaterial({ color: 0x224410, roughness: 0.75 })
+    );
+    sp.position.set(Math.cos(ang) * rad, 0.20, Math.sin(ang) * rad);
+    sp.rotation.x = (Math.random() - 0.5) * 0.3;
+    grp.add(sp);
+  }
+  grp.position.set(x, 0, z);
+  scene.add(grp);
+  side.thornPoolsLocal = side.thornPoolsLocal || [];
+  side.thornPoolsLocal.push({
+    mesh: grp, ring, inner, x, z,
+    radius: r, remaining: LEGOLUS_THORN_POOL_DURATION,
+    duration: LEGOLUS_THORN_POOL_DURATION,
+    tickAccum: 0, dmgPct: LEGOLUS_THORN_POOL_DMG_PCT,
+  });
+}
+
+// Tickar lokala thorn pools i solo/arena/boss (line wars använder server-state TP).
+function tickClientThornPools(side, dt) {
+  if (!side.thornPoolsLocal || side.thornPoolsLocal.length === 0) return;
+  const opp = sides[3 - side.idx];
+  for (let i = side.thornPoolsLocal.length - 1; i >= 0; i--) {
+    const p = side.thornPoolsLocal[i];
+    p.remaining -= dt;
+    p.tickAccum += dt;
+    while (p.tickAccum >= LEGOLUS_THORN_POOL_TICK && p.remaining > -LEGOLUS_THORN_POOL_TICK) {
+      p.tickAccum -= LEGOLUS_THORN_POOL_TICK;
+      for (let k = side.monsters.length - 1; k >= 0; k--) {
+        const m = side.monsters[k];
+        if (Math.hypot(m.mesh.position.x - p.x, m.mesh.position.z - p.z) < p.radius) {
+          const dmg = (m.maxHp || m.hp) * p.dmgPct;
+          m.hp -= dmg;
+          if (m.hp <= 0) hostKillMonster(side, k, side);
+        }
+      }
+      if (opp) for (let k = opp.playerCreeps.length - 1; k >= 0; k--) {
+        const c = opp.playerCreeps[k];
+        if (Math.hypot(c.mesh.position.x - p.x, c.mesh.position.z - p.z) < p.radius) {
+          const dmg = (c.maxHp || c.hp) * p.dmgPct;
+          c.hp -= dmg;
+          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      if (opp && !opp.hero.dead && Math.hypot(opp.hero.x - p.x, opp.hero.z - p.z) < p.radius) {
+        damageHero(opp, opp.hero.maxHp * p.dmgPct);
+      }
+    }
+    const lifeR = Math.max(0, p.remaining / p.duration);
+    if (p.ring && p.ring.material) p.ring.material.opacity = 0.70 * lifeR;
+    if (p.inner && p.inner.material) p.inner.material.opacity = 0.45 * lifeR;
+    if (p.remaining <= 0) { scene.remove(p.mesh); side.thornPoolsLocal.splice(i, 1); }
+  }
+}
+
+// Tickar Shadow Volley invis-timer (solo/arena/boss). Vid 0 reveal + cancel aaPending.
+function tickClientLegolusInvis(side, dt) {
+  if ((side.legolusInvisRemaining || 0) <= 0) return;
+  side.legolusInvisRemaining = Math.max(0, side.legolusInvisRemaining - dt);
+  if (side.legolusInvisRemaining <= 0) {
+    side.legolusUltAaPending = false;
+  }
+}
+
+// Dead (Worldpiercer-pilen) — behållen som no-op-stub om något annat anropar funktionen.
+function _legacyHostCastLegolasUlt_UNUSED(side, dx, dz) {
   if (side.hero.dead) return;
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
@@ -13709,10 +13913,12 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
     // Visuell ult-feedback direkt (host's broadcast carry no fx för ult)
     triggerClientVisualSkill(side, 'r');
-    // Klient-prediktion för Legolas Worldpiercer: host broadcastar inte big arrows
-    // via a-state, så utan lokal pil ser klienten ingenting (Decision: predicta).
-    if (isArenaMpClient && side.heroId === 'legolas') {
-      spawnClientLocalBigArrow(side, worldDx, worldDz, tap);
+    // Optimistic klient-prediction för Legolas Shadow Volley: sätt invis-state
+    // direkt så hero blir transparent och empowered-AA är tillgänglig innan
+    // server-snap bekräftar (~150 ms). Server är auktoritativ vid nästa snap.
+    if (side.heroId === 'legolas') {
+      side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
+      side.legolusUltAaPending = true;
     }
     sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
@@ -14868,7 +15074,7 @@ const HERO_INFO = {
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). 6 sek cooldown. Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
     },
     passive: { name: 'Toxic Volley', icon: '☣', desc: 'Var 3:e auto-attack blir splittad: huvudtarget + 2 närmaste extra fiender inom 6 m. Alla 3 träffar applicerar en poison-stack som tickar damage i 4 sekunder. Stackar refreshar duration. Damage per sekund = 5 × stacks × (1 + 10% × (stacks − 1)), så varje stack gör 10% mer skada än föregående.' },
-    ult: { name: 'Worldpiercer', icon: '🏹', desc: 'Skjuter en gigantisk pil med global räckvidd (200 m) i siktriktningen. Den första boss:en eller (i arena) motståndarhjälten som träffas blir target. Vid träff: Legolas teleporteras direkt fram till target, target stunnas i 1 sekund. Efter teleporten får Legolas en 5-sekunders buf med +30% attackfart. Missar pilen sker varken teleport eller buff.' },
+    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Legolus blir osynlig för alla fiender och motspelare i 5 sekunder, får +20% movement speed och hans nästa auto-attack blir empowered: dubbel räckvidd, gör 25% av targetens max-HP i direct damage, stunnar target + alla fiender inom 2.5 m i 1.5 sekunder och lämnar en torn-pool under target som tickar 5% av max-HP i AoE-damage var 0.5 sekund i 3 sekunder (totalt 30% maxHP). Legolus revealas så fort han skjuter pilen eller efter 5 sekunder. Skill-skada som träffar honom under invis dealar damage men avslöjar INTE hans position.' },
   },
   gimlu: {
     skills: {
@@ -16909,6 +17115,11 @@ function simulateAll(dt) {
     if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
     tickUltimates(side, dt);
     tickBigArrows(side, dt);
+    // Shadow Volley (Legolus ult) tick: invis-timer + thorn pools (solo/arena/boss).
+    // I classic MP är server auktoritativ — invis-flagga + TP-pools synkas via snap;
+    // dessa client-side ticks är no-op då (state.legolusInvisRemaining nollställs av snap).
+    tickClientLegolusInvis(side, dt);
+    tickClientThornPools(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
@@ -17284,7 +17495,8 @@ function triggerClientVisualSkill(side, key) {
   if (heroId === 'legolas' && !isClassicMpHere) {
     if (key === 'q') { spawnClientLocalVineTrap(side, side.hero.facingX, side.hero.facingZ, false, 1); return; }
     if (key === 'e') { spawnClientLocalDash(side, side.hero.facingX, side.hero.facingZ); return; }
-    if (key === 'r') { spawnClientLocalBigArrow(side, side.hero.facingX, side.hero.facingZ, false); return; }
+    // Shadow Volley: ingen pil-mesh längre. Cast-fx hanteras via generic spawnSkillCastFx
+    // nedan + invis-mesh-opacity via state-snap. Fall-through till default-pathen.
   }
   const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff, r: 0xff44aa };
   const color = colors[key] || 0xffdc66;
@@ -17922,10 +18134,37 @@ function tick() {
   updateShop();
   updateInventoryDisplay();
   updateCamera(dt);
+  // Shadow Volley: toggle hero-mesh-visibility för invis-Legolus. Måste ske
+  // EFTER applyHeroSnap (som sätter visible = !dead) och FÖRE render.
+  for (const side of activeSides()) updateLegolusInvisVisibility(side);
 
   if (bloomComposer) bloomComposer.render();
   else renderer.render(scene, camera);
   requestAnimationFrame(tick);
+}
+
+// Toggle visibility för Legolus under Shadow Volley-invis. För casteren själv:
+// behåll synlig (HUD-indikator visar invis-status). För motståndare/observatörer:
+// dölj mesh helt. Anropas en gång per frame innan render.
+function updateLegolusInvisVisibility(side) {
+  if (!side || !side.mesh) return;
+  if ((side.heroId || 'magiker') !== 'legolas') {
+    // Återställ om hero bytte från Legolas medan stale-flagga sattes
+    if (side.mesh._invisHidden) {
+      side.mesh.visible = !side.hero.dead;
+      side.mesh._invisHidden = false;
+    }
+    return;
+  }
+  const invis = (side.legolusInvisRemaining || 0) > 0;
+  const isMe = (side.idx === APP.localSide);
+  if (invis && !isMe) {
+    side.mesh.visible = false;
+    side.mesh._invisHidden = true;
+  } else if (side.mesh._invisHidden) {
+    side.mesh.visible = !side.hero.dead;
+    side.mesh._invisHidden = false;
+  }
 }
 
 requestAnimationFrame(tick);

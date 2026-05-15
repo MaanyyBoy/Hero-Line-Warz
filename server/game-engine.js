@@ -227,6 +227,17 @@ const LEGOLUS_SPLIT_EXTRAS = 2;
 const LEGOLUS_SPLIT_RANGE = 6;     // hur långt extra targets kan vara från hero
 const POISON_DURATION = 4.0;
 const POISON_BASE_DPS = 5;         // per stack baseline
+// Legolus ult (Shadow Volley): invis + empowered next-AA + thorn pool
+const LEGOLUS_INVIS_DURATION = 5.0;
+const LEGOLUS_INVIS_SPEED_BONUS = 0.20;     // +20% movespeed under invis
+const LEGOLUS_ULT_AA_RANGE_MUL = 2.0;       // dubbel range på empowered AA
+const LEGOLUS_ULT_AA_DMG_PCT = 0.25;        // 25% av target's maxHp som direct dmg
+const LEGOLUS_ULT_AA_STUN_DUR = 1.5;        // stun target + nearby 1.5s
+const LEGOLUS_ULT_AA_STUN_RADIUS = 2.5;     // radie runt target för AoE-stun
+const LEGOLUS_THORN_POOL_DURATION = 3.0;    // pool finns kvar 3s
+const LEGOLUS_THORN_POOL_TICK = 0.5;        // tick var 0.5s
+const LEGOLUS_THORN_POOL_DMG_PCT = 0.05;    // 5% maxHp per tick
+const LEGOLUS_THORN_POOL_RADIUS = 2.5;      // AoE-radie
 // Gimlu
 const TAUNT_RADIUS = 5.5;
 const TAUNT_DURATION = 3.0;
@@ -754,6 +765,10 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   side.hero.x = cfg.heroSpawn.x;
   side.hero.z = cfg.heroSpawn.z;
+  // Rensa Shadow Volley-state om Legolus dog medan invis (annars stannar
+  // invis-flagga med "0" rem men cleared aaPending — säkert att nolla allt).
+  side.legolusInvisRemaining = 0;
+  side.legolusUltAaPending = false;
 }
 
 function createSide(idx) {
@@ -795,6 +810,9 @@ function createSide(idx) {
     ironWillExplosions: [],
     legolusAaCounter: 0,
     legolusSplitPending: false,
+    legolusInvisRemaining: 0,         // sek kvar i Shadow Volley-invis
+    legolusUltAaPending: false,       // nästa AA är empowered (revealar)
+    thornPools: [],                   // {id,x,z,radius,remaining,tickAccum,dmgPct}
     gimluDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
@@ -1089,13 +1107,16 @@ function updateMonsters(state, side, opp, dt) {
     }
     const dxh = heroX - m.x, dzh = heroZ - m.z;
     const distHero = Math.hypot(dxh, dzh);
-    if (!heroAlive) m.chasing = false;
+    // Legolus i Shadow Volley-invis ses ej av fiender — aggro/atk skippas.
+    // Invis trumfar taunt (assassin-mekanik): tauntade monster tappar target.
+    const heroVisible = heroAlive && !((side.legolusInvisRemaining || 0) > 0);
+    if (!heroVisible) m.chasing = false;
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
     m.atkCd = Math.max(0, m.atkCd - dt);
     const atkRange = m.attackRange || 1.2;
     const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
-    if (heroAlive && distHero < atkRange && m.atkCd <= 0) {
+    if (heroVisible && distHero < atkRange && m.atkCd <= 0) {
       damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = atkInterval;
     }
@@ -1195,10 +1216,16 @@ function startBossCastServer(state, side, m, skill) {
   const hero = side.hero;
   let originX = m.x, originZ = m.z;
   let targetX, targetZ, dirX, dirZ;
+  // Legolus i Shadow Volley-invis: boss kan inte se honom → casta i statisk
+  // standardriktning (lätt att undvika, men kan fortfarande träffa).
+  const heroHidden = (side.legolusInvisRemaining || 0) > 0;
   if (skill.originSelf) {
     targetX = m.x; targetZ = m.z;
-  } else if (skill.targetHero && hero && !hero.dead) {
+  } else if (skill.targetHero && hero && !hero.dead && !heroHidden) {
     targetX = hero.x; targetZ = hero.z;
+  } else if (heroHidden) {
+    dirX = 1; dirZ = 0;
+    targetX = m.x + (skill.length || skill.range || skill.radius || 5); targetZ = m.z;
   } else {
     // Cone/line/projectile: rikta mot hero
     if (hero && !hero.dead) {
@@ -1767,7 +1794,11 @@ function maintainTargetLock(side, opp, state) {
   let isMonster = side.targetType === 'monster';
   let isHero = side.targetType === 'hero';
   let isDuelOrb = side.targetType === 'duelOrb';
-  const range = side.attackRange || HERO_ATTACK_RANGE;
+  const baseRange = side.attackRange || HERO_ATTACK_RANGE;
+  // Legolus Shadow Volley empowered AA: dubbel range medan invis-ult-pending.
+  const ultAaRange = (side.heroId === 'legolas' && side.legolusUltAaPending)
+    ? baseRange * LEGOLUS_ULT_AA_RANGE_MUL : baseRange;
+  const range = ultAaRange;
   if (target) {
     const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
     if (d > range) target = null;
@@ -1825,6 +1856,16 @@ function updateHeroAttack(state, side, opp, dt) {
   const isLegolusHero = side.heroId === 'legolas';
   const splitNow = isLegolusHero && !!side.legolusSplitPending;
   if (splitNow) side.legolusSplitPending = false;
+  // Shadow Volley empowered AA: target.maxHp*25% direct dmg + stun nearby + thorn pool.
+  // Pilen revealar Legolus när den skjuts. Override:ar normal dmg-formel.
+  const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul;
+  if (ultAaNow) {
+    const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
+    aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
+    side.legolusUltAaPending = false;
+    side.legolusInvisRemaining = 0;   // reveal direkt vid pil-spawn
+  }
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -1834,10 +1875,11 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsDuelOrb: !!target.isDuelOrb,
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     ownerSideIdx: side.idx,
-    damage: side.attackDmg * auraDmg * buffDmgMul * critMul, isAoE, isCrit,
+    damage: aaDmg, isAoE, isCrit,
     lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
+    legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
   });
   // Split: skjut 2 extra projektiler mot närmaste andra fiender
   if (splitNow) {
@@ -1978,6 +2020,47 @@ function updateProjectiles(state, side, opp, dt) {
           }
         }
       }
+      // Shadow Volley empowered AA hit: stun target + nearby (1.5s) + thorn pool 3s.
+      // Använder hero.frozenTime (samma fält som Vine Trap/Leap/Frostnova) som
+      // hero-stun. monster/creep frozenTime dekrementeras i deras egna ticks.
+      if (p.legolusUltAa) {
+        // Stun primärt target
+        if (p.targetIsHero) {
+          const ts = state.sides[p.targetSideIdx];
+          if (ts && !ts.hero.dead) ts.hero.frozenTime = Math.max(ts.hero.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
+        } else if (!p.targetIsDuelOrb) {
+          if (p.target) p.target.frozenTime = Math.max(p.target.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
+        }
+        // AoE-stun runt hit-pos
+        for (const m of side.monsters) {
+          if (m === p.target) continue;
+          if (Math.hypot(m.x - ix, m.z - iz) < LEGOLUS_ULT_AA_STUN_RADIUS) {
+            m.frozenTime = Math.max(m.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
+          }
+        }
+        if (opp) for (const c of opp.playerCreeps) {
+          if (c === p.target) continue;
+          if (Math.hypot(c.x - ix, c.z - iz) < LEGOLUS_ULT_AA_STUN_RADIUS) {
+            c.frozenTime = Math.max(c.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
+          }
+        }
+        if (opp && !opp.hero.dead) {
+          if (Math.hypot(opp.hero.x - ix, opp.hero.z - iz) < LEGOLUS_ULT_AA_STUN_RADIUS) {
+            opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
+          }
+        }
+        // Spawna thorn pool på hit-pos (ägd av casterns sida)
+        side.thornPools = side.thornPools || [];
+        side.thornPools.push({
+          id: state.nextEntityId++,
+          x: ix, z: iz,
+          radius: LEGOLUS_THORN_POOL_RADIUS,
+          remaining: LEGOLUS_THORN_POOL_DURATION,
+          duration: LEGOLUS_THORN_POOL_DURATION,
+          tickAccum: 0,
+          dmgPct: LEGOLUS_THORN_POOL_DMG_PCT,
+        });
+      }
       side.projectiles.splice(i, 1);
       continue;
     }
@@ -1985,6 +2068,56 @@ function updateProjectiles(state, side, opp, dt) {
     p.x += (dx / dist) * step;
     p.y += (dy / dist) * step;
     p.z += (dz / dist) * step;
+  }
+}
+
+// Shadow Volley: dekrementera invis-timer. Vid 0 cancellas även aaPending
+// (annars stannar empowered AA kvar i evighet om Legolus aldrig skjuter).
+function tickLegolusInvis(side, dt) {
+  if ((side.legolusInvisRemaining || 0) <= 0) return;
+  side.legolusInvisRemaining = Math.max(0, side.legolusInvisRemaining - dt);
+  if (side.legolusInvisRemaining <= 0) {
+    side.legolusUltAaPending = false;
+  }
+}
+
+// Tickar Shadow Volley thorn pools per sida (5% maxHp / 0.5s i 3s, AoE 2.5 m).
+// Skadar motståndarens minions + hero + monsterwaves i sin egen sida.
+function tickThornPools(state, side, dt) {
+  if (!side.thornPools || side.thornPools.length === 0) return;
+  const opp = state.sides[3 - side.idx];
+  for (let i = side.thornPools.length - 1; i >= 0; i--) {
+    const p = side.thornPools[i];
+    p.remaining -= dt;
+    p.tickAccum += dt;
+    while (p.tickAccum >= LEGOLUS_THORN_POOL_TICK && p.remaining > -LEGOLUS_THORN_POOL_TICK) {
+      p.tickAccum -= LEGOLUS_THORN_POOL_TICK;
+      // Egna sidans monster (wave-mobs som spawnar i din arena)
+      for (let k = side.monsters.length - 1; k >= 0; k--) {
+        const m = side.monsters[k];
+        if (Math.hypot(m.x - p.x, m.z - p.z) < p.radius) {
+          const dmg = (m.maxHp || m.hp) * p.dmgPct;
+          m.hp -= dmg;
+          if (m.hp <= 0) killMonster(side, k, side);
+        }
+      }
+      // Motståndarens creeps (line wars: opponent skickar creeps in i din arena)
+      if (opp) for (let k = opp.playerCreeps.length - 1; k >= 0; k--) {
+        const c = opp.playerCreeps[k];
+        if (Math.hypot(c.x - p.x, c.z - p.z) < p.radius) {
+          const dmg = (c.maxHp || c.hp) * p.dmgPct;
+          c.hp -= dmg;
+          if (c.hp <= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        }
+      }
+      // Opp-hero (arena/duel): pool spawnas under target, kan träffa fientlig hero
+      if (opp && !opp.hero.dead) {
+        if (Math.hypot(opp.hero.x - p.x, opp.hero.z - p.z) < p.radius) {
+          damageHero(opp, opp.hero.maxHp * p.dmgPct);
+        }
+      }
+    }
+    if (p.remaining <= 0) side.thornPools.splice(i, 1);
   }
 }
 
@@ -3048,8 +3181,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   side.hero.facingX = ndx;
   side.hero.facingZ = ndz;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * strength * dt;
+  const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -3145,6 +3279,11 @@ function applyEvent(state, sideIdx, ev) {
       if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX && (side._ultLockoutTime || 0) <= 0) {
         side.ultEnergy = 0;
         side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
+        // Legolus Shadow Volley: invis 5s + empowered next-AA. Revealar vid AA-fire eller timeout.
+        if (side.heroId === 'legolas' && !side.hero.dead) {
+          side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
+          side.legolusUltAaPending = true;
+        }
       }
       return;
     }
@@ -3568,6 +3707,8 @@ function tickGame(state, dt) {
       updateSoulDrain(state, side, opp, dt);
       updateBossProjectiles(state, side, dt);
       updateBossPools(state, side, dt);
+      tickLegolusInvis(side, dt);
+      tickThornPools(state, side, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
       if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
       // Ult-energy passive gain (0.5%/sek) — gainUltEnergy bail:ar om lockout aktiv
@@ -3693,6 +3834,8 @@ function tickGame(state, dt) {
     updateSoulDrain(state, side, opp, dt);
     updateBossProjectiles(state, side, dt);
     updateBossPools(state, side, dt);
+    tickLegolusInvis(side, dt);
+    tickThornPools(state, side, dt);
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
     if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
@@ -3816,6 +3959,13 @@ function serializeSide(side) {
     VT: (side.vineTraps || []).map(v => ({ id: v.id, x: v.x, z: v.z, life: v.life / v.maxLife })),
     lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
     ldash: side.legolusDashBuffPending ? 1 : 0,
+    // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
+    lInv: +(side.legolusInvisRemaining || 0).toFixed(2),
+    lAa: side.legolusUltAaPending ? 1 : 0,
+    TP: (side.thornPools || []).map(p => ({
+      id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2),
+      r: p.radius, life: +(p.remaining / p.duration).toFixed(3),
+    })),
     HM: (side.hammers || []).map(h => ({ id: h.id, x: h.x, z: h.z, ret: h.returning ? 1 : 0 })),
     taunt: +(side.titansTauntRemaining || 0).toFixed(2),
     iw: +(side.ironWillRemaining || 0).toFixed(2),
