@@ -536,9 +536,11 @@ function damageHero(side, amount) {
     }
   }
   const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
+  // Aragurn passive — DR baserat på nearby enemies (cached varje frame i tick-loop)
+  const aragurnMul = side.heroId === 'aragurn' ? (1 - aragurnPassiveDR(side)) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * aragurnMul;
   // Gandulf shield absorberar först
   if ((side.shield || 0) > 0 && final > 0) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
@@ -1092,7 +1094,10 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  m.hp -= dmg * dmgTakenDebuffMul(m);
+  const finalDmg = dmg * dmgTakenDebuffMul(m);
+  const actualDealt = Math.min(m.hp, finalDmg);
+  m.hp -= finalDmg;
+  aragurnLifestealHeal(side, actualDealt);
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
 function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
@@ -1101,7 +1106,10 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
     triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
     creep.frozenTime = 0;
   }
-  creep.hp -= dmg * dmgTakenDebuffMul(creep);
+  const finalDmg = dmg * dmgTakenDebuffMul(creep);
+  const actualDealt = Math.min(creep.hp, finalDmg);
+  creep.hp -= finalDmg;
+  aragurnLifestealHeal(attackerSide, actualDealt);
 }
 function applySkillDamageToOppHero(state, side, opp, dmg) {
   if (!opp || opp.hero.dead) return;
@@ -1109,7 +1117,10 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
     triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
     opp.hero.frozenTime = 0;
   }
-  damageHero(opp, dmg * dmgTakenDebuffMul(opp.hero));
+  const finalDmg = dmg * dmgTakenDebuffMul(opp.hero);
+  const actualDealt = Math.min(opp.hero.hp, finalDmg);
+  damageHero(opp, finalDmg);
+  aragurnLifestealHeal(side, actualDealt);
 }
 // Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
 function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
@@ -1437,7 +1448,10 @@ function updateProjectiles(state, side, opp, dt) {
           ts.hero.poisonRemaining = POISON_DURATION;
         }
       }
+      let aaDmgDealt = 0;   // För Aragurn-passive lifesteal — räkna utdelad AA-skada
       if (p.targetIsHero) {
+        const ts = state.sides[p.targetSideIdx];
+        if (ts) aaDmgDealt = Math.min(ts.hero.hp, p.damage);
         damageHero(state.sides[p.targetSideIdx], p.damage);
         if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
       } else if (p.targetIsDuelOrb) {
@@ -1447,6 +1461,7 @@ function updateProjectiles(state, side, opp, dt) {
           if (!orb.alive) killedTarget = true;
         }
       } else {
+        aaDmgDealt = Math.min(p.target.hp, p.damage);
         p.target.hp -= p.damage;
         if (p.target.hp <= 0) {
           killedTarget = true;
@@ -1459,6 +1474,8 @@ function updateProjectiles(state, side, opp, dt) {
           }
         }
       }
+      // Aragurn passive lifesteal: 0.5% per 1% HP loss på AA-damage också
+      aragurnLifestealHeal(side, aaDmgDealt);
       // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill
       if (p.lifestealRatio > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
@@ -2219,6 +2236,59 @@ const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
 const WHIRLWIND_RADIUS = 3.0;
 const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
+const WHIRLWIND_HEAL_PCT = 0.10;     // Aragurn healar 10% av all damage done från whirlwind
+
+// Aragurn passive — Lifesteal (proportional till HP loss) + DR (baserat på nearby enemies)
+const ARAGURN_LIFESTEAL_PER_HP_LOSS = 0.005;   // 0.5% lifesteal per 1% HP loss → max 50% vid 0 HP
+const ARAGURN_DR_RADIUS = 5.0;                  // 5m radius runt hero för enemy-count
+const ARAGURN_DR_BASE_1 = 0.20;                 // 1 enemy nearby = 20% DR
+const ARAGURN_DR_EXTRA_PER_ENEMY = 0.05;        // +5% per extra enemy utöver första
+const ARAGURN_DR_MAX = 0.40;                    // cap 40%
+
+// Helper: räkna fiender (monster + opp creeps + opp hero) inom radius runt hero
+function aragurnNearbyCount(state, side) {
+  if (!side || side.heroId !== 'aragurn' || side.hero.dead) return 0;
+  const r2 = ARAGURN_DR_RADIUS * ARAGURN_DR_RADIUS;
+  const hx = side.hero.x, hz = side.hero.z;
+  let count = 0;
+  for (const m of side.monsters) {
+    const dx = m.x - hx, dz = m.z - hz;
+    if (dx * dx + dz * dz < r2) count++;
+  }
+  const opp = state.sides[3 - side.idx];
+  if (opp) {
+    for (const c of opp.playerCreeps) {
+      const dx = c.x - hx, dz = c.z - hz;
+      if (dx * dx + dz * dz < r2) count++;
+    }
+    if (isHeroPvpActive(state) && !opp.hero.dead) {
+      const dx = opp.hero.x - hx, dz = opp.hero.z - hz;
+      if (dx * dx + dz * dz < r2) count++;
+    }
+  }
+  return count;
+}
+
+// Helper: DR från Aragurn-passive baserat på cached nearby-count (uppdateras 1Hz i tick-loop).
+function aragurnPassiveDR(side) {
+  if (!side || side.heroId !== 'aragurn') return 0;
+  const n = side.aragurnNearbyCount || 0;
+  if (n <= 0) return 0;
+  if (n === 1) return ARAGURN_DR_BASE_1;
+  // 2+ enemies: 20% baseline + 5% per extra (cap 40%)
+  return Math.min(ARAGURN_DR_MAX, ARAGURN_DR_BASE_1 + (n - 1) * ARAGURN_DR_EXTRA_PER_ENEMY);
+}
+
+// Helper: lifesteal heal baserat på HP loss-pct. Anropas efter varje damage-app
+// där `side` är attacker. Heal 0.5% av dealt damage per 1% HP loss (max 50% av dmg).
+function aragurnLifestealHeal(side, dmgDealt) {
+  if (!side || side.heroId !== 'aragurn' || side.hero.dead || dmgDealt <= 0) return;
+  const hpLossPct = Math.max(0, 1 - (side.hero.hp / Math.max(1, side.hero.maxHp)));
+  const lifestealPct = hpLossPct * 100 * ARAGURN_LIFESTEAL_PER_HP_LOSS;   // 0.5% × loss%
+  if (lifestealPct <= 0) return;
+  const heal = dmgDealt * lifestealPct;
+  side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + heal);
+}
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;
@@ -2249,13 +2319,16 @@ function castAragurnWhirlwind(state, sideIdx) {
 function applyWhirlwindTick(state, side, opp) {
   const r2 = WHIRLWIND_RADIUS * WHIRLWIND_RADIUS;
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  let totalDealt = 0;   // Whirlwind heal: 10% av all damage done tickas till hero
   // Monsters
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     const dx = m.x - side.hero.x, dz = m.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
       const dmg = (m.maxHp || m.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      const dealt = Math.min(m.hp, dmg * dmgTakenDebuffMul(m));
       applySkillDamageToMonster(state, side, opp, i, dmg);
+      totalDealt += dealt;
     }
   }
   // Opp creeps
@@ -2264,7 +2337,9 @@ function applyWhirlwindTick(state, side, opp) {
     const dx = c.x - side.hero.x, dz = c.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
       const dmg = (c.maxHp || c.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      const dealt = Math.min(c.hp, dmg * dmgTakenDebuffMul(c));
       applySkillDamageToCreep(state, side, opp, c, dmg);
+      totalDealt += dealt;
       if (c.hp <= 0) {
         opp.playerCreeps.splice(i, 1);
         side.gold += minionBounty(c);
@@ -2277,8 +2352,14 @@ function applyWhirlwindTick(state, side, opp) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
       const dmg = opp.hero.maxHp * WHIRLWIND_DMG_PCT * skillMul;
+      const dealt = Math.min(opp.hero.hp, dmg * dmgTakenDebuffMul(opp.hero));
       applySkillDamageToOppHero(state, side, opp, dmg);
+      totalDealt += dealt;
     }
+  }
+  // Heal Aragurn 10% av damage done (utöver passive lifesteal — stackar)
+  if (totalDealt > 0 && !side.hero.dead) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + totalDealt * WHIRLWIND_HEAL_PCT);
   }
 }
 
@@ -2989,6 +3070,8 @@ function tickGame(state, dt) {
       updateAragurnLeap(state, side, opp, dt);
       updateAragurnShoutHeal(side, dt);
       updateSoulDrain(state, side, opp, dt);
+      // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
+      if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -3106,6 +3189,8 @@ function tickGame(state, dt) {
     updateAragurnLeap(state, side, opp, dt);
     updateAragurnShoutHeal(side, dt);
     updateSoulDrain(state, side, opp, dt);
+    // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
+    if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
