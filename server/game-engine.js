@@ -121,6 +121,27 @@ const BOSS_DEFS = {
   },
 };
 
+// Mini-boss-mapping: 3 minibossar per tier (en per skill-index) presenterar
+// kommande boss's skills i förhand så spelaren får träna på att dodga dem.
+// Spawnar TILLSAMMANS med vanliga minions, lite starkare än minions.
+const MINIBOSS_WAVE_MAP = {
+  2:  { bossTier: 10, skillIdx: 0 },
+  5:  { bossTier: 10, skillIdx: 1 },
+  7:  { bossTier: 10, skillIdx: 2 },
+  12: { bossTier: 20, skillIdx: 0 },
+  15: { bossTier: 20, skillIdx: 1 },
+  17: { bossTier: 20, skillIdx: 2 },
+  22: { bossTier: 30, skillIdx: 0 },
+  25: { bossTier: 30, skillIdx: 1 },
+  27: { bossTier: 30, skillIdx: 2 },
+  32: { bossTier: 40, skillIdx: 0 },
+  35: { bossTier: 40, skillIdx: 1 },
+  37: { bossTier: 40, skillIdx: 2 },
+  42: { bossTier: 50, skillIdx: 0 },
+  45: { bossTier: 50, skillIdx: 1 },
+  47: { bossTier: 50, skillIdx: 2 },
+};
+
 function getWaveDef(waveNum) {
   if (waveNum < 1 || waveNum > MAX_WAVES) return null;
   const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
@@ -140,7 +161,7 @@ function getWaveDef(waveNum) {
     };
   }
   const inTier = ((waveNum - 1) % 10) + 1;
-  return {
+  const def = {
     number: waveNum,
     name: WAVE_NAMES[tierIdx],
     isBoss: false,
@@ -150,6 +171,22 @@ function getWaveDef(waveNum) {
     monsterDmg: Math.round((8 + tierIdx * 4 + inTier * 0.6) * 10) / 10,
     monsterSpeed: 2.0 + tierIdx * 0.05,
   };
+  // Mini-boss på utvalda waves: spawnas TILLSAMMANS med vanliga minions
+  const mbInfo = MINIBOSS_WAVE_MAP[waveNum];
+  if (mbInfo) {
+    const bossDef = BOSS_DEFS[mbInfo.bossTier];
+    if (bossDef && bossDef.skills && bossDef.skills[mbInfo.skillIdx]) {
+      def.minibossDef = {
+        name: 'Mini ' + bossDef.name,
+        skill: bossDef.skills[mbInfo.skillIdx],
+        hp: Math.round(def.monsterHp * 4.5),     // ~4.5x minion-HP
+        dmg: Math.round(def.monsterDmg * 1.6 * 10) / 10,   // 1.6x minion-DMG
+        speed: def.monsterSpeed * 0.85,          // lite långsammare än minions
+        bossTier: mbInfo.bossTier,
+      };
+    }
+  }
+  return def;
 }
 
 const CREEP_VS_CREEP_DAMAGE = 5;
@@ -813,8 +850,11 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   const m = arenaSide.monsters[idx];
   if (!m) return;
   arenaSide.monsters.splice(idx, 1);
-  if (byPlayerSide) { byPlayerSide.gold += GOLD_PER_KILL; gainXp(byPlayerSide, MONSTER_XP_REWARD); }
-  else { arenaSide.gold += GOLD_PER_KILL; gainXp(arenaSide, MONSTER_XP_REWARD); }
+  // Mini-bosses ger 2× belöning eftersom de är ~4.5x stark som vanliga minions
+  const mul = m.isMiniBoss ? 2 : 1;
+  const recv = byPlayerSide || arenaSide;
+  recv.gold += GOLD_PER_KILL * mul;
+  gainXp(recv, MONSTER_XP_REWARD * mul);
 }
 
 // === Update ===
@@ -881,6 +921,34 @@ function spawnWaveAtOnce(state, side, def) {
     for (; i < melee; i++) spawnMonsterFromDef(state, side, lane, def, positions[i], 'melee');
     for (let j = 0; j < range; j++) spawnMonsterFromDef(state, side, lane, def, positions[melee + j], 'range');
   }
+  // Mini-boss: spawnas en gång (i lane 1) tillsammans med vanliga minions
+  if (def.minibossDef) {
+    spawnMinibossFromDef(state, side, def.minibossDef);
+  }
+}
+
+function spawnMinibossFromDef(state, side, mb) {
+  const cfg = SIDE_CFG[side.idx];
+  side.monsters.push({
+    id: state.nextEntityId++,
+    x: cfg.spawnX, z: cfg.laneZ[1],
+    ry: 0, lane: 1,
+    hp: mb.hp, maxHp: mb.hp,
+    speed: mb.speed,
+    damage: mb.dmg,
+    attackType: 'melee',
+    attackRange: 1.4,
+    attackInterval: MONSTER_MELEE_INTERVAL,
+    pathIndex: 0,
+    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    isBoss: false,
+    isMiniBoss: true,
+    bossName: mb.name,
+    bossSkills: [mb.skill],
+    skillCds: [mb.skill.cd * 0.5],
+    activeCast: null,
+    multiCircleQueue: null,
+  });
 }
 
 function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
@@ -1015,7 +1083,7 @@ function updateMonsters(state, side, opp, dt) {
     else if (isCreepPos(m.x, nz)) m.z = nz;
     m.ry = Math.atan2(dirX, dirZ);
     // Boss-skill-tick (server-auth för line wars)
-    if (m.isBoss && m.bossSkills) tickBossSkillsServer(state, side, m, dt);
+    if (m.bossSkills) tickBossSkillsServer(state, side, m, dt);
   }
 }
 
@@ -3619,7 +3687,7 @@ function serializeSide(side) {
     },
     M: side.monsters.map(m => ({
       id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10,
-      boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
+      boss: m.isBoss ? 1 : 0, mb: m.isMiniBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
       fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0,
       // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
       c: m.activeCast && m.activeCast.skill ? {

@@ -10235,6 +10235,7 @@ function applyRemoteState(state) {
     clientReconcileEntities(idx, 'monsters', sData.M, (e) => {
       const m = makeMonsterMesh();
       if (e && e.boss) m.scale.set(1.6, 1.7, 1.6);
+      else if (e && e.mb) m.scale.set(1.25, 1.3, 1.25);   // miniboss = mellan minion (1.0) och boss (1.6)
       if (e && e.r) {
         // Range-monster grön-tintat
         m.traverse(o => {
@@ -10244,7 +10245,7 @@ function applyRemoteState(state) {
           }
         });
       }
-      attachHpBar(m, (e && e.boss) ? 2.4 : 1.7);
+      attachHpBar(m, (e && e.boss) ? 2.4 : (e && e.mb) ? 2.0 : 1.7);
       return m;
     });
     // Boss-skill-telegraph: efter monster-reconcile, kolla om någon boss har
