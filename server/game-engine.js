@@ -1807,26 +1807,11 @@ function maintainTargetLock(side, opp, state) {
     if (d > range) target = null;
   }
   if (!target) {
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, range, state);
-    if (t) {
-      target = t.entity;
-      isMonster = !!t.isMonster;
-      isHero = !!t.isHero;
-      isDuelOrb = !!t.isDuelOrb;
-      if (isHero) {
-        side.targetId = 0;
-        side.targetType = 'hero';
-      } else if (isDuelOrb) {
-        side.targetId = 0;
-        side.targetType = 'duelOrb';
-      } else {
-        side.targetId = target.id;
-        side.targetType = isMonster ? 'monster' : 'creep';
-      }
-    } else {
-      side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
-      return null;
-    }
+    // Manuell AA: ingen auto-pick av nästa target. Target dog eller är out of
+    // range → sluta attackera. Användaren måste trycka Attack-knappen igen.
+    side.aaActive = false;
+    side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+    return null;
   }
   side.targetX = target.x;
   side.targetZ = target.z;
@@ -3252,15 +3237,22 @@ function applyEvent(state, sideIdx, ev) {
   if (ev.type === 'aa') {
     if (side.hero.dead) return;
     const opp = state.sides[3 - sideIdx];
-    side.aaActive = true;
-    // Lock omedelbart på närmaste fiende (om någon i range)
+    // Manuell AA: aktivera bara om någon fiende redan finns inom range.
+    // Inget auto-aktiverande "väntar"-läge — hero attackerar bara efter explicit
+    // tryck mot ett konkret target.
     const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE, state);
     if (t) {
-      side.targetId = t.entity.id;
-      side.targetType = t.isMonster ? 'monster' : 'creep';
+      side.aaActive = true;
+      if (t.isHero) { side.targetId = 0; side.targetType = 'hero'; }
+      else if (t.isDuelOrb) { side.targetId = 0; side.targetType = 'duelOrb'; }
+      else {
+        side.targetId = t.entity.id;
+        side.targetType = t.isMonster ? 'monster' : 'creep';
+      }
       side.targetX = t.entity.x;
       side.targetZ = t.entity.z;
     } else {
+      side.aaActive = false;
       side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
     }
     return;

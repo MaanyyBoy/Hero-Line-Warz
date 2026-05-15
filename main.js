@@ -7159,17 +7159,11 @@ function maintainTargetLock(side) {
     if (d > range) target = null;
   }
   if (!target) {
-    const t = findClosestHostile(side, side.hero.x, side.hero.z, range);
-    if (t) {
-      target = t.entity;
-      isMonster = t.isMonster;
-      side.targetId = target.id;
-      side.targetType = t.targetType || (isMonster ? 'monster' : 'creep');
-    } else {
-      side.targetId = 0; side.targetType = '';
-      // Behåll aaActive — väntar tills fiende dyker upp
-      return null;
-    }
+    // Manuell AA: ingen auto-pick av nästa target. Target dog eller är out of
+    // range → sluta attackera. Användaren måste trycka Attack-knappen igen.
+    side.aaActive = false;
+    side.targetId = 0; side.targetType = '';
+    return null;
   }
   side.targetX = target.mesh.position.x;
   side.targetZ = target.mesh.position.z;
@@ -9625,14 +9619,16 @@ function applyEvent(side, ev) {
     if (side.hero.dead || channelLocked || feared || frozen || laserLocked || whirlLocked || leapLocked) return;
     // Tauntad: AA-target låses i maintainTargetLock, men låt event:et gå igenom
     // (maintainTargetLock skriver över targetId direkt — klienten ser inte flimmer)
-    side.aaActive = true;
+    // Manuell AA: aktivera bara om någon fiende redan finns inom range.
     const t = findClosestHostile(side, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE);
     if (t) {
+      side.aaActive = true;
       side.targetId = t.entity.id;
-      side.targetType = t.isMonster ? 'monster' : 'creep';
+      side.targetType = t.targetType || (t.isMonster ? 'monster' : 'creep');
       side.targetX = t.entity.mesh.position.x;
       side.targetZ = t.entity.mesh.position.z;
     } else {
+      side.aaActive = false;
       side.targetId = 0; side.targetType = '';
     }
     return;
