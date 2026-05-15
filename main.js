@@ -15184,7 +15184,17 @@ function howtoSvg(kind) {
   return '';
 }
 
-function renderHowto() {
+// Sticky tracker: kom-från-panel så Back-knappen returnerar till rätt sub-meny.
+let _howtoReturnPanel = 'main';
+
+function renderHowto(mode) {
+  if (!howtoContent) return;
+  if (mode === 'arena') return renderHowtoArena();
+  if (mode === 'boss') return renderHowtoBoss();
+  return renderHowtoLine();   // default = line wars
+}
+
+function renderHowtoLine() {
   if (!howtoContent) return;
   const sections = [
     {
@@ -15238,6 +15248,104 @@ function renderHowto() {
     {
       icon: 'goal', title: 'Hur du vinner',
       html: `<p>Förstör <strong>motståndarens fontän</strong>. Båda fontäner har 50 HP. Skada kommer från:</p><ul><li>Dina <strong>minions</strong> som når hens fontän (största källan).</li><li>Din <strong>hero-copy</strong> på lvl 30.</li><li>Indirekt: hens hjälte dör → 5s respawn → 5g till dig per kill.</li></ul>`
+    },
+  ];
+  howtoContent.innerHTML = sections.map(s => `
+    <div class="howto-section">
+      <div class="howto-icon">${howtoSvg(s.icon)}</div>
+      <div class="howto-body">
+        <h3>${s.title}</h3>
+        ${s.html}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderHowtoArena() {
+  if (!howtoContent) return;
+  const sections = [
+    {
+      icon: 'overview', title: 'Översikt',
+      html: `<p>Arena Wars är ren <strong>PvP-duell</strong> mellan hjältar (1v1 eller 2v2). Inga waves, ingen fontän — bara hero-vs-hero combat över flera rundor.</p><p>Vinner du <strong>3 av 5 rundor</strong> vinner du matchen. Mellan rundor får du välja talents och köpa items.</p>`
+    },
+    {
+      icon: 'controls', title: 'Kontroller',
+      html: `<ul><li><strong>Vänster joystick</strong> — flytta hjälten.</li><li><strong>AA-knapp (stor, hörnet)</strong> — toggle auto-attack på närmaste fiende.</li><li><strong>Skills (Q / F / E)</strong> — tap för auto-aim, drag-hold för manuell aim med riktnings-indicator på marken.</li><li><strong>Ult (R)</strong> — kräver 100% energy. 5s lockout efter cast.</li><li><strong>Desktop:</strong> WASD/piltangenter + Q/F/E + Space = AA.</li></ul>`
+    },
+    {
+      icon: 'overview', title: 'Hero pick (60s)',
+      html: `<p>Innan matchen startar väljer båda spelare hjälte från grid-vyn. 60-sekunders timer. <strong>Tap på en hjälte</strong> sen <strong>Confirm</strong>. Båda måste bekräfta innan matchen börjar — eller 0s timer.</p><p>Du kan se motståndarens val live under pick-fasen.</p>`
+    },
+    {
+      icon: 'waves', title: 'Round-struktur',
+      html: `<p>Varje round består av två faser:</p><ul><li><strong>Prep (60s):</strong> Välj 1 talent + köp items. Båda måste klicka Ready (eller timer går ut) för att starta fight-fasen.</li><li><strong>Fight:</strong> Sista hjälten som lever vinner round. Vid timeout vinner högsta HP%. Ingen respawn — dö = round-förlust.</li></ul><p>+1 talent-point per vunnen round + 500g bonus.</p>`
+    },
+    {
+      icon: 'items', title: 'Items + talents under prep',
+      html: `<p>Prep-skärmen visar talents (övre delen) och items (under). Du kan både välja talent OCH köpa items i samma prep-fas.</p><ul><li><strong>Talents:</strong> Hero-specifika passive buffs (t.ex. +20% skill damage, +10% MS). 1 poäng per round, max 5 över hela matchen.</li><li><strong>Items:</strong> Standard hero-items (Boots, Glove of Haste osv). 200g köp / 500×2^(lvl-1)g upgrade. Stats ackumuleras genom matchen.</li></ul>`
+    },
+    {
+      icon: 'duel', title: 'Orb + shrink-circle',
+      html: `<p>Under fight-fasen spawnar en <strong>magisk orb</strong> i mitten av arenan. Skada den för gold/buff-belöning.</p><p>En <strong>krymp-cirkel</strong> drar in arenan över tid — utanför cirkeln tar du 5% maxHP/sek + stackar (1% mer per stack). Tvingar engagement i mitten.</p>`
+    },
+    {
+      icon: 'heroes', title: 'Heroes & skills',
+      html: `<p>Alla 4 hjältar (Gandulf, Legolus, Gimlu, Aragurn) tillgängliga. Se Heroes-fliken för full skill-beskrivning. Ultimates har <strong>5s lockout</strong> efter cast — kan inte spammas.</p><ul><li>Skill-cast har per-cast cap på ult-gain (max 10% oavsett targets).</li><li>Drag-aim ger exakt landing-position (mag = drag-fraktion av max-range).</li></ul>`
+    },
+    {
+      icon: 'goal', title: 'Hur du vinner',
+      html: `<p>Döda motståndaren <strong>3 gånger</strong> (Best of 5). Skill-kombos och positionering avgör. Spara ult till rätt moment — 5s lockout efter cast.</p><p><strong>2v2-läge:</strong> teamet med flest lvande hjältar vid round-end vinner. Allierad shout-buff (Aragurn F) ger DR + MS + HoT till lagkompis.</p>`
+    },
+  ];
+  howtoContent.innerHTML = sections.map(s => `
+    <div class="howto-section">
+      <div class="howto-icon">${howtoSvg(s.icon)}</div>
+      <div class="howto-body">
+        <h3>${s.title}</h3>
+        ${s.html}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderHowtoBoss() {
+  if (!howtoContent) return;
+  const sections = [
+    {
+      icon: 'overview', title: 'Översikt',
+      html: `<p>Boss Wars är en <strong>3-spelar co-op raid</strong> mot en enskild gigantisk boss (eller solo om du vill träna). Inga waves, ingen PvP — bara du och dina vänner mot bossen.</p><p>5 olika bosstar med stigande svårighet (Captain → Drakkonungen).</p>`
+    },
+    {
+      icon: 'controls', title: 'Kontroller',
+      html: `<ul><li>Samma som andra modes: joystick + AA + Q/F/E/R + skill-aim med drag.</li><li><strong>Hjältar är 15% större</strong> i Boss Wars — bättre synlighet mot stor boss.</li><li>Aragurns svärd är dock 40% mindre för att inte täcka skärmen.</li></ul>`
+    },
+    {
+      icon: 'lanes', title: 'Spawn-rum + korridor + boss-rum',
+      html: `<p>Mappen är trippeldelad:</p><ul><li><strong>Spawn-rum (väster):</strong> Alla 3 hjältar spawnar tätt tillsammans här. Trygg start-zon.</li><li><strong>Korridor:</strong> Smal väg österut. Springa genom denna till boss-rummet.</li><li><strong>Boss-rum (öster):</strong> Cirkulär arena där bossen står inaktiv tills alla är inne.</li></ul>`
+    },
+    {
+      icon: 'duel', title: 'Boss-aktivering + gate',
+      html: `<p>Bossen <strong>står helt still</strong> tills <strong>ALLA</strong> aktiva hjältar är inne i boss-rummet. När alla är inne:</p><ul><li>Gate stängs vid ingången — ingen kan springa ut.</li><li>Bossen aktiveras: börjar jaga, attackera och casta skills.</li><li>Coordinate som team — vänta på varandra!</li></ul>`
+    },
+    {
+      icon: 'waves', title: 'Boss-skills (telegraphade)',
+      html: `<p>Varje boss har <strong>3 unika skills</strong>. Alla har <strong>telegraph-fas</strong> (röd varnings-zon på marken) innan execute — du kan <strong>dodga</strong> ut ur damage-zonen.</p><ul><li><strong>Captain:</strong> Shield Bash (line-dash), Throwing Axe (projektil), Battle Roar (AoE + slow).</li><li><strong>Drakkonungen:</strong> Dragon Breath (sustained cone), Wing Slam (huge AoE + knockback), Skyfire Rain (10 meteorer).</li><li>Andra bossar har mix av target-AoE, cones, sweep-beams, pools.</li></ul>`
+    },
+    {
+      icon: 'minions', title: 'Phase 2 (vid 50% HP)',
+      html: `<p>När bossen tappar <strong>50% HP</strong> aktiveras phase 2:</p><ul><li>Bossen flyger upp i luften — invulnerable i 2.5s.</li><li>Lander med <strong>knockback + 3s stun</strong> på alla hjältar.</li><li>Spawnar nytt skill-set (annorlunda än fas 1).</li><li>Får <strong>glow/aura</strong> i tier-specifik färg (blå smoke / grön eld / gold-halo / lila skugga / röd eld).</li><li>+25% AA-damage.</li></ul>`
+    },
+    {
+      icon: 'shop', title: 'Talents + items (prep)',
+      html: `<p>Innan striden får du <strong>välja talents</strong> och köpa <strong>raid-items</strong> som matchar din build. Boss Wars-talents är mer aggressiva än arena-talents.</p><ul><li>Phoenix Revive: en automatisk revive vid 0 HP.</li><li>Lifesteal-on-AA: vampire-builds.</li><li>Crit-dmg-bonus: burst-builds.</li></ul>`
+    },
+    {
+      icon: 'fountain', title: 'Boss HP-bar (top center)',
+      html: `<p>En stor HP-bar visas <strong>högst upp i mitten</strong> av skärmen under hela striden. Visar bossens procent (inte siffror). Färgen byts till lila i phase 2.</p><p>Hjälper hela teamet att tracka boss-HP utan att kolla på bossen själv.</p>`
+    },
+    {
+      icon: 'goal', title: 'Damage-skalning + win',
+      html: `<p>Mot bossar är <strong>% max-HP-skador nerfas 10×</strong> (en 5%-skill blir 0.5%). Bossens enormous HP skulle annars få whirlwind/laser att one-shot:a. Flat-damage AA + skill-base-damage är oförändrade.</p><p><strong>Vinst:</strong> Döda bossen innan teamet wipe:as. Bossen ger inte respawn — om en spelare dör är det till nästa matchstart.</p>`
     },
   ];
   howtoContent.innerHTML = sections.map(s => `
@@ -16276,10 +16384,29 @@ document.getElementById('btn-solo').addEventListener('click', () => {
 });
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
-document.getElementById('btn-howto').addEventListener('click', () => { renderHowto(); showLobbyPanel('howto'); });
+// Per-mode How to Play-knappar. Sticky return-panel så Back-knappen returnerar
+// till rätt sub-meny (line-team / arena-team / boss-mode).
+const _btnHowtoLine = document.getElementById('btn-howto-line');
+if (_btnHowtoLine) _btnHowtoLine.addEventListener('click', () => {
+  _howtoReturnPanel = 'line-team';
+  renderHowto('line');
+  showLobbyPanel('howto');
+});
+const _btnHowtoArena = document.getElementById('btn-howto-arena');
+if (_btnHowtoArena) _btnHowtoArena.addEventListener('click', () => {
+  _howtoReturnPanel = 'arena-team';
+  renderHowto('arena');
+  showLobbyPanel('howto');
+});
+const _btnHowtoBoss = document.getElementById('btn-howto-boss');
+if (_btnHowtoBoss) _btnHowtoBoss.addEventListener('click', () => {
+  _howtoReturnPanel = 'boss-mode';
+  renderHowto('boss');
+  showLobbyPanel('howto');
+});
 document.getElementById('btn-heroes-back').addEventListener('click', () => showLobbyPanel('main'));
 document.getElementById('btn-items-back').addEventListener('click', () => showLobbyPanel('main'));
-document.getElementById('btn-howto-back').addEventListener('click', () => showLobbyPanel('main'));
+document.getElementById('btn-howto-back').addEventListener('click', () => showLobbyPanel(_howtoReturnPanel || 'main'));
 const btnHeroDetailBack = document.getElementById('btn-hero-detail-back');
 if (btnHeroDetailBack) btnHeroDetailBack.addEventListener('click', closeHeroDetailModal);
 const btnItemDetailBack = document.getElementById('btn-item-detail-back');
