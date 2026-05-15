@@ -29,21 +29,121 @@
     body:not(.in-game) #income-display,
     body:not(.in-game) #shop-container { display: none !important; }
 
-    /* HUD */
-    #hud {
+    /* Tower HP-stack längst till vänster (egen + enemy ovanför varandra) */
+    #tower-hp-stack {
       position: fixed;
-      top: max(8px, env(safe-area-inset-top));
-      /* Gör plats för options-kugghjul (44px) + 8px gap till vänster */
-      left: max(60px, calc(env(safe-area-inset-left) + 60px));
-      color: #fff; font: 13px/1.3 system-ui, sans-serif;
-      background: rgba(0,0,0,0.45); padding: 7px 11px; border-radius: 8px;
+      top: 50%;
+      left: max(10px, env(safe-area-inset-left));
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 55;
       pointer-events: none;
-      max-width: 38vw;
     }
-    #hud .hint { opacity: 0.55; font-size: 11px; margin-top: 4px; }
-    #level-row {
-      display: flex; align-items: center; gap: 6px; margin-top: 5px;
+    body:not(.in-game) #tower-hp-stack,
+    body:not(.in-game) #respawn-overlay { display: none !important; }
+    .tower-hp-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,0,0,0.55);
+      padding: 5px 8px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     }
+    .tower-label {
+      font: 700 11px/1 system-ui, sans-serif;
+      letter-spacing: 0.4px;
+      min-width: 44px;
+    }
+    .tower-label.own-color { color: #88aaff; }
+    .tower-label.enemy-color { color: #ff8888; }
+    .tower-hp-bar {
+      width: 110px;
+      height: 12px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .tower-hp-fill {
+      height: 100%;
+      width: 100%;
+      transition: width 0.18s ease-out;
+    }
+    .tower-hp-fill.own-fill { background: linear-gradient(90deg, #5a9aff 0%, #88c0ff 100%); }
+    .tower-hp-fill.enemy-fill { background: linear-gradient(90deg, #ff6a6a 0%, #ffa0a0 100%); }
+    .tower-hp-text {
+      font: 700 11px/1 system-ui, sans-serif;
+      color: #fff;
+      min-width: 50px;
+      text-align: right;
+    }
+
+    /* Respawn-overlay (visas när hjälten är död) */
+    #respawn-overlay {
+      position: fixed;
+      top: 38%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 80;
+      background: rgba(40,10,10,0.78);
+      padding: 18px 36px;
+      border-radius: 14px;
+      border: 2px solid rgba(255,100,100,0.55);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.55);
+    }
+    #respawn-overlay.hidden { display: none; }
+    .respawn-label {
+      color: #ff8888;
+      font: 700 16px/1 system-ui, sans-serif;
+      letter-spacing: 3px;
+      text-shadow: 0 0 8px rgba(255,80,80,0.6);
+    }
+    .respawn-timer {
+      color: #fff;
+      font: 700 48px/1 system-ui, sans-serif;
+      margin-top: 6px;
+      text-shadow: 0 0 12px rgba(255,120,120,0.8);
+    }
+
+    /* Wave-display (bredvid duel-timer i top-row) */
+    #wave-display {
+      color: #88dd88;
+      font: 700 13px/1 system-ui, sans-serif;
+      background: rgba(15,30,20,0.78);
+      padding: 7px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(136,221,136,0.45);
+      letter-spacing: 0.3px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    #wave-display.hidden { display: none; }
+    body:not(.in-game) #wave-display { display: none; }
+
+    /* Gold-span inline i income-display */
+    #income-gold { color: #ffe066; font-weight: 700; }
+
+    /* Level + XP-bar nedanför item-slots längst ner i mitten */
+    #level-row-bottom {
+      position: fixed;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #fff;
+      z-index: 49;
+      pointer-events: none;
+      background: rgba(0,0,0,0.45);
+      padding: 6px 12px;
+      border-radius: 8px;
+    }
+    body:not(.in-game) #level-row-bottom { display: none; }
     #level-badge {
       background: linear-gradient(135deg, #d4af37 0%, #b8941f 100%);
       color: #1a1408;
@@ -384,10 +484,10 @@
       border-color: rgba(220,150,150,0.5);
     }
 
-    /* Inventory längst ner i mitten — 4 slots */
+    /* Inventory i mitten ovanför level-row — 4 slots */
     #inventory {
       position: fixed;
-      bottom: max(16px, env(safe-area-inset-bottom));
+      bottom: max(54px, calc(env(safe-area-inset-bottom) + 54px));
       left: 50%;
       transform: translateX(-50%);
       display: flex;
@@ -2210,14 +2310,24 @@
     </div>
   </div>
 
-  <div id="hud">
-    <div id="status">Förbereder...</div>
-    <div id="level-row">
-      <span id="level-badge">Lv 1</span>
-      <div id="xp-bar"><div id="xp-fill"></div></div>
-      <span id="xp-text">0 / 50</span>
+  <!-- Tower HP-stack längst till vänster (egen + enemy ovanför varandra) -->
+  <div id="tower-hp-stack">
+    <div class="tower-hp-row">
+      <span class="tower-label own-color">Du</span>
+      <div class="tower-hp-bar"><div class="tower-hp-fill own-fill" id="tower-hp-own-fill"></div></div>
+      <span class="tower-hp-text" id="tower-hp-own-text">50/50</span>
     </div>
-    <div class="hint">vänster: rörelse · höger: tap eller drag-sikta · AA: Space/A</div>
+    <div class="tower-hp-row">
+      <span class="tower-label enemy-color">Fiende</span>
+      <div class="tower-hp-bar"><div class="tower-hp-fill enemy-fill" id="tower-hp-enemy-fill"></div></div>
+      <span class="tower-hp-text" id="tower-hp-enemy-text">50/50</span>
+    </div>
+  </div>
+
+  <!-- Respawn-overlay (visas när hjälten är död) -->
+  <div id="respawn-overlay" class="hidden">
+    <div class="respawn-label">RESPAWN</div>
+    <div class="respawn-timer" id="respawn-timer">5.0</div>
   </div>
 
   <!-- Options-kugghjul (visas bara i match) -->
@@ -2239,7 +2349,8 @@
   </div>
 
   <div id="top-row">
-    <div id="income-display">Income: 2g / 15s</div>
+    <div id="income-display">Income: 2g / 15s · <span id="income-gold">0g</span></div>
+    <div id="wave-display"><span id="wave-text">Wave 1</span></div>
     <div id="duel-info" class="hidden">⏱ Duel <span id="duel-info-timer">5:00</span></div>
   </div>
 
@@ -2311,6 +2422,13 @@
     <div class="inventory-slot empty" data-slot="1"></div>
     <div class="inventory-slot empty" data-slot="2"></div>
     <div class="inventory-slot empty" data-slot="3"></div>
+  </div>
+
+  <!-- Hero level + XP-bar under item-slots -->
+  <div id="level-row-bottom">
+    <span id="level-badge">Lv 1</span>
+    <div id="xp-bar"><div id="xp-fill"></div></div>
+    <span id="xp-text">0 / 50</span>
   </div>
 
   <div id="item-tooltip" class="hidden">

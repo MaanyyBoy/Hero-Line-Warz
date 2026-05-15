@@ -1870,7 +1870,8 @@ function createHpBar(hero = false) {
   tex.minFilter = THREE.LinearFilter;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(hero ? 1.2 : 0.85, hero ? 0.34 : 0.26, 1);
+  // Hero HP-bar förstorad (HUD-omfördelning — hero-HP visas nu primärt här).
+  sprite.scale.set(hero ? 1.9 : 0.85, hero ? 0.52 : 0.26, 1);
   sprite.renderOrder = 999;
   sprite.userData.canvas = canvas;
   sprite.userData.tex = tex;
@@ -10779,8 +10780,20 @@ function updateCamera(dt) {
 // HUD
 // ============================================================
 
-const hudEl = document.getElementById('hud');
-const statusEl = document.getElementById('status');
+const hudEl = document.getElementById('hud');         // null efter HUD-omfördelning
+const statusEl = document.getElementById('status');   // null — ersatt av nya element nedan
+// Nya HUD-element efter omfördelning: torn-HP-stack (vänster), gold inline med income,
+// wave-display (top-row), respawn-overlay (centrerad vid död).
+const towerOwnFillEl = document.getElementById('tower-hp-own-fill');
+const towerOwnTextEl = document.getElementById('tower-hp-own-text');
+const towerEnemyFillEl = document.getElementById('tower-hp-enemy-fill');
+const towerEnemyTextEl = document.getElementById('tower-hp-enemy-text');
+const incomeGoldEl = document.getElementById('income-gold');
+const waveDisplayEl = document.getElementById('wave-display');
+const waveTextEl = document.getElementById('wave-text');
+const respawnOverlayEl = document.getElementById('respawn-overlay');
+const respawnTimerEl = document.getElementById('respawn-timer');
+const towerHpStackEl = document.getElementById('tower-hp-stack');
 const endgameEl = document.getElementById('endgame');
 const endgameTitle = document.getElementById('endgame-title');
 const endgameInfo = document.getElementById('endgame-info');
@@ -10792,6 +10805,8 @@ function updateHud() {
   const side = sides[APP.localSide];
   if (!side) return;
   if (matchState.gameOver) {
+    // Match slut: dölj respawn-overlay (var synlig vid hero-död)
+    if (respawnOverlayEl) respawnOverlayEl.classList.add('hidden');
     endgameEl.classList.add('visible');
     const won = matchState.winner === APP.localSide;
     endgameEl.classList.toggle('win', won);
@@ -10811,31 +10826,46 @@ function updateHud() {
   }
   const opp = sides[3 - APP.localSide];
   const isArena = APP.gameMode === 'arena1v1';
-  const heroLine = side.hero.dead
-    ? `<span style="color:#ff6666">${isArena ? 'DÖD — väntar nästa runda' : `DÖD — respawn om ${side.hero.respawnTimer.toFixed(1)}s`}</span>`
-    : `HP: ${Math.round(side.hero.hp)}/${Math.round(side.hero.maxHp)}`;
-  const top = [heroLine];
-  if (!isArena) {
-    top.push(
-      `Guld: ${side.gold}`,
-      `<span style="color:#88aaff">Du: ${side.tower.hp}/${side.tower.maxHp}</span>`,
-      `<span style="color:#ff8888">Motst: ${opp ? opp.tower.hp + '/' + opp.tower.maxHp : '–'}</span>`,
-    );
-    if (side.wave.active) top.push(`Wave ${side.wave.current}`);
-    else top.push(`Wave ${side.wave.current + 1} om: ${side.wave.betweenTimer.toFixed(1)}s`);
-  } else if (side.shield > 0) {
-    top.push(`<span style="color:#66ccff">Shield: ${Math.round(side.shield)}</span>`);
+  const isBossWars = APP.gameMode === 'bosswars';
+  // Tower HP-stack (line wars endast — arena/boss har inga torn)
+  const showTowers = !isArena && !isBossWars;
+  if (towerHpStackEl) towerHpStackEl.classList.toggle('hidden', !showTowers);
+  if (showTowers) {
+    if (towerOwnFillEl) towerOwnFillEl.style.width = ((side.tower.hp / side.tower.maxHp) * 100).toFixed(1) + '%';
+    if (towerOwnTextEl) towerOwnTextEl.textContent = `${side.tower.hp}/${side.tower.maxHp}`;
+    if (opp) {
+      if (towerEnemyFillEl) towerEnemyFillEl.style.width = ((opp.tower.hp / opp.tower.maxHp) * 100).toFixed(1) + '%';
+      if (towerEnemyTextEl) towerEnemyTextEl.textContent = `${opp.tower.hp}/${opp.tower.maxHp}`;
+    } else {
+      if (towerEnemyFillEl) towerEnemyFillEl.style.width = '0%';
+      if (towerEnemyTextEl) towerEnemyTextEl.textContent = '–';
+    }
   }
-  const nextAoe = PASSIVE_EVERY - (side.attackCounter % PASSIVE_EVERY);
-  const bottom = [
-    `Q: ${fmtCd(side.skills.q.cd)}`,
-    `F: ${fmtCd(side.skills.f.cd)}`,
-    `E: ${fmtCd(side.skills.e.cd)}`,
-    `AoE: ${nextAoe}`,
-  ];
-  if (APP.mode === 'host') bottom.push('HOST');
-  else if (APP.mode === 'client') bottom.push('CLIENT');
-  statusEl.innerHTML = top.join(' | ') + '<br>' + bottom.join(' | ');
+  // Wave-display (line wars endast)
+  if (waveDisplayEl) {
+    if (showTowers) {
+      waveDisplayEl.classList.remove('hidden');
+      if (waveTextEl) {
+        if (side.wave.active) waveTextEl.textContent = `Wave ${side.wave.current}`;
+        else waveTextEl.textContent = `Wave ${side.wave.current + 1} om ${side.wave.betweenTimer.toFixed(1)}s`;
+      }
+    } else {
+      waveDisplayEl.classList.add('hidden');
+    }
+  }
+  // Gold inline med income (line wars + boss wars). Arena har ingen gold-mekanik.
+  if (incomeGoldEl) {
+    if (!isArena) incomeGoldEl.textContent = `${side.gold}g`;
+    else incomeGoldEl.textContent = '';
+  }
+  // Respawn-overlay: visa "RESPAWN <countdown>" när hero är död i line/boss wars
+  if (respawnOverlayEl) {
+    const showRespawn = side.hero.dead && !isArena;
+    respawnOverlayEl.classList.toggle('hidden', !showRespawn);
+    if (showRespawn && respawnTimerEl) {
+      respawnTimerEl.textContent = side.hero.respawnTimer.toFixed(1);
+    }
+  }
   updateLevelUI(side);
   updateBossHpBar();
 }
