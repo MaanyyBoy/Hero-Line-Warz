@@ -1699,6 +1699,17 @@ const LEVEL_DMG_PCT = 0.04;
 const LEVEL_HP_PCT = 0.04;
 const LEVEL_MS_PCT = 0.01;
 function xpForLevel(level) { return 50 * level; }
+
+// Boss Wars: skala %-max-HP-skador 10× ner mot själva bossen.
+// Anledning: bossens HP är så hög att en 5%-skill annars knockar 5% i en cast,
+// vilket bryter balansen för en raid. AA + flat-damage förblir oförändrad.
+// Användning: vid varje call-site där dmg = target.maxHp * KONSTANT_DMG_PCT,
+// multiplicera med bossWarsPctScale(target).
+const BOSS_WARS_PCT_SCALE = 0.1;
+function bossWarsPctScale(target) {
+  if (APP.gameMode !== 'bosswars') return 1;
+  return (target && target.isBossWarsBoss) ? BOSS_WARS_PCT_SCALE : 1;
+}
 const MONSTER_XP_REWARD = 10;
 const CREEP_XP_RATIO = 0.6;
 
@@ -2269,7 +2280,7 @@ function makeHeroMesh(idx, heroId) {
   // slår med det vid AA och spinner med det vid Whirlwind.
   if ((heroId || '').toLowerCase() === 'aragurn') {
     const sword = makeAragurnSword();
-    sword.scale.set(4, 4, 4);              // 4× större
+    sword.scale.set(3.2, 3.2, 3.2);        // 3.2× större (tidigare 4×, nu −20%)
     sword.position.set(0.85, 1.0, 0.15);   // höger sida, högre upp pga storlek
     sword.rotation.z = -0.35;
     sword.rotation.x = 0.15;
@@ -3700,6 +3711,22 @@ scene.add(arenaSceneGroup);
 const BOSSWARS_CX = 0;
 const BOSSWARS_CZ = 90;
 const BOSSWARS_RADIUS = 30;   // 25 × 1.2 = 30 (20% större)
+
+// Rum-system: hjältarna spawnar i ett separat rum, springer genom en korridor
+// in i boss-rummet. När alla är inne aktiveras bossen + en gate stängs så
+// ingen kan springa ut. Alla mått relativt världs-origin.
+const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;   // -30 — boss-rummets västsida
+const CORRIDOR_LENGTH = 22;
+const CORRIDOR_WIDTH = 9;
+const CORRIDOR_HALF_W = CORRIDOR_WIDTH / 2;
+const CORRIDOR_X_MIN = BOSS_GATE_X - CORRIDOR_LENGTH;   // -52
+const CORRIDOR_X_MAX = BOSS_GATE_X;                       // -30
+const SPAWN_ROOM_SIZE = 24;
+const SPAWN_ROOM_HALF = SPAWN_ROOM_SIZE / 2;
+const SPAWN_ROOM_CX = CORRIDOR_X_MIN - SPAWN_ROOM_HALF;   // -64
+const SPAWN_ROOM_CZ = BOSSWARS_CZ;                          // 90
+// Gate-thickness — used for visual mesh + walkability "wall" when stängd
+const GATE_THICKNESS = 0.5;
 // Map-config per tier — shape, color-tema, ev. accent
 const BOSSWARS_MAPS = {
   1: { name: 'Stone Arena',    shape: 'circle',  color: 0x6a5a44, edgeColor: 0x2a2218, accent: 0x9a8a6a },
@@ -3728,6 +3755,9 @@ function clearBossWarsScene() {
     bossWarsSceneGroup.remove(c);
   }
   bossWarsSceneGroup.userData.builtForTier = -1;
+  // Rensa gate-referenser så de inte pekar på disposed meshes vid rebuild
+  bossWarsSceneGroup.userData.gate = null;
+  bossWarsSceneGroup.userData.gateGlow = null;
 }
 
 // Bygger en shape-yta baserat på map.shape
@@ -3836,9 +3866,107 @@ function buildBossWarsScene() {
   innerDot.rotation.x = -Math.PI / 2;
   innerDot.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
   bossWarsSceneGroup.add(innerDot);
+
+  // ===== SPAWN-RUM (västra) + KORRIDOR + GATE =====
+  // Spawn-golvet — mörkare ton än boss-rummet så zonen visuellt skiljer sig.
+  const spawnFloorMat = new THREE.MeshStandardMaterial({
+    color: map.edgeColor,
+    roughness: 0.92,
+    metalness: 0.05,
+  });
+  // Bas-platta under spawn-rummet (samma tjocklek som boss-platformen)
+  const spawnBase = new THREE.Mesh(
+    new THREE.BoxGeometry(SPAWN_ROOM_SIZE + 1, 0.4, SPAWN_ROOM_SIZE + 1),
+    new THREE.MeshStandardMaterial({ color: map.edgeColor, roughness: 0.92 })
+  );
+  spawnBase.position.set(SPAWN_ROOM_CX, 0.2, SPAWN_ROOM_CZ);
+  spawnBase.receiveShadow = true;
+  bossWarsSceneGroup.add(spawnBase);
+  // Topp-yta för spawn-rummet (kvadratisk plane, samma textur som boss-rummet
+  // men lite mörkare ton för att läsa som "förrum")
+  const spawnTop = new THREE.Mesh(
+    new THREE.PlaneGeometry(SPAWN_ROOM_SIZE, SPAWN_ROOM_SIZE),
+    new THREE.MeshStandardMaterial({ map: floorTex, color: 0xb0b0b0, roughness: 0.9 })
+  );
+  spawnTop.rotation.x = -Math.PI / 2;
+  spawnTop.position.set(SPAWN_ROOM_CX, 0.42, SPAWN_ROOM_CZ);
+  spawnTop.receiveShadow = true;
+  bossWarsSceneGroup.add(spawnTop);
+  // Accent-ring i spawn-rumet (visuell pickup-point — säger "stå här")
+  const spawnRing = new THREE.Mesh(
+    new THREE.RingGeometry(2.4, 3.0, 36),
+    new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  spawnRing.rotation.x = -Math.PI / 2;
+  spawnRing.position.set(SPAWN_ROOM_CX, 0.44, SPAWN_ROOM_CZ);
+  bossWarsSceneGroup.add(spawnRing);
+
+  // Korridor — rektangulär bas + topp
+  const corrCX = (CORRIDOR_X_MIN + CORRIDOR_X_MAX) / 2;   // mid-x
+  const corrBase = new THREE.Mesh(
+    new THREE.BoxGeometry(CORRIDOR_LENGTH + 0.5, 0.4, CORRIDOR_WIDTH + 0.5),
+    new THREE.MeshStandardMaterial({ color: map.edgeColor, roughness: 0.92 })
+  );
+  corrBase.position.set(corrCX, 0.2, BOSSWARS_CZ);
+  corrBase.receiveShadow = true;
+  bossWarsSceneGroup.add(corrBase);
+  const corrTop = new THREE.Mesh(
+    new THREE.PlaneGeometry(CORRIDOR_LENGTH, CORRIDOR_WIDTH),
+    new THREE.MeshStandardMaterial({ map: floorTex, color: 0xc8c8c8, roughness: 0.9 })
+  );
+  corrTop.rotation.x = -Math.PI / 2;
+  corrTop.position.set(corrCX, 0.42, BOSSWARS_CZ);
+  corrTop.receiveShadow = true;
+  bossWarsSceneGroup.add(corrTop);
+
+  // GATE — synlig portal vid boss-rummets ingång. Vid match-start är gaten öppen
+  // (gaten är BARA visible när stängd, dvs efter att alla heroes är inne).
+  // Vi sparar referens på bossWarsSceneGroup.userData så vi kan toggla via state.
+  const gateMat = new THREE.MeshStandardMaterial({
+    color: 0x3a2a18,
+    roughness: 0.75,
+    emissive: 0x442211,
+    emissiveIntensity: 0.6,
+    transparent: true,
+    opacity: 0.92,
+  });
+  const gate = new THREE.Mesh(
+    new THREE.BoxGeometry(GATE_THICKNESS, 5, CORRIDOR_WIDTH + 1),
+    gateMat
+  );
+  gate.position.set(BOSS_GATE_X, 2.5, BOSSWARS_CZ);
+  gate.castShadow = false;
+  gate.receiveShadow = true;
+  gate.visible = false;   // dolt tills bossActivated
+  bossWarsSceneGroup.add(gate);
+  // Lite glödande accent på gaten (lila/rosa pulserande när stängd)
+  const gateGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(GATE_THICKNESS + 0.4, 5.2, CORRIDOR_WIDTH + 1.4),
+    new THREE.MeshBasicMaterial({ color: 0xff44aa, transparent: true, opacity: 0.18, depthWrite: false })
+  );
+  gateGlow.position.copy(gate.position);
+  gateGlow.visible = false;
+  bossWarsSceneGroup.add(gateGlow);
+  bossWarsSceneGroup.userData.gate = gate;
+  bossWarsSceneGroup.userData.gateGlow = gateGlow;
 }
 
+// Walkable area i boss wars = spawn-rum + korridor + boss-rum (+ gate-block om stängd).
 function isBossWarsPos(x, z) {
+  // 1) Gate-block: när gaten är stängd får man INTE passera genom korridor-utgången
+  //    (tunn vertikal vägg vid BOSS_GATE_X, inom korridor-bredd).
+  if (APP.bossWars && APP.bossWars.gateClosed) {
+    const inGateBand = Math.abs(x - BOSS_GATE_X) < (GATE_THICKNESS / 2 + 0.45);
+    const inGateZ = Math.abs(z - BOSSWARS_CZ) < (CORRIDOR_HALF_W + 0.4);
+    if (inGateBand && inGateZ) return false;
+  }
+  // 2) Spawn-rum (kvadrat västra sidan)
+  const sdx = x - SPAWN_ROOM_CX, sdz = z - SPAWN_ROOM_CZ;
+  if (Math.abs(sdx) < SPAWN_ROOM_HALF - 0.5 && Math.abs(sdz) < SPAWN_ROOM_HALF - 0.5) return true;
+  // 3) Korridor (rektangel mellan spawn-rum och boss-rum)
+  if (x >= CORRIDOR_X_MIN - 0.5 && x <= CORRIDOR_X_MAX + 0.5 &&
+      Math.abs(z - BOSSWARS_CZ) < CORRIDOR_HALF_W - 0.3) return true;
+  // 4) Boss-rum (tier-shape)
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
   const tier = (APP.bossWars && APP.bossWars.tier) || 1;
   const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
@@ -3854,6 +3982,25 @@ function isBossWarsPos(x, z) {
         || (Math.abs(dx) < armWidth && Math.abs(dz) < armLen);
   }
   // hexagon/octagon/circle alla approxmas som cirkel för walkable
+  return (dx * dx + dz * dz) < r * r;
+}
+
+// Returnerar true om punkten är inom själva boss-rummet (för "alla inne?"-check).
+function isInsideBossRoom(x, z) {
+  const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
+  const tier = (APP.bossWars && APP.bossWars.tier) || 1;
+  const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
+  const r = BOSSWARS_RADIUS - 0.5;
+  if (map.shape === 'square') {
+    const half = (r * Math.SQRT2) / 2;
+    return Math.abs(dx) < half && Math.abs(dz) < half;
+  }
+  if (map.shape === 'cross') {
+    const armLen = r * 1.8 / 2;
+    const armWidth = r * 0.85 / 2;
+    return (Math.abs(dx) < armLen && Math.abs(dz) < armWidth)
+        || (Math.abs(dx) < armWidth && Math.abs(dz) < armLen);
+  }
   return (dx * dx + dz * dz) < r * r;
 }
 
@@ -4077,6 +4224,122 @@ function spawnBossWarsBoss(side, tier) {
     mesh,
   });
   side.bossWarsBossId = bossId;   // för säker check i checkMatchEnd
+}
+
+// Boss Wars: kollar om alla aktiva heroes är inne i boss-rummet → aktivera
+// bossen + stäng gaten. Idempotent — sätter inte om redan aktiverad.
+// Körs host-side (och solo) varje frame i simulateAll-loopen.
+function checkBossWarsActivation() {
+  if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  if (APP.bossWars.bossActivated) return;
+  // I MP boss-wars: alla 3 peers. I solo: bara sides[1].
+  const isMp = bossMpState && bossMpState.matchActive;
+  const activeIdxs = isMp ? [1, 2, 3] : [1];
+  let allInside = true;
+  let anyAlive = false;
+  for (const idx of activeIdxs) {
+    const s = sides[idx];
+    if (!s) { allInside = false; break; }
+    if (s.hero.dead) continue;   // döda räknas inte (rare edge-case innan boss aktiverat)
+    anyAlive = true;
+    if (!isInsideBossRoom(s.hero.x, s.hero.z)) { allInside = false; break; }
+  }
+  if (!anyAlive || !allInside) return;
+  // Alla inne → aktivera + stäng gate
+  APP.bossWars.bossActivated = true;
+  APP.bossWars.gateClosed = true;
+  // Visuellt: gör gate-meshen synlig + spawna FX vid ingången
+  if (bossWarsSceneGroup.userData.gate) bossWarsSceneGroup.userData.gate.visible = true;
+  if (bossWarsSceneGroup.userData.gateGlow) bossWarsSceneGroup.userData.gateGlow.visible = true;
+  spawnSkillCastFx(BOSS_GATE_X, BOSSWARS_CZ, 0xff44aa, 2.4);
+  spawnShieldBurstFx(BOSS_GATE_X, BOSSWARS_CZ, 0xff66cc);
+  triggerCameraShake(0.4, 0.4);
+}
+
+// Klient: applicera bossActivated + gateClosed från host-snapshot.
+function applyBossWarsActivationFromSnap(ba, gc) {
+  if (!APP.bossWars) return;
+  const prevActivated = !!APP.bossWars.bossActivated;
+  APP.bossWars.bossActivated = !!ba;
+  APP.bossWars.gateClosed = !!gc;
+  if (bossWarsSceneGroup.userData.gate) bossWarsSceneGroup.userData.gate.visible = !!gc;
+  if (bossWarsSceneGroup.userData.gateGlow) bossWarsSceneGroup.userData.gateGlow.visible = !!gc;
+  // Delta-trigga gate-stängnings-FX på klienten också (för "epic moment")
+  if (!prevActivated && APP.bossWars.bossActivated) {
+    spawnSkillCastFx(BOSS_GATE_X, BOSSWARS_CZ, 0xff44aa, 2.4);
+    spawnShieldBurstFx(BOSS_GATE_X, BOSSWARS_CZ, 0xff66cc);
+    triggerCameraShake(0.4, 0.4);
+  }
+}
+
+// Phase 2 aura/glow per tier. Skapar transparent sphere + roterande orbs +
+// pulserande pointlight runt boss-meshen. Aktiveras när bossen landar efter
+// phase-transition. Idempotent — om mesh redan har userData.phase2Aura
+// gör funktionen ingenting.
+const BOSS_PHASE2_AURA = {
+  1: { color: 0x44ccff, name: 'blue-smoke' },   // Werewolf — blå smoke
+  2: { color: 0x55ff44, name: 'green-fire' },   // Forest — grön eld
+  3: { color: 0xffe080, name: 'gold-halo'  },   // Angel — gyllene gloria
+  4: { color: 0xcc44ff, name: 'purple-shadow' },// Dracula — lila/röd skugga
+  5: { color: 0xff5520, name: 'red-fire'    },  // Dragon — orange/röd eld
+};
+function applyBossPhase2Glow(mesh, tier) {
+  if (!mesh || mesh.userData.phase2Aura) return;
+  const cfg = BOSS_PHASE2_AURA[tier] || BOSS_PHASE2_AURA[1];
+  const color = cfg.color;
+  const grp = new THREE.Group();
+  // Stor transparent sphere (glow-aura, depthWrite false så den inte skuggar barn)
+  const auraMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const aura = new THREE.Mesh(new THREE.SphereGeometry(2.4, 24, 16), auraMat);
+  aura.position.y = 1.6;
+  grp.add(aura);
+  // Inre tätare sphere (pulserar i takt)
+  const coreMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const core = new THREE.Mesh(new THREE.SphereGeometry(1.55, 20, 14), coreMat);
+  core.position.y = 1.6;
+  grp.add(core);
+  // 3 orbiterande wisps (planes som spinner runt mesh)
+  const wisps = [];
+  const wispMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+  });
+  for (let i = 0; i < 3; i++) {
+    const w = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 1.4), wispMat);
+    const ang = (i / 3) * Math.PI * 2;
+    w.position.set(Math.cos(ang) * 2.0, 1.4 + (i - 1) * 0.4, Math.sin(ang) * 2.0);
+    w.userData.orbitAngle = ang;
+    grp.add(w);
+    wisps.push(w);
+  }
+  // Pulserande pointlight (raid-känsla)
+  const light = new THREE.PointLight(color, 2.0, 8);
+  light.position.y = 1.8;
+  grp.add(light);
+  mesh.add(grp);
+  mesh.userData.phase2Aura = { grp, aura, core, wisps, light, baseY: 1.6, color, age: 0 };
+}
+function tickBossPhase2Aura(mesh, dt) {
+  const a = mesh && mesh.userData && mesh.userData.phase2Aura;
+  if (!a) return;
+  a.age += dt;
+  // Pulserande opacity (2 Hz)
+  const pulse = 0.5 + 0.5 * Math.sin(a.age * 4);
+  if (a.aura.material) a.aura.material.opacity = 0.18 + 0.10 * pulse;
+  if (a.core.material) a.core.material.opacity = 0.30 + 0.15 * pulse;
+  if (a.light) a.light.intensity = 1.6 + 0.7 * pulse;
+  // Wisps orbiterar
+  for (let i = 0; i < a.wisps.length; i++) {
+    const w = a.wisps[i];
+    w.userData.orbitAngle += dt * (1.2 + i * 0.15);
+    const r = 1.9 + Math.sin(a.age * 2 + i) * 0.3;
+    w.position.x = Math.cos(w.userData.orbitAngle) * r;
+    w.position.z = Math.sin(w.userData.orbitAngle) * r;
+    w.lookAt(0, w.position.y, 0);  // Vänd alltid mot mesh-centrum (billboard-effekt)
+  }
 }
 
 // Phase-transition: trigga vid 50% HP. Push back + stun heroes, boss flyger upp,
@@ -5511,6 +5774,12 @@ function attachBossAura(mesh, auraColor, eyeColor, scale, isMini = false) {
 // Per frame: ticka CDs, om aktiv cast → tick. Annars välj random ready skill.
 // Faser: 'telegraph' (visuell varning) → 'execute' (skada/projektil/dash/etc).
 function tickBossSkills(side, m, dt) {
+  // Boss inaktiv i boss wars tills alla heroes är inne i boss-rummet.
+  // Stannar still, attackar inte, castar inga skills.
+  if (m.isBossWarsBoss && APP.bossWars && !APP.bossWars.bossActivated) {
+    if (m.activeCast) cancelBossCast(side, m);
+    return;
+  }
   if (m.hp <= 0 || side.hero.dead) {
     if (m.activeCast) cancelBossCast(side, m);
     return;
@@ -5578,6 +5847,15 @@ function startBossCast(side, m, skill, skillIdx) {
   if (m.mesh) m.mesh.userData.attackTrigger = true;
   // Boss roterar mot target under telegraph
   if (m.mesh) m.mesh.rotation.y = Math.atan2(dirX, dirZ);
+  // Extra visuell feedback för boss-skill-cast i boss wars — så användaren
+  // tydligt ser "bossen castar något". Lila ring runt bossen + camera shake.
+  if (m.isBossWarsBoss && m.mesh) {
+    spawnSkillCastFx(m.mesh.position.x, m.mesh.position.z, 0xcc44ff, 1.8);
+    spawnShieldBurstFx(m.mesh.position.x, m.mesh.position.z, 0xff66dd);
+    triggerCameraShake(0.18, 0.2);
+    // Bumpa aaCount så klienter delta-detect:ar och triggar attack-clip lokalt
+    m.aaCount = (m.aaCount || 0) + 1;
+  }
   spawnBossTelegraph(side, m, cast);
 }
 
@@ -6285,6 +6563,14 @@ function updateMonsters(side, dt) {
     }
     // Boss/miniboss: aura-tick varje frame
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
+    // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
+    if (m.isBossWarsBoss && m.mesh && m.mesh.userData.phase2Aura) tickBossPhase2Aura(m.mesh, dt);
+    // Boss Wars: bossen är inaktiv (står still, attackar inte, castar inga skills)
+    // tills alla aktiva heroes är inne i boss-rummet. tickBossSkills bail:ar redan
+    // i sin egen check; här skippar vi också movement + AA.
+    if (m.isBossWarsBoss && APP.bossWars && !APP.bossWars.bossActivated) {
+      continue;
+    }
     // Frusen: hoppa över movement + attack + boss-skills
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -6323,6 +6609,8 @@ function updateMonsters(side, dt) {
         // Visuell landningsburst
         spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 8, 0xff44aa);
         triggerCameraShake(0.5, 0.5);
+        // Phase 2 aura/glow (tier-specifik färg)
+        applyBossPhase2Glow(m.mesh, m.bossTier);
       }
       continue;   // Skip all normal monster AI under transition
     }
@@ -6361,6 +6649,12 @@ function updateMonsters(side, dt) {
       spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
       // Trigga attack-animation på boss-mesh
       if (m.mesh) m.mesh.userData.attackTrigger = true;
+      // Boss-AA: extra visuell feedback så animationen syns tydligt.
+      // Ground-impact vid bossens fot + slash vid heroens position.
+      if (m.isBossWarsBoss && m.mesh) {
+        spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 2.2, 0xff6644);
+        spawnHitSparkFx(targetSide.hero.x, 1.2, targetSide.hero.z, 0xffaa44);
+      }
       // Räknare för boss-AA — syncas till klienter via b-state så klienter
       // kan trigga visuell attack-animation lokalt (delta-detection).
       if (m.isBossWarsBoss) m.aaCount = (m.aaCount || 0) + 1;
@@ -7387,7 +7681,8 @@ function applySoulDrainTick(side, target, sd) {
   }
   const baseDmg = maxHp * SOULDRAIN_DMG_PCT * (side.skillDmgMul || 1) *
                   (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) *
-                  gandulfSkillDmgMul(side);
+                  gandulfSkillDmgMul(side) *
+                  bossWarsPctScale(target);
   sd.stacks = Math.min(SOULDRAIN_MAX_STACKS, (sd.stacks || 0) + 1);
   const slowMul = 1 - SOULDRAIN_SLOW_PER_STACK * sd.stacks;
   const tt = sd.targetType;
@@ -10276,6 +10571,38 @@ function updateHud() {
   else if (APP.mode === 'client') bottom.push('CLIENT');
   statusEl.innerHTML = top.join(' | ') + '<br>' + bottom.join(' | ');
   updateLevelUI(side);
+  updateBossHpBar();
+}
+
+// Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
+const bossHpWrapEl = document.getElementById('boss-hp-wrap');
+const bossHpFillEl = document.getElementById('boss-hp-fill');
+const bossHpPctEl = document.getElementById('boss-hp-pct');
+const bossHpNameEl = document.getElementById('boss-hp-name');
+function updateBossHpBar() {
+  if (!bossHpWrapEl) return;
+  if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) {
+    bossHpWrapEl.classList.add('hidden');
+    return;
+  }
+  // Hitta boss-meshen — bor i sides[1].monsters med isBossWarsBoss=true
+  const hostSide = sides[1];
+  const boss = hostSide && hostSide.monsters
+    ? hostSide.monsters.find(m => m.isBossWarsBoss)
+    : null;
+  if (!boss || boss.hp <= 0) {
+    bossHpWrapEl.classList.add('hidden');
+    return;
+  }
+  bossHpWrapEl.classList.remove('hidden');
+  const pct = Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100));
+  // Visa 1 decimal när < 10%, annars heltal (känns mer "epic" på final stretch)
+  const pctStr = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
+  if (bossHpFillEl) bossHpFillEl.style.width = pct + '%';
+  if (bossHpPctEl) bossHpPctEl.textContent = pctStr + '%';
+  if (bossHpNameEl && boss.bossName) bossHpNameEl.textContent = boss.bossName;
+  // Phase 2 styling
+  bossHpWrapEl.classList.toggle('phase2', boss.bossPhase === 2);
 }
 
 const duelInfoEl = document.getElementById('duel-info');
@@ -11325,7 +11652,7 @@ function applyLaserBeamTick(side) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (inBeam(m.mesh.position.x, m.mesh.position.z)) {
-      const dmg = (m.maxHp || m.hp) * LASER_TICK_DMG_PCT;
+      const dmg = (m.maxHp || m.hp) * LASER_TICK_DMG_PCT * bossWarsPctScale(m);
       m.hp -= dmg;
       spawnHitSparkFx(m.mesh.position.x, 1.2, m.mesh.position.z, 0xaaddff);
       if (m.hp <= 0) hostKillMonster(side, i, side);
@@ -11585,7 +11912,7 @@ function applyRagePulse(side) {
     const m = side.monsters[i];
     const d = Math.hypot(m.mesh.position.x - ox, m.mesh.position.z - oz);
     if (d < RAGE_PULSE_RADIUS) {
-      const dmg = (m.maxHp || m.hp) * RAGE_PULSE_DMG_PCT;
+      const dmg = (m.maxHp || m.hp) * RAGE_PULSE_DMG_PCT * bossWarsPctScale(m);
       const dealt = Math.min(dmg, m.hp);
       m.hp -= dmg;
       applyRageLifesteal(side, dealt);
@@ -11737,7 +12064,7 @@ function applyWhirlwindTick(side) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (Math.hypot(m.mesh.position.x - ox, m.mesh.position.z - oz) < WHIRLWIND_RADIUS) {
-      const dmg = (m.maxHp || m.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      const dmg = (m.maxHp || m.hp) * WHIRLWIND_DMG_PCT * skillMul * bossWarsPctScale(m);
       soloApplySkillDmgToMonster(side, opp, i, dmg);
     }
   }
@@ -11799,7 +12126,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
-    const dmg = (m.maxHp || m.hp) * SHOUT_DIRECT_DMG_PCT * skillMul;
+    const dmg = (m.maxHp || m.hp) * SHOUT_DIRECT_DMG_PCT * skillMul * bossWarsPctScale(m);
     soloApplySkillDmgToMonster(side, opp, i, dmg);
     if (side.monsters[i] === m && m.hp > 0) {
       m.slowMul = Math.min(m.slowMul || 1, SHOUT_SLOW_MUL);
@@ -11936,7 +12263,7 @@ function applyAragurnLeapImpact(side, x, z) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z) < LEAP_RADIUS) {
-      const dmg = (m.maxHp || m.hp) * LEAP_DMG_PCT * skillMul;
+      const dmg = (m.maxHp || m.hp) * LEAP_DMG_PCT * skillMul * bossWarsPctScale(m);
       soloApplySkillDmgToMonster(side, opp, i, dmg);
       if (side.monsters[i] === m && m.hp > 0) m.frozenTime = Math.max(m.frozenTime || 0, LEAP_STUN_TIME);
       hitCount++;
@@ -13416,12 +13743,18 @@ function broadcastBossWarsState() {
     h: snap.h,
     b: snap.b,
     tr: snap.t,
+    ba: !!(APP.bossWars && APP.bossWars.bossActivated),   // boss aktiverad?
+    gc: !!(APP.bossWars && APP.bossWars.gateClosed),       // gate stängd?
   });
 }
 
 function applyBossWarsState(msg) {
   // Bara klienter applicerar denna; host kör auth-sim
   if (bossMpState.role !== 'client' || !bossMpState.matchActive) return;
+  // Boss-aktivering + gate-state (synkad från host)
+  if (msg.ba !== undefined || msg.gc !== undefined) {
+    applyBossWarsActivationFromSnap(msg.ba, msg.gc);
+  }
   // Hero-snapshots — sätt position, hp, level för alla 3 sides
   if (msg.h) {
     for (const idx of [1, 2, 3]) {
@@ -13520,8 +13853,15 @@ function applyBossWarsState(msg) {
 
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
+      const prevPhase = boss._prevSyncedPhase || 1;
       boss.bossPhase = msg.b.ph || 1;
       boss.phaseTransitionRemaining = msg.b.pt || 0;
+      // Delta-detection: fas växlade 1 → 2 → lägg på phase-2-aura på klienten.
+      // Idempotent — applyBossPhase2Glow returnerar tidigt om aura redan finns.
+      if (boss.bossPhase === 2 && prevPhase !== 2 && boss.mesh) {
+        applyBossPhase2Glow(boss.mesh, msg.tr || boss.bossTier || 1);
+      }
+      boss._prevSyncedPhase = boss.bossPhase;
     }
   }
 }
@@ -15426,27 +15766,14 @@ function enterPlayPhase() {
         swapHeroMeshIfNeeded(s);
       }
     }
-    const _tier = (APP.bossWars && APP.bossWars.tier) || 1;
-    const _map = BOSSWARS_MAPS[_tier] || BOSSWARS_MAPS[1];
-    let spawnOffsetX = BOSSWARS_RADIUS - 4;
-    if (_map.shape === 'square') spawnOffsetX = (BOSSWARS_RADIUS * Math.SQRT2) / 2 - 3.5;
-    else if (_map.shape === 'cross') spawnOffsetX = (BOSSWARS_RADIUS * 1.8) / 2 - 3.5;
-    // Spawn-positioner per peer.
-    // Cross-shape (tier 3): diagonalerna mellan armarna är non-walkable
-    // (isBossWarsPos returnerar false). Triangulär spridning skulle spawna
-    // peer 2/3 utanför armen → applyMovement bail:ar varje frame och
-    // klienterna sitter fast. Spawna alla 3 längs samma horisontella arm.
-    const spawnPoints = (_map.shape === 'cross')
-      ? {
-          1: { x: BOSSWARS_CX - spawnOffsetX,     z: BOSSWARS_CZ },
-          2: { x: BOSSWARS_CX - spawnOffsetX + 4, z: BOSSWARS_CZ - 3 },
-          3: { x: BOSSWARS_CX - spawnOffsetX + 4, z: BOSSWARS_CZ + 3 },
-        }
-      : {
-          1: { x: BOSSWARS_CX - spawnOffsetX,       z: BOSSWARS_CZ },
-          2: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ - spawnOffsetX * 0.6 },
-          3: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ + spawnOffsetX * 0.6 },
-        };
+    // Spawn-positioner: alla 3 hjältar i spawn-rummet, nära varandra.
+    // Triangulär uppställning så de inte överlappar. Bossen är öster om
+    // korridor + gate och inaktiv tills alla 3 är inne i boss-rummet.
+    const spawnPoints = {
+      1: { x: SPAWN_ROOM_CX - 2, z: SPAWN_ROOM_CZ },
+      2: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ - 3 },
+      3: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ + 3 },
+    };
     const activeIdxs = bossMpState.matchActive ? [1, 2, 3] : [1];
     for (const idx of activeIdxs) {
       const s = sides[idx];
@@ -15474,6 +15801,10 @@ function enterPlayPhase() {
       if (s.mesh) {
         s.mesh.position.set(s.hero.x, 0, s.hero.z);
         s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
+        // Hero +15% storlek i boss wars (raid-känsla, syns bättre vs stor boss).
+        // Aragurn-svärdet är child av mesh:n så det skalas automatiskt.
+        s.mesh.scale.set(1.15, 1.15, 1.15);
+        s.mesh.userData.bossWarsScaled = true;
       }
     }
     // Spawna boss — bara host (eller solo) gör det. Klienter får boss via b-state.
@@ -15481,8 +15812,23 @@ function enterPlayPhase() {
     if (!isMpClient) {
       spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
     }
+    // Boss Wars co-op: bossen ligger i sides[1].monsters, men hero-skills på peer 2/3
+    // itererar side.monsters i sin egen sida (tom). Dela monsters-arrayen så
+    // alla hero-skills träffar bossen oavsett vem som castar. updateMonsters
+    // skippas för sides 2/3 i simulateAll (annars triple-tick av boss-AI).
+    if (bossMpState.matchActive) {
+      if (sides[2]) sides[2].monsters = sides[1].monsters;
+      if (sides[3]) sides[3].monsters = sides[1].monsters;
+    }
     // Markera match som startad — först nu får checkMatchEnd avgöra utgång
     APP.bossWars.started = true;
+    // Boss inaktiv tills alla aktiva heroes är inne i boss-rummet. Då stängs gaten.
+    APP.bossWars.bossActivated = false;
+    APP.bossWars.gateClosed = false;
+    // Säkerställ att gaten är dold visuellt vid match-start (build-cache kan
+    // ha lämnat den visible från en tidigare match).
+    if (bossWarsSceneGroup.userData.gate) bossWarsSceneGroup.userData.gate.visible = false;
+    if (bossWarsSceneGroup.userData.gateGlow) bossWarsSceneGroup.userData.gateGlow.visible = false;
     // MP: anpassa APP.localSide så camera/HUD följer lokal hero
     if (bossMpState.matchActive) APP.localSide = bossMpState.peerIdx;
   } else {
@@ -15510,12 +15856,17 @@ function swapHeroMeshIfNeeded(side) {
   const wantedHeroId = side.heroId || 'magiker';
   const currentHeroId = side.mesh?.userData?.heroId || 'magiker';
   if (wantedHeroId === currentHeroId) return;
-  // Behåll position, rotation och hp-bar-state
+  // Behåll position, rotation, scale och hp-bar-state
   const oldMesh = side.mesh;
   const newMesh = makeHeroMesh(side.idx, wantedHeroId);
   newMesh.position.copy(oldMesh.position);
   newMesh.rotation.y = oldMesh.rotation.y;
   newMesh.visible = oldMesh.visible;
+  // Behåll boss-wars +15%-scale om gammal mesh hade det
+  if (oldMesh.userData && oldMesh.userData.bossWarsScaled) {
+    newMesh.scale.set(1.15, 1.15, 1.15);
+    newMesh.userData.bossWarsScaled = true;
+  }
   attachHpBar(newMesh, 2.0, true);
   scene.add(newMesh);
   scene.remove(oldMesh);
@@ -15998,6 +16349,8 @@ const clock = new THREE.Clock();
 function simulateAll(dt) {
   // I arena: pausa all gameplay-sim utanför 'fight'-fasen (prep + roundEnd + matchEnd)
   if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return;
+  // Boss Wars: check om alla aktiva heroes är i boss-rummet → aktivera bossen
+  if (APP.gameMode === 'bosswars') checkBossWarsActivation();
   // Lokal duel-timer (bara HUD, ingen duel triggas i solo). Stannar vid 0.
   if (duelState.timer > 0) duelState.timer = Math.max(0, duelState.timer - dt);
   // Hjälte-respawn
@@ -16082,8 +16435,11 @@ function simulateAll(dt) {
       updatePlayerCreeps(side, dt);
       updateCreepProjectiles(side, dt);
     } else if (isBossWars) {
-      // Boss Wars: bara monster-tick (för boss-AI), inga waves/creeps
-      updateMonsters(side, dt);
+      // Boss Wars: bara monster-tick (för boss-AI), inga waves/creeps.
+      // Sides 2/3 delar samma monsters-array som sides[1] (shared-pointer
+      // ovan i enterPlayPhase), så hopp över tick:n för dem — annars körs
+      // boss-AI 3× per frame.
+      if (side.idx === 1) updateMonsters(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
@@ -16953,6 +17309,12 @@ function tick() {
       sendBossWarsInput();
     }
     smoothEntityMeshes(dt);
+    // Klient kör inte simulateAll → phase-2-aura behöver tickas separat
+    // så animation/pulsering syns på klient (host tickar via updateMonsters).
+    if (sides[1] && sides[1].monsters) {
+      const _boss = sides[1].monsters.find(m => m.isBossWarsBoss);
+      if (_boss && _boss.mesh && _boss.mesh.userData.phase2Aura) tickBossPhase2Aura(_boss.mesh, dt);
+    }
   } else if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
     // Solo + arena-host kör simulationen lokalt
     if (!matchState.gameOver) simulateAll(dt);
