@@ -1655,11 +1655,54 @@
       font-size: 12px;
     }
     #ap-talents-status strong { color: #ffd34a; font-size: 15px; }
+    .ap-section-label {
+      font: 700 11px/1 system-ui, sans-serif;
+      color: rgba(180,200,255,0.8);
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin: 10px 0 6px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #ap-gold-display {
+      font: 700 12px/1 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 0.3px;
+      text-transform: none;
+    }
+    #ap-items-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .ap-item-card {
+      background: rgba(35,30,55,0.7);
+      border: 1.5px solid rgba(200,170,255,0.4);
+      border-radius: 9px;
+      padding: 6px 8px;
+      cursor: pointer;
+      transition: transform 0.1s, border-color 0.12s, background 0.12s;
+      text-align: left;
+      min-height: 60px;
+      font: 500 11px/1.25 system-ui, sans-serif;
+      color: #fff;
+    }
+    .ap-item-card:hover { border-color: rgba(220,180,255,0.9); transform: translateY(-2px); }
+    .ap-item-card.owned {
+      background: linear-gradient(135deg, rgba(120,90,200,0.55), rgba(80,60,160,0.45));
+      border-color: #c8a8ff;
+    }
+    .ap-item-card.disabled { opacity: 0.55; cursor: not-allowed; filter: grayscale(0.3); }
+    .ap-item-card .ai-name { font-weight: 700; color: #ddc8ff; margin-bottom: 2px; font-size: 12px; }
+    .ap-item-card .ai-cost { color: #ffd34a; font-weight: 700; font-size: 11px; }
+    .ap-item-card .ai-level { opacity: 0.75; font-size: 10px; margin-left: 4px; }
     #ap-talents-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 7px;
-      margin-bottom: 12px;
+      margin-bottom: 4px;
     }
     .talent-card {
       background: rgba(30,45,75,0.65);
@@ -2296,7 +2339,7 @@
       <div id="ap-header">
         <div>
           <div id="ap-title">Round 1 · Prep</div>
-          <div id="ap-subtitle">Välj talents och tryck Ready</div>
+          <div id="ap-subtitle">Välj talents, köp items och tryck Ready</div>
         </div>
         <div id="ap-timer">60</div>
       </div>
@@ -2304,7 +2347,10 @@
         <div>Talent points kvar: <strong id="ap-points">1</strong></div>
         <div id="ap-opp-status" style="opacity:0.7;font-size:11px;"></div>
       </div>
+      <div class="ap-section-label">Talents</div>
       <div id="ap-talents-grid"></div>
+      <div class="ap-section-label">Items <span id="ap-gold-display"></span></div>
+      <div id="ap-items-grid"></div>
       <div id="ap-actions">
         <button id="ap-ready" class="lobby-btn">Ready</button>
       </div>

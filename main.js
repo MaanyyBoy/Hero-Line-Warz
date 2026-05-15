@@ -3832,23 +3832,21 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
-  // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut
-  const baseR = (map.shape === 'cross') ? r * 1.0 : r;
+  // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut.
+  // Alla tier använder samma cirkulära platform så walkability är konsistent
+  // (tidigare shape-varianter skapade gaps vid korridor-ingången → hjältarna fastnade).
+  const baseR = r;
   const baseCyl = new THREE.Mesh(new THREE.CylinderGeometry(baseR, baseR + 0.5, 0.4, 48), new THREE.MeshStandardMaterial({ color: map.edgeColor, roughness: 0.92 }));
   baseCyl.position.set(BOSSWARS_CX, 0.2, BOSSWARS_CZ);
   baseCyl.receiveShadow = true;
-  // Disable castShadow på massiv platform — sparar shadowmap-perf (lag-fix)
   baseCyl.castShadow = false;
   bossWarsSceneGroup.add(baseCyl);
-  // Topp-yta i shape-form med slät textur
+  // Topp-yta = cirkel oavsett map.shape (tier-distinktion via färg/accent)
   const topMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.88, metalness: 0.08 });
-  const top = makeBossWarsShapeMesh(map.shape, r - 0.4, topMat);
+  const top = new THREE.Mesh(new THREE.CircleGeometry(r - 0.4, 64), topMat);
+  top.rotation.x = -Math.PI / 2;
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
-  if (top.children?.length) {
-    top.children.forEach(c => { c.position.y = 0; c.receiveShadow = true; });
-  } else {
-    top.receiveShadow = true;
-  }
+  top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
   // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
   const accentRing = new THREE.Mesh(
@@ -3952,9 +3950,12 @@ function buildBossWarsScene() {
 }
 
 // Walkable area i boss wars = spawn-rum + korridor + boss-rum (+ gate-block om stängd).
+// Boss-rum är ALLTID en cirkel oavsett tier (visuell shape är fortfarande tier-specifik
+// via top-mesh, men walkability är konsistent). Tidigare hade tier 2 (square) och
+// tier 3 (cross) walkable areas som lämnade gap mellan korridor-slut och boss-rumsedge
+// → hjältarna fastnade vid ingången. Cirkel-walkability garanterar smooth övergång.
 function isBossWarsPos(x, z) {
-  // 1) Gate-block: när gaten är stängd får man INTE passera genom korridor-utgången
-  //    (tunn vertikal vägg vid BOSS_GATE_X, inom korridor-bredd).
+  // 1) Gate-block: när gaten är stängd får man INTE passera genom korridor-utgången.
   if (APP.bossWars && APP.bossWars.gateClosed) {
     const inGateBand = Math.abs(x - BOSS_GATE_X) < (GATE_THICKNESS / 2 + 0.45);
     const inGateZ = Math.abs(z - BOSSWARS_CZ) < (CORRIDOR_HALF_W + 0.4);
@@ -3963,48 +3964,20 @@ function isBossWarsPos(x, z) {
   // 2) Spawn-rum (kvadrat västra sidan)
   const sdx = x - SPAWN_ROOM_CX, sdz = z - SPAWN_ROOM_CZ;
   if (Math.abs(sdx) < SPAWN_ROOM_HALF - 0.5 && Math.abs(sdz) < SPAWN_ROOM_HALF - 0.5) return true;
-  // 3) Korridor (rektangel mellan spawn-rum och boss-rum).
-  // Sträcker sig ~6m IN i boss-rummet så det inte finns gap mellan korridor-slut
-  // och cirkelns rand (cirkeln kröker inåt vid kanterna → smal ingen-mans-land-zon
-  // framför gaten där hero fastnade). Med overlap är passage genom gate-öppningen
-  // alltid kontinuerlig oavsett z-läge inom korridor-bredd.
+  // 3) Korridor (rektangel mellan spawn-rum och boss-rum, med 6m overlap in i boss-rummet)
   if (x >= CORRIDOR_X_MIN - 0.5 && x <= CORRIDOR_X_MAX + 6 &&
       Math.abs(z - BOSSWARS_CZ) < CORRIDOR_HALF_W - 0.3) return true;
-  // 4) Boss-rum (tier-shape)
+  // 4) Boss-rum: alltid cirkel oavsett tier-shape
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
-  const tier = (APP.bossWars && APP.bossWars.tier) || 1;
-  const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
   const r = BOSSWARS_RADIUS - 0.5;
-  if (map.shape === 'square') {
-    const half = (r * Math.SQRT2) / 2;
-    return Math.abs(dx) < half && Math.abs(dz) < half;
-  }
-  if (map.shape === 'cross') {
-    const armLen = r * 1.8 / 2;
-    const armWidth = r * 0.85 / 2;
-    return (Math.abs(dx) < armLen && Math.abs(dz) < armWidth)
-        || (Math.abs(dx) < armWidth && Math.abs(dz) < armLen);
-  }
-  // hexagon/octagon/circle alla approxmas som cirkel för walkable
   return (dx * dx + dz * dz) < r * r;
 }
 
 // Returnerar true om punkten är inom själva boss-rummet (för "alla inne?"-check).
+// Också cirkel-baserad så det matchar isBossWarsPos.
 function isInsideBossRoom(x, z) {
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
-  const tier = (APP.bossWars && APP.bossWars.tier) || 1;
-  const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
   const r = BOSSWARS_RADIUS - 0.5;
-  if (map.shape === 'square') {
-    const half = (r * Math.SQRT2) / 2;
-    return Math.abs(dx) < half && Math.abs(dz) < half;
-  }
-  if (map.shape === 'cross') {
-    const armLen = r * 1.8 / 2;
-    const armWidth = r * 0.85 / 2;
-    return (Math.abs(dx) < armLen && Math.abs(dz) < armWidth)
-        || (Math.abs(dx) < armWidth && Math.abs(dz) < armLen);
-  }
   return (dx * dx + dz * dz) < r * r;
 }
 
@@ -10587,6 +10560,7 @@ const perfFpsEl = document.getElementById('perf-fps');
 const perfBarFillEl = document.getElementById('perf-bar-fill');
 const _perfFrames = [];
 let _perfLastUpdateMs = 0;
+let _lastHudMs = 0;   // throttle-tracker för HUD-textuppdateringar
 const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
@@ -11209,6 +11183,8 @@ const apTimerEl = document.getElementById('ap-timer');
 const apPointsEl = document.getElementById('ap-points');
 const apOppStatusEl = document.getElementById('ap-opp-status');
 const apTalentsGridEl = document.getElementById('ap-talents-grid');
+const apItemsGridEl = document.getElementById('ap-items-grid');
+const apGoldDisplayEl = document.getElementById('ap-gold-display');
 const apReadyBtn = document.getElementById('ap-ready');
 const arenaEndEl = document.getElementById('arena-end');
 const aeTitleEl = document.getElementById('ae-title');
@@ -11219,7 +11195,58 @@ function showArenaPrep() {
   if (!arenaPrepEl) return;
   arenaPrepEl.classList.add('visible');
   renderTalentsGrid();
+  renderArenaPrepItems();
   updateArenaPrepUI();
+}
+
+// Items-grid under prep: spelaren kan både välja talents OCH köpa items.
+// Återanvänder befintliga ITEM_TYPES + shop-event-flödet (samma som klassisk
+// shop-tap → applyEvent({ type: 'shop', kind: 'item', ... })).
+function renderArenaPrepItems() {
+  if (!apItemsGridEl) return;
+  const side = sides[APP.localSide];
+  if (!side) { apItemsGridEl.innerHTML = ''; return; }
+  apItemsGridEl.innerHTML = '';
+  const ownedById = new Map();
+  for (const it of (side.inventory || [])) ownedById.set(it.itemId, it);
+  for (const [itemId, def] of Object.entries(ITEM_TYPES)) {
+    const existing = ownedById.get(itemId);
+    const card = document.createElement('div');
+    card.className = 'ap-item-card' + (existing ? ' owned' : '');
+    const name = def.name || itemId;
+    let cost, action;
+    if (existing) {
+      if (existing.level >= ITEM_MAX_LEVEL) { cost = 'MAX'; action = null; }
+      else { cost = itemUpgradeCost(existing.level) + 'g'; action = 'upgrade'; }
+    } else {
+      cost = ITEM_BUY_COST + 'g';
+      action = 'buy';
+    }
+    const lvlStr = existing ? `<span class="ai-level">Lvl ${existing.level}</span>` : '';
+    card.innerHTML = `<div class="ai-name">${name}${lvlStr}</div><div class="ai-cost">${cost}</div>`;
+    // Disabled om vi inte har råd eller inventory är full vid buy
+    let disabled = false;
+    if (action === 'buy') {
+      if ((side.inventory || []).length >= INVENTORY_SLOTS) disabled = true;
+      if (side.gold < ITEM_BUY_COST) disabled = true;
+      // Items med varianter kan inte köpas direkt — kräver variant-val (skippa i prep-grid)
+      if (def.variants) disabled = true;
+    } else if (action === 'upgrade') {
+      const c = itemUpgradeCost(existing.level);
+      if (side.gold < c) disabled = true;
+    }
+    if (action === null) disabled = true;
+    if (disabled) card.classList.add('disabled');
+    if (!disabled && action) {
+      card.addEventListener('click', () => {
+        // Samma 'item' event hanterar både buy (inget existing) och upgrade
+        sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
+        // Re-render efter en kort delay så host hinner svara (eller direkt om solo/host)
+        setTimeout(() => { renderArenaPrepItems(); updateArenaPrepUI(); }, 80);
+      });
+    }
+    apItemsGridEl.appendChild(card);
+  }
 }
 function hideArenaPrep() {
   if (arenaPrepEl) arenaPrepEl.classList.remove('visible');
@@ -11302,6 +11329,11 @@ function updateArenaPrepUI() {
   }
   const localTalents = arenaState.talents[APP.localSide] || { points: 0, chosen: [] };
   if (apPointsEl) apPointsEl.textContent = String(localTalents.points);
+  // Gold-display för items-grid
+  if (apGoldDisplayEl) {
+    const localSide = sides[APP.localSide];
+    apGoldDisplayEl.textContent = localSide ? `${localSide.gold || 0}g` : '';
+  }
   if (apOppStatusEl) {
     const otherIdx = 3 - APP.localSide;
     const opp = sides[otherIdx];
@@ -16853,42 +16885,71 @@ function triggerClientVisualAA(side) {
   const fz = side.hero.facingZ || 1;
   const heroId = side.heroId || 'magiker';
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
+  const color = colors[heroId] || 0xffdc66;
+  // Större projektil + längre liv så det blir tydligt synligt på klient
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 12, 10),
-    new THREE.MeshBasicMaterial({ color: colors[heroId] || 0xffdc66, transparent: true, opacity: 0.95, depthWrite: false })
+    new THREE.SphereGeometry(0.30, 14, 10),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
   );
   sphere.position.set(side.hero.x + fx * 0.5, 1.3, side.hero.z + fz * 0.5);
   scene.add(sphere);
   combatFx.push({
-    mesh: sphere, life: 0.4, maxLife: 0.4, kind: 'aaFly',
-    vx: fx * 20, vz: fz * 20,
+    mesh: sphere, life: 0.6, maxLife: 0.6, kind: 'aaFly',
+    vx: fx * 22, vz: fz * 22,
   });
+  // Muzzle-flash vid hero (liten ring som expanderar snabbt)
+  spawnSkillCastFx(side.hero.x + fx * 0.4, side.hero.z + fz * 0.4, color, 0.8);
 }
 
-// Klient-visual för skill-cast: cast-ring vid hero-position med skill-specifik
-// färg + en projektil-blast som flyger framåt för synlig "kasta"-känsla.
+// Klient-visual för skill-cast — förstärkt med:
+// (1) hero-specifika full meshes för Legolas (vine trap / dash / big arrow)
+// (2) större cast-ring + ground-impact för alla andra
+// (3) trail-partiklar bakom projektil för Q/E/R så casting tydligt syns
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
+  const heroId = side.heroId || 'magiker';
+  // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R
+  // (de spawnar fulla mesher: vine trap-ring, dash-fx, ult-pil).
+  if (heroId === 'legolas') {
+    if (key === 'q') { spawnClientLocalVineTrap(side, side.hero.facingX, side.hero.facingZ, false, 1); return; }
+    if (key === 'e') { spawnClientLocalDash(side, side.hero.facingX, side.hero.facingZ); return; }
+    if (key === 'r') { spawnClientLocalBigArrow(side, side.hero.facingX, side.hero.facingZ, false); return; }
+  }
   const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff, r: 0xff44aa };
   const color = colors[key] || 0xffdc66;
-  const radius = (key === 'r') ? 2.4 : 1.4;
+  const radius = (key === 'r') ? 3.0 : 1.8;   // större än tidigare
+  // Cast-ring vid hero + sekundär ring på marken (ground-impact-feel)
   spawnSkillCastFx(side.hero.x, side.hero.z, color, radius);
-  // Projektil-blast i facing-riktning för Q/E/R (de skickar något framåt).
-  // F är ofta self-cast (Frostnova/Iron Will) så bara cast-ring.
+  spawnShieldBurstFx(side.hero.x, side.hero.z, color);
+  // Projektil-blast i facing-riktning för Q/E/R — större + flyger längre
   if (key === 'q' || key === 'e' || key === 'r') {
     const fx = side.hero.facingX || 0;
     const fz = side.hero.facingZ || 1;
-    const size = (key === 'r') ? 0.45 : 0.32;
+    const size = (key === 'r') ? 0.6 : 0.42;
     const sphere = new THREE.Mesh(
-      new THREE.SphereGeometry(size, 14, 12),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, depthWrite: false })
+      new THREE.SphereGeometry(size, 16, 12),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
     );
-    sphere.position.set(side.hero.x + fx * 0.6, 1.3, side.hero.z + fz * 0.6);
+    sphere.position.set(side.hero.x + fx * 0.7, 1.3, side.hero.z + fz * 0.7);
     scene.add(sphere);
     combatFx.push({
-      mesh: sphere, life: 0.6, maxLife: 0.6, kind: 'aaFly',
-      vx: fx * 22, vz: fz * 22,
+      mesh: sphere, life: (key === 'r') ? 1.2 : 0.9,
+      maxLife: (key === 'r') ? 1.2 : 0.9, kind: 'aaFly',
+      vx: fx * 24, vz: fz * 24,
     });
+    // Trail-partiklar bakom projektilen
+    for (let i = 0; i < 3; i++) {
+      const pf = i * 0.06;
+      spawnProjectileTrailPuff(
+        side.hero.x + fx * (0.4 + pf),
+        1.2 + (Math.random() - 0.5) * 0.3,
+        side.hero.z + fz * (0.4 + pf),
+        color
+      );
+    }
+  } else if (key === 'f') {
+    // F är ofta AoE / self-buff — spawna en större ground-mark vid hero
+    spawnGroundImpact(side.hero.x, side.hero.z, 3.0, color);
   }
 }
 
@@ -17405,10 +17466,20 @@ function tick() {
   checkAllCcStates();
   updateBuffDebuffSprites();
 
-  updateHud();
-  updateDuelHud();
+  // Throttle text-tunga HUD-uppdateringar till ~10 Hz. innerHTML-skrivningar
+  // är dyra (force reflow). 6× mindre CPU per frame utan synlig skillnad.
+  // updateBossHpBar körs DÄRFÖR direkt i updateHud — kallas också separat varje
+  // frame nedan för smidig HP-animation.
+  if (!_lastHudMs || now * 1000 - _lastHudMs > 100) {
+    _lastHudMs = now * 1000;
+    updateHud();
+    updateDuelHud();
+    updateIncomeDisplay();
+  } else {
+    // Mellan throttle-ticks: bara den snabba boss-HP-baren behöver fortsätta
+    updateBossHpBar();
+  }
   checkWaveBanner();
-  updateIncomeDisplay();
   checkIncomeTickNotifications();
   updateSkillButtonStyles();
   updateAimIndicators();
