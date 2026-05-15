@@ -15431,12 +15431,22 @@ function enterPlayPhase() {
     let spawnOffsetX = BOSSWARS_RADIUS - 4;
     if (_map.shape === 'square') spawnOffsetX = (BOSSWARS_RADIUS * Math.SQRT2) / 2 - 3.5;
     else if (_map.shape === 'cross') spawnOffsetX = (BOSSWARS_RADIUS * 1.8) / 2 - 3.5;
-    // Spawn-positioner per peer
-    const spawnPoints = {
-      1: { x: BOSSWARS_CX - spawnOffsetX, z: BOSSWARS_CZ },
-      2: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ - spawnOffsetX * 0.6 },
-      3: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ + spawnOffsetX * 0.6 },
-    };
+    // Spawn-positioner per peer.
+    // Cross-shape (tier 3): diagonalerna mellan armarna är non-walkable
+    // (isBossWarsPos returnerar false). Triangulär spridning skulle spawna
+    // peer 2/3 utanför armen → applyMovement bail:ar varje frame och
+    // klienterna sitter fast. Spawna alla 3 längs samma horisontella arm.
+    const spawnPoints = (_map.shape === 'cross')
+      ? {
+          1: { x: BOSSWARS_CX - spawnOffsetX,     z: BOSSWARS_CZ },
+          2: { x: BOSSWARS_CX - spawnOffsetX + 4, z: BOSSWARS_CZ - 3 },
+          3: { x: BOSSWARS_CX - spawnOffsetX + 4, z: BOSSWARS_CZ + 3 },
+        }
+      : {
+          1: { x: BOSSWARS_CX - spawnOffsetX,       z: BOSSWARS_CZ },
+          2: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ - spawnOffsetX * 0.6 },
+          3: { x: BOSSWARS_CX - spawnOffsetX * 0.7, z: BOSSWARS_CZ + spawnOffsetX * 0.6 },
+        };
     const activeIdxs = bossMpState.matchActive ? [1, 2, 3] : [1];
     for (const idx of activeIdxs) {
       const s = sides[idx];
