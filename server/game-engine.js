@@ -377,8 +377,11 @@ for (const tier of [1, 2, 3, 4, 5]) {
   }
 }
 const MINION_KILL_RATIO = 0.2;
-const ARROW_SPEED = 14;
-const MAGIC_PROJ_SPEED = 10;
+// Range-minion AA-projektiler: flight time 0.5-1.5s. Pil långsammast (~1.2s på
+// 3.5 m range), magic (fireball) snabbare (~0.6s). Skadan applieras vid hit, ej
+// vid skott — hero hinner se projektilen flyga och kan röra sig.
+const ARROW_SPEED = 3.0;     // 3.5 m range / 3.0 m/s ≈ 1.17s flight
+const MAGIC_PROJ_SPEED = 6.0; // 3.5 m range / 6.0 m/s ≈ 0.58s flight
 
 // === Items ===
 const ITEM_BUY_COST = 200;

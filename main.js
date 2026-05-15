@@ -9859,10 +9859,17 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
       if (e.ry !== undefined) mesh._target.ry = e.ry;
     } else {
       // Snap (projektiler/effekter)
+      const oldX = mesh.position.x, oldZ = mesh.position.z;
       mesh.position.x = e.x;
       mesh.position.z = e.z;
       if (e.y !== undefined) mesh.position.y = e.y;
       if (e.ry !== undefined) mesh.rotation.y = e.ry;
+      // Orient mot motion-riktning för pilar (creep-arrows: orientToMotion-flagga
+      // sätts i makeMesh). Använd delta sedan förra snap som riktning.
+      if (!fresh && mesh.userData && mesh.userData.orientToMotion) {
+        const ddx = e.x - oldX, ddz = e.z - oldZ;
+        if (ddx * ddx + ddz * ddz > 0.0001) mesh.rotation.y = Math.atan2(ddx, ddz);
+      }
     }
     if (e.life !== undefined && mesh.material && mesh.material.opacity !== undefined) {
       mesh.material.opacity = 0.7 * Math.max(0, e.life);
@@ -10430,15 +10437,46 @@ function applyRemoteState(state) {
     });
     clientReconcileEntities(idx, 'creepProjectiles', sData.CP || [], (e) => {
       if (e.kind === 'magic') {
-        return new THREE.Mesh(
-          new THREE.SphereGeometry(0.15, 10, 8),
-          new THREE.MeshStandardMaterial({ color: 0xaa44ff, emissive: 0xaa44ff, emissiveIntensity: 1.0 })
+        // Fireball: större glowing orb med sekundär halo så pilbåge-flyget syns.
+        const grp = new THREE.Group();
+        const core = new THREE.Mesh(
+          new THREE.SphereGeometry(0.30, 14, 10),
+          new THREE.MeshStandardMaterial({ color: 0xff7733, emissive: 0xff5511, emissiveIntensity: 2.0, roughness: 0.35 })
         );
+        grp.add(core);
+        const halo = new THREE.Mesh(
+          new THREE.SphereGeometry(0.50, 12, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.32, depthWrite: false })
+        );
+        grp.add(halo);
+        return grp;
       }
-      return new THREE.Mesh(
-        new THREE.ConeGeometry(0.045, 0.35, 6),
-        new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.7 })
+      // Pil: större cone med silver-tip + brun shaft + fjädrar. Orienteras
+      // mot motion-riktning via userData-flagga (renderas av updateCreepProjectiles-mesh).
+      const grp = new THREE.Group();
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.045, 0.045, 0.70, 8),
+        new THREE.MeshStandardMaterial({ color: 0x6a4020, roughness: 0.75 })
       );
+      shaft.rotation.x = Math.PI / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.08, 0.22, 8),
+        new THREE.MeshStandardMaterial({ color: 0xc8c8d0, metalness: 0.55, roughness: 0.35 })
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.42;
+      grp.add(tip);
+      const featherMat = new THREE.MeshBasicMaterial({ color: 0xddddee, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+      for (let i = 0; i < 3; i++) {
+        const ang = (i / 3) * Math.PI * 2;
+        const f = new THREE.Mesh(new THREE.PlaneGeometry(0.10, 0.18), featherMat);
+        f.position.set(Math.cos(ang) * 0.05, Math.sin(ang) * 0.05, -0.30);
+        f.rotation.z = ang;
+        grp.add(f);
+      }
+      grp.userData.orientToMotion = true;
+      return grp;
     });
     clientReconcileEntities(idx, 'heroCopies', sData.HC || [], (e) => {
       const m = makeHeroCopyMesh(e.owner || idx, e.heroId || 'magiker');
