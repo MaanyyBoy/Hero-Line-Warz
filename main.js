@@ -10120,6 +10120,8 @@ function applyRemoteState(state) {
     side.gold = sData.g;
     side.income = sData.inc ?? side.income;
     side.incomeTimer = sData.incT ?? side.incomeTimer;
+    // Ult-energy från server-snap (mätare-rendering + R-knapp ready-toggle)
+    if (sData.ue !== undefined) side.ultEnergy = sData.ue;
     if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
     // Portal-state (lvl-30 PvP-portal)
     if (sData.ptu !== undefined) side.portalUsesLeft = sData.ptu;

@@ -289,6 +289,16 @@ const ITEM_BUY_COST = 200;
 const ITEM_MAX_LEVEL = 10;
 const INVENTORY_SLOTS = 4;
 const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
+// Ult-energy: fills 0.5%/s passivt + 5% per skill-hit + 3% per AA-hit. Vid 100% kan
+// klienten casta R (ult). Matchar main.js ULT_GAIN_*-konstanter.
+const ULT_ENERGY_MAX = 100;
+const ULT_GAIN_PASSIVE = 0.5;
+const ULT_GAIN_SKILL_HIT = 5;
+const ULT_GAIN_AA_HIT = 3;
+function gainUltEnergy(side, amount) {
+  if (!side || side.hero.dead) return;
+  side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amount);
+}
 const ACTIVE_DURATION = 5;
 const ACTIVE_COOLDOWN = 30;
 const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
@@ -628,6 +638,8 @@ function createSide(idx) {
     vineTraps: [],
     legolusBuffRemaining: 0,
     legolusDashBuffPending: false,
+    ultEnergy: 0,           // 0-100, klient renderar mätare + tillåter R-cast vid 100
+    aragurnNearbyCount: 0,  // cachas varje frame för Aragurn passive DR
     critDmgMul: 2.0,         // base crit-multiplikator (kan justeras av buff)
     titansTauntRemaining: 0,
     ironWillRemaining: 0,
@@ -1098,6 +1110,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   aragurnLifestealHeal(side, actualDealt);
+  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
 function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
@@ -1110,6 +1123,7 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
   const actualDealt = Math.min(creep.hp, finalDmg);
   creep.hp -= finalDmg;
   aragurnLifestealHeal(attackerSide, actualDealt);
+  gainUltEnergy(attackerSide, ULT_GAIN_SKILL_HIT);
 }
 function applySkillDamageToOppHero(state, side, opp, dmg) {
   if (!opp || opp.hero.dead) return;
@@ -1121,6 +1135,7 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
   const actualDealt = Math.min(opp.hero.hp, finalDmg);
   damageHero(opp, finalDmg);
   aragurnLifestealHeal(side, actualDealt);
+  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
 }
 // Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
 function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
@@ -1476,6 +1491,8 @@ function updateProjectiles(state, side, opp, dt) {
       }
       // Aragurn passive lifesteal: 0.5% per 1% HP loss på AA-damage också
       aragurnLifestealHeal(side, aaDmgDealt);
+      // Ult-energy gain per AA-hit (3%)
+      if (aaDmgDealt > 0) gainUltEnergy(side, ULT_GAIN_AA_HIT);
       // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill
       if (p.lifestealRatio > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
@@ -3072,6 +3089,8 @@ function tickGame(state, dt) {
       updateSoulDrain(state, side, opp, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
       if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+      // Ult-energy passive gain (0.5%/sek)
+      if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -3259,6 +3278,7 @@ function serializeSide(side) {
     hid: side.heroId || 'magiker',
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
+    ue: +(side.ultEnergy || 0).toFixed(1),   // ult-energy 0-100 för klientens R-knapp + meter
     // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc
     wwR: +(side.whirlwindRemaining || 0).toFixed(2),
     leapA: side.aragurnLeap ? 1 : 0,
