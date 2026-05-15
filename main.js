@@ -8108,6 +8108,20 @@ function updateVineTrapsSolo(side, dt) {
     const vt = side.vineTraps[i];
     vt.life -= dt;
     const r2 = vt.radius * vt.radius;
+    // localOnly = client-prediktion i arena MP: bara visuell, ingen damage/root/heal
+    // (host kör auktoritativ simulering och appliceras via heroSnap).
+    if (vt.localOnly) {
+      const fadeMul = Math.max(0, vt.life / vt.maxLife);
+      if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * fadeMul;
+      if (vt.glow && vt.glow.material) vt.glow.material.opacity = 0.20 * fadeMul;
+      if (vt.life <= 0) {
+        if (vt.ring) scene.remove(vt.ring);
+        if (vt.glow) scene.remove(vt.glow);
+        if (vt.spikes) for (const sp of vt.spikes) scene.remove(sp);
+        side.vineTraps.splice(i, 1);
+      }
+      continue;
+    }
     // Self-buff: om Legolas själv står i sin egen vine trap → -20% dmg taken + 5% HP/s heal
     if (!side.hero.dead) {
       const ddx = side.hero.x - vt.x, ddz = side.hero.z - vt.z;
@@ -8150,7 +8164,7 @@ function updateVineTrapsSolo(side, dt) {
     // Arena: vine-trap DoT mot orb
     applyAoEDamageInArena(vt.x, vt.z, vt.radius, vt.dotPerSec * dt, side.idx);
     // Fade ring + spikar + glow
-    const fadeMul = vt.life / vt.maxLife;
+    const fadeMul = Math.max(0, vt.life / vt.maxLife);
     if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * fadeMul;
     if (vt.glow && vt.glow.material) vt.glow.material.opacity = 0.20 * fadeMul;
     if (vt.life <= 0) {
@@ -11446,6 +11460,15 @@ function tickBigArrows(side, dt) {
       const color = Math.random() < 0.5 ? 0x88ff44 : 0xccff88;
       spawnProjectileTrailPuff(tx + (Math.random() - 0.5) * 0.4, ty, tz + (Math.random() - 0.5) * 0.4, color);
     }
+    // localOnly = client-prediktion i arena MP: ingen hit-detection (host gör det),
+    // ta bara bort pilen när max-range nås eller efter ~5s.
+    if (arr.localOnly) {
+      if (arr.traveled > arr.maxRange) {
+        disposeArrowMesh(arr.mesh);
+        side.bigArrows.splice(i, 1);
+      }
+      continue;
+    }
     let hit = null;
     // Opp hero (arena)
     if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
@@ -13054,6 +13077,7 @@ function screenToWorld(sx, sz) {
 function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
+  const isArenaMpClient = (APP.mode === 'client' && isArenaMp());
   // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
   if (key === 'r') {
     if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
@@ -13063,6 +13087,11 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     side.ultEnergy = 0;
     // Visuell ult-feedback direkt (host's broadcast carry no fx för ult)
     triggerClientVisualSkill(side, 'r');
+    // Klient-prediktion för Legolas Worldpiercer: host broadcastar inte big arrows
+    // via a-state, så utan lokal pil ser klienten ingenting (Decision: predicta).
+    if (isArenaMpClient && side.heroId === 'legolas') {
+      spawnClientLocalBigArrow(side, worldDx, worldDz, tap);
+    }
     sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
   }
@@ -13082,11 +13111,164 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // Trigga visuell skill-effekt direkt på klient (instant feedback).
   // Host's broadcast carry inte fx-events — så vi vill INTE delta-trigga ovanpå
   // när broadcast kommer (cd-jumpen kommer från local optimistic, inte ny info).
-  if ((APP.mode === 'client' && isArenaMp()) ||
+  if (isArenaMpClient ||
       (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')) {
     triggerClientVisualSkill(side, key);
   }
+  // Klient-prediktion i arena MP för Legolas Q (vine trap) + E (dash). Host broadcastar
+  // inte vine trap-meshen eller dash-teleporten via a-state — klienten skulle annars
+  // bara se cast-ringen och inget mer. Damage/auktoritativ position kommer från host.
+  if (isArenaMpClient && side.heroId === 'legolas') {
+    if (key === 'q') spawnClientLocalVineTrap(side, worldDx, worldDz, tap, mag);
+    else if (key === 'e') spawnClientLocalDash(side, worldDx, worldDz);
+  }
   sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
+}
+
+// ============================================================
+// Klient-prediktion för Legolas-skills i arena MP. Host kör auktoritativ
+// simulering men arena-broadcasten skickar bara hero-snaps, inte entity-listor
+// som vineTraps/bigArrows. Utan dessa client-side spawns ser klienten bara
+// cast-ringen från triggerClientVisualSkill och inget mer. Spawn:ade entries
+// är markerade localOnly:true så updateVineTrapsSolo/tickBigArrows skippar
+// damage- och hit-detection (de fade:as bara visuellt).
+// ============================================================
+
+function spawnClientLocalVineTrap(side, worldDx, worldDz, tap, mag) {
+  const ev = { dx: worldDx, dz: worldDz, tap, mag };
+  const center = soloResolveSkillGroundTarget(side, ev, VINE_TRAP_CAST_DISTANCE);
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66cc44, 0.9);
+  spawnShieldBurstFx(center.x, center.z, 0x88dd55);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(center.x, 0.07, center.z);
+  scene.add(ring);
+  const glow = new THREE.Mesh(
+    new THREE.CircleGeometry(VINE_TRAP_RADIUS, 32),
+    new THREE.MeshBasicMaterial({ color: 0x55cc44, transparent: true, opacity: 0.20, side: THREE.DoubleSide })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.set(center.x, 0.05, center.z);
+  scene.add(glow);
+  const spikes = [];
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const r = VINE_TRAP_RADIUS * 0.6;
+    const sp = new THREE.Mesh(
+      new THREE.ConeGeometry(0.08, 0.35, 6),
+      new THREE.MeshStandardMaterial({ color: 0x3a5018, roughness: 0.85 })
+    );
+    sp.position.set(center.x + Math.cos(ang) * r, 0.17, center.z + Math.sin(ang) * r);
+    scene.add(sp);
+    spikes.push(sp);
+  }
+  side.vineTraps = side.vineTraps || [];
+  side.vineTraps.push({
+    ring, spikes, glow,
+    x: center.x, z: center.z,
+    life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
+    radius: VINE_TRAP_RADIUS,
+    localOnly: true,
+  });
+}
+
+function spawnClientLocalBigArrow(side, worldDx, worldDz, tap) {
+  let dx = worldDx || 0, dz = worldDz || 0;
+  // Tap-aim: använd target-riktning om vi har en target (samma som applyEvent på host)
+  if (tap === true && side.targetId) {
+    const opp = sides[3 - side.idx];
+    const t = resolveTargetEntity(side, opp);
+    if (t && t.mesh) {
+      const ddx = t.mesh.position.x - side.hero.x;
+      const ddz = t.mesh.position.z - side.hero.z;
+      const m = Math.hypot(ddx, ddz);
+      if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
+    }
+  }
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  // Mesh-bygge: samma kod som hostCastLegolasUlt så det blir visuellt identiskt.
+  const grp = new THREE.Group();
+  const shaftMat = new THREE.MeshStandardMaterial({
+    color: 0x8a6028, roughness: 0.45, emissive: 0xaaff55, emissiveIntensity: 0.7, metalness: 0.3,
+  });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, ULT_ARROW_LENGTH, 14), shaftMat);
+  shaft.rotation.x = Math.PI / 2;
+  grp.add(shaft);
+  const tipMat = new THREE.MeshStandardMaterial({
+    color: 0xddff88, emissive: 0xaaff55, emissiveIntensity: 2.0, metalness: 0.6, roughness: 0.2,
+  });
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.8, 14), tipMat);
+  tip.rotation.x = Math.PI / 2;
+  tip.position.z = ULT_ARROW_LENGTH / 2 + 0.85;
+  grp.add(tip);
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0x88ff44, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, ULT_ARROW_LENGTH + 1.0, 16), haloMat);
+  halo.rotation.x = Math.PI / 2;
+  grp.add(halo);
+  const featherMat = new THREE.MeshBasicMaterial({ color: 0xccff88, transparent: true, opacity: 0.92, side: THREE.DoubleSide });
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * Math.PI * 2;
+    const feather = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.1), featherMat);
+    feather.position.set(Math.cos(ang) * 0.28, Math.sin(ang) * 0.28, -ULT_ARROW_LENGTH / 2 + 0.6);
+    feather.rotation.z = ang;
+    grp.add(feather);
+  }
+  const leafGroup = new THREE.Group();
+  leafGroup.position.z = ULT_ARROW_LENGTH / 2 + 0.4;
+  const leafMat = new THREE.MeshBasicMaterial({ color: 0x66dd33, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2;
+    const leaf = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.9), leafMat);
+    leaf.position.set(Math.cos(ang) * 0.9, Math.sin(ang) * 0.9, 0);
+    leaf.rotation.z = ang + Math.PI / 2;
+    leafGroup.add(leaf);
+  }
+  grp.add(leafGroup);
+  const arrowLight = new THREE.PointLight(0xaaff55, 2.4, 6);
+  arrowLight.position.z = ULT_ARROW_LENGTH / 2;
+  grp.add(arrowLight);
+  grp.rotation.y = Math.atan2(dx, dz);
+  grp.position.set(side.hero.x, 1.0, side.hero.z);
+  scene.add(grp);
+  side.bigArrows = side.bigArrows || [];
+  side.bigArrows.push({
+    mesh: grp,
+    dx, dz,
+    traveled: 0,
+    maxRange: ULT_ARROW_MAX_RANGE,
+    leafGroup,
+    trailAccum: 0,
+    localOnly: true,
+  });
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ff44, 1.8);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaff66);
+  triggerCameraShake(0.18, 0.25);
+}
+
+function spawnClientLocalDash(side, worldDx, worldDz) {
+  let dx = worldDx || 0, dz = worldDz || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  let dist = LEGOLUS_DASH_DISTANCE, nx = side.hero.x, nz = side.hero.z;
+  while (dist >= 0.5) {
+    const tx = side.hero.x + dx * dist;
+    const tz = side.hero.z + dz * dist;
+    if (isHeroWalkable(side.idx, tx, tz)) { nx = tx; nz = tz; break; }
+    dist -= 0.5;
+  }
+  if (dist < 0.5) return;
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ff88, 0.7);
+  side.hero.x = nx; side.hero.z = nz;
+  if (side.mesh) { side.mesh.position.x = nx; side.mesh.position.z = nz; }
+  spawnSkillCastFx(nx, nz, 0x66ff88, 0.7);
 }
 
 function sendOrApplyEvent(ev) {
