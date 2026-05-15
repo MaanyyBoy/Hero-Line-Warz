@@ -2281,7 +2281,7 @@ function makeHeroMesh(idx, heroId) {
   // slår med det vid AA och spinner med det vid Whirlwind.
   if ((heroId || '').toLowerCase() === 'aragurn') {
     const sword = makeAragurnSword();
-    sword.scale.set(3.2, 3.2, 3.2);        // 3.2× större (tidigare 4×, nu −20%)
+    sword.scale.set(1.92, 1.92, 1.92);     // −40% från 3.2 (tidigare 4×, nu kompakt)
     sword.position.set(0.85, 1.0, 0.15);   // höger sida, högre upp pga storlek
     sword.rotation.z = -0.35;
     sword.rotation.x = 0.15;
@@ -7213,11 +7213,14 @@ function updateHeroAttack(side, dt) {
   const berserkActive = (side.berserkRemaining || 0) > 0;
   const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
   const aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul;
+  // Berserk: 25% lifesteal på AA. Stackar additivt med dash-buff (annars dash overrider).
+  const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
+  const aaLifesteal = dashBuffed ? dashLs : berserkLs;
   side.projectiles.push({
     mesh, target: target.entity, targetIsMonster: target.isMonster,
     ownerSide: target.isMonster ? side : sides[3 - side.idx] || side,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? dashLs : 0,
+    lifestealRatio: aaLifesteal,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
   });
@@ -12203,8 +12206,9 @@ const LEAP_DMG_PCT = 0.20;                  // 20% maxHP
 const LEAP_STUN_TIME = 1.0;
 const LEAP_HEAL_LOST_PCT = 0.25;            // 25% av (maxHP - currentHP) per träffad fiende (var 10%)
 const BERSERK_DURATION = 5.0;
-const BERSERK_AS_MUL = 0.50;                // -50% attack speed (multiplier på interval = 1/0.5 = 2x slower)
+const BERSERK_AS_MUL = 1.0;                 // ingen AS-nerf längre (var 0.50 = -50% AS)
 const BERSERK_AA_DMG_MUL = 2.50;            // +150% AA-damage
+const BERSERK_AA_LIFESTEAL = 0.25;          // 25% lifesteal av all AA-skada under berserk
 const BERSERK_SCALE = 1.25;                 // lite större hero
 
 // === Q: Whirlwind ===
