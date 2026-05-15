@@ -1956,6 +1956,242 @@ function updateHammers(state, side, opp, dt) {
   }
 }
 
+// ============================================================
+// ARAGURN SKILLS (server-auth för line wars)
+// ============================================================
+const WHIRLWIND_DURATION = 3.0;
+const WHIRLWIND_TICK = 0.5;
+const WHIRLWIND_RADIUS = 3.0;
+const WHIRLWIND_DMG_PCT = 0.05;
+const WHIRLWIND_MS_BUFF = 0.20;
+const SHOUT_LENGTH = 8.0;
+const SHOUT_HALF_ANGLE = Math.PI / 3;
+const SHOUT_DIRECT_DMG_PCT = 0.15;
+const SHOUT_SLOW_DURATION = 3.0;
+const SHOUT_SLOW_MUL = 0.80;
+const SHOUT_HEAL_DURATION = 2.0;
+const SHOUT_HEAL_SELF_PCT = 0.10;
+const LEAP_TRAVEL_TIME = 1.0;
+const LEAP_MAX_DISTANCE = 11.5;
+const LEAP_RADIUS = 4.55;
+const LEAP_DMG_PCT = 0.20;
+const LEAP_STUN_TIME = 1.0;
+
+// Q: Whirlwind — spin 3s med tick-damage runt hero + MS-buff + CC-immun.
+// CD sätts ENDAST när spin slutar (i updateAragurnWhirlwind). Att sätta CD här
+// + igen vid slut skulle ge effektiv CD = WHIRLWIND_DURATION + cd.max.
+function castAragurnWhirlwind(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  if ((side.whirlwindRemaining || 0) > 0) return;
+  side.whirlwindRemaining = WHIRLWIND_DURATION;
+  side.whirlwindTickAccum = 0;
+  // Initial tick direkt
+  applyWhirlwindTick(state, side, state.sides[3 - sideIdx]);
+}
+
+function applyWhirlwindTick(state, side, opp) {
+  const r2 = WHIRLWIND_RADIUS * WHIRLWIND_RADIUS;
+  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    const dx = m.x - side.hero.x, dz = m.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      const dmg = (m.maxHp || m.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      applySkillDamageToMonster(state, side, opp, i, dmg);
+    }
+  }
+  // Opp creeps
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    const dx = c.x - side.hero.x, dz = c.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      const dmg = (c.maxHp || c.hp) * WHIRLWIND_DMG_PCT * skillMul;
+      applySkillDamageToCreep(state, side, opp, c, dmg);
+      if (c.hp <= 0) {
+        opp.playerCreeps.splice(i, 1);
+        side.gold += minionBounty(c);
+        gainXp(side, minionXp(c));
+      }
+    }
+  }
+  // Duel: opp.hero
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
+    if (dx * dx + dz * dz < r2) {
+      const dmg = opp.hero.maxHp * WHIRLWIND_DMG_PCT * skillMul;
+      applySkillDamageToOppHero(state, side, opp, dmg);
+    }
+  }
+}
+
+function updateAragurnWhirlwind(state, side, opp, dt) {
+  if (!side.whirlwindRemaining || side.whirlwindRemaining <= 0) return;
+  side.whirlwindRemaining -= dt;
+  // CC-immun under spin
+  side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.hero.frozenTime = 0;
+  side.hero.tauntedTime = 0;
+  side.heroFearTime = 0;
+  side.hero.dotRemaining = 0;
+  side.hero.poisonRemaining = 0;
+  side.whirlwindTickAccum = (side.whirlwindTickAccum || 0) + dt;
+  while (side.whirlwindTickAccum >= WHIRLWIND_TICK && side.whirlwindRemaining > -WHIRLWIND_TICK) {
+    side.whirlwindTickAccum -= WHIRLWIND_TICK;
+    applyWhirlwindTick(state, side, opp);
+  }
+  if (side.whirlwindRemaining <= 0) {
+    side.whirlwindRemaining = 0;
+    // CD startar nu — först efter spin slutat (max innehåller CDR redan)
+    side.skills.q.cd = side.skills.q.max;
+  }
+}
+
+// F: War Shout — cone-damage framåt + slow på fiender + HoT på Aragurn
+function castAragurnShout(state, sideIdx, dirX, dirZ) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  // HoT på Aragurn
+  side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
+  side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
+  const opp = state.sides[3 - sideIdx];
+  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > SHOUT_LENGTH || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < SHOUT_HALF_ANGLE;
+  };
+  // Monsters
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    if (!inCone(m.x, m.z)) continue;
+    const dmg = (m.maxHp || m.hp) * SHOUT_DIRECT_DMG_PCT * skillMul;
+    applySkillDamageToMonster(state, side, opp, i, dmg);
+    if (side.monsters[i] === m && m.hp > 0) {
+      m.slowMul = Math.min(m.slowMul || 1, SHOUT_SLOW_MUL);
+      m.slowTime = Math.max(m.slowTime || 0, SHOUT_SLOW_DURATION);
+    }
+  }
+  // Opp creeps
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    if (!inCone(c.x, c.z)) continue;
+    const dmg = (c.maxHp || c.hp) * SHOUT_DIRECT_DMG_PCT * skillMul;
+    applySkillDamageToCreep(state, side, opp, c, dmg);
+    if (c.hp > 0) {
+      c.slowMul = Math.min(c.slowMul || 1, SHOUT_SLOW_MUL);
+      c.slowTime = Math.max(c.slowTime || 0, SHOUT_SLOW_DURATION);
+    } else {
+      opp.playerCreeps.splice(i, 1);
+      side.gold += minionBounty(c);
+      gainXp(side, minionXp(c));
+    }
+  }
+  // Duel: opp.hero
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
+    const dmg = opp.hero.maxHp * SHOUT_DIRECT_DMG_PCT * skillMul;
+    applySkillDamageToOppHero(state, side, opp, dmg);
+    opp.heroSlowMul = Math.min(opp.heroSlowMul || 1, SHOUT_SLOW_MUL);
+    opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, SHOUT_SLOW_DURATION);
+  }
+}
+
+function updateAragurnShoutHeal(side, dt) {
+  if (!side.aragurnShoutHealRemaining || side.aragurnShoutHealRemaining <= 0) return;
+  if (side.hero.dead) { side.aragurnShoutHealRemaining = 0; return; }
+  const healAmt = side.hero.maxHp * (side.aragurnShoutHealPct || 0) * dt;
+  if (healAmt > 0 && side.hero.hp < side.hero.maxHp) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+  }
+  side.aragurnShoutHealRemaining -= dt;
+  if (side.aragurnShoutHealRemaining <= 0) side.aragurnShoutHealPct = 0;
+}
+
+// E: Heroic Leap — hoppa till target-position, AoE damage + stun vid landning
+function castAragurnLeap(state, sideIdx, ev) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  if (side.aragurnLeap) return;   // redan i luften
+  side.skills.e.cd = side.skills.e.max;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  const mag = (ev && typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+  const dist = LEAP_MAX_DISTANCE * mag;
+  const targetX = side.hero.x + dx * dist;
+  const targetZ = side.hero.z + dz * dist;
+  side.aragurnLeap = {
+    remaining: LEAP_TRAVEL_TIME,
+    total: LEAP_TRAVEL_TIME,
+    startX: side.hero.x, startZ: side.hero.z,
+    targetX, targetZ,
+  };
+  // CC-immun under hopp
+  side.hero.frozenTime = 0;
+  side.hero.tauntedTime = 0;
+  side.heroFearTime = 0;
+}
+
+function updateAragurnLeap(state, side, opp, dt) {
+  if (!side.aragurnLeap) return;
+  const lp = side.aragurnLeap;
+  lp.remaining -= dt;
+  // CC-immun under leap
+  side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.hero.frozenTime = 0;
+  // Linjär xz-interpolation (server skickar position varje frame via snapshot)
+  const u = Math.max(0, Math.min(1, 1 - lp.remaining / lp.total));
+  side.hero.x = lp.startX + (lp.targetX - lp.startX) * u;
+  side.hero.z = lp.startZ + (lp.targetZ - lp.startZ) * u;
+  if (lp.remaining <= 0) {
+    // Landning
+    side.hero.x = lp.targetX;
+    side.hero.z = lp.targetZ;
+    applyAragurnLeapImpact(state, side, opp, lp.targetX, lp.targetZ);
+    side.aragurnLeap = null;
+  }
+}
+
+function applyAragurnLeapImpact(state, side, opp, x, z) {
+  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const r2 = LEAP_RADIUS * LEAP_RADIUS;
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    const ddx = m.x - x, ddz = m.z - z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      const dmg = (m.maxHp || m.hp) * LEAP_DMG_PCT * skillMul;
+      applySkillDamageToMonster(state, side, opp, i, dmg);
+      if (side.monsters[i] === m && m.hp > 0) m.frozenTime = Math.max(m.frozenTime || 0, LEAP_STUN_TIME);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    const ddx = c.x - x, ddz = c.z - z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      const dmg = (c.maxHp || c.hp) * LEAP_DMG_PCT * skillMul;
+      applySkillDamageToCreep(state, side, opp, c, dmg);
+      if (c.hp > 0) c.frozenTime = Math.max(c.frozenTime || 0, LEAP_STUN_TIME);
+      else { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    const ddx = opp.hero.x - x, ddz = opp.hero.z - z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      const dmg = opp.hero.maxHp * LEAP_DMG_PCT * skillMul;
+      applySkillDamageToOppHero(state, side, opp, dmg);
+      opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, LEAP_STUN_TIME);
+    }
+  }
+}
+
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
   const mag = Math.hypot(joyX, joyZ);
@@ -2065,17 +2301,21 @@ function applyEvent(state, sideIdx, ev) {
     }
     const isLegolus = side.heroId === 'legolas';
     const isGimlu = side.heroId === 'gimlu';
+    const isAragurn = side.heroId === 'aragurn';
     if (ev.key === 'q') {
       if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
       else if (isGimlu) castGimluTaunt(state, sideIdx);
+      else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
       else castEldklot(state, sideIdx, dx, dz);
     } else if (ev.key === 'f') {
       if (isLegolus) castLegolusBuff(state, sideIdx);
       else if (isGimlu) castGimluIronWill(state, sideIdx);
+      else if (isAragurn) castAragurnShout(state, sideIdx, dx, dz);
       else castFrostnova(state, sideIdx, ev);
     } else if (ev.key === 'e') {
       if (isLegolus) castLegolusDash(state, sideIdx, ev);
       else if (isGimlu) castGimluHammer(state, sideIdx, dx, dz);
+      else if (isAragurn) castAragurnLeap(state, sideIdx, ev);
       else castBlink(state, sideIdx, ev);
     }
     return;
@@ -2456,6 +2696,9 @@ function tickGame(state, dt) {
       updateVineTraps(state, side, opp, dt);
       updateHammers(state, side, opp, dt);
       updateIronWill(state, side, opp, dt);
+      updateAragurnWhirlwind(state, side, opp, dt);
+      updateAragurnLeap(state, side, opp, dt);
+      updateAragurnShoutHeal(side, dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -2564,6 +2807,9 @@ function tickGame(state, dt) {
     updateVineTraps(state, side, opp, dt);
     updateHammers(state, side, opp, dt);
     updateIronWill(state, side, opp, dt);
+    updateAragurnWhirlwind(state, side, opp, dt);
+    updateAragurnLeap(state, side, opp, dt);
+    updateAragurnShoutHeal(side, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {

@@ -13507,9 +13507,12 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     side.skills[key]._localCastAt = performance.now();
   }
   // Trigga visuell skill-effekt direkt på klient (instant feedback).
-  // Host's broadcast carry inte fx-events — så vi vill INTE delta-trigga ovanpå
-  // när broadcast kommer (cd-jumpen kommer från local optimistic, inte ny info).
-  if (isArenaMpClient ||
+  // Gäller alla MP-lägen (classic line wars, arena, boss wars) eftersom servern
+  // / hosten inte skickar dedikerade fx-events — klienten måste själv spawna
+  // visualer för sina egna casts. Solo körs som vanligt via applyEvent och
+  // skippar denna (sin egen hostCast-funktion spawnar fx direkt).
+  const isClassicMp = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
+  if (isArenaMpClient || isClassicMp ||
       (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')) {
     triggerClientVisualSkill(side, key);
   }
@@ -13742,10 +13745,13 @@ function flushClientInput() {
 
 function maybeSendClientInput(now) {
   if (!isMpMode() || !wsOpen()) return;
-  // Klassisk MP: bara client skickar input (host kör server-state-rendering)
   // Arena MP: bara client skickar input (host kör simulering lokalt)
   if (isArenaMp() && APP.mode !== 'client') return;
-  if (!isArenaMp() && APP.mode === 'host') return;  // klassisk host får server-state
+  // Klassisk MP är server-auktoritativ — BÅDE host och client skickar input
+  // till servern. Tidigare blockerades host här ("klassisk host får server-state")
+  // vilket gjorde att host's joystick-input aldrig nådde servern → host's hero
+  // stod still i state, host upplevde lag/icke-fri rörelse. Decision 019 säger
+  // explicit "Båda klienter blir tunna i MP (skickar inputs, renderar state)".
   if (now - APP.lastInputSent < INPUT_SEND_INTERVAL && APP.pendingEvents.length === 0) return;
   APP.lastInputSent = now;
   flushClientInput();
@@ -14118,9 +14124,15 @@ function applyHeroSnap(side, snap) {
     ((APP.mode === 'client' && isArenaMp()) ||
      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))
   );
+  // isMpClientForVisuals = true om vi inte kör simuleringen lokalt och därför
+  // behöver delta-detection för att visa fx från andra spelares casts. Gäller
+  // arena MP-klient, boss MP-klient OCH alla classic-MP-deltagare (server-auth
+  // — varken host eller client kör skill-logik lokalt).
+  const isClassicMpForVis = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
   const isMpClientForVisuals = (
     (APP.mode === 'client' && isArenaMp()) ||
-    (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')
+    (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars') ||
+    isClassicMpForVis
   );
   // Capture prev values för delta-detection (AA-fire, skill-cast, ult-cast)
   const prevAc = side.attackCounter || 0;
