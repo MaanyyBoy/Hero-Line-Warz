@@ -7523,7 +7523,7 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
   spawnDamageText(m.mesh, actual, false);
   applySkillLifesteal(side, actual);
   applyRageLifesteal(side, actual);
-  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+  gainUltOnSkillHit(side);
   if (m.hp <= 0) hostKillMonster(side, mIdx, side);
 }
 function soloApplySkillDmgToCreep(side, opp, c, dmg) {
@@ -7536,7 +7536,7 @@ function soloApplySkillDmgToCreep(side, opp, c, dmg) {
   spawnDamageText(c.mesh, actual, false);
   applySkillLifesteal(side, actual);
   applyRageLifesteal(side, actual);
-  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+  gainUltOnSkillHit(side);
 }
 
 // Onyx Orb skill-lifesteal: hela X% av skill-skada utdelad
@@ -7709,7 +7709,7 @@ function applySoulDrainTick(side, target, sd) {
   } else if (tt === 'arena-orb') {
     healed = Math.min(baseDmg, arenaState.orb.hp);
     damageArenaOrb(baseDmg, side.idx);
-    gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+    gainUltOnSkillHit(side);
   } else if (tt === 'arena-hero') {
     const oppIdx = 3 - side.idx;
     const oppSide = sides[oppIdx];
@@ -7720,7 +7720,7 @@ function applySoulDrainTick(side, target, sd) {
       const heroSlowMul = 1 - SOULDRAIN_SLOW_PER_STACK * sd.stacks * ccMul;
       oppSide.heroSlowMul = Math.min(oppSide.heroSlowMul || 1, heroSlowMul);
       oppSide.heroSlowTime = Math.max(oppSide.heroSlowTime || 0, SOULDRAIN_SLOW_TAIL);
-      gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+      gainUltOnSkillHit(side);
     }
   }
   // Heal Gandulf
@@ -9232,6 +9232,11 @@ function damageHero(side, amount, isCrit = false) {
   if ((side.ironWillRemaining || 0) > 0) {
     side.ironWillStored = (side.ironWillStored || 0) + final;
   }
+  // Gimlu tank-mekanik: 5% av damage taken som ult-gain (cap 2% per hit).
+  // Kompenserar långsam AA-frekvens + single-target skills.
+  if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
+    gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
+  }
   if (side.hero.hp <= 0) killHero(side);
 }
 
@@ -9564,6 +9569,11 @@ function applyEvent(side, ev) {
     const isLegolus = side.heroId === 'legolas';
     const isGimlu = side.heroId === 'gimlu';
     const isAragurn = side.heroId === 'aragurn';
+    // Q/F/E skill-cast: reset per-cast ult-gain-budget (AoE-skills som leap
+    // skulle annars fylla ult proportionellt till antal targets träffade).
+    if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
+      side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
+    }
     if (ev.key === 'r') {
       hostCastUlt(side, dx, dz);
     } else if (ev.key === 'q') {
@@ -11698,10 +11708,27 @@ const ULT_ENERGY_MAX = 100;
 const ULT_GAIN_PASSIVE = 0.5;   // %/sek
 const ULT_GAIN_SKILL_HIT = 5;
 const ULT_GAIN_AA_HIT = 3;
+const ULT_GAIN_SKILL_CAST_CAP = 10;     // Max gain per skill-cast (AoE-fix)
+const ULT_LOCKOUT_AFTER_CAST = 5.0;     // Sek ingen gain efter ult-cast
+const GIMLU_ULT_GAIN_ON_DMG_PCT = 0.05; // Gimlu tank-mekanik: 5% av damage taken
+const GIMLU_ULT_GAIN_PER_HIT_CAP = 2;   // Max 2% per damage-instance
 
 function gainUltEnergy(side, amount) {
   if (!side) return;
+  if ((side._ultLockoutTime || 0) > 0) return;   // 5s lockout efter ult-cast
   side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amount);
+}
+
+// Skill-hit-gain med per-cast-cap. _ultCapThisCast reset:as när hero castar
+// Q/F/E (i applyEvent skill-gren) så AoE-träffar inte fyller ult proportionellt.
+function gainUltOnSkillHit(side) {
+  if (!side || side.hero.dead) return;
+  if ((side._ultLockoutTime || 0) > 0) return;
+  const cap = (side._ultCapThisCast == null) ? 0 : side._ultCapThisCast;
+  if (cap <= 0) return;
+  const amt = Math.min(ULT_GAIN_SKILL_HIT, cap);
+  side._ultCapThisCast = cap - amt;
+  side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amt);
 }
 
 // Dispatchar ULT-cast per hero. Konsumerar 100% energy och kallar
@@ -13623,10 +13650,12 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
   if (key === 'r') {
     if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
-    // Optimistic: nollställ ultEnergy lokalt så användaren ser ult-ikonen
-    // återgå till tom direkt (utan att vänta på broadcast).
+    if ((side._ultLockoutTime || 0) > 0) return;   // 5s lockout efter förra ult-cast
+    // Optimistic: nollställ ultEnergy + starta 5s lockout lokalt så användaren
+    // ser ult-ikonen tom + ult-gain pausad direkt (utan att vänta på broadcast).
     side._localUltCastAt = performance.now();
     side.ultEnergy = 0;
+    side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
     // Visuell ult-feedback direkt (host's broadcast carry no fx för ult)
     triggerClientVisualSkill(side, 'r');
     // Klient-prediktion för Legolas Worldpiercer: host broadcastar inte big arrows
@@ -16676,6 +16705,8 @@ function simulateAll(dt) {
     updateHammersSolo(side, dt);
     updateIronWillSolo(side, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    // Ult-cast-lockout (5s ingen ult-gain efter ult castas)
+    if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
       side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
       if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
@@ -17610,6 +17641,15 @@ function tick() {
   const now = performance.now() / 1000;
   resetFxPopupBudget();
   tickPerfMeter(dt);
+  // Tick lokal optimistic ult-lockout för classic MP-klient (line wars).
+  // I solo + arena/boss host körs simulateAll som tickar via buff-loopen
+  // — guard:a här så det inte blir dubbel tick (2.5s istället för 5s lockout).
+  if (APP.mode !== 'solo' && !(isArenaMp() && APP.mode === 'host')) {
+    const _localSide = sides[APP.localSide];
+    if (_localSide && (_localSide._ultLockoutTime || 0) > 0) {
+      _localSide._ultLockoutTime = Math.max(0, _localSide._ultLockoutTime - dt);
+    }
+  }
 
   // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state.
   // MEN: klient kör applyMovement lokalt för EGEN hjälte (prediction) så

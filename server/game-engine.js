@@ -380,9 +380,27 @@ const ULT_ENERGY_MAX = 100;
 const ULT_GAIN_PASSIVE = 0.5;
 const ULT_GAIN_SKILL_HIT = 5;
 const ULT_GAIN_AA_HIT = 3;
+const ULT_GAIN_SKILL_CAST_CAP = 10;   // Max gain per skill-cast oavsett antal träffar (AoE-fix)
+const ULT_LOCKOUT_AFTER_CAST = 5.0;   // Sek ingen ult-gain efter ult-cast
+const GIMLU_ULT_GAIN_ON_DMG_PCT = 0.05;   // 5% av damage taken som ult-gain (tank-mekanik)
+const GIMLU_ULT_GAIN_PER_HIT_CAP = 2;     // Max 2% per damage-instance
+// Lockout-aware: blockerar passive + AA + skill-hit-gain i 5s efter ult-cast
 function gainUltEnergy(side, amount) {
   if (!side || side.hero.dead) return;
+  if ((side._ultLockoutTime || 0) > 0) return;
   side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amount);
+}
+// Skill-hit-gain med per-cast-cap. Reset:as via _ultCapThisCast i applyEvent's
+// skill-gren. Förhindrar att AoE-skills (leap, frostnova, etc.) fyller ult
+// proportionellt till antal träffar.
+function gainUltOnSkillHit(side) {
+  if (!side || side.hero.dead) return;
+  if ((side._ultLockoutTime || 0) > 0) return;
+  const cap = (side._ultCapThisCast == null) ? 0 : side._ultCapThisCast;
+  if (cap <= 0) return;
+  const amt = Math.min(ULT_GAIN_SKILL_HIT, cap);
+  side._ultCapThisCast = cap - amt;
+  side.ultEnergy = Math.min(ULT_ENERGY_MAX, (side.ultEnergy || 0) + amt);
 }
 const ACTIVE_DURATION = 5;
 const ACTIVE_COOLDOWN = 30;
@@ -649,6 +667,11 @@ function damageHero(side, amount) {
   // Iron Will: stacka tagen skada för senare explosion
   if ((side.ironWillRemaining || 0) > 0) {
     side.ironWillStored = (side.ironWillStored || 0) + final;
+  }
+  // Gimlu tank-mekanik: bygger ult genom att tanka skada (kompenserar låg AA-frekvens
+  // + single-target skills). 5% av damage taken som ult-gain, cap 2% per hit.
+  if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
+    gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
   }
   if (side.hero.hp <= 0) killHero(side);
 }
@@ -1498,7 +1521,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   aragurnLifestealHeal(side, actualDealt);
-  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+  gainUltOnSkillHit(side);
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
 function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
@@ -1511,7 +1534,7 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
   const actualDealt = Math.min(creep.hp, finalDmg);
   creep.hp -= finalDmg;
   aragurnLifestealHeal(attackerSide, actualDealt);
-  gainUltEnergy(attackerSide, ULT_GAIN_SKILL_HIT);
+  gainUltOnSkillHit(attackerSide);
 }
 function applySkillDamageToOppHero(state, side, opp, dmg) {
   if (!opp || opp.hero.dead) return;
@@ -1523,7 +1546,7 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
   const actualDealt = Math.min(opp.hero.hp, finalDmg);
   damageHero(opp, finalDmg);
   aragurnLifestealHeal(side, actualDealt);
-  gainUltEnergy(side, ULT_GAIN_SKILL_HIT);
+  gainUltOnSkillHit(side);
 }
 // Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
 function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
@@ -3062,6 +3085,20 @@ function applyEvent(state, sideIdx, ev) {
     return;
   }
   if (ev.type === 'skill') {
+    // R-cast (ult): server-side consume + lockout. Per-hero ult-effekter
+    // implementeras separat (klient-side endast just nu). Här säkerställs
+    // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,
+    // och 5s lockout startar så ult-gain pausas.
+    if (ev.key === 'r') {
+      if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX && (side._ultLockoutTime || 0) <= 0) {
+        side.ultEnergy = 0;
+        side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
+      }
+      return;
+    }
+    // Q/F/E skill-cast: reset per-cast ult-gain-budget så AoE-hits inte
+    // proportionellt fyller ult (leap som träffar 20 mobs gav 100% direkt).
+    side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
     // Om tap (ingen dx/dz), använd target som aim. Annars använd givet drag-riktning.
     let dx = ev.dx, dz = ev.dz;
     const useTargetAim = (ev.tap === true) && side.targetId;
@@ -3479,8 +3516,10 @@ function tickGame(state, dt) {
       updateBossPools(state, side, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
       if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
-      // Ult-energy passive gain (0.5%/sek)
+      // Ult-energy passive gain (0.5%/sek) — gainUltEnergy bail:ar om lockout aktiv
       if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
+      // Tick ner lockout-timer (5s efter ult-cast)
+      if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
