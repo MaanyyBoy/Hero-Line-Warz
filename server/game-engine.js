@@ -133,6 +133,7 @@ const LEGOLUS_BUFF_DURATION = 5.0;
 const LEGOLUS_BUFF_DMG_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
+const LEGOLUS_BUFF_AS_PCT = 0.30;        // Hunter's Focus: +30% attack speed under buff
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
 // Passive: var 3:e AA → nästa AA är split + poison
@@ -156,13 +157,13 @@ const HAMMER_DAMAGE = 25;
 const HAMMER_LIFESTEAL = 0.50;
 const HAMMER_RETURN_DMG_MUL = 0.5;
 // Gimlu passive trösklar (Stalwart Resolve)
-const GIMLU_PASSIVE_TIER1_HP = 0.80;   // <80% → 20% DR
-const GIMLU_PASSIVE_TIER1_DR = 0.20;
-const GIMLU_PASSIVE_TIER2_HP = 0.60;   // <60% → +5%/s regen
-const GIMLU_PASSIVE_TIER2_REGEN = 0.05;
-const GIMLU_PASSIVE_TIER3_HP = 0.40;   // <40% → +20% mer DR (40% totalt) + var 3:e dmg immun
-const GIMLU_PASSIVE_TIER3_DR = 0.20;
-const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
+const GIMLU_PASSIVE_TIER1_HP = 0.80;   // <80% → 10% DR (var 20% — nerf 50%)
+const GIMLU_PASSIVE_TIER1_DR = 0.10;
+const GIMLU_PASSIVE_TIER2_HP = 0.60;   // <60% → +2.5%/s regen (var 5% — nerf 50%)
+const GIMLU_PASSIVE_TIER2_REGEN = 0.025;
+const GIMLU_PASSIVE_TIER3_HP = 0.40;   // <40% → +10% mer DR (var 20% — nerf 50%) + var 6:e dmg immun (var 3:e)
+const GIMLU_PASSIVE_TIER3_DR = 0.10;
+const GIMLU_PASSIVE_IMMUNE_EVERY = 6;
 // Gandulf passive (Arcane Convergence)
 const GANDULF_BUFF_DURATION = 3.0;
 const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;  // 5% skill-dmg per enemy hit (3s)
@@ -488,9 +489,13 @@ function recomputeSideStats(side) {
     if (delta > 0) side.hero.hp = Math.min(newMaxHp, side.hero.hp + delta);
     else if (side.hero.hp > newMaxHp) side.hero.hp = newMaxHp;
   }
-  side.skills.q.max = SKILL_BASE_CD.q * side.cdrMul;
-  side.skills.f.max = SKILL_BASE_CD.f * side.cdrMul;
-  side.skills.e.max = SKILL_BASE_CD.e * side.cdrMul;
+  // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
+  // (var 10s default) — buff för rörlighet. Övriga heroes använder base.
+  const HERO_SKILL_CD = { legolas: { e: 6.0 } };
+  const heroCd = HERO_SKILL_CD[side.heroId] || {};
+  side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
+  side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
+  side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
 }
 
 // Gandulf passive-helpers — buff/shield på skill-hit
@@ -928,6 +933,10 @@ function updateMonsters(state, side, opp, dt) {
       m.slowTime -= dt;
       if (m.slowTime <= 0) m.slowMul = 1.0;
     }
+    if (m.dmgTakenDebuffTime > 0) {
+      m.dmgTakenDebuffTime -= dt;
+      if (m.dmgTakenDebuffTime <= 0) m.dmgTakenDebuffMul = 1;
+    }
     const step = m.speed * (m.slowMul || 1.0) * dt;
     const nx = m.x + dirX * step, nz = m.z + dirZ * step;
     if (isCreepPos(nx, nz)) { m.x = nx; m.z = nz; }
@@ -941,6 +950,11 @@ function updatePlayerCreeps(state, side, opp, dt) {
   const oppCfg = SIDE_CFG[3 - side.idx];
   for (let i = side.playerCreeps.length - 1; i >= 0; i--) {
     const c = side.playerCreeps[i];
+    // Wind Puff debuff tick-down
+    if (c.dmgTakenDebuffTime > 0) {
+      c.dmgTakenDebuffTime -= dt;
+      if (c.dmgTakenDebuffTime <= 0) c.dmgTakenDebuffMul = 1;
+    }
     // DoT-tick
     if ((c.dotRemaining || 0) > 0) {
       c.dotRemaining -= dt;
@@ -1063,6 +1077,13 @@ function updateCreepProjectiles(state, side, opp, dt) {
 }
 
 // === Skill-effekter (DoT, freeze, shatter) ===
+// Wind Puff debuff: tar +20% mer skada i 4s. Applieras av Magiker Q på träffade targets.
+// Multipliceras in i alla skill-damage-applications nedan.
+function dmgTakenDebuffMul(target) {
+  if (!target || !target.dmgTakenDebuffTime || target.dmgTakenDebuffTime <= 0) return 1;
+  return target.dmgTakenDebuffMul || 1;
+}
+
 function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
   const m = side.monsters[mIdx];
   if (!m || m.hp <= 0) return;
@@ -1071,7 +1092,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  m.hp -= dmg;
+  m.hp -= dmg * dmgTakenDebuffMul(m);
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
 function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
@@ -1080,7 +1101,7 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
     triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
     creep.frozenTime = 0;
   }
-  creep.hp -= dmg;
+  creep.hp -= dmg * dmgTakenDebuffMul(creep);
 }
 function applySkillDamageToOppHero(state, side, opp, dmg) {
   if (!opp || opp.hero.dead) return;
@@ -1088,7 +1109,7 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
     triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
     opp.hero.frozenTime = 0;
   }
-  damageHero(opp, dmg);
+  damageHero(opp, dmg * dmgTakenDebuffMul(opp.hero));
 }
 // Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
 function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
@@ -1374,8 +1395,10 @@ function updateHeroAttack(state, side, opp, dt) {
       side.legolusSplitPending = true;
     }
   }
+  // Legolas Hunter's Focus (F-buff): +30% attack speed under buff-duration
+  const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -1963,7 +1986,89 @@ function updateHammers(state, side, opp, dt) {
 }
 
 // ============================================================
-// GANDULF Q — SOUL DRAIN (target-locked beam, replaces Eldklot)
+// GANDULF Q — WIND PUFF (cone framåt, 20% maxHP dmg + push 3m + debuff +20% dmg taken)
+// Tidigare versioner: Eldklot (fire cone), Soul Drain (target-locked channel).
+// ============================================================
+const WIND_PUFF_LENGTH = 5.5;
+const WIND_PUFF_HALF_ANGLE = Math.PI / 4;       // 90° total cone
+const WIND_PUFF_DMG_PCT = 0.20;                  // 20% av targets max HP
+const WIND_PUFF_PUSH_DIST = 3;                   // 3m pushback i cast-riktning
+const WIND_PUFF_DEBUFF_DURATION = 4.0;
+const WIND_PUFF_DEBUFF_MUL = 1.20;               // +20% taken damage
+
+function castWindPuff(state, sideIdx, dirX, dirZ) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  // Sätt CD först så server och klient CD är synkade även vid bail
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  const opp = state.sides[3 - sideIdx];
+  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+  // Spawn cone-FX (klient renderar via fireWaves-reconcile — orange-ish, OK för wind)
+  side.fireWaves = side.fireWaves || [];
+  side.fireWaves.push({
+    id: state.nextEntityId++,
+    x: side.hero.x, z: side.hero.z,
+    dx: dirX, dz: dirZ,
+    life: 0.6, maxLife: 0.6,
+  });
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > WIND_PUFF_LENGTH || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < WIND_PUFF_HALF_ANGLE;
+  };
+  // Monsters
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (!inCone(m.x, m.z)) continue;
+    const dmg = (m.maxHp || m.hp) * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, m);
+    applySkillDamageToMonster(state, side, opp, j, dmg);
+    if (side.monsters[j] === m && m.hp > 0) {
+      m.x += dirX * WIND_PUFF_PUSH_DIST;
+      m.z += dirZ * WIND_PUFF_PUSH_DIST;
+      m.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      m.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    }
+  }
+  // Opp creeps
+  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (!inCone(c.x, c.z)) continue;
+    const dmg = (c.maxHp || c.hp) * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, c);
+    applySkillDamageToCreep(state, side, opp, c, dmg);
+    if (c.hp > 0) {
+      c.x += dirX * WIND_PUFF_PUSH_DIST;
+      c.z += dirZ * WIND_PUFF_PUSH_DIST;
+      c.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      c.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    } else {
+      const idx = opp.playerCreeps.indexOf(c);
+      if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+  // Duel: opp.hero i cone
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
+    const dmg = opp.hero.maxHp * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, opp.hero);
+    applySkillDamageToOppHero(state, side, opp, dmg);
+    if (!opp.hero.dead) {
+      opp.hero.x += dirX * WIND_PUFF_PUSH_DIST;
+      opp.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
+      opp.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      opp.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    }
+  }
+}
+
+// ============================================================
+// GANDULF Q — SOUL DRAIN (LEGACY — ej längre routad, behållen för att inte
+// bryta solo/arena-paths som ev. importerar den)
 // ============================================================
 const SOULDRAIN_DURATION = 5.0;
 const SOULDRAIN_TICK = 1.0;
@@ -2113,7 +2218,7 @@ function updateSoulDrain(state, side, opp, dt) {
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
 const WHIRLWIND_RADIUS = 3.0;
-const WHIRLWIND_DMG_PCT = 0.05;
+const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;
@@ -2331,9 +2436,13 @@ function updateAragurnLeap(state, side, opp, dt) {
   }
 }
 
+// Heal-pct per träffad fiende: 25% av (maxHP - currentHP) per hit.
+const LEAP_HEAL_LOST_PCT = 0.25;
+
 function applyAragurnLeapImpact(state, side, opp, x, z) {
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   const r2 = LEAP_RADIUS * LEAP_RADIUS;
+  let hitCount = 0;
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     const ddx = m.x - x, ddz = m.z - z;
@@ -2341,6 +2450,7 @@ function applyAragurnLeapImpact(state, side, opp, x, z) {
       const dmg = (m.maxHp || m.hp) * LEAP_DMG_PCT * skillMul;
       applySkillDamageToMonster(state, side, opp, i, dmg);
       if (side.monsters[i] === m && m.hp > 0) m.frozenTime = Math.max(m.frozenTime || 0, LEAP_STUN_TIME);
+      hitCount++;
     }
   }
   if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
@@ -2351,6 +2461,7 @@ function applyAragurnLeapImpact(state, side, opp, x, z) {
       applySkillDamageToCreep(state, side, opp, c, dmg);
       if (c.hp > 0) c.frozenTime = Math.max(c.frozenTime || 0, LEAP_STUN_TIME);
       else { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      hitCount++;
     }
   }
   if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
@@ -2359,7 +2470,14 @@ function applyAragurnLeapImpact(state, side, opp, x, z) {
       const dmg = opp.hero.maxHp * LEAP_DMG_PCT * skillMul;
       applySkillDamageToOppHero(state, side, opp, dmg);
       opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, LEAP_STUN_TIME);
+      hitCount++;
     }
+  }
+  // Heal Aragurn: 25% av förlorad HP per träffad fiende
+  if (hitCount > 0 && !side.hero.dead) {
+    const lost = Math.max(0, side.hero.maxHp - side.hero.hp);
+    const heal = lost * LEAP_HEAL_LOST_PCT * hitCount;
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + heal);
   }
 }
 
@@ -2477,7 +2595,7 @@ function applyEvent(state, sideIdx, ev) {
       if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
       else if (isGimlu) castGimluTaunt(state, sideIdx);
       else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
-      else castSoulDrain(state, sideIdx, ev);   // Magiker Q = Soul Drain (var Eldklot)
+      else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
     } else if (ev.key === 'f') {
       if (isLegolus) castLegolusBuff(state, sideIdx);
       else if (isGimlu) castGimluIronWill(state, sideIdx);
@@ -2954,6 +3072,11 @@ function tickGame(state, dt) {
       }
       // Tick freeze på hero (om frusen, hjälten kan inte använda skills/AA — för enkelhet bara dekrementera)
       if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime -= dt;
+      // Wind Puff debuff på hero
+      if (side.hero.dmgTakenDebuffTime > 0) {
+        side.hero.dmgTakenDebuffTime -= dt;
+        if (side.hero.dmgTakenDebuffTime <= 0) side.hero.dmgTakenDebuffMul = 1;
+      }
       // Titans Taunt passive heal: 20% av maxHP per sek (= 10% per halvsek) medan tauntet är aktivt
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);

@@ -1762,6 +1762,7 @@ const LEGOLUS_BUFF_DURATION = 5.0;
 const LEGOLUS_BUFF_DMG_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;
+const LEGOLUS_BUFF_AS_PCT = 0.30;          // Hunter's Focus: +30% attack speed under buff
 const LEGOLUS_DASH_DISTANCE = 4.0;
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
 const LEGOLUS_PASSIVE_EVERY = 3;
@@ -1785,12 +1786,12 @@ const HAMMER_LIFESTEAL = 0.50;
 const HAMMER_RETURN_DMG_MUL = 0.5;
 // Gimlu passive (Stalwart Resolve)
 const GIMLU_PASSIVE_TIER1_HP = 0.80;
-const GIMLU_PASSIVE_TIER1_DR = 0.20;
+const GIMLU_PASSIVE_TIER1_DR = 0.10;       // var 0.20 — nerf 50%
 const GIMLU_PASSIVE_TIER2_HP = 0.60;
-const GIMLU_PASSIVE_TIER2_REGEN = 0.05;
+const GIMLU_PASSIVE_TIER2_REGEN = 0.025;   // var 0.05 — nerf 50%
 const GIMLU_PASSIVE_TIER3_HP = 0.40;
-const GIMLU_PASSIVE_TIER3_DR = 0.20;
-const GIMLU_PASSIVE_IMMUNE_EVERY = 3;
+const GIMLU_PASSIVE_TIER3_DR = 0.10;       // var 0.20 — nerf 50%
+const GIMLU_PASSIVE_IMMUNE_EVERY = 6;      // var 3 — nerf 50% (hälften så ofta immun)
 // Gandulf passive
 const GANDULF_BUFF_DURATION = 3.0;
 const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;
@@ -7294,10 +7295,12 @@ function updateHeroAttack(side, dt) {
   }
   // Legolas ult-buff: +30% AS efter teleport-träff
   const ultAsMul = (side.legolusUltBuff || 0) > 0 ? (1 + LEGOLUS_ULT_AS_BONUS) : 1;
+  // Legolas Hunter's Focus (F-buff): +30% AS under buff-duration
+  const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
   // Aragurn berserk-buff: -50% AS (interval * 2)
   const berserkAsMul = (side.berserkRemaining || 0) > 0 ? BERSERK_AS_MUL : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * berserkAsMul);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * focusAsMul * berserkAsMul);
 }
 
 function updateProjectiles(side, dt) {
@@ -8897,7 +8900,7 @@ function itemUpgradeCost(currentLevel) {
 const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
 // Per-hero overrides på enstaka skill-CDs (bryter med global SKILL_BASE_CD)
 const HERO_SKILL_CD = {
-  legolas: { e: 8.0 },  // Shadow Dash -2s
+  legolas: { e: 6.0 },  // Shadow Dash -4s (var 8s, nu 6s)
 };
 function heroSkillBaseCd(heroId, key) {
   const ov = HERO_SKILL_CD[heroId];
@@ -10927,8 +10930,8 @@ function updateAimIndicators() {
       // Whirlwind — self-cast, visa damage-radien runt hero
       showCircle(side.hero.x, side.hero.z, WHIRLWIND_RADIUS, 0xffe399);
     } else {
-      // Gandulf Soul Drain — target-baserad, visa max-range som cirkel runt hero
-      showCircle(side.hero.x, side.hero.z, SOULDRAIN_RANGE, 0x66ff66);
+      // Gandulf Wind Puff — cone framåt (push + debuff)
+      showLine(dirX, dirZ, 5.5);
     }
   } else if (aimState.key === 'f') {
     if (heroId === 'legolas') {
@@ -12085,7 +12088,7 @@ function applyRageLifesteal(side, dmgDealt) {
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
 const WHIRLWIND_RADIUS = 3.0;
-const WHIRLWIND_DMG_PCT = 0.05;
+const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;      // 60° halv-vinkel = 120° kon (vidare)
@@ -12106,7 +12109,7 @@ const LEAP_MAX_DISTANCE = 10.0 * 1.15;     // +15% = 11.5m
 const LEAP_RADIUS = 4.55;                   // = BLACKHOLE_RADIUS
 const LEAP_DMG_PCT = 0.20;                  // 20% maxHP
 const LEAP_STUN_TIME = 1.0;
-const LEAP_HEAL_LOST_PCT = 0.10;            // 10% av (maxHP - currentHP) per träffad fiende
+const LEAP_HEAL_LOST_PCT = 0.25;            // 25% av (maxHP - currentHP) per träffad fiende (var 10%)
 const BERSERK_DURATION = 5.0;
 const BERSERK_AS_MUL = 0.50;                // -50% attack speed (multiplier på interval = 1/0.5 = 2x slower)
 const BERSERK_AA_DMG_MUL = 2.50;            // +150% AA-damage
