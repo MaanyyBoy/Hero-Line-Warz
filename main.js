@@ -10578,6 +10578,41 @@ function updateHud() {
   updateBossHpBar();
 }
 
+// Performance-mätare (top-right): frame-time i ms + FPS, med färg-kod
+// och mini-bar mot 60 fps target. Uppdateras ~4 gånger/sek så siffrorna
+// är stabila och lätta att läsa (annars flickerar de varje frame).
+const perfMeterEl = document.getElementById('perf-meter');
+const perfMsEl = document.getElementById('perf-ms');
+const perfFpsEl = document.getElementById('perf-fps');
+const perfBarFillEl = document.getElementById('perf-bar-fill');
+const _perfFrames = [];
+let _perfLastUpdateMs = 0;
+const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
+function tickPerfMeter(dt) {
+  if (!perfMeterEl) return;
+  // Lägg dagens dt (sekunder) i rullande fönster av ~60 frames
+  _perfFrames.push(dt);
+  if (_perfFrames.length > 60) _perfFrames.shift();
+  const nowMs = performance.now();
+  if (nowMs - _perfLastUpdateMs < 250) return;
+  _perfLastUpdateMs = nowMs;
+  const sum = _perfFrames.reduce((s, v) => s + v, 0);
+  const avg = sum / Math.max(1, _perfFrames.length);
+  const ms = avg * 1000;
+  const fps = avg > 0 ? (1 / avg) : 0;
+  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1);
+  if (perfFpsEl) perfFpsEl.textContent = Math.round(fps);
+  // Bar-fill: 100% när vi når 60 fps (16.67ms), skalar ner när frame-time växer
+  if (perfBarFillEl) {
+    const ratio = Math.max(0, Math.min(1, PERF_FRAME_BUDGET_MS / ms));
+    perfBarFillEl.style.width = (ratio * 100).toFixed(0) + '%';
+  }
+  // Färg-tillstånd (klassbaserat)
+  perfMeterEl.classList.remove('warn', 'bad');
+  if (ms > 33) perfMeterEl.classList.add('bad');         // < 30 fps
+  else if (ms > 20) perfMeterEl.classList.add('warn');   // < 50 fps
+}
+
 // Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
 const bossHpWrapEl = document.getElementById('boss-hp-wrap');
 const bossHpFillEl = document.getElementById('boss-hp-fill');
@@ -17300,6 +17335,7 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   resetFxPopupBudget();
+  tickPerfMeter(dt);
 
   // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state.
   // MEN: klient kör applyMovement lokalt för EGEN hjälte (prediction) så

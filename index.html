@@ -592,7 +592,47 @@
     body:not(.in-game) #duel-info,
     body:not(.in-game) #duel-banner,
     body:not(.in-game) #wave-banner,
-    body:not(.in-game) #boss-hp-wrap { display: none !important; }
+    body:not(.in-game) #boss-hp-wrap,
+    body:not(.in-game) #perf-meter { display: none !important; }
+
+    /* Performance-mätare — slim chip i top-right. Visar frame-time (ms) + FPS.
+       Färg-kod: blå/grön <20ms, gul 20-33ms, röd >33ms. Mini-bar visar
+       prestanda-marginal mot 60 fps. Synlig bara in-game. */
+    #perf-meter {
+      position: fixed;
+      top: max(8px, env(safe-area-inset-top));
+      right: max(8px, env(safe-area-inset-right));
+      background: rgba(15,25,40,0.72);
+      color: #88ddff;
+      font: 600 11px/1.2 ui-monospace, "SF Mono", monospace;
+      padding: 5px 9px 6px;
+      border-radius: 7px;
+      border: 1px solid rgba(140,200,255,0.35);
+      z-index: 65;
+      pointer-events: none;
+      letter-spacing: 0.4px;
+      text-align: right;
+      min-width: 92px;
+    }
+    #perf-meter .perf-row { white-space: nowrap; }
+    #perf-bar {
+      margin-top: 3px;
+      height: 3px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #perf-bar-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #44ddff 0%, #88ffaa 100%);
+      transition: width 0.18s ease-out, background 0.25s ease-out;
+    }
+    /* Färg-tillstånd för texten (sätts via JS via class) */
+    #perf-meter.warn { color: #ffcc55; border-color: rgba(255,200,80,0.55); }
+    #perf-meter.warn #perf-bar-fill { background: linear-gradient(90deg, #ffaa55 0%, #ffcc55 100%); }
+    #perf-meter.bad { color: #ff7766; border-color: rgba(255,120,90,0.6); }
+    #perf-meter.bad #perf-bar-fill { background: linear-gradient(90deg, #ff4422 0%, #ff7766 100%); }
 
     /* Boss HP-bar (top center i boss wars). Synlig under hela boss-fighten. */
     #boss-hp-wrap {
@@ -2137,6 +2177,12 @@
 
   <!-- Options-kugghjul (visas bara i match) -->
   <button id="options-btn" aria-label="Options" title="Options">⚙</button>
+
+  <!-- Performance-mätare (frame-time/FPS, top-right under match) -->
+  <div id="perf-meter">
+    <div class="perf-row"><span id="perf-ms">16.7</span> ms · <span id="perf-fps">60</span> fps</div>
+    <div id="perf-bar"><div id="perf-bar-fill"></div></div>
+  </div>
 
   <!-- Options-overlay (Lämna match / Stäng) -->
   <div id="options-overlay" class="hidden">
