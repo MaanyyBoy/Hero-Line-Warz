@@ -10056,9 +10056,26 @@ function applyRemoteState(state) {
     // Hero pick info per side
     if (sData.hid !== undefined) side.heroId = sData.hid;
     if (sData.hpc !== undefined) side.heroPickConfirmed = !!sData.hpc;
-    // Hjälte
-    side.hero.x = sData.h.x;
-    side.hero.z = sData.h.z;
+    // Hjälte position: för OWN side (vår egen hero) i classic MP kör vi
+    // local-prediction varje frame via tickLocalPrediction → reconcile bara
+    // vid stora avvikelser (knockback, teleport, stun) så vanlig löpning blir
+    // smooth 60Hz istället för ryckigt 20Hz från snap-stream. För opp-side
+    // applieras snap direkt (smooth via mesh._target-interpolation).
+    const isOwnLocalClassicMp = (idx === APP.localSide) &&
+      (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
+    if (isOwnLocalClassicMp) {
+      const dxR = side.hero.x - sData.h.x;
+      const dzR = side.hero.z - sData.h.z;
+      // 2.5m² = 6.25 — stor avvikelse = knockback/teleport/stun → snap till server
+      if (dxR * dxR + dzR * dzR > 6.25) {
+        side.hero.x = sData.h.x;
+        side.hero.z = sData.h.z;
+      }
+      // Annars behåll lokal predicted pos
+    } else {
+      side.hero.x = sData.h.x;
+      side.hero.z = sData.h.z;
+    }
     side.hero.hp = sData.h.hp;
     side.hero.maxHp = sData.h.mh;
     side.hero.facingX = sData.h.fx;
@@ -10082,12 +10099,19 @@ function applyRemoteState(state) {
       side.aragurnLeap = null;
     }
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
-    if (!side.mesh._target) {
-      side.mesh.position.x = sData.h.x;
-      side.mesh.position.z = sData.h.z;
-      side.mesh.rotation.y = heroRy;
+    if (isOwnLocalClassicMp) {
+      // Own-side i classic MP: tickLocalPrediction uppdaterar mesh.position
+      // direkt via applyMovement varje frame. Sätt _target=null så
+      // smoothEntityMeshes inte krockar med prediction (annars dubbel-update).
+      side.mesh._target = null;
+    } else {
+      if (!side.mesh._target) {
+        side.mesh.position.x = sData.h.x;
+        side.mesh.position.z = sData.h.z;
+        side.mesh.rotation.y = heroRy;
+      }
+      side.mesh._target = { x: sData.h.x, z: sData.h.z, ry: heroRy };
     }
-    side.mesh._target = { x: sData.h.x, z: sData.h.z, ry: heroRy };
     side.mesh.visible = !sData.h.d;
     // Resurser
     side.gold = sData.g;
@@ -17512,8 +17536,11 @@ function tick() {
   } else if (isMpMode()) {
     // Klassisk MP (server-auth): bara input + render från server's state.
     // Arena-client: input + prediction + render från host's state.
+    // Classic MP behöver också local-prediction för own hero — annars rör sig
+    // hero bara via 20Hz state-snap = synlig "hackig" jitter när man springer.
+    // Reconciliation sker i applySideData (stor diff = snap till server pos).
     maybeSendClientInput(now);
-    if (isArenaMp()) tickLocalPrediction(dt);
+    tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
   }
   // Arena MP host broadcastar state till klienten
