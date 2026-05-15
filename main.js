@@ -9662,10 +9662,63 @@ const clientMeshes = {
   vineTraps: new Map(),
   hammers: new Map(),
   ironWillExplosions: new Map(),
+  bossProjectiles: new Map(),
+  bossPools: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
 const INTERPOLATED_KEYS = new Set(['monsters', 'playerCreeps', 'heroCopies']);
+
+// Line wars: server broadcastar boss-skill activeCast i monster-snap (M[i].c).
+// Klient spawnar telegraph-mesh på boss-meshen vid ny cast och rensar vid slut.
+// Heroes ser röd telegraph-zon under telegraph-fasen → kan flytta sig ur den.
+function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
+  if (!monsterList) return;
+  const meshMap = clientMeshes.monsters && clientMeshes.monsters.get(sideIdx);
+  if (!meshMap) return;
+  for (const m of monsterList) {
+    const mesh = meshMap.get(m.id);
+    if (!mesh) continue;
+    const newCast = m.c;
+    const newKey = newCast ? `${newCast.n}|${newCast.ph}` : '';
+    const prevKey = mesh.userData._bossCastKey || '';
+    if (newKey === prevKey) continue;
+    // Cleanup gammal telegraph-mesh
+    if (mesh.userData._bossTelegraph) {
+      const tg = mesh.userData._bossTelegraph;
+      tg.traverse?.(o => { if (o.geometry) o.geometry.dispose?.(); if (o.material) o.material.dispose?.(); });
+      scene.remove(tg);
+      mesh.userData._bossTelegraph = null;
+    }
+    if (newCast && newCast.ph === 'telegraph' && newCast.n) {
+      // Pseudo-monster för spawnBossTelegraph (har samma fält som riktig boss)
+      const pseudoMonster = { mesh, x: mesh.position.x, z: mesh.position.z };
+      const pseudoSkill = {
+        id: newCast.n,
+        kind: newCast.k || 'groundCircle',
+        radius: newCast.rad || 3,
+        length: newCast.len || 0,
+        halfAngle: newCast.ha || 0,
+        width: newCast.w || 0,
+        telegraph: newCast.tg || 1,
+      };
+      const pseudoCast = {
+        skill: pseudoSkill,
+        phase: 'telegraph',
+        timer: newCast.t || 0,
+        dirX: newCast.dx != null ? newCast.dx : 0,
+        dirZ: newCast.dz != null ? newCast.dz : 1,
+        originX: newCast.ox != null ? newCast.ox : mesh.position.x,
+        originZ: newCast.oz != null ? newCast.oz : mesh.position.z,
+        targetX: newCast.tx, targetZ: newCast.tz,
+        telegraphMesh: null,
+      };
+      try { spawnBossTelegraph(null, pseudoMonster, pseudoCast); } catch (_) {}
+      mesh.userData._bossTelegraph = pseudoCast.telegraphMesh;
+    }
+    mesh.userData._bossCastKey = newKey;
+  }
+}
 
 function clientReconcileEntities(sideIdx, key, list, makeMesh) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
@@ -10193,6 +10246,42 @@ function applyRemoteState(state) {
       }
       attachHpBar(m, (e && e.boss) ? 2.4 : 1.7);
       return m;
+    });
+    // Boss-skill-telegraph: efter monster-reconcile, kolla om någon boss har
+    // ny activeCast i snap → spawna telegraph-mesh på dess mesh. När cast
+    // försvinner, rensa telegraph. Heroes kan dodga ut ur damage-zonen under
+    // telegraph-fasen.
+    syncBossSkillTelegraphsFromSnap(idx, sData.M);
+    // Boss-projektiler + DoT-pools (line wars boss-skills)
+    clientReconcileEntities(idx, 'bossProjectiles', sData.BP || [], () => {
+      const grp = new THREE.Group();
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.45, 14, 10),
+        new THREE.MeshStandardMaterial({ color: 0xff6622, emissive: 0xff3300, emissiveIntensity: 1.4 })
+      );
+      core.position.y = 1.0;
+      grp.add(core);
+      return grp;
+    });
+    clientReconcileEntities(idx, 'bossPools', sData.BPL || [], () => {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.5, 4.5, 36),
+        new THREE.MeshBasicMaterial({ color: 0x66cc44, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.08;
+      grp.add(ring);
+      const inner = new THREE.Mesh(
+        new THREE.CircleGeometry(4.4, 32),
+        new THREE.MeshBasicMaterial({ color: 0x447733, transparent: true, opacity: 0.30, side: THREE.DoubleSide })
+      );
+      inner.rotation.x = -Math.PI / 2;
+      inner.position.y = 0.06;
+      grp.add(inner);
+      grp.userData.poolRing = ring;
+      grp.userData.poolInner = inner;
+      return grp;
     });
     clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => {
       const m = makeMinionMesh(e.typeId || 'T1_bruiser', idx);

@@ -74,6 +74,53 @@ const RANGE_MONSTER_INTERVAL = 1.5;
 const RANGE_MONSTER_SPEED_RATIO = 0.75;
 const RANGE_MONSTER_HP_RATIO = 0.80;
 
+// 5 boss-definitioner med 3 unika skills var (wave 10/20/30/40/50).
+// Skills är dodgeable: telegraph-fasen ger heroes tid att flytta sig ur
+// damage-zonen innan execute-fasen träffar. dmgMul multipliceras mot bossens
+// base monsterDmg. cd = cooldown per skill.
+const BOSS_DEFS = {
+  10: {
+    name: 'Captain',
+    skills: [
+      { id: 'shieldBash',   kind: 'lineDash',    telegraph: 1.4, length: 11, width: 3.2, execTime: 0.5, dmgMul: 2.2, cd: 7.5 },
+      { id: 'throwingAxe',  kind: 'projectile',  telegraph: 0.5, speed: 14, dmgMul: 1.8, radius: 1.0, range: 18, cd: 5.0 },
+      { id: 'battleRoar',   kind: 'groundCircle',telegraph: 1.4, radius: 7.5, dmgMul: 1.6, originSelf: true, slow: { dur: 2.5, mul: 0.5 }, cd: 9.0 },
+    ],
+  },
+  20: {
+    name: 'General',
+    skills: [
+      { id: 'lightningStrike', kind: 'groundCircle',   telegraph: 1.0, radius: 4.2, dmgMul: 2.4, targetHero: true, cd: 5.5 },
+      { id: 'spearVolley',     kind: 'projectileMulti',telegraph: 0.7, count: 4, spreadAngle: Math.PI / 6, speed: 18, dmgMul: 1.6, radius: 1.0, range: 18, cd: 6.5 },
+      { id: 'warStomp',        kind: 'groundCircle',   telegraph: 1.3, radius: 9, dmgMul: 2.0, originSelf: true, knockback: 3.5, cd: 10.0 },
+    ],
+  },
+  30: {
+    name: 'Warlord',
+    skills: [
+      { id: 'cleaveWave',  kind: 'cone',        telegraph: 1.0, length: 12, halfAngle: Math.PI / 3, dmgMul: 2.6, cd: 6.0 },
+      { id: 'poisonPool',  kind: 'poolDot',     telegraph: 1.0, radius: 4.5, duration: 7, dpsMul: 0.6, slow: { dur: 0.8, mul: 0.6 }, targetHero: true, cd: 7.5 },
+      { id: 'earthquake',  kind: 'multiCircle', telegraph: 0.7, count: 6, spawnInterval: 0.5, radius: 3.5, dmgMul: 1.7, spread: 9, cd: 11.0 },
+    ],
+  },
+  40: {
+    name: 'Demon Prince',
+    skills: [
+      { id: 'hellfireBeam',  kind: 'sweepBeam',   telegraph: 1.3, sweepDuration: 2.2, length: 16, halfAngle: Math.PI / 1.8, dpsMul: 1.8, cd: 10.0 },
+      { id: 'infernoStrike', kind: 'groundCircle',telegraph: 0.8, radius: 3.2, dmgMul: 2.8, targetHero: true, leaveBurn: true, cd: 5.0 },
+      { id: 'meteorShower',  kind: 'multiCircle', telegraph: 0.9, count: 6, spawnInterval: 0.7, radius: 4.5, dmgMul: 2.4, spread: 13, cd: 13.0 },
+    ],
+  },
+  50: {
+    name: 'Drakkonungen',
+    skills: [
+      { id: 'dragonBreath', kind: 'sustainedCone',telegraph: 1.3, sustainDuration: 2.8, length: 16, halfAngle: Math.PI / 2.8, dpsMul: 2.0, cd: 8.5 },
+      { id: 'wingSlam',     kind: 'groundCircle', telegraph: 1.0, radius: 7.5, dmgMul: 3.0, originSelf: true, knockback: 5.0, cd: 7.0 },
+      { id: 'skyfireRain',  kind: 'multiCircle',  telegraph: 0.7, count: 10, spawnInterval: 0.6, radius: 4.0, dmgMul: 2.2, spread: 15, cd: 15.0 },
+    ],
+  },
+};
+
 function getWaveDef(waveNum) {
   if (waveNum < 1 || waveNum > MAX_WAVES) return null;
   const tierIdx = Math.min(4, Math.floor((waveNum - 1) / 10));
@@ -89,6 +136,7 @@ function getWaveDef(waveNum) {
       monsterHp: 200 + tierIdx * 250,
       monsterDmg: 18 + tierIdx * 6,
       monsterSpeed: 1.8,
+      bossDef: BOSS_DEFS[waveNum] || null,
     };
   }
   const inTier = ((waveNum - 1) % 10) + 1;
@@ -842,7 +890,7 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
   const isRange = attackType === 'range';
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
   const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
-  side.monsters.push({
+  const monster = {
     id: state.nextEntityId++,
     x, z,
     ry: 0,
@@ -856,7 +904,16 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: !!def.isBoss,
-  });
+  };
+  // Boss-skill-state: bossen castar telegraph→execute via tickBossSkillsServer.
+  if (def.isBoss && def.bossDef && def.bossDef.skills) {
+    monster.bossSkills = def.bossDef.skills;
+    monster.bossName = def.bossDef.name;
+    monster.skillCds = def.bossDef.skills.map(s => s.cd * 0.4);   // första cast snabbare
+    monster.activeCast = null;
+    monster.multiCircleQueue = null;   // för multiCircle-skills (sequence av AoE)
+  }
+  side.monsters.push(monster);
 }
 
 function updateMonsters(state, side, opp, dt) {
@@ -957,6 +1014,269 @@ function updateMonsters(state, side, opp, dt) {
     else if (isCreepPos(nx, m.z)) m.x = nx;
     else if (isCreepPos(m.x, nz)) m.z = nz;
     m.ry = Math.atan2(dirX, dirZ);
+    // Boss-skill-tick (server-auth för line wars)
+    if (m.isBoss && m.bossSkills) tickBossSkillsServer(state, side, m, dt);
+  }
+}
+
+// ============================================================
+// BOSS SKILL-SYSTEM SERVER-SIDE (för line wars, server-auth)
+// Telegraph → execute. Klient renderar telegraph-mesh från broadcastad
+// activeCast så heroes kan dodga ut ur damage-zonen.
+// ============================================================
+function tickBossSkillsServer(state, side, m, dt) {
+  if (m.hp <= 0) { m.activeCast = null; m.multiCircleQueue = null; return; }
+  // Tick CDs
+  if (m.skillCds) for (let i = 0; i < m.skillCds.length; i++) m.skillCds[i] = Math.max(0, m.skillCds[i] - dt);
+  // Multi-circle queue (earthquake, meteorShower, skyfireRain): sekvens av AoE-impacts
+  if (m.multiCircleQueue) tickMultiCircleQueue(state, side, m, dt);
+  // Aktiv cast (telegraph → execute)
+  if (m.activeCast) {
+    const cast = m.activeCast;
+    cast.timer -= dt;
+    if (cast.phase === 'telegraph' && cast.timer <= 0) {
+      bossExecuteSkill(state, side, m, cast);
+      // Sustained skills (sweepBeam, sustainedCone) tickas i execute-fas; övriga avslutas direkt
+      if (cast.phase !== 'execute') m.activeCast = null;
+    } else if (cast.phase === 'execute') {
+      tickBossExecutePhase(state, side, m, cast, dt);
+      if (cast.timer <= 0) m.activeCast = null;
+    }
+    return;
+  }
+  // Välj ny skill om någon är ready
+  if (!m.bossSkills || !m.skillCds) return;
+  const ready = [];
+  for (let i = 0; i < m.skillCds.length; i++) if (m.skillCds[i] <= 0) ready.push(i);
+  if (ready.length === 0) return;
+  const pick = ready[Math.floor(Math.random() * ready.length)];
+  const skill = m.bossSkills[pick];
+  m.skillCds[pick] = skill.cd;
+  startBossCastServer(state, side, m, skill);
+}
+
+function startBossCastServer(state, side, m, skill) {
+  // Räkna ut target-position + direction beroende på skill-type
+  const hero = side.hero;
+  let originX = m.x, originZ = m.z;
+  let targetX, targetZ, dirX, dirZ;
+  if (skill.originSelf) {
+    targetX = m.x; targetZ = m.z;
+  } else if (skill.targetHero && hero && !hero.dead) {
+    targetX = hero.x; targetZ = hero.z;
+  } else {
+    // Cone/line/projectile: rikta mot hero
+    if (hero && !hero.dead) {
+      const dx = hero.x - m.x, dz = hero.z - m.z;
+      const d = Math.hypot(dx, dz) || 1;
+      dirX = dx / d; dirZ = dz / d;
+      targetX = m.x + dirX * (skill.length || skill.range || skill.radius || 5);
+      targetZ = m.z + dirZ * (skill.length || skill.range || skill.radius || 5);
+    } else {
+      dirX = 1; dirZ = 0;
+      targetX = m.x + 5; targetZ = m.z;
+    }
+  }
+  m.activeCast = {
+    skill,
+    phase: 'telegraph',
+    timer: skill.telegraph,
+    telegraphTotal: skill.telegraph,
+    originX, originZ,
+    targetX, targetZ,
+    dirX: dirX || 0, dirZ: dirZ || 1,
+    sweepStartAngle: 0,
+    tickAccum: 0,
+  };
+}
+
+function bossExecuteSkill(state, side, m, cast) {
+  const skill = cast.skill;
+  const dmg = (m.damage || 10) * (skill.dmgMul || 1);
+  const dpsDmg = (m.damage || 10) * (skill.dpsMul || 0);
+  const kind = skill.kind;
+  if (kind === 'groundCircle') {
+    bossApplyAoE(state, side, cast.targetX, cast.targetZ, skill.radius, dmg, skill);
+  } else if (kind === 'cone') {
+    bossApplyCone(state, side, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, dmg, skill);
+  } else if (kind === 'lineDash') {
+    // Dasha boss + skada längs linjen
+    const newX = cast.originX + cast.dirX * skill.length;
+    const newZ = cast.originZ + cast.dirZ * skill.length;
+    bossApplyLine(state, side, cast.originX, cast.originZ, newX, newZ, skill.width / 2, dmg, skill);
+    m.x = newX; m.z = newZ;
+  } else if (kind === 'projectile') {
+    spawnBossProjectile(state, side, m, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.speed, skill.range, skill.radius, dmg, skill);
+  } else if (kind === 'projectileMulti') {
+    const baseAng = Math.atan2(cast.dirX, cast.dirZ);
+    for (let i = 0; i < skill.count; i++) {
+      const t = skill.count === 1 ? 0 : (i / (skill.count - 1)) - 0.5;
+      const ang = baseAng + t * skill.spreadAngle;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      spawnBossProjectile(state, side, m, cast.originX, cast.originZ, dx, dz, skill.speed, skill.range, skill.radius, dmg, skill);
+    }
+  } else if (kind === 'multiCircle') {
+    // Starta queue: spawnar skill.count AoE-circlar över skill.count * spawnInterval sek
+    const positions = [];
+    for (let i = 0; i < skill.count; i++) {
+      const ang = (i / skill.count) * Math.PI * 2 + Math.random() * 0.5;
+      const r = Math.random() * skill.spread;
+      positions.push({ x: m.x + Math.cos(ang) * r, z: m.z + Math.sin(ang) * r });
+    }
+    m.multiCircleQueue = { positions, spawnInterval: skill.spawnInterval, nextSpawnIn: 0, idx: 0, radius: skill.radius, dmg, skill };
+  } else if (kind === 'poolDot') {
+    // DoT-pool vid target-pos
+    side.bossPools = side.bossPools || [];
+    side.bossPools.push({
+      id: state.nextEntityId++,
+      x: cast.targetX, z: cast.targetZ,
+      radius: skill.radius,
+      duration: skill.duration, life: skill.duration,
+      dps: dpsDmg, tickAccum: 0,
+      slow: skill.slow,
+    });
+  } else if (kind === 'sweepBeam') {
+    // Sustained roterande beam — tick i execute-phase
+    cast.phase = 'execute';
+    cast.timer = skill.sweepDuration;
+    cast.sweepStartAngle = Math.atan2(cast.dirX, cast.dirZ);
+    cast.sweepDmg = dpsDmg;
+  } else if (kind === 'sustainedCone') {
+    // Sustained dragon breath — tick damage i kon
+    cast.phase = 'execute';
+    cast.timer = skill.sustainDuration;
+    cast.sustainDmg = dpsDmg;
+  }
+}
+
+function tickBossExecutePhase(state, side, m, cast, dt) {
+  const skill = cast.skill;
+  cast.tickAccum = (cast.tickAccum || 0) + dt;
+  // Tick damage var 0.25s under sustained execute
+  if (cast.tickAccum < 0.25) return;
+  const tickDmg = (cast.sweepDmg || cast.sustainDmg || 0) * cast.tickAccum;
+  cast.tickAccum = 0;
+  if (skill.kind === 'sweepBeam') {
+    // Rotera dir över sweep-duration (90° vänster → 90° höger)
+    const total = skill.sweepDuration;
+    const elapsed = total - cast.timer;
+    const sweepAng = cast.sweepStartAngle + (elapsed / total - 0.5) * Math.PI;
+    const dx = Math.sin(sweepAng), dz = Math.cos(sweepAng);
+    bossApplyCone(state, side, m.x, m.z, dx, dz, skill.length, skill.halfAngle, tickDmg, skill);
+  } else if (skill.kind === 'sustainedCone') {
+    bossApplyCone(state, side, m.x, m.z, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, tickDmg, skill);
+  }
+}
+
+function tickMultiCircleQueue(state, side, m, dt) {
+  const q = m.multiCircleQueue;
+  if (!q) return;
+  q.nextSpawnIn -= dt;
+  while (q.nextSpawnIn <= 0 && q.idx < q.positions.length) {
+    const p = q.positions[q.idx++];
+    bossApplyAoE(state, side, p.x, p.z, q.radius, q.dmg, q.skill);
+    q.nextSpawnIn += q.spawnInterval;
+  }
+  if (q.idx >= q.positions.length) m.multiCircleQueue = null;
+}
+
+function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
+  const r2 = radius * radius;
+  // Hero (target i line wars: side.hero är den vars torn bossen attackerar)
+  if (!side.hero.dead) {
+    const dx = side.hero.x - cx, dz = side.hero.z - cz;
+    if (dx * dx + dz * dz < r2) {
+      damageHero(side, dmg);
+      if (skill.slow && !side.hero.dead) {
+        side.heroSlowMul = Math.min(side.heroSlowMul || 1, skill.slow.mul);
+        side.heroSlowTime = Math.max(side.heroSlowTime || 0, skill.slow.dur);
+      }
+      if (skill.knockback && !side.hero.dead) {
+        const d = Math.hypot(dx, dz) || 1;
+        side.hero.x += (dx / d) * skill.knockback;
+        side.hero.z += (dz / d) * skill.knockback;
+      }
+    }
+  }
+  // Boss-skills fokuserar bara på hero (dodgeable design). Invaderande creeps
+  // hanteras separat av reguljär monster-AA i updateMonsters.
+}
+
+function bossApplyCone(state, side, cx, cz, dx, dz, length, halfAngle, dmg, skill) {
+  if (!side.hero.dead) {
+    const ddx = side.hero.x - cx, ddz = side.hero.z - cz;
+    const d = Math.hypot(ddx, ddz);
+    if (d > 0.01 && d < length) {
+      const dot = (ddx * dx + ddz * dz) / d;
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (ang < halfAngle) {
+        damageHero(side, dmg);
+      }
+    }
+  }
+}
+
+function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill) {
+  if (side.hero.dead) return;
+  // Punkt-till-segment-avstånd
+  const dx = x2 - x1, dz = z2 - z1;
+  const lenSq = dx * dx + dz * dz;
+  if (lenSq < 0.01) return;
+  const t = Math.max(0, Math.min(1, ((side.hero.x - x1) * dx + (side.hero.z - z1) * dz) / lenSq));
+  const cx = x1 + t * dx, cz = z1 + t * dz;
+  const distSq = (side.hero.x - cx) ** 2 + (side.hero.z - cz) ** 2;
+  if (distSq < halfWidth * halfWidth) damageHero(side, dmg);
+}
+
+function spawnBossProjectile(state, side, m, x, z, dx, dz, speed, range, radius, dmg, skill) {
+  side.bossProjectiles = side.bossProjectiles || [];
+  side.bossProjectiles.push({
+    id: state.nextEntityId++,
+    x, z, dx, dz,
+    speed, range, traveled: 0,
+    radius, dmg, skill,
+  });
+}
+
+function updateBossProjectiles(state, side, dt) {
+  if (!side.bossProjectiles || side.bossProjectiles.length === 0) return;
+  for (let i = side.bossProjectiles.length - 1; i >= 0; i--) {
+    const p = side.bossProjectiles[i];
+    const step = p.speed * dt;
+    p.x += p.dx * step; p.z += p.dz * step; p.traveled += step;
+    // Träff på hero?
+    if (!side.hero.dead) {
+      const ddx = side.hero.x - p.x, ddz = side.hero.z - p.z;
+      if (ddx * ddx + ddz * ddz < p.radius * p.radius) {
+        damageHero(side, p.dmg);
+        side.bossProjectiles.splice(i, 1);
+        continue;
+      }
+    }
+    if (p.traveled > p.range) side.bossProjectiles.splice(i, 1);
+  }
+}
+
+function updateBossPools(state, side, dt) {
+  if (!side.bossPools || side.bossPools.length === 0) return;
+  for (let i = side.bossPools.length - 1; i >= 0; i--) {
+    const p = side.bossPools[i];
+    p.life -= dt;
+    p.tickAccum += dt;
+    if (p.tickAccum >= 0.5) {
+      p.tickAccum = 0;
+      if (!side.hero.dead) {
+        const dx = side.hero.x - p.x, dz = side.hero.z - p.z;
+        if (dx * dx + dz * dz < p.radius * p.radius) {
+          damageHero(side, p.dps * 0.5);
+          if (p.slow) {
+            side.heroSlowMul = Math.min(side.heroSlowMul || 1, p.slow.mul);
+            side.heroSlowTime = Math.max(side.heroSlowTime || 0, p.slow.dur);
+          }
+        }
+      }
+    }
+    if (p.life <= 0) side.bossPools.splice(i, 1);
   }
 }
 
@@ -3087,6 +3407,8 @@ function tickGame(state, dt) {
       updateAragurnLeap(state, side, opp, dt);
       updateAragurnShoutHeal(side, dt);
       updateSoulDrain(state, side, opp, dt);
+      updateBossProjectiles(state, side, dt);
+      updateBossPools(state, side, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
       if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
       // Ult-energy passive gain (0.5%/sek)
@@ -3208,6 +3530,8 @@ function tickGame(state, dt) {
     updateAragurnLeap(state, side, opp, dt);
     updateAragurnShoutHeal(side, dt);
     updateSoulDrain(state, side, opp, dt);
+    updateBossProjectiles(state, side, dt);
+    updateBossPools(state, side, dt);
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
     if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
@@ -3293,7 +3617,31 @@ function serializeSide(side) {
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
     },
-    M: side.monsters.map(m => ({ id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10, boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0, fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0 })),
+    M: side.monsters.map(m => ({
+      id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10,
+      boss: m.isBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
+      fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0,
+      // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
+      c: m.activeCast && m.activeCast.skill ? {
+        n: m.activeCast.skill.id || '',
+        k: m.activeCast.skill.kind || 'groundCircle',
+        rad: m.activeCast.skill.radius || 0,
+        len: m.activeCast.skill.length || 0,
+        ha: m.activeCast.skill.halfAngle || 0,
+        w: m.activeCast.skill.width || 0,
+        ph: m.activeCast.phase || 'telegraph',
+        t: +(m.activeCast.timer || 0).toFixed(2),
+        tg: +(m.activeCast.skill.telegraph || 0).toFixed(2),
+        tx: m.activeCast.targetX != null ? +m.activeCast.targetX.toFixed(2) : null,
+        tz: m.activeCast.targetZ != null ? +m.activeCast.targetZ.toFixed(2) : null,
+        ox: m.activeCast.originX != null ? +m.activeCast.originX.toFixed(2) : null,
+        oz: m.activeCast.originZ != null ? +m.activeCast.originZ.toFixed(2) : null,
+        dx: m.activeCast.dirX != null ? +m.activeCast.dirX.toFixed(3) : null,
+        dz: m.activeCast.dirZ != null ? +m.activeCast.dirZ.toFixed(3) : null,
+      } : null,
+    })),
+    BP: (side.bossProjectiles || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), dx: +p.dx.toFixed(3), dz: +p.dz.toFixed(3) })),
+    BPL: (side.bossPools || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), rad: p.radius, life: +(p.life / p.duration).toFixed(3) })),
     C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
     F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
     P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
