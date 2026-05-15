@@ -1126,15 +1126,17 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
     if (t) { tx = t.x; tz = t.z; }
   }
   if (tx === undefined) {
-    // Drag: dir × distance × mag (drag-fraktion 0..1) från hero.
-    // Tidigare ignorerades ev.mag → skill landade alltid på full räckvidd.
-    // Användaren ska kunna VÄLJA exakt landingspos via drag-aim (samma som
-    // Black Hole / Frost Nova / Vine Trap-mönstret).
+    // Drag: dir × distance × mag (drag-fraktion 0.3..1) från hero.
+    // Min-clamp på 0.3 säkerställer att drag aldrig kastar skill ovanpå
+    // hero (mag=0 skulle annars ge "exploderar runt heroens kropp"). Tap
+    // utan target ger mag=1 = full räckvidd.
     let dx = ev.dx || 0, dz = ev.dz || 0;
     const len = Math.hypot(dx, dz);
     if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
     else { dx /= len; dz /= len; }
-    const mag = (typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+    let mag = (typeof ev.mag === 'number' && Number.isFinite(ev.mag))
+      ? Math.min(1, Math.max(0, ev.mag)) : 1;
+    if (mag < 0.3) mag = 0.3;
     tx = side.hero.x + dx * defaultDistance * mag;
     tz = side.hero.z + dz * defaultDistance * mag;
   }
@@ -1977,6 +1979,10 @@ function castSoulDrain(state, sideIdx, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   if (side.soulDrain) side.soulDrain = null;
   const opp = state.sides[3 - sideIdx];
+  // Sätt CD FÖRST så klientens optimistic CD synkar med server, även om vi
+  // bail:ar utan target nedan. Annars: klient ser CD i 4s utan att server
+  // har satt det → vid nästa cast är klient blockerad men server tillåter.
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
   // Hitta target: tap → låst targetId, annars närmsta i range
   let target = null, targetType = null;
   if (ev && ev.tap === true && side.targetId) {
@@ -1990,19 +1996,46 @@ function castSoulDrain(state, sideIdx, ev) {
       targetType = t.isMonster ? 'monster' : 'creep';
     }
   }
-  if (!target) return;
-  const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
-  if (d > SOULDRAIN_RANGE) return;
-  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
-  side.soulDrain = {
-    remaining: SOULDRAIN_DURATION,
-    tickAccum: 0,
-    stacks: 0,
-    targetId: target.id,
-    targetType,
-  };
-  // Initial tick — drain ska börja skada direkt vid cast
-  applySoulDrainTick(state, side, opp);
+  if (target) {
+    side.soulDrain = {
+      remaining: SOULDRAIN_DURATION,
+      tickAccum: 0,
+      stacks: 0,
+      targetId: target.id,
+      targetType,
+    };
+    applySoulDrainTick(state, side, opp);
+  } else {
+    // Inget target — fallback: AoE "vampire wave" runt hero så Q alltid gör
+    // något när det castas (annars ser användaren bara CD-bar utan effekt).
+    const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+    const r2 = (SOULDRAIN_RANGE * 0.5) * (SOULDRAIN_RANGE * 0.5);
+    let healed = 0;
+    for (let i = side.monsters.length - 1; i >= 0; i--) {
+      const m = side.monsters[i];
+      const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
+      if (ddx * ddx + ddz * ddz < r2) {
+        const dmg = (m.maxHp || m.hp) * SOULDRAIN_DMG_PCT * 2 * skillMul;
+        const dealt = Math.min(dmg, m.hp);
+        applySkillDamageToMonster(state, side, opp, i, dmg);
+        healed += dealt;
+      }
+    }
+    if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+      const c = opp.playerCreeps[i];
+      const ddx = c.x - side.hero.x, ddz = c.z - side.hero.z;
+      if (ddx * ddx + ddz * ddz < r2) {
+        const dmg = (c.maxHp || c.hp) * SOULDRAIN_DMG_PCT * 2 * skillMul;
+        const dealt = Math.min(dmg, c.hp);
+        applySkillDamageToCreep(state, side, opp, c, dmg);
+        healed += dealt;
+        if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    if (!side.hero.dead && healed > 0) {
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healed * 0.4);
+    }
+  }
 }
 
 function resolveSoulDrainTargetServer(side, opp) {
@@ -2430,7 +2463,7 @@ function applyEvent(state, sideIdx, ev) {
     const useTargetAim = (ev.tap === true) && side.targetId;
     if (useTargetAim) {
       const opp = state.sides[3 - sideIdx];
-      const t = resolveTargetEntity(side, opp);
+      const t = resolveTargetEntity(side, opp, state);
       if (t) {
         const ddx = t.x - side.hero.x, ddz = t.z - side.hero.z;
         const m = Math.hypot(ddx, ddz);
