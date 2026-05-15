@@ -23,7 +23,16 @@ const renderer = new THREE.WebGLRenderer({
 // Pixel-ratio cap 1.5 på mobil (retina-skärmar har devicePixelRatio 2-3 →
 // renderar 4-9× pixlar utan visuell vinst vid spel-zoom). Desktop kör 2x.
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+// getViewportSize() läser visualViewport när det finns (mer exakt på mobil vid
+// rotation, adressfält som glider, pinch-zoom) och faller tillbaka på innerWidth.
+function getViewportSize() {
+  const vv = window.visualViewport;
+  const w = Math.max(1, Math.round(vv ? vv.width : window.innerWidth));
+  const h = Math.max(1, Math.round(vv ? vv.height : window.innerHeight));
+  return { w, h };
+}
+const __vp0 = getViewportSize();
+renderer.setSize(__vp0.w, __vp0.h);
 renderer.shadowMap.enabled = true;
 // PCFShadowMap istället för PCFSoftShadowMap: cheaper sampling (4 taps vs 16),
 // ~30% snabbare shadow-pass utan synlig kvalitetsskillnad vid spel-zoom.
@@ -33,18 +42,32 @@ renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(50, __vp0.w / __vp0.h, 0.1, 200);
 
 // Bloom-postprocessing borttagen tillfälligt — three.js' addons använder bare-specifier
 // 'three' internt vilket kräver importmap som inte funkar i alla browsers.
 // Återinförs när vi har ett mer browser-säkert sätt (esm.sh eller liknande).
 const bloomComposer = null;
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+function applyViewportSize() {
+  const { w, h } = getViewportSize();
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', applyViewportSize);
+// orientationchange firar innan innerWidth/innerHeight uppdaterats på vissa
+// browsers (iOS Safari, äldre Android Chrome). Utan detta blir canvasen
+// portrait-bred i landscape → höger halva svart. Re-applya på nästa frame och
+// efter en kort fördröjning så vi fångar layout-settling i alla browsers.
+window.addEventListener('orientationchange', () => {
+  applyViewportSize();
+  requestAnimationFrame(applyViewportSize);
+  setTimeout(applyViewportSize, 250);
 });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', applyViewportSize);
+}
 
 // ============================================================
 // ASSET PRELOADER — laddar alla GLTF-modeller + animationer innan
