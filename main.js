@@ -15476,10 +15476,6 @@ function renderHowtoLine() {
       html: `<p>Hero Line Wars är en <strong>1v1 MOBA-light</strong>. Ni har varsin arena. Var 10:e sekund spawnar en wave av fiender i din arena — du måste döda dem innan de når din <strong>fontän</strong>. När fontänen är död förlorar du.</p><p>Vid sidan dödar du fiender för guld och XP, köper items till din hjälte och <strong>minions till motståndarens lane</strong> så hens wave blir tuffare.</p>`
     },
     {
-      icon: 'controls', title: 'Kontroller',
-      html: `<ul><li><strong>Vänster joystick</strong> — flytta hjälten.</li><li><strong>AA-knapp (stor, hörnet)</strong> — toggle auto-attack på närmaste fiende. Hjälten attackerar bara när AA är på.</li><li><strong>Skills (Q / F / E)</strong> — tap för att casta mot AA-target. Håll och dra för att aim:a manuellt.</li><li><strong>Desktop:</strong> WASD/piltangenter + Q/F/E + Space = AA. Mus aim:ar skills.</li></ul>`
-    },
-    {
       icon: 'lanes', title: 'Lanes & arenor',
       html: `<p>Du har <strong>2 lanes</strong> (övre + nedre) i din arena. Vägg-barriärer skiljer dem så fiender stannar i sin lane. Du kan röra dig fritt mellan dem.</p><p>Motståndarens arena är spegelvänt nedanför (för host). Joinern ser den uppochnedvänd så hens arena är "nere".</p>`
     },
@@ -15502,10 +15498,6 @@ function renderHowtoLine() {
     {
       icon: 'items', title: 'Hjälte-items',
       html: `<p>Items har <strong>10 levels</strong>. Köp första gången för 200g, sedan dyrare per level (500 × 2^(lvl-1)).</p><ul><li><strong>Boots</strong> — 3 varianter: Speed / Magic / Tank. Vid lvl 10 unlock active: +50% buff i 5s, 30s CD.</li><li><strong>Glove of Haste</strong> — attack-speed/skill-dmg fokus.</li><li>Max 4 items i inventoryn längst ner i mitten. Tap/hover för tooltip.</li></ul>`
-    },
-    {
-      icon: 'heroes', title: 'Heroes',
-      html: `<p>3 hjältar valbara (fler kommer):</p><ul><li><strong>Gandulf</strong> — magiker, 100 HP, 5 AA, target-skills (Soul Drain / Frost Nova / Black Hole). Passive: skill-hits ger shield + skill-dmg-stacks.</li><li><strong>Legolus</strong> — archer-assassin, 85 HP, 6 AA, längre range + snabb AA. Var 3:e AA = buff.</li><li><strong>Gimlu</strong> — dvärg-tank, hög HP, hammar-skills. Passive: under 80% HP får han DR-tier.</li></ul>`
     },
     {
       icon: 'fountain', title: 'Fontän-aura',
