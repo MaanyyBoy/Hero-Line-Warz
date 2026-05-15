@@ -3963,8 +3963,12 @@ function isBossWarsPos(x, z) {
   // 2) Spawn-rum (kvadrat västra sidan)
   const sdx = x - SPAWN_ROOM_CX, sdz = z - SPAWN_ROOM_CZ;
   if (Math.abs(sdx) < SPAWN_ROOM_HALF - 0.5 && Math.abs(sdz) < SPAWN_ROOM_HALF - 0.5) return true;
-  // 3) Korridor (rektangel mellan spawn-rum och boss-rum)
-  if (x >= CORRIDOR_X_MIN - 0.5 && x <= CORRIDOR_X_MAX + 0.5 &&
+  // 3) Korridor (rektangel mellan spawn-rum och boss-rum).
+  // Sträcker sig ~6m IN i boss-rummet så det inte finns gap mellan korridor-slut
+  // och cirkelns rand (cirkeln kröker inåt vid kanterna → smal ingen-mans-land-zon
+  // framför gaten där hero fastnade). Med overlap är passage genom gate-öppningen
+  // alltid kontinuerlig oavsett z-läge inom korridor-bredd.
+  if (x >= CORRIDOR_X_MIN - 0.5 && x <= CORRIDOR_X_MAX + 6 &&
       Math.abs(z - BOSSWARS_CZ) < CORRIDOR_HALF_W - 0.3) return true;
   // 4) Boss-rum (tier-shape)
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
