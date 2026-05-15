@@ -10070,6 +10070,17 @@ function applyRemoteState(state) {
     side.hero.dotRemaining = sData.h.dot || 0;
     side.hero.tauntedTime = sData.h.tnt || 0;
     side.hero.poisonRemaining = sData.h.poi || 0;
+    // Aragurn-state (för visuella effekter på klient)
+    side.whirlwindRemaining = sData.wwR || 0;
+    if (sData.leapA) {
+      side.aragurnLeap = side.aragurnLeap || {};
+      side.aragurnLeap.active = true;
+      side.aragurnLeap.u = sData.leapU || 0;
+      side.aragurnLeap.targetX = sData.leapTx || 0;
+      side.aragurnLeap.targetZ = sData.leapTz || 0;
+    } else {
+      side.aragurnLeap = null;
+    }
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
     if (!side.mesh._target) {
       side.mesh.position.x = sData.h.x;
@@ -10888,6 +10899,9 @@ function updateAimIndicators() {
       showCircle(p.x, p.z, VINE_TRAP_RADIUS, 0x4a8030);
     } else if (heroId === 'gimlu') {
       showCircle(side.hero.x, side.hero.z, TAUNT_RADIUS, 0xffaa55);
+    } else if (heroId === 'aragurn') {
+      // Whirlwind — self-cast, visa damage-radien runt hero
+      showCircle(side.hero.x, side.hero.z, WHIRLWIND_RADIUS, 0xffe399);
     } else {
       // Gandulf Soul Drain — target-baserad, visa max-range som cirkel runt hero
       showCircle(side.hero.x, side.hero.z, SOULDRAIN_RANGE, 0x66ff66);
@@ -10899,6 +10913,9 @@ function updateAimIndicators() {
     } else if (heroId === 'gimlu') {
       // Iron Will — visa explosionsradien runt hero
       showCircle(side.hero.x, side.hero.z, IRON_WILL_EXPLOSION_RADIUS, 0xff7733);
+    } else if (heroId === 'aragurn') {
+      // War Shout — cone framåt (line för aim)
+      showLine(dirX, dirZ, SHOUT_LENGTH);
     } else {
       // Gandulf Frost Nova — cirkel där novan kastas
       const p = castGround(NOVA_CAST_DISTANCE);
@@ -10912,6 +10929,10 @@ function updateAimIndicators() {
     } else if (heroId === 'gimlu') {
       // Hammer — line längs banan
       showLine(dirX, dirZ, HAMMER_RANGE);
+    } else if (heroId === 'aragurn') {
+      // Heroic Leap — target-cirkel där hero landar
+      const p = castGround(LEAP_MAX_DISTANCE);
+      showCircle(p.x, p.z, LEAP_RADIUS, 0xff8844);
     } else {
       // Gandulf Black Hole — cirkel med blackhole-radien
       const p = castGround(BLACKHOLE_CAST_DISTANCE);
@@ -16920,9 +16941,15 @@ function triggerClientVisualAA(side) {
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
   const heroId = side.heroId || 'magiker';
-  // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R
-  // (de spawnar fulla mesher: vine trap-ring, dash-fx, ult-pil).
-  if (heroId === 'legolas') {
+  // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
+  // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
+  // big arrows. I CLASSIC MP är servern auktoritativ och broadcastar VT/BA
+  // via 'st'-message → klient reconciliear automatiskt. Att också spawna
+  // local-only mesh här skulle ge 2 cirklar (en från reconcile som fade:as
+  // efter 3s + en local-only som ALDRIG fade:as eftersom updateVineTrapsSolo
+  // ej körs i classic MP). Skip routing där.
+  const isClassicMpHere = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
+  if (heroId === 'legolas' && !isClassicMpHere) {
     if (key === 'q') { spawnClientLocalVineTrap(side, side.hero.facingX, side.hero.facingZ, false, 1); return; }
     if (key === 'e') { spawnClientLocalDash(side, side.hero.facingX, side.hero.facingZ); return; }
     if (key === 'r') { spawnClientLocalBigArrow(side, side.hero.facingX, side.hero.facingZ, false); return; }
@@ -16973,6 +17000,57 @@ function spawnSkillCastFx(x, z, color, radius = 0.6) {
   ring.position.set(x, 0.06, z);
   scene.add(ring);
   combatFx.push({ mesh: ring, life: 0.45, maxLife: 0.45, kind: 'castRing' });
+}
+
+// Visuella effekter för Aragurn-skills på klient (line wars MP).
+// Whirlwind: spin hero-mesh + transient golden aura. Leap: y-arc upp/ner +
+// landings-impact när leap slutar. Server är auktoritativ och skickar
+// whirlwindRemaining/aragurnLeap-state via state-snap; klient renderar.
+function tickAragurnVisuals(dt) {
+  const idxs = [1, 2];
+  for (const idx of idxs) {
+    const s = sides[idx];
+    if (!s || !s.mesh) continue;
+    // Whirlwind: spin hero-mesh snabbt under whirlwindRemaining > 0
+    if ((s.whirlwindRemaining || 0) > 0) {
+      s.mesh.rotation.y += dt * 18;
+      // Spawn aura-puff då och då för "spin"-känsla
+      s._wwSpawnAccum = (s._wwSpawnAccum || 0) + dt;
+      if (s._wwSpawnAccum > 0.08) {
+        s._wwSpawnAccum = 0;
+        spawnSkillCastFx(s.hero.x, s.hero.z, 0xffe399, 1.6);
+      }
+      // Triggra cast-fx vid start (delta-detection)
+      if (!s._wwActive) {
+        s._wwActive = true;
+        spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffd34a);
+        triggerCameraShake(0.15, 0.18);
+      }
+    } else if (s._wwActive) {
+      s._wwActive = false;
+    }
+    // Leap: y-arc. Server skickar leapU (0..1 progress). Peak vid u=0.5.
+    if (s.aragurnLeap && s.aragurnLeap.active) {
+      const u = s.aragurnLeap.u || 0;
+      const peakY = 6.0;
+      s.mesh.position.y = Math.sin(u * Math.PI) * peakY;
+      if (!s._leapActive) {
+        s._leapActive = true;
+        spawnSkillCastFx(s.hero.x, s.hero.z, 0xff8844, 1.4);
+        spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffaa66);
+      }
+    } else {
+      if (s._leapActive) {
+        // Just landed — spawn ground-impact vid current pos
+        s._leapActive = false;
+        spawnGroundImpact(s.mesh.position.x, s.mesh.position.z, LEAP_RADIUS, 0xff7733);
+        triggerCameraShake(0.35, 0.4);
+        s.mesh.position.y = 0;
+      } else if (s.mesh.position.y !== 0) {
+        s.mesh.position.y = 0;
+      }
+    }
+  }
 }
 
 function tickCombatFx(dt) {
@@ -17472,6 +17550,7 @@ function tick() {
   tickDuelOrbVisual(dt);
   tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
+  tickAragurnVisuals(dt);
   updateShieldAuras(now);
   checkShieldGain();
   checkHealGain();

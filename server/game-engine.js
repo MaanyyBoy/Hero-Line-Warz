@@ -1126,13 +1126,17 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
     if (t) { tx = t.x; tz = t.z; }
   }
   if (tx === undefined) {
-    // Drag: dir × distance från hero
+    // Drag: dir × distance × mag (drag-fraktion 0..1) från hero.
+    // Tidigare ignorerades ev.mag → skill landade alltid på full räckvidd.
+    // Användaren ska kunna VÄLJA exakt landingspos via drag-aim (samma som
+    // Black Hole / Frost Nova / Vine Trap-mönstret).
     let dx = ev.dx || 0, dz = ev.dz || 0;
     const len = Math.hypot(dx, dz);
     if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
     else { dx /= len; dz /= len; }
-    tx = side.hero.x + dx * defaultDistance;
-    tz = side.hero.z + dz * defaultDistance;
+    const mag = (typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+    tx = side.hero.x + dx * defaultDistance * mag;
+    tz = side.hero.z + dz * defaultDistance * mag;
   }
   // Clamp till arenan under duel så skills inte landar utanför
   if (state && state.duelActive) {
@@ -1957,6 +1961,120 @@ function updateHammers(state, side, opp, dt) {
 }
 
 // ============================================================
+// GANDULF Q — SOUL DRAIN (target-locked beam, replaces Eldklot)
+// ============================================================
+const SOULDRAIN_DURATION = 5.0;
+const SOULDRAIN_TICK = 1.0;
+const SOULDRAIN_DMG_PCT = 0.05;
+const SOULDRAIN_SLOW_PER_STACK = 0.10;
+const SOULDRAIN_MAX_STACKS = 5;
+const SOULDRAIN_SLOW_TAIL = 1.0;
+const SOULDRAIN_RANGE = 10.0;
+const SOULDRAIN_BREAK_RANGE = 12.0;
+
+function castSoulDrain(state, sideIdx, ev) {
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  if (side.soulDrain) side.soulDrain = null;
+  const opp = state.sides[3 - sideIdx];
+  // Hitta target: tap → låst targetId, annars närmsta i range
+  let target = null, targetType = null;
+  if (ev && ev.tap === true && side.targetId) {
+    const t = resolveTargetEntity(side, opp, state);
+    if (t) { target = t; targetType = side.targetType; }
+  }
+  if (!target) {
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, SOULDRAIN_RANGE, state);
+    if (t) {
+      target = t.entity;
+      targetType = t.isMonster ? 'monster' : 'creep';
+    }
+  }
+  if (!target) return;
+  const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
+  if (d > SOULDRAIN_RANGE) return;
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  side.soulDrain = {
+    remaining: SOULDRAIN_DURATION,
+    tickAccum: 0,
+    stacks: 0,
+    targetId: target.id,
+    targetType,
+  };
+  // Initial tick — drain ska börja skada direkt vid cast
+  applySoulDrainTick(state, side, opp);
+}
+
+function resolveSoulDrainTargetServer(side, opp) {
+  const sd = side.soulDrain;
+  if (!sd) return null;
+  if (sd.targetType === 'monster') {
+    for (const m of side.monsters) if (m.id === sd.targetId && m.hp > 0) return m;
+    return null;
+  }
+  if (sd.targetType === 'creep' && opp) {
+    for (const c of opp.playerCreeps) if (c.id === sd.targetId && c.hp > 0) return c;
+    return null;
+  }
+  return null;
+}
+
+function applySoulDrainTick(state, side, opp) {
+  const sd = side.soulDrain;
+  if (!sd) return;
+  const target = resolveSoulDrainTargetServer(side, opp);
+  if (!target) { side.soulDrain = null; return; }
+  sd.stacks = Math.min(SOULDRAIN_MAX_STACKS, (sd.stacks || 0) + 1);
+  const maxHp = target.maxHp || target.hp || 1;
+  const dmg = maxHp * SOULDRAIN_DMG_PCT * (side.skillDmgMul || 1) *
+              (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) *
+              gandulfSkillDmgMul(side);
+  const slowMul = 1 - SOULDRAIN_SLOW_PER_STACK * sd.stacks;
+  if (sd.targetType === 'monster') {
+    const idx = side.monsters.indexOf(target);
+    if (idx >= 0) {
+      onGandulfSkillHit(side, target);
+      applySkillDamageToMonster(state, side, opp, idx, dmg);
+      if (side.monsters[idx] === target && target.hp > 0) {
+        target.slowMul = Math.min(target.slowMul || 1, slowMul);
+        target.slowTime = Math.max(target.slowTime || 0, SOULDRAIN_SLOW_TAIL);
+      }
+    }
+  } else if (sd.targetType === 'creep' && opp) {
+    onGandulfSkillHit(side, target);
+    applySkillDamageToCreep(state, side, opp, target, dmg);
+    if (target.hp > 0) {
+      target.slowMul = Math.min(target.slowMul || 1, slowMul);
+      target.slowTime = Math.max(target.slowTime || 0, SOULDRAIN_SLOW_TAIL);
+    } else {
+      const i = opp.playerCreeps.indexOf(target);
+      if (i >= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(target); gainXp(side, minionXp(target)); }
+    }
+  }
+  // Heal Gandulf — Soul Drain är vampyr-skill
+  if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * 0.4);
+}
+
+function updateSoulDrain(state, side, opp, dt) {
+  if (!side.soulDrain) return;
+  const sd = side.soulDrain;
+  if (side.hero.dead) { side.soulDrain = null; return; }
+  // Bryt-range: om target rör sig för långt bort, bryt drain
+  const target = resolveSoulDrainTargetServer(side, opp);
+  if (!target) { side.soulDrain = null; return; }
+  const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
+  if (d > SOULDRAIN_BREAK_RANGE) { side.soulDrain = null; return; }
+  sd.remaining -= dt;
+  if (sd.remaining <= 0) { side.soulDrain = null; return; }
+  sd.tickAccum = (sd.tickAccum || 0) + dt;
+  while (sd.tickAccum >= SOULDRAIN_TICK) {
+    sd.tickAccum -= SOULDRAIN_TICK;
+    applySoulDrainTick(state, side, opp);
+    if (!side.soulDrain) return;
+  }
+}
+
+// ============================================================
 // ARAGURN SKILLS (server-auth för line wars)
 // ============================================================
 const WHIRLWIND_DURATION = 3.0;
@@ -2114,25 +2232,45 @@ function updateAragurnShoutHeal(side, dt) {
   if (side.aragurnShoutHealRemaining <= 0) side.aragurnShoutHealPct = 0;
 }
 
-// E: Heroic Leap — hoppa till target-position, AoE damage + stun vid landning
+// E: Heroic Leap — hoppa till target-position, AoE damage + stun vid landning.
+// Använder resolveSkillGroundTarget så drag-aim + tap-target-aim båda fungerar
+// (samma pattern som Black Hole/Frost Nova). Klampar landings-pos mot walkability
+// så hero inte landar inuti väggar/tower.
 function castAragurnLeap(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
   if (side.aragurnLeap) return;   // redan i luften
+  const opp = state.sides[3 - sideIdx];
+  const target = resolveSkillGroundTarget(state, side, opp, ev || {}, LEAP_MAX_DISTANCE);
+  let tx = target.x, tz = target.z;
+  const walkOpts = { inEnemyTerritory: side.inEnemyTerritory };
+  // Walkability-clamp: om target ligger i icke-walkable terräng, gå tillbaka
+  // mot hero i 0.5m-steg tills vi hittar walkable pos. Skippar leap helt om
+  // ingen walkable mellan hero och target hittas.
+  if (!isHeroWalkable(sideIdx, tx, tz, walkOpts)) {
+    const ddx = tx - side.hero.x, ddz = tz - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d < 0.1) return;   // för nära, skip
+    const stepX = (ddx / d) * 0.5;
+    const stepZ = (ddz / d) * 0.5;
+    let foundWalkable = false;
+    for (let testX = tx - stepX, testZ = tz - stepZ;
+         Math.hypot(testX - side.hero.x, testZ - side.hero.z) > 0.4;
+         testX -= stepX, testZ -= stepZ) {
+      if (isHeroWalkable(sideIdx, testX, testZ, walkOpts)) {
+        tx = testX; tz = testZ;
+        foundWalkable = true;
+        break;
+      }
+    }
+    if (!foundWalkable) return;   // ingen walkable pos längs leap-vägen
+  }
   side.skills.e.cd = side.skills.e.max;
-  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
-  const len = Math.hypot(dx, dz);
-  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
-  else { dx /= len; dz /= len; }
-  const mag = (ev && typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
-  const dist = LEAP_MAX_DISTANCE * mag;
-  const targetX = side.hero.x + dx * dist;
-  const targetZ = side.hero.z + dz * dist;
   side.aragurnLeap = {
     remaining: LEAP_TRAVEL_TIME,
     total: LEAP_TRAVEL_TIME,
     startX: side.hero.x, startZ: side.hero.z,
-    targetX, targetZ,
+    targetX: tx, targetZ: tz,
   };
   // CC-immun under hopp
   side.hero.frozenTime = 0;
@@ -2306,7 +2444,7 @@ function applyEvent(state, sideIdx, ev) {
       if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
       else if (isGimlu) castGimluTaunt(state, sideIdx);
       else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
-      else castEldklot(state, sideIdx, dx, dz);
+      else castSoulDrain(state, sideIdx, ev);   // Magiker Q = Soul Drain (var Eldklot)
     } else if (ev.key === 'f') {
       if (isLegolus) castLegolusBuff(state, sideIdx);
       else if (isGimlu) castGimluIronWill(state, sideIdx);
@@ -2699,6 +2837,7 @@ function tickGame(state, dt) {
       updateAragurnWhirlwind(state, side, opp, dt);
       updateAragurnLeap(state, side, opp, dt);
       updateAragurnShoutHeal(side, dt);
+      updateSoulDrain(state, side, opp, dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
       if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -2810,6 +2949,7 @@ function tickGame(state, dt) {
     updateAragurnWhirlwind(state, side, opp, dt);
     updateAragurnLeap(state, side, opp, dt);
     updateAragurnShoutHeal(side, dt);
+    updateSoulDrain(state, side, opp, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
@@ -2878,6 +3018,12 @@ function serializeSide(side) {
     hid: side.heroId || 'magiker',
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
+    // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc
+    wwR: +(side.whirlwindRemaining || 0).toFixed(2),
+    leapA: side.aragurnLeap ? 1 : 0,
+    leapU: side.aragurnLeap ? +(1 - (side.aragurnLeap.remaining / side.aragurnLeap.total)).toFixed(3) : 0,
+    leapTx: side.aragurnLeap ? +side.aragurnLeap.targetX.toFixed(2) : 0,
+    leapTz: side.aragurnLeap ? +side.aragurnLeap.targetZ.toFixed(2) : 0,
     w: {
       c: side.wave.current,
       a: side.wave.active,
