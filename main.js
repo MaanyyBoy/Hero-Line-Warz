@@ -14748,10 +14748,11 @@ const INPUT_SEND_INTERVAL = 1 / 60;        // 60 Hz input — halverar local
                                             // input-buffer-fördröjning (~16ms vs ~33ms).
                                             // Server bufferar tills nästa tick;
                                             // ingen extra serverkostnad.
-// Arena state 20 Hz: matchar server-auktoritativ classic-MP-rate. Med 80 ms
-// halflife interpolation + klient-prediction känns det smooth. Lägre rate =
-// mindre nät+CPU-press = färre spikes på host's enhet och Render's free tier.
-const ARENA_STATE_SEND_INTERVAL = 1 / 20;
+// Arena state 30 Hz: matchar classic line-wars rate. Tidigare 20 Hz lade ~25ms
+// intern-buffer-delay. 30 Hz + 55ms halflife = snappare visuell respons,
+// motsvarande mängd interpolation-smoothness. Bandbredd kompenserad av
+// payload-skipping + WebSocket-compression (permessage-deflate).
+const ARENA_STATE_SEND_INTERVAL = 1 / 30;
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
@@ -14809,12 +14810,12 @@ function buildBossWarsSnap() {
     const b = hostSide.monsters.find(m => m.isBossWarsBoss);
     if (b && b.mesh) {
       boss = {
-        x: +b.mesh.position.x.toFixed(2),
-        z: +b.mesh.position.z.toFixed(2),
-        hp: Math.round(b.hp),
+        x: _r2(b.mesh.position.x),
+        z: _r2(b.mesh.position.z),
+        hp: _ri(b.hp),
         mh: b.maxHp,
         ph: b.bossPhase || 1,
-        pt: +(b.phaseTransitionRemaining || 0).toFixed(2),
+        pt: _nzr2(b.phaseTransitionRemaining),
         aac: b.aaCount || 0,           // AA-räknare för klient-visual (delta-detect)
         c: b.activeCast && b.activeCast.skill ? {
           n: b.activeCast.skill.id || '',
@@ -14824,15 +14825,15 @@ function buildBossWarsSnap() {
           ha: b.activeCast.skill.halfAngle || 0,
           w: b.activeCast.skill.width || 0,
           ph: b.activeCast.phase || 'telegraph',
-          t: +(b.activeCast.timer || 0).toFixed(2),
-          tg: +(b.activeCast.skill.telegraph || 0).toFixed(2),
-          tx: b.activeCast.targetX != null ? +b.activeCast.targetX.toFixed(2) : null,
-          tz: b.activeCast.targetZ != null ? +b.activeCast.targetZ.toFixed(2) : null,
-          ox: b.activeCast.originX != null ? +b.activeCast.originX.toFixed(2) : null,
-          oz: b.activeCast.originZ != null ? +b.activeCast.originZ.toFixed(2) : null,
-          dx: b.activeCast.dirX != null ? +b.activeCast.dirX.toFixed(3) : null,
-          dz: b.activeCast.dirZ != null ? +b.activeCast.dirZ.toFixed(3) : null,
-        } : null,
+          t: _r2(b.activeCast.timer || 0),
+          tg: _r2(b.activeCast.skill.telegraph || 0),
+          tx: b.activeCast.targetX != null ? _r2(b.activeCast.targetX) : null,
+          tz: b.activeCast.targetZ != null ? _r2(b.activeCast.targetZ) : null,
+          ox: b.activeCast.originX != null ? _r2(b.activeCast.originX) : null,
+          oz: b.activeCast.originZ != null ? _r2(b.activeCast.originZ) : null,
+          dx: b.activeCast.dirX != null ? _r3(b.activeCast.dirX) : null,
+          dz: b.activeCast.dirZ != null ? _r3(b.activeCast.dirZ) : null,
+        } : undefined,
       };
     }
   }
@@ -15118,28 +15119,40 @@ function handleNetworkMessage(msg) {
 }
 
 // Bygger en snapshot av en sidas hero-state till klienten
+// Payload-helpers (mirror av server-side r2/r1/r3/ri/nz/flag i game-engine.js).
+// Använda i Arena/Boss snap-builders för att reducera bandbredd 30-50% via
+// avrundade decimaler + skip av 0-värda/default-fält (JSON skippar undefined).
+function _r2(v) { return Math.round(v * 100) / 100; }
+function _r1(v) { return Math.round(v * 10) / 10; }
+function _r3(v) { return Math.round(v * 1000) / 1000; }
+function _ri(v) { return Math.round(v); }
+function _nz(v) { return v > 0 ? v : undefined; }
+function _nzr2(v) { return v > 0 ? _r2(v) : undefined; }
+function _flag(v) { return v ? 1 : undefined; }
+function _arrOpt(arr, mapper) { return (!arr || arr.length === 0) ? undefined : arr.map(mapper); }
+
 function heroSnap(side) {
   if (!side) return null;
   return {
-    x: side.hero.x, z: side.hero.z,
-    fx: side.hero.facingX, fz: side.hero.facingZ,
-    hp: side.hero.hp, mh: side.hero.maxHp,
+    x: _r2(side.hero.x), z: _r2(side.hero.z),
+    fx: _r3(side.hero.facingX), fz: _r3(side.hero.facingZ),
+    hp: _ri(side.hero.hp), mh: _ri(side.hero.maxHp),
     d: side.hero.dead,
-    sh: side.shield || 0,
+    sh: _nzr2(side.shield),
     lv: side.level,
-    sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
+    sk: { q: _r2(side.skills.q.cd), f: _r2(side.skills.f.cd), e: _r2(side.skills.e.cd) },
     hid: side.heroId || 'magiker',
     ac: side.attackCounter || 0,
-    g: side.gold || 0,
-    ue: side.ultEnergy || 0,
-    tnt: +(side.hero.tauntedTime || 0).toFixed(2),
+    g: _nz(side.gold),
+    ue: _nzr2(side.ultEnergy),
+    tnt: _nzr2(side.hero.tauntedTime),
     // CC-state: klient-prediction behöver dessa för att respektera stuns/freeze
     // (annars rör sig hjälten lokalt under stun → ful rubber-band vid snap-tillbaka).
-    fzt: +(side.hero.frozenTime || 0).toFixed(2),
-    fer: +(side.heroFearTime || 0).toFixed(2),
-    ibr: +(side.iceBlockRemaining || 0).toFixed(2),
-    slm: +(side.heroSlowMul != null ? side.heroSlowMul : 1).toFixed(3),
-    slt: +(side.heroSlowTime || 0).toFixed(2),
+    fzt: _nzr2(side.hero.frozenTime),
+    fer: _nzr2(side.heroFearTime),
+    ibr: _nzr2(side.iceBlockRemaining),
+    slm: (side.heroSlowMul != null && side.heroSlowMul !== 1) ? _r3(side.heroSlowMul) : undefined,
+    slt: _nzr2(side.heroSlowTime),
   };
 }
 
@@ -15199,7 +15212,8 @@ function applyHeroSnap(side, snap) {
   side.hero.hp = snap.hp;
   side.hero.maxHp = snap.mh;
   side.hero.dead = !!snap.d;
-  side.shield = snap.sh;
+  // Skip-0-värden i snap → || 0 fallback (annars `undefined` fastnar i state)
+  side.shield = snap.sh || 0;
   side.level = snap.lv;
   // Sticky-aware cd-update för Q/F/E: efter att klient klickat skill lokalt
   // satte vi cd = max optimistiskt. Om broadcast bär lägre cd än vår lokala
@@ -15224,26 +15238,29 @@ function applyHeroSnap(side, snap) {
   };
   setCdSticky('q'); setCdSticky('f'); setCdSticky('e');
   side.attackCounter = snap.ac;
-  if (snap.g !== undefined) side.gold = snap.g;
-  // Ult-energy: sticky local optimism (om vi just castade ult lokalt och host's
-  // broadcast inte hunnit reflektera ännu, behåll vår 0). Annars trust host.
-  if (snap.ue !== undefined) {
+  // Skip-0-värden i snap → || 0 fallback för alla state-fält som kan vara 0.
+  // Tidigare guard `if (snap.X !== undefined)` fastnade på sista positiva värde
+  // när server skickade undefined för 0 (taunt slutar, gold spent, etc).
+  side.gold = snap.g || 0;
+  // Ult-energy: sticky local optimism. snap.ue undefined → 0 (default).
+  {
+    const snapUe = snap.ue || 0;
     const recentUlt = side._localUltCastAt && (nowPerf - side._localUltCastAt < 600);
-    if (recentUlt && snap.ue > (side.ultEnergy || 0)) {
+    if (recentUlt && snapUe > (side.ultEnergy || 0)) {
       // Keep local 0 — host hasn't seen our ult cast yet
     } else {
-      side.ultEnergy = snap.ue;
+      side.ultEnergy = snapUe;
     }
   }
-  if (snap.tnt !== undefined) side.hero.tauntedTime = snap.tnt;
+  side.hero.tauntedTime = snap.tnt || 0;
   // CC-state: applicerar ALLTID (även för lokal sida) så prediction respekterar
   // stun/freeze/fear/slow. Annars rör sig hjälten visuellt under CC, sen rycker
   // tillbaka via reconciliation = ful rubber-band.
-  if (snap.fzt !== undefined) side.hero.frozenTime = snap.fzt;
-  if (snap.fer !== undefined) side.heroFearTime = snap.fer;
-  if (snap.ibr !== undefined) side.iceBlockRemaining = snap.ibr;
-  if (snap.slm !== undefined) side.heroSlowMul = snap.slm;
-  if (snap.slt !== undefined) side.heroSlowTime = snap.slt;
+  side.hero.frozenTime = snap.fzt || 0;
+  side.heroFearTime = snap.fer || 0;
+  side.iceBlockRemaining = snap.ibr || 0;
+  side.heroSlowMul = snap.slm != null ? snap.slm : 1;     // default = 1 (no slow)
+  side.heroSlowTime = snap.slt || 0;
   if (side.mesh) {
     if (!isLocalMpClient) {
       // Non-local: _target-baserad interpolation (smoothEntityMeshes lerpar
@@ -15307,8 +15324,8 @@ function broadcastArenaState() {
     },
     o: { hp: arenaState.orb.hp, a: arenaState.orb.alive, sp: arenaState.orb.spawnTimer },
     mp: arenaState.mapIdx || 0,
-    sr: +(arenaState.shrinkRadius || 0).toFixed(2),
-    ft: +(arenaState.fightTimer || 0).toFixed(2),
+    sr: _r2(arenaState.shrinkRadius || 0),
+    ft: _r2(arenaState.fightTimer || 0),
     h1: heroSnap(sides[1]),
     h2: heroSnap(sides[2]),
   });
@@ -18698,11 +18715,11 @@ function tick() {
       broadcastArenaState();
     }
   }
-  // Boss Wars MP host broadcastar state till klienterna ~20 Hz
-  // (klient-interpolation lerpar 60 fps, så 20 Hz räcker visuellt och sparar
-  // CPU+nätverk på host's enhet vilket är vanlig flaskhals)
+  // Boss Wars MP host broadcastar state till klienterna 30 Hz (uppgraderad från
+  // 20 Hz). Matchar classic line-wars-rate. Snappare visuell respons för 3-spelar
+  // co-op. Payload-skipping + compression håller bandbredd lågt.
   if (isBossMpHost && wsOpen()) {
-    if (now - bossMpState.lastStateSent > (1 / 20)) {
+    if (now - bossMpState.lastStateSent > (1 / 30)) {
       bossMpState.lastStateSent = now;
       broadcastBossWarsState();
     }
