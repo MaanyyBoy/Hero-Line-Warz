@@ -671,8 +671,9 @@ function recomputeSideStats(side) {
     else if (side.hero.hp > newMaxHp) side.hero.hp = newMaxHp;
   }
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
-  // (var 10s default) — buff för rörlighet. Övriga heroes använder base.
-  const HERO_SKILL_CD = { legolas: { e: 6.0 } };
+  // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
+  // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
+  const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 } };
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;

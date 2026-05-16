@@ -8968,7 +8968,8 @@ function itemUpgradeCost(currentLevel) {
 const SKILL_BASE_CD = { q: 4.0, f: 8.0, e: 10.0 };
 // Per-hero overrides på enstaka skill-CDs (bryter med global SKILL_BASE_CD)
 const HERO_SKILL_CD = {
-  legolas: { e: 6.0 },  // Shadow Dash -4s (var 8s, nu 6s)
+  legolas: { e: 6.0 },   // Shadow Dash -4s (var 8s, nu 6s)
+  kostefo: { e: 12.0 },  // Cannabis Cloud +2s (var 10s, nu 12s) — stark sustain
 };
 function heroSkillBaseCd(heroId, key) {
   const ov = HERO_SKILL_CD[heroId];
