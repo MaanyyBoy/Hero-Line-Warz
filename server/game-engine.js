@@ -250,7 +250,7 @@ const HAMMER_SPEED = 12;
 const HAMMER_RANGE = 9;
 const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
-const HAMMER_LIFESTEAL = 0.50;
+const HAMMER_LIFESTEAL = 0.15;
 const HAMMER_RETURN_DMG_MUL = 0.5;
 // Gimlu passive trösklar (Stalwart Resolve)
 const GIMLU_PASSIVE_TIER1_HP = 0.80;   // <80% → 10% DR (var 20% — nerf 50%)

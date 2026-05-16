@@ -1782,7 +1782,7 @@ const HAMMER_SPEED = 12;
 const HAMMER_RANGE = 9 * 1.3;        // +30% kast-range
 const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
-const HAMMER_LIFESTEAL = 0.50;
+const HAMMER_LIFESTEAL = 0.15;
 const HAMMER_RETURN_DMG_MUL = 0.5;
 // Gimlu passive (Stalwart Resolve)
 const GIMLU_PASSIVE_TIER1_HP = 0.80;
@@ -15166,7 +15166,7 @@ const HERO_INFO = {
     skills: {
       q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction, healas 20% av all skada han tar och 10% av maxHP per halv sekund.' },
       f: { name: 'Iron Will', icon: '🛡', desc: '3 sekunders aktiveringsfönster. All damage Gimlu tar lagras i en mätare. Vid slutet exploderar han i AoE (6 m radie) och gör damage = den lagrade summan till alla fiender runt.' },
-      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 50% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
+      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 15% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
     },
     passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 10% damage reduction (alltid på).\n• Under 60% HP: + 2.5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 10% mer damage reduction (20% totalt) och var 6:e inkommande damage-instance blockas helt.\n\nBonus: Gimlu bygger ult-energy genom att tanka skada (5% av damage taken, max 2% per hit).' },
     ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 3.5% av targets max-HP i skada — totalt 35% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
