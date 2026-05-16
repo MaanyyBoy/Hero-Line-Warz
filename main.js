@@ -10816,13 +10816,13 @@ function updateCamera(dt) {
 
 const hudEl = document.getElementById('hud');         // null efter HUD-omfördelning
 const statusEl = document.getElementById('status');   // null — ersatt av nya element nedan
-// Nya HUD-element efter omfördelning: torn-HP-stack (vänster), gold inline med income,
-// wave-display (top-row), respawn-overlay (centrerad vid död).
-const towerOwnFillEl = document.getElementById('tower-hp-own-fill');
+// Nya HUD-element efter omfördelning: torn-HP-stack (vänster, bara text — bar
+// borttagen), gold-display (top-row höger, egen ruta), wave-display (top-row
+// center), respawn-overlay (centrerad vid död).
 const towerOwnTextEl = document.getElementById('tower-hp-own-text');
-const towerEnemyFillEl = document.getElementById('tower-hp-enemy-fill');
 const towerEnemyTextEl = document.getElementById('tower-hp-enemy-text');
-const incomeGoldEl = document.getElementById('income-gold');
+const goldDisplayEl = document.getElementById('gold-display');
+const goldTextEl = document.getElementById('gold-text');
 const waveDisplayEl = document.getElementById('wave-display');
 const waveTextEl = document.getElementById('wave-text');
 const respawnOverlayEl = document.getElementById('respawn-overlay');
@@ -10861,19 +10861,13 @@ function updateHud() {
   const opp = sides[3 - APP.localSide];
   const isArena = APP.gameMode === 'arena1v1';
   const isBossWars = APP.gameMode === 'bosswars';
-  // Tower HP-stack (line wars endast — arena/boss har inga torn)
+  // Tower HP-stack (line wars endast — arena/boss har inga torn). HP-bar borttagen,
+  // bara numerisk text kvar.
   const showTowers = !isArena && !isBossWars;
   if (towerHpStackEl) towerHpStackEl.classList.toggle('hidden', !showTowers);
   if (showTowers) {
-    if (towerOwnFillEl) towerOwnFillEl.style.width = ((side.tower.hp / side.tower.maxHp) * 100).toFixed(1) + '%';
     if (towerOwnTextEl) towerOwnTextEl.textContent = `${side.tower.hp}/${side.tower.maxHp}`;
-    if (opp) {
-      if (towerEnemyFillEl) towerEnemyFillEl.style.width = ((opp.tower.hp / opp.tower.maxHp) * 100).toFixed(1) + '%';
-      if (towerEnemyTextEl) towerEnemyTextEl.textContent = `${opp.tower.hp}/${opp.tower.maxHp}`;
-    } else {
-      if (towerEnemyFillEl) towerEnemyFillEl.style.width = '0%';
-      if (towerEnemyTextEl) towerEnemyTextEl.textContent = '–';
-    }
+    if (towerEnemyTextEl) towerEnemyTextEl.textContent = opp ? `${opp.tower.hp}/${opp.tower.maxHp}` : '–';
   }
   // Wave-display (line wars endast)
   if (waveDisplayEl) {
@@ -10887,10 +10881,14 @@ function updateHud() {
       waveDisplayEl.classList.add('hidden');
     }
   }
-  // Gold inline med income (line wars + boss wars). Arena har ingen gold-mekanik.
-  if (incomeGoldEl) {
-    if (!isArena) incomeGoldEl.textContent = `${side.gold}g`;
-    else incomeGoldEl.textContent = '';
+  // Gold-display (egen ruta bredvid duel-timer, line wars + boss wars). Arena har ingen gold-mekanik.
+  if (goldDisplayEl) {
+    if (!isArena) {
+      goldDisplayEl.classList.remove('hidden');
+      if (goldTextEl) goldTextEl.textContent = `${side.gold}g`;
+    } else {
+      goldDisplayEl.classList.add('hidden');
+    }
   }
   // Respawn-overlay: visa "RESPAWN <countdown>" när hero är död i line/boss wars
   if (respawnOverlayEl) {
