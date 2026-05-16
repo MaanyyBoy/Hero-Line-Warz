@@ -246,6 +246,7 @@ const KOSTEFO_GOOSEWAVE_TICK = 0.5;
 const KOSTEFO_GOOSEWAVE_DMG_PCT = 0.05;
 const KOSTEFO_GOOSEWAVE_WIDTH = 3.6;     // bred wave
 const KOSTEFO_GOOSEWAVE_LENGTH = 6.5;    // räckvidd framåt
+const KOSTEFO_GOOSEWAVE_OFFSET = 4.0;    // offset från hero (zon-bakkant 0.75m framför hero, framkant 7.25m)
 const KOSTEFO_GOOSEWAVE_CD = 8.0;
 // F: Joint Slider — piercing projectile, 6m, explosion DoT + slow vid slutet
 const KOSTEFO_SLIDER_RANGE = 6.0;
@@ -3279,9 +3280,12 @@ function castKostefoJointAttack(state, sideIdx, dirX, dirZ) {
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
-  // Zon-center 3.25m framför hero (mitten av 6.5m längd)
-  const cx = side.hero.x + dirX * (KOSTEFO_GOOSEWAVE_LENGTH / 2);
-  const cz = side.hero.z + dirZ * (KOSTEFO_GOOSEWAVE_LENGTH / 2);
+  // Zon-center placeras OFFSET + halv-length framför hero. Med offset 4m och
+  // length 6.5m: bakkant 0.75m framför hero, framkant 7.25m. Zonen startar tydligt
+  // framför Kostefo (ej direkt vid hans fötter) per user-spec.
+  const fwd = KOSTEFO_GOOSEWAVE_OFFSET + KOSTEFO_GOOSEWAVE_LENGTH / 2;
+  const cx = side.hero.x + dirX * fwd;
+  const cz = side.hero.z + dirZ * fwd;
   side.kostefoGooseWaves.push({
     id: state.nextEntityId++,
     x: cx, z: cz,
