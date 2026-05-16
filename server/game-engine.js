@@ -1203,11 +1203,14 @@ function updateMonsters(state, side, opp, dt) {
       m.atkCd = atkInterval;
     }
     if (!m.chasing && opp) {
-      let nearest = null, bestDist = CREEP_VS_CREEP_RANGE;
-      for (const pc of opp.playerCreeps) {
+      // Find-nearest med sqr-dist (sparar sqrt × N creeps per monster per tick)
+      let nearest = null, bestDistSq = CREEP_VS_CREEP_RANGE * CREEP_VS_CREEP_RANGE;
+      const creeps = opp.playerCreeps;
+      for (let pi = 0; pi < creeps.length; pi++) {
+        const pc = creeps[pi];
         const dx = pc.x - m.x, dz = pc.z - m.z;
-        const d = Math.hypot(dx, dz);
-        if (d < bestDist) { bestDist = d; nearest = pc; }
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDistSq) { bestDistSq = d2; nearest = pc; }
       }
       if (nearest) {
         if (m.atkCd <= 0) {
@@ -1567,19 +1570,27 @@ function updatePlayerCreeps(state, side, opp, dt) {
       continue;
     }
     c.atkCd = Math.max(0, c.atkCd - dt);
-    let target = null, targetType = null, bestDist = c.range;
+    // Find-nearest med sqr-dist (sparar sqrt per creep × targets per tick)
+    let target = null, targetType = null, bestDistSq = c.range * c.range;
     if (tauntActive && opp && !opp.hero.dead) {
       // Tauntad: lås till opp.hero (Gimlu) oavsett avstånd
       target = opp.hero; targetType = 'hero';
-      bestDist = Math.hypot(opp.hero.x - c.x, opp.hero.z - c.z);
+      const dxh = opp.hero.x - c.x, dzh = opp.hero.z - c.z;
+      bestDistSq = dxh * dxh + dzh * dzh;
     } else {
       if (opp && !opp.hero.dead) {
-        const d = Math.hypot(opp.hero.x - c.x, opp.hero.z - c.z);
-        if (d < bestDist) { bestDist = d; target = opp.hero; targetType = 'hero'; }
+        const dx = opp.hero.x - c.x, dz = opp.hero.z - c.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDistSq) { bestDistSq = d2; target = opp.hero; targetType = 'hero'; }
       }
-      if (opp) for (const m of opp.monsters) {
-        const d = Math.hypot(m.x - c.x, m.z - c.z);
-        if (d < bestDist) { bestDist = d; target = m; targetType = 'monster'; }
+      if (opp) {
+        const mons = opp.monsters;
+        for (let mi = 0; mi < mons.length; mi++) {
+          const m = mons[mi];
+          const dx = m.x - c.x, dz = m.z - c.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < bestDistSq) { bestDistSq = d2; target = m; targetType = 'monster'; }
+        }
       }
     }
     if (target) {
@@ -1780,32 +1791,44 @@ function isHeroPvpActive(state) {
   return false;
 }
 
+// Find-closest: kvadrerad distans-jämförelse (undviker sqrt i hot loop).
+// Hero AA + skill-target-search kallar denna varje tick × 30 entiteter.
 function findClosestHostile(side, opp, x, z, maxDist, state) {
-  let best = null, bestDist = maxDist;
+  let best = null, bestDistSq = maxDist * maxDist;
   // Under duel: opp.hero OCH duel-big-orb är giltiga targets
   if (state && state.duelActive) {
     if (opp && !opp.hero.dead) {
-      const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
-      if (d < bestDist) { bestDist = d; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
+      const dx = opp.hero.x - x, dz = opp.hero.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
     }
     if (state.duelBigOrb && state.duelBigOrb.alive) {
-      const d = Math.hypot(state.duelBigOrb.x - x, state.duelBigOrb.z - z);
-      if (d < bestDist) { bestDist = d; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
+      const dx = state.duelBigOrb.x - x, dz = state.duelBigOrb.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
     }
     return best;
   }
   // Portal-PvP: opp.hero blir target om någon sida är i fiendens territorium
   if (state && isHeroPvpActive(state) && opp && !opp.hero.dead) {
-    const d = Math.hypot(opp.hero.x - x, opp.hero.z - z);
-    if (d < bestDist) { bestDist = d; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
+    const dx = opp.hero.x - x, dz = opp.hero.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
   }
-  for (const m of side.monsters) {
-    const d = Math.hypot(m.x - x, m.z - z);
-    if (d < bestDist) { bestDist = d; best = { entity: m, isMonster: true }; }
+  for (let i = 0; i < side.monsters.length; i++) {
+    const m = side.monsters[i];
+    const dx = m.x - x, dz = m.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: m, isMonster: true }; }
   }
-  if (opp) for (const c of opp.playerCreeps) {
-    const d = Math.hypot(c.x - x, c.z - z);
-    if (d < bestDist) { bestDist = d; best = { entity: c, isMonster: false, ownerSide: opp }; }
+  if (opp) {
+    const creeps = opp.playerCreeps;
+    for (let i = 0; i < creeps.length; i++) {
+      const c = creeps[i];
+      const dx = c.x - x, dz = c.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: c, isMonster: false, ownerSide: opp }; }
+    }
   }
   return best;
 }
@@ -1882,8 +1905,8 @@ function maintainTargetLock(side, opp, state) {
     ? baseRange * LEGOLUS_ULT_AA_RANGE_MUL : baseRange;
   const range = ultAaRange;
   if (target) {
-    const d = Math.hypot(target.x - side.hero.x, target.z - side.hero.z);
-    if (d > range) target = null;
+    const dx = target.x - side.hero.x, dz = target.z - side.hero.z;
+    if (dx * dx + dz * dz > range * range) target = null;
   }
   if (!target) {
     // Manuell AA: ingen auto-pick av nästa target. Target dog eller är out of
@@ -4377,6 +4400,14 @@ function r1(v) { return Math.round(v * 10) / 10; }
 function r3(v) { return Math.round(v * 1000) / 1000; }
 function ri(v) { return Math.round(v); }
 
+// Tom array → undefined så JSON.stringify skippar fältet helt. Stora vinster
+// för Kostefo/Aragurn/Legolus-specifika arrays som oftast är tomma (sliders,
+// joints, vine traps, hammers, etc).
+function arrOpt(arr, mapper) {
+  if (!arr || arr.length === 0) return undefined;
+  return arr.map(mapper);
+}
+
 function serializeSide(side) {
   return {
     h: {
@@ -4438,7 +4469,7 @@ function serializeSide(side) {
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
     },
-    M: side.monsters.map(m => ({
+    M: arrOpt(side.monsters, m => ({
       id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
       boss: m.isBoss ? 1 : 0, mb: m.isMiniBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
       fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0,
@@ -4451,37 +4482,37 @@ function serializeSide(side) {
         ha: m.activeCast.skill.halfAngle || 0,
         w: m.activeCast.skill.width || 0,
         ph: m.activeCast.phase || 'telegraph',
-        t: +(m.activeCast.timer || 0).toFixed(2),
-        tg: +(m.activeCast.skill.telegraph || 0).toFixed(2),
-        tx: m.activeCast.targetX != null ? +m.activeCast.targetX.toFixed(2) : null,
-        tz: m.activeCast.targetZ != null ? +m.activeCast.targetZ.toFixed(2) : null,
-        ox: m.activeCast.originX != null ? +m.activeCast.originX.toFixed(2) : null,
-        oz: m.activeCast.originZ != null ? +m.activeCast.originZ.toFixed(2) : null,
-        dx: m.activeCast.dirX != null ? +m.activeCast.dirX.toFixed(3) : null,
-        dz: m.activeCast.dirZ != null ? +m.activeCast.dirZ.toFixed(3) : null,
-      } : null,
+        t: r2(m.activeCast.timer || 0),
+        tg: r2(m.activeCast.skill.telegraph || 0),
+        tx: m.activeCast.targetX != null ? r2(m.activeCast.targetX) : null,
+        tz: m.activeCast.targetZ != null ? r2(m.activeCast.targetZ) : null,
+        ox: m.activeCast.originX != null ? r2(m.activeCast.originX) : null,
+        oz: m.activeCast.originZ != null ? r2(m.activeCast.originZ) : null,
+        dx: m.activeCast.dirX != null ? r3(m.activeCast.dirX) : null,
+        dz: m.activeCast.dirZ != null ? r3(m.activeCast.dirZ) : null,
+      } : undefined,
     })),
-    BP: (side.bossProjectiles || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), dx: +p.dx.toFixed(3), dz: +p.dz.toFixed(3) })),
-    BPL: (side.bossPools || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), rad: p.radius, life: +(p.life / p.duration).toFixed(3) })),
-    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
-    F: side.fireballs.map(f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
-    P: side.projectiles.map(p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
-    N: side.novaEffects.map(n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
-    CP: side.creepProjectiles.map(p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
-    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
-    HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
-    FW: (side.fireWaves || []).map(f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife) })),
-    BH: (side.blackHoles || []).map(b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
-    SH: (side.shatters || []).map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
-    VT: (side.vineTraps || []).map(v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
+    BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })),
+    BPL: arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) })),
+    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
+    F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
+    P: arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
+    N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
+    CP: arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
+    HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
+    HCF: arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
+    FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife) })),
+    BH: arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
+    SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
+    VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
     lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
     ldash: side.legolusDashBuffPending ? 1 : 0,
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
     lInv: +(side.legolusInvisRemaining || 0).toFixed(2),
     lAa: side.legolusUltAaPending ? 1 : 0,
-    TP: (side.thornPools || []).map(p => ({
-      id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2),
-      r: p.radius, life: +(p.remaining / p.duration).toFixed(3),
+    TP: arrOpt(side.thornPools, p => ({
+      id: p.id, x: r2(p.x), z: r2(p.z),
+      r: p.radius, life: r3(p.remaining / p.duration),
     })),
     // Kostefo state (companion + cloud + ult-joints + goose-wave + sliders)
     kCloud: r2(side.kostefoCloudRemaining || 0),
@@ -4490,16 +4521,16 @@ function serializeSide(side) {
     kUlt: r2(side.kostefoUltRemaining || 0),
     kComp: side.kostefoCompanion ? {
       x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0),
-    } : null,
-    kJoints: (side.kostefoUltJoints || []).map(j => ({ a: r3(j.angle) })),
-    kGW: (side.kostefoGooseWaves || []).map(w => ({
+    } : undefined,
+    kJoints: arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) })),
+    kGW: arrOpt(side.kostefoGooseWaves, w => ({
       id: w.id, x: r2(w.x), z: r2(w.z), dx: r3(w.dx), dz: r3(w.dz),
       w: w.width, l: w.length, life: r3(w.remaining / w.duration),
     })),
-    kSL: (side.kostefoSliders || []).map(s => ({
+    kSL: arrOpt(side.kostefoSliders, s => ({
       id: s.id, x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz),
     })),
-    HM: (side.hammers || []).map(h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 })),
+    HM: arrOpt(side.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 })),
     taunt: +(side.titansTauntRemaining || 0).toFixed(2),
     iw: +(side.ironWillRemaining || 0).toFixed(2),
     iwS: +(side.ironWillStored || 0).toFixed(1),
@@ -4507,7 +4538,7 @@ function serializeSide(side) {
     gbStk: side.gandulfBuffStacks || 0,
     shld: +(side.shield || 0).toFixed(1),
     dSp: +(side.duelSpeedBuffRemaining || 0).toFixed(2),
-    IWE: (side.ironWillExplosions || []).map(e => ({ id: e.id, x: e.x, z: e.z, life: e.life / e.maxLife })),
+    IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
   };
 }
 

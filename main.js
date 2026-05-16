@@ -9909,12 +9909,11 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 }
 
 // Lerpar interpolerande meshes mot sitt _target varje frame.
-// Halflife 80 ms är en sweet-spot: snabbt nog att kännas responsivt, men
-// tillräckligt tolerant mot nät-jitter att klienten inte stutter:ar vid
-// fördröjda/burst:ade broadcasts. 35 ms (tidigare) gjorde att karaktärer
-// "tickade" synligt vid varje state-tick på laggig anslutning.
+// Halflife 55ms — med 30 Hz broadcast (33ms mellan snaps) ger detta ~80%
+// konvergens på 2 snap-intervaller = snappare visuell respons än 80ms utan att
+// synligt jittra. Tidigare 80ms upplevdes som "drift" mellan snaps.
 function smoothEntityMeshes(dt) {
-  const k = 1 - Math.pow(0.5, dt / 0.08);
+  const k = 1 - Math.pow(0.5, dt / 0.055);
   // Hero-meshes — alla 3 sidor (boss-wars MP har sides[3]).
   for (const sideIdx of [1, 2, 3]) {
     const side = sides[sideIdx];
@@ -10384,7 +10383,7 @@ function applyRemoteState(state) {
     side.wave.isBoss = !!sData.w.b;
     side.wave.bannerPulse = sData.w.p || 0;
     // Entiteter
-    clientReconcileEntities(idx, 'monsters', sData.M, (e) => {
+    clientReconcileEntities(idx, 'monsters', sData.M || [], (e) => {
       const m = makeMonsterMesh();
       if (e && e.boss) m.scale.set(1.6, 1.7, 1.6);
       else if (e && e.mb) m.scale.set(1.25, 1.3, 1.25);   // miniboss = mellan minion (1.0) och boss (1.6)
@@ -10436,16 +10435,16 @@ function applyRemoteState(state) {
       grp.userData.poolInner = inner;
       return grp;
     });
-    clientReconcileEntities(idx, 'playerCreeps', sData.C, (e) => {
+    clientReconcileEntities(idx, 'playerCreeps', sData.C || [], (e) => {
       const m = makeMinionMesh(e.typeId || 'T1_bruiser', idx);
       attachHpBar(m, 1.7);
       return m;
     });
-    clientReconcileEntities(idx, 'fireballs', sData.F, () => new THREE.Mesh(
+    clientReconcileEntities(idx, 'fireballs', sData.F || [], () => new THREE.Mesh(
       new THREE.SphereGeometry(0.35, 14, 10),
       new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xcc2200, emissiveIntensity: 1.0 })
     ));
-    clientReconcileEntities(idx, 'projectiles', sData.P, (e) => new THREE.Mesh(
+    clientReconcileEntities(idx, 'projectiles', sData.P || [], (e) => new THREE.Mesh(
       new THREE.SphereGeometry(e.aoe ? 0.28 : 0.18, 12, 8),
       new THREE.MeshStandardMaterial({
         color: e.aoe ? 0xff66ff : 0xffdd55,
@@ -10453,7 +10452,7 @@ function applyRemoteState(state) {
         emissiveIntensity: e.aoe ? 1.2 : 0.8,
       })
     ));
-    clientReconcileEntities(idx, 'novaEffects', sData.N, () => {
+    clientReconcileEntities(idx, 'novaEffects', sData.N || [], () => {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.3, NOVA_RADIUS, 36),
         new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
@@ -14704,7 +14703,10 @@ let lastInputJoy = { x: 0, z: 0 };
 // mot _target varje frame vid 60 fps, 80 ms halflife) ger 30 Hz broadcasts samma
 // visuella smoothness som 45 Hz — men halva CPU + nätverk-pressen, vilket sänker
 // risken för spikes och stutters på Render's free-tier-server och högre RTT.
-const INPUT_SEND_INTERVAL = 1 / 30;        // 30 Hz input
+const INPUT_SEND_INTERVAL = 1 / 60;        // 60 Hz input — halverar local
+                                            // input-buffer-fördröjning (~16ms vs ~33ms).
+                                            // Server bufferar tills nästa tick;
+                                            // ingen extra serverkostnad.
 // Arena state 20 Hz: matchar server-auktoritativ classic-MP-rate. Med 80 ms
 // halflife interpolation + klient-prediction känns det smooth. Lägre rate =
 // mindre nät+CPU-press = färre spikes på host's enhet och Render's free tier.
