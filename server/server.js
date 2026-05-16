@@ -8,10 +8,10 @@ const engine = require('./game-engine.js');
 
 const PORT = process.env.PORT || 3000;
 const TICK_RATE = 30;                       // simuleringssteg per sekund
-// State-broadcast 20 Hz: klienter interpolerar mesh.position med 80 ms halflife,
-// så 20 Hz ger samma visuella smoothness som 30 Hz men sparar CPU + bandbredd
-// (viktigt på Render's free-tier-server).
-const STATE_RATE = 20;
+// State-broadcast nu matchad till tick-rate (30 Hz) — varje simuleringssteg
+// resulterar i ett snapshot. Tidigare 20 Hz hade ~50ms intern-buffer-delay för
+// position-uppdateringar; 30 Hz minskar uppfattad lagg + klient-snapshot-jitter.
+const STATE_RATE = 30;
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
 // Grace-period när host disconnect:ar utan client. Rummet behålls så
@@ -52,20 +52,32 @@ function startGame(room) {
   room.game = engine.createGameState();
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
-  room.tickHandle = setInterval(() => gameLoopTick(room), TICK_INTERVAL_MS);
+  room.nextTickAt = Date.now();
+  scheduleNextTick(room);
   console.log(`[${room.code}] game started`);
 }
 
 function stopGame(room) {
   if (room.tickHandle) {
-    clearInterval(room.tickHandle);
+    clearTimeout(room.tickHandle);
     room.tickHandle = null;
   }
   room.game = null;
 }
 
-function gameLoopTick(room) {
+// Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
+// för Node:s setTimeout-drift. setInterval ackumulerar fel över tid + kan koalescera
+// missade ticks; setTimeout-rekursion låter oss styra exakt när nästa tick ska
+// köras + skippa redan-passerade om vi halkar efter (catch-up utan tick-stack).
+function scheduleNextTick(room) {
   if (!room.game) return;
+  const now = Date.now();
+  const delay = Math.max(0, room.nextTickAt - now);
+  room.tickHandle = setTimeout(() => gameLoopTick(room), delay);
+}
+
+function gameLoopTick(room) {
+  if (!room.game) { room.tickHandle = null; return; }
   const now = Date.now();
   const dt = Math.min(0.1, Math.max(0.001, (now - room.lastTickMs) / 1000));
   room.lastTickMs = now;
@@ -73,19 +85,30 @@ function gameLoopTick(room) {
     engine.tickGame(room.game, dt);
   } catch (e) {
     console.error(`[${room.code}] tickGame error:`, e && e.stack || e);
-    return;
   }
-  if (now - room.lastStateMs >= STATE_INTERVAL_MS) {
+  if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
     room.lastStateMs = now;
     try {
       const stateMsg = engine.serializeState(room.game);
-      const envelope = { t: 'msg', d: stateMsg };
-      send(room.host, envelope);
-      send(room.client, envelope);
+      // Pre-stringify EN gång + skicka samma raw-string till båda peers.
+      // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
+      // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
+      const payload = JSON.stringify({ t: 'msg', d: stateMsg });
+      if (room.host && room.host.readyState === 1) {
+        try { room.host.send(payload); } catch (_) {}
+      }
+      if (room.client && room.client.readyState === 1) {
+        try { room.client.send(payload); } catch (_) {}
+      }
     } catch (e) {
       console.error(`[${room.code}] serialize/send error:`, e && e.stack || e);
     }
   }
+  // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
+  // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
+  room.nextTickAt += TICK_INTERVAL_MS;
+  if (room.nextTickAt < now - TICK_INTERVAL_MS * 2) room.nextTickAt = now + TICK_INTERVAL_MS;
+  scheduleNextTick(room);
 }
 
 function handleGameInput(room, ws, payload) {

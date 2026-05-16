@@ -3855,13 +3855,21 @@ function tickGame(state, dt) {
   checkMatchEnd(state);
 }
 
+// Avrundnings-helpers för JSON-payload — reducerar string-storlek vid stringify
+// från 15+ tecken (full float-precision) till 4-6 tecken. Använt på positions/HP
+// där 1 cm / 1 hp precision räcker visuellt. Snabbare än toFixed (returnerar number).
+function r2(v) { return Math.round(v * 100) / 100; }
+function r1(v) { return Math.round(v * 10) / 10; }
+function r3(v) { return Math.round(v * 1000) / 1000; }
+function ri(v) { return Math.round(v); }
+
 function serializeSide(side) {
   return {
     h: {
-      x: side.hero.x, z: side.hero.z,
-      hp: side.hero.hp, mh: side.hero.maxHp,
-      fx: side.hero.facingX, fz: side.hero.facingZ,
-      d: side.hero.dead, rt: side.hero.respawnTimer,
+      x: r2(side.hero.x), z: r2(side.hero.z),
+      hp: ri(side.hero.hp), mh: ri(side.hero.maxHp),
+      fx: r3(side.hero.facingX), fz: r3(side.hero.facingZ),
+      d: side.hero.dead, rt: r1(side.hero.respawnTimer),
       // Debuff-timers (klienten visar ikoner)
       frz: +(side.hero.frozenTime || 0).toFixed(2),
       dot: +(side.hero.dotRemaining || 0).toFixed(2),
@@ -3885,22 +3893,22 @@ function serializeSide(side) {
       ar: +(it.activeRemaining || 0).toFixed(2),
       ac: +(it.activeCd || 0).toFixed(2),
     })),
-    ms: side.moveSpeed,
-    ad: side.attackDmg,
+    ms: r2(side.moveSpeed),
+    ad: r1(side.attackDmg),
     ac: side.attackCounter,
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     fa: side.heroFountainAura ? 1 : 0,
     aa: side.aaActive ? 1 : 0,
     tg: side.targetId || 0,
     tt: side.targetType || '',
-    tx: side.targetX || 0,
-    tz: side.targetZ || 0,
+    tx: r2(side.targetX || 0),
+    tz: r2(side.targetZ || 0),
     lv: side.level || 1,
     xp: side.xp || 0,
     xpN: side.xpToNext || 0,
     hid: side.heroId || 'magiker',
     hpc: side.heroPickConfirmed ? 1 : 0,
-    sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
+    sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
     ue: +(side.ultEnergy || 0).toFixed(1),   // ult-energy 0-100 för klientens R-knapp + meter
     // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc
     wwR: +(side.whirlwindRemaining || 0).toFixed(2),
@@ -3917,7 +3925,7 @@ function serializeSide(side) {
       p: side.wave.bannerPulse || 0,
     },
     M: side.monsters.map(m => ({
-      id: m.id, x: m.x, z: m.z, ry: m.ry, hp: m.hp, mh: m.maxHp || 10,
+      id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
       boss: m.isBoss ? 1 : 0, mb: m.isMiniBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
       fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0,
       // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
@@ -3941,17 +3949,17 @@ function serializeSide(side) {
     })),
     BP: (side.bossProjectiles || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), dx: +p.dx.toFixed(3), dz: +p.dz.toFixed(3) })),
     BPL: (side.bossPools || []).map(p => ({ id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2), rad: p.radius, life: +(p.life / p.duration).toFixed(3) })),
-    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
-    F: side.fireballs.map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
-    P: side.projectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, aoe: p.isAoE })),
-    N: side.novaEffects.map(n => ({ id: n.id, x: n.x, z: n.z, life: n.life / n.maxLife })),
-    CP: side.creepProjectiles.map(p => ({ id: p.id, x: p.x, y: p.y, z: p.z, kind: p.kind })),
-    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: c.x, z: c.z, ry: c.ry, hp: c.hp, mh: c.maxHp })),
-    HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: f.x, y: f.y, z: f.z })),
-    FW: (side.fireWaves || []).map(f => ({ id: f.id, x: f.x, z: f.z, dx: f.dx, dz: f.dz, life: f.life / f.maxLife })),
-    BH: (side.blackHoles || []).map(b => ({ id: b.id, x: b.x, z: b.z, life: b.life / b.maxLife })),
-    SH: (side.shatters || []).map(s => ({ id: s.id, x: s.x, z: s.z, life: s.life / s.maxLife })),
-    VT: (side.vineTraps || []).map(v => ({ id: v.id, x: v.x, z: v.z, life: v.life / v.maxLife })),
+    C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
+    F: side.fireballs.map(f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
+    P: side.projectiles.map(p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
+    N: side.novaEffects.map(n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
+    CP: side.creepProjectiles.map(p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
+    HC: (side.heroCopies || []).map(c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
+    HCF: (side.heroCopyFireballs || []).map(f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
+    FW: (side.fireWaves || []).map(f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife) })),
+    BH: (side.blackHoles || []).map(b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
+    SH: (side.shatters || []).map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
+    VT: (side.vineTraps || []).map(v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
     lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
     ldash: side.legolusDashBuffPending ? 1 : 0,
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
@@ -3961,7 +3969,7 @@ function serializeSide(side) {
       id: p.id, x: +p.x.toFixed(2), z: +p.z.toFixed(2),
       r: p.radius, life: +(p.remaining / p.duration).toFixed(3),
     })),
-    HM: (side.hammers || []).map(h => ({ id: h.id, x: h.x, z: h.z, ret: h.returning ? 1 : 0 })),
+    HM: (side.hammers || []).map(h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 })),
     taunt: +(side.titansTauntRemaining || 0).toFixed(2),
     iw: +(side.ironWillRemaining || 0).toFixed(2),
     iwS: +(side.ironWillStored || 0).toFixed(1),
