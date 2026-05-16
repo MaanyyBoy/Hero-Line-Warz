@@ -1748,7 +1748,7 @@
       display: none;
       z-index: 250;
     }
-    #arena-prep.visible { display: block; }
+    #arena-prep.visible { display: flex; flex-direction: column; }
     #ap-card {
       background: linear-gradient(135deg, #18243d, #0c1424);
       border: 2px solid rgba(255,170,80,0.6);
@@ -1758,12 +1758,23 @@
       box-shadow: 0 10px 32px rgba(0,0,0,0.7);
       color: #fff;
       font: 13px/1.35 system-ui, sans-serif;
+      /* Scrollbart innehåll så ALLA talents/items syns även i landscape på phone.
+         Begränsa till viewport-höjd, läs förflutna med inner scroll. */
+      max-height: 96vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
     }
     #ap-header {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 10px;
-      padding-bottom: 8px;
+      margin: -14px -18px 10px -18px;
+      padding: 14px 18px 8px;
       border-bottom: 1px solid rgba(255,170,80,0.25);
+      /* Sticky så timer + titel alltid syns medan man scrollar talents/items */
+      position: sticky;
+      top: -14px;
+      z-index: 2;
+      background: linear-gradient(to bottom, #18243d 0%, rgba(24,36,61,0.96) 70%, rgba(24,36,61,0.85) 100%);
     }
     #ap-title { font: 800 19px/1.1 system-ui, sans-serif; color: #ffd34a; letter-spacing: 0.7px; margin-bottom: 2px; }
     #ap-subtitle { font: 500 11px/1 system-ui, sans-serif; opacity: 0.72; }
@@ -1875,7 +1886,17 @@
       font: 400 11px/1.35 system-ui, sans-serif;
       opacity: 0.92;
     }
-    #ap-actions { display: flex; justify-content: center; }
+    /* Sticky Ready-knapp så den alltid syns vid botten av scrollat #ap-card.
+       Bakgrunds-fade så Ready inte krockar visuellt med scrollat innehåll. */
+    #ap-actions {
+      display: flex; justify-content: center;
+      position: sticky;
+      bottom: -12px;
+      margin: 8px -18px -12px -18px;
+      padding: 10px 18px 14px;
+      background: linear-gradient(to bottom, rgba(12,20,36,0) 0%, rgba(12,20,36,0.95) 35%, #0c1424 100%);
+      z-index: 2;
+    }
     #ap-ready {
       padding: 12px 36px;
       font: 700 16px/1 system-ui, sans-serif;
