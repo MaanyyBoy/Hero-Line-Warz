@@ -1944,13 +1944,15 @@ function updateEntityHpBar(mesh, hp, maxHp, now, shield = 0) {
 function tickAllHpBars() {
   const now = performance.now() / 1000;
   // Heroes — skicka in shield så HP-baren ritar shield-raden.
-  // 3D HP-bar visas ovanför hero-mesh i alla lägen (även line wars).
+  // 3D HP-bar visas ALLTID ovanför hero-mesh så länge hero lever. Forcera
+  // visible = !dead (skippar updateEntityHpBar:s "damage/lowHp"-logic som
+  // annars kunde gömma baren vid full HP utan att damaged-flagga sattes).
   for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s || !s.mesh) continue;
     const shieldTotal = (s.shield || 0) + (s.lingShieldHp || 0);
     updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now, shieldTotal);
-    if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
+    if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead;
   }
   if (APP.mode === 'solo') {
     for (const idx of [1, 2]) {
