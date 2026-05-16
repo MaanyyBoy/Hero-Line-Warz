@@ -1943,13 +1943,18 @@ function updateEntityHpBar(mesh, hp, maxHp, now, shield = 0) {
 
 function tickAllHpBars() {
   const now = performance.now() / 1000;
-  // Heroes — skicka in shield så HP-baren ritar shield-raden
+  // Heroes — skicka in shield så HP-baren ritar shield-raden.
+  // I line wars (classic) döljs hero-baren helt — HP visas i HUD under kugghjul-knappen.
+  const hideHeroBar = APP.gameMode === 'classic';
   for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s || !s.mesh) continue;
     const shieldTotal = (s.shield || 0) + (s.lingShieldHp || 0);
     updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now, shieldTotal);
-    if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
+    if (s.mesh.userData.hpBar) {
+      if (hideHeroBar) s.mesh.userData.hpBar.visible = false;
+      else s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
+    }
   }
   if (APP.mode === 'solo') {
     for (const idx of [1, 2]) {
@@ -10828,6 +10833,11 @@ const waveTextEl = document.getElementById('wave-text');
 const respawnOverlayEl = document.getElementById('respawn-overlay');
 const respawnTimerEl = document.getElementById('respawn-timer');
 const towerHpStackEl = document.getElementById('tower-hp-stack');
+// Hero HP-HUD (under kugghjul-knappen, line wars endast — ersätter 3D HP-bar
+// ovanför hero-mesh som döljs i tickAllHpBars för classic-mode).
+const heroHpHudEl = document.getElementById('hero-hp-hud');
+const heroHpFillEl = document.getElementById('hero-hp-fill');
+const heroHpTextEl = document.getElementById('hero-hp-text');
 const endgameEl = document.getElementById('endgame');
 const endgameTitle = document.getElementById('endgame-title');
 const endgameInfo = document.getElementById('endgame-info');
@@ -10868,6 +10878,22 @@ function updateHud() {
   if (showTowers) {
     if (towerOwnTextEl) towerOwnTextEl.textContent = `${side.tower.hp}/${side.tower.maxHp}`;
     if (towerEnemyTextEl) towerEnemyTextEl.textContent = opp ? `${opp.tower.hp}/${opp.tower.maxHp}` : '–';
+  }
+  // Hero HP-HUD (line wars endast — ersätter 3D HP-bar ovanför hero).
+  if (heroHpHudEl) {
+    const showHeroHud = !isArena && !isBossWars;
+    heroHpHudEl.classList.toggle('hidden', !showHeroHud);
+    if (showHeroHud) {
+      const hp = Math.max(0, Math.round(side.hero.hp));
+      const mh = Math.round(side.hero.maxHp);
+      const pct = mh > 0 ? hp / mh : 0;
+      if (heroHpFillEl) {
+        heroHpFillEl.style.width = (pct * 100).toFixed(1) + '%';
+        heroHpFillEl.classList.toggle('mid', pct < 0.6 && pct >= 0.3);
+        heroHpFillEl.classList.toggle('low', pct < 0.3);
+      }
+      if (heroHpTextEl) heroHpTextEl.textContent = `${hp}/${mh}`;
+    }
   }
   // Wave-display (line wars endast)
   if (waveDisplayEl) {

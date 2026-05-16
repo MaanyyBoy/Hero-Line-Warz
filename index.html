@@ -691,20 +691,16 @@
     body:not(.in-game) #boss-hp-wrap,
     body:not(.in-game) #perf-meter { display: none !important; }
 
-    /* Performance-mätare — slim chip i top-right. Visar frame-time (ms) + FPS.
-       Färg-kod: blå/grön <20ms, gul 20-33ms, röd >33ms. Mini-bar visar
-       prestanda-marginal mot 60 fps. Synlig bara in-game. */
+    /* Performance-mätare — slim chip till vänster om income i top-row. Visar
+       frame-time (ms) + FPS. Färg-kod: blå/grön <20ms, gul 20-33ms, röd >33ms.
+       Mini-bar visar prestanda-marginal mot 60 fps. Synlig bara in-game. */
     #perf-meter {
-      position: fixed;
-      top: max(8px, env(safe-area-inset-top));
-      right: max(8px, env(safe-area-inset-right));
       background: rgba(15,25,40,0.72);
       color: #88ddff;
       font: 600 11px/1.2 ui-monospace, "SF Mono", monospace;
       padding: 5px 9px 6px;
       border-radius: 7px;
       border: 1px solid rgba(140,200,255,0.35);
-      z-index: 65;
       pointer-events: none;
       letter-spacing: 0.4px;
       text-align: right;
@@ -1480,6 +1476,48 @@
     }
     body.in-game #options-btn { display: flex; }
     #options-btn:active { transform: scale(0.94); }
+
+    /* Hero HP-HUD — placeras under kugghjul-knappen (top-left). Synlig bara
+       i line wars; arena/boss-wars använder 3D HP-bar ovanför hero-mesh. */
+    #hero-hp-hud {
+      position: fixed;
+      top: max(60px, calc(env(safe-area-inset-top) + 60px));
+      left: max(8px, env(safe-area-inset-left));
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,0,0,0.55);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(110,220,140,0.45);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      z-index: 65;
+      pointer-events: none;
+    }
+    #hero-hp-hud.hidden { display: none; }
+    body:not(.in-game) #hero-hp-hud { display: none; }
+    #hero-hp-bar {
+      width: 110px;
+      height: 12px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #hero-hp-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #2bd054 0%, #88ee99 100%);
+      transition: width 0.18s ease-out, background 0.25s ease-out;
+    }
+    #hero-hp-fill.mid { background: linear-gradient(90deg, #d5a52a 0%, #ffd66a 100%); }
+    #hero-hp-fill.low { background: linear-gradient(90deg, #d04a2a 0%, #ff7766 100%); }
+    #hero-hp-text {
+      font: 700 12px/1 system-ui, sans-serif;
+      color: #fff;
+      min-width: 64px;
+      text-align: right;
+    }
     #options-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,0.55);
@@ -2328,10 +2366,10 @@
   <!-- Options-kugghjul (visas bara i match) -->
   <button id="options-btn" aria-label="Options" title="Options">⚙</button>
 
-  <!-- Performance-mätare (frame-time/FPS, top-right under match) -->
-  <div id="perf-meter">
-    <div class="perf-row"><span id="perf-ms">16.7</span> ms · <span id="perf-fps">60</span> fps</div>
-    <div id="perf-bar"><div id="perf-bar-fill"></div></div>
+  <!-- Hero HP-bar under kugghjul-knappen (line wars endast) -->
+  <div id="hero-hp-hud">
+    <div id="hero-hp-bar"><div id="hero-hp-fill"></div></div>
+    <span id="hero-hp-text">100/100</span>
   </div>
 
   <!-- Options-overlay (Lämna match / Stäng) -->
@@ -2344,6 +2382,11 @@
   </div>
 
   <div id="top-row">
+    <!-- Performance-mätare (frame-time/FPS) — flyttad in i top-row som första item -->
+    <div id="perf-meter">
+      <div class="perf-row"><span id="perf-ms">16.7</span> ms · <span id="perf-fps">60</span> fps</div>
+      <div id="perf-bar"><div id="perf-bar-fill"></div></div>
+    </div>
     <div id="income-display">Income: 2g / 15s</div>
     <div id="wave-display"><span id="wave-text">Wave 1</span></div>
     <div id="duel-info" class="hidden">⏱ Duel <span id="duel-info-timer">5:00</span></div>
