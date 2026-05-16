@@ -249,7 +249,7 @@ const KOSTEFO_GOOSEWAVE_LENGTH = 6.5;    // räckvidd framåt
 const KOSTEFO_GOOSEWAVE_CD = 8.0;
 // F: Joint Slider — piercing projectile, 6m, explosion DoT + slow vid slutet
 const KOSTEFO_SLIDER_RANGE = 6.0;
-const KOSTEFO_SLIDER_SPEED = 14.0;       // ~0.43s flight på 6m
+const KOSTEFO_SLIDER_SPEED = 7.0;        // ~0.86s flight på 6m (halverad från 14)
 const KOSTEFO_SLIDER_RADIUS = 0.55;      // hit-radie för pierce
 const KOSTEFO_SLIDER_DIRECT_PCT = 0.15;  // 15% maxHP direct
 const KOSTEFO_SLIDER_DOT_DUR = 2.0;

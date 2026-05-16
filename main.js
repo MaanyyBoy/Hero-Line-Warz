@@ -12408,9 +12408,9 @@ function makeKostefoJointMesh(scale = 1) {
 }
 
 function makeKostefoSliderMesh() {
-  // Stor flygande joint i full storlek + brännande ember på spetsen
-  const grp = makeKostefoJointMesh(1.8);   // riktigt stor — användaren såg den inte förut
-  grp.position.y = 1.1;
+  // Stor flygande joint — DUBBEL storlek per user-spec (3.6 = 1.8 × 2).
+  const grp = makeKostefoJointMesh(3.6);
+  grp.position.y = 1.4;
   grp.userData.orientToMotion = true;
   return grp;
 }
@@ -12504,83 +12504,104 @@ function makeKostefoGooseWaveMesh(e) {
 }
 
 // Smoke-cloud-mesh: VIT genomskinlig cirkel-formad smoke (radie 4m runt hero).
-// Cylindrisk volym (disc + svävande puffs) — användaren ville cirkulär form, inte
-// blob-sphere. Markerad bas-cirkel synlig på marken så radie är tydlig.
+// Tjockare opacity + fler puffar + ground-disc + point-light så cirkulär smoke
+// syns ordentligt under cast.
 function makeKostefoCloudMesh() {
   const grp = new THREE.Group();
   const layers = [];
   const cloudR = 4.0;
-  // Bas-disc på marken (vit ring + fyllning) så cirkelformen syns tydligt
+  // Bas-disc på marken (tjockare vit ring så cirkelformen syns från top-down-vinkel)
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(cloudR, 48),
-    new THREE.MeshBasicMaterial({ color: 0xeeeeee, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: 0xf0f0f0, transparent: true, opacity: 0.60, side: THREE.DoubleSide, depthWrite: false })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = 0.06;
   grp.add(ground);
   const groundRing = new THREE.Mesh(
-    new THREE.RingGeometry(cloudR * 0.92, cloudR, 48),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.RingGeometry(cloudR * 0.88, cloudR * 1.02, 48),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.90, side: THREE.DoubleSide, depthWrite: false })
   );
   groundRing.rotation.x = -Math.PI / 2;
-  groundRing.position.y = 0.07;
+  groundRing.position.y = 0.08;
   grp.add(groundRing);
-  // Smoke-puffar fördelade i cirkulär ring + center — vit genomskinlig.
-  // Två ringar (yttre + inre) + center-puff för att fylla volymen utan att förlora cirkel-form.
-  const ringCount = 10;
+  // Yttre puff-ring (stora vita spheres längs cirkel-perimeter)
+  const ringCount = 14;
   for (let i = 0; i < ringCount; i++) {
     const ang = (i / ringCount) * Math.PI * 2;
-    const r = cloudR * 0.78;
+    const r = cloudR * 0.80;
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.45 + Math.random() * 0.3, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.38, depthWrite: false })
+      new THREE.SphereGeometry(1.85 + Math.random() * 0.4, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65, depthWrite: false })
     );
-    puff.position.set(Math.cos(ang) * r, 1.0 + Math.random() * 0.5, Math.sin(ang) * r);
+    puff.position.set(Math.cos(ang) * r, 1.3 + Math.random() * 0.5, Math.sin(ang) * r);
     grp.add(puff);
     layers.push(puff);
   }
-  // Inre ring (mindre, närmare center)
+  // Mellanring
+  for (let i = 0; i < 9; i++) {
+    const ang = (i / 9) * Math.PI * 2 + Math.PI / 9;
+    const r = cloudR * 0.55;
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(1.50 + Math.random() * 0.30, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false })
+    );
+    puff.position.set(Math.cos(ang) * r, 1.5 + Math.random() * 0.5, Math.sin(ang) * r);
+    grp.add(puff);
+    layers.push(puff);
+  }
+  // Inre ring
   for (let i = 0; i < 6; i++) {
-    const ang = (i / 6) * Math.PI * 2 + Math.PI / 6;
-    const r = cloudR * 0.40;
+    const ang = (i / 6) * Math.PI * 2;
+    const r = cloudR * 0.25;
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.10 + Math.random() * 0.25, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.32, depthWrite: false })
+      new THREE.SphereGeometry(1.30, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.50, depthWrite: false })
     );
-    puff.position.set(Math.cos(ang) * r, 1.2 + Math.random() * 0.6, Math.sin(ang) * r);
+    puff.position.set(Math.cos(ang) * r, 1.6 + Math.random() * 0.4, Math.sin(ang) * r);
     grp.add(puff);
     layers.push(puff);
   }
-  // Center-puff (tätare i mitten)
+  // Center-puff (tjockaste mitten)
   const center = new THREE.Mesh(
-    new THREE.SphereGeometry(1.6, 18, 12),
-    new THREE.MeshBasicMaterial({ color: 0xf8f8f8, transparent: true, opacity: 0.42, depthWrite: false })
+    new THREE.SphereGeometry(2.0, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.60, depthWrite: false })
   );
-  center.position.y = 1.2;
+  center.position.y = 1.4;
   grp.add(center);
   layers.push(center);
+  // PointLight i centrum så smoken lyser från insidan
+  const light = new THREE.PointLight(0xffffff, 2.5, 6.0);
+  light.position.y = 1.8;
+  grp.add(light);
   grp.userData.cloudLayers = layers;
   grp.userData.kostefoCloud = true;
   return grp;
 }
 
-// Companion-mesh: STOR svävande cigarett som följer Kostefo. Inget humanoid-
-// element längre — bara joint-meshen, lyft till hero-höjd så den syns över hero.
+// Companion-mesh: STOR svävande cigarett som följer Kostefo (scale 2.5 så den
+// syns tydligt över hero-mesh-höjden). Joint lyft till y=2.0.
 function makeKostefoCompanionMesh() {
   const grp = new THREE.Group();
-  // Stor joint som svävar, något lutande för "leverande" känsla
-  const joint = makeKostefoJointMesh(1.6);
-  joint.position.y = 1.4;
+  const joint = makeKostefoJointMesh(2.5);
+  joint.position.y = 2.0;
   joint.rotation.z = -0.25;
   grp.add(joint);
-  // Svag bas-shadow-disc på marken (visuell anchor)
+  // Bas-shadow-disc på marken (visuell anchor)
   const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(0.35, 16),
-    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.CircleGeometry(0.45, 16),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.40, side: THREE.DoubleSide, depthWrite: false })
   );
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;
   grp.add(shadow);
+  // Liten glow-aura runt joint så companion sticker ut
+  const aura = new THREE.Mesh(
+    new THREE.SphereGeometry(0.95, 14, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.25, depthWrite: false })
+  );
+  aura.position.y = 2.0;
+  grp.add(aura);
   grp.userData.companionMesh = true;
   grp.userData.companionJoint = joint;
   return grp;
@@ -12604,7 +12625,13 @@ function updateKostefoMeshes(dt) {
     // === Companion ===
     let comp = kostefoMeshTrack.companions.get(idx);
     if (isKostefo && side.kostefoCompanion && !side.hero.dead) {
-      if (!comp) { comp = makeKostefoCompanionMesh(); scene.add(comp); kostefoMeshTrack.companions.set(idx, comp); }
+      if (!comp) {
+        comp = makeKostefoCompanionMesh();
+        // Snap till target-pos vid spawn så mesh inte hamnar vid origo
+        comp.position.set(side.kostefoCompanion.x, 0, side.kostefoCompanion.z);
+        scene.add(comp);
+        kostefoMeshTrack.companions.set(idx, comp);
+      }
       // Lerp mot snap-pos (smoother än snap eftersom server tickar 30 Hz)
       const t = comp.userData._target || { x: side.kostefoCompanion.x, z: side.kostefoCompanion.z, ry: side.kostefoCompanion.ry };
       t.x = side.kostefoCompanion.x; t.z = side.kostefoCompanion.z; t.ry = side.kostefoCompanion.ry;
@@ -12627,8 +12654,8 @@ function updateKostefoMeshes(dt) {
       const cj = comp.userData.companionJoint;
       if (cj) {
         const tt = performance.now() / 1000;
-        cj.position.y = 1.4 + Math.sin(tt * 6) * 0.10;
-        cj.rotation.z = -0.25 + Math.sin(tt * 5) * 0.08;
+        cj.position.y = 2.0 + Math.sin(tt * 6) * 0.12;
+        cj.rotation.z = -0.25 + Math.sin(tt * 5) * 0.10;
       }
     } else if (comp) {
       scene.remove(comp);
@@ -12638,14 +12665,28 @@ function updateKostefoMeshes(dt) {
     let cloud = kostefoMeshTrack.clouds.get(idx);
     const cloudActive = isKostefo && (side.kostefoCloudRemaining || 0) > 0;
     if (cloudActive) {
-      if (!cloud) { cloud = makeKostefoCloudMesh(); scene.add(cloud); kostefoMeshTrack.clouds.set(idx, cloud); }
+      if (!cloud) {
+        cloud = makeKostefoCloudMesh();
+        cloud.position.set(side.hero.x, 0, side.hero.z);
+        scene.add(cloud);
+        kostefoMeshTrack.clouds.set(idx, cloud);
+        // Cacha varje layers initial opacity så pulse-effekten kan multiplicera
+        // mot den (annars förlorar vi per-layer-tjockleksvariation)
+        cloud.userData._initOpacity = new Map();
+        if (cloud.userData.cloudLayers) for (const l of cloud.userData.cloudLayers) {
+          if (l.material) cloud.userData._initOpacity.set(l, l.material.opacity);
+        }
+      }
       cloud.position.set(side.hero.x, 0, side.hero.z);
       cloud.rotation.y += dt * 0.6;
-      // Pulse-effect på opacity
       const t = performance.now() / 1000;
-      const pulse = 0.85 + Math.sin(t * 1.8) * 0.15;
-      if (cloud.userData.cloudLayers) for (const l of cloud.userData.cloudLayers) {
-        if (l.material) l.material.opacity = 0.22 * pulse;
+      const pulse = 0.90 + Math.sin(t * 1.8) * 0.10;
+      const initMap = cloud.userData._initOpacity;
+      if (cloud.userData.cloudLayers && initMap) for (const l of cloud.userData.cloudLayers) {
+        if (l.material) {
+          const base = initMap.get(l) || 0.5;
+          l.material.opacity = base * pulse;
+        }
       }
     } else if (cloud) {
       scene.remove(cloud);
@@ -12658,7 +12699,7 @@ function updateKostefoMeshes(dt) {
       if (!joints) {
         joints = [];
         for (let i = 0; i < side.kostefoUltJoints.length; i++) {
-          const jm = makeKostefoJointMesh(1.1);
+          const jm = makeKostefoJointMesh(2.4);   // STOR — användaren såg dem inte tidigare
           scene.add(jm);
           joints.push(jm);
         }
@@ -12666,17 +12707,15 @@ function updateKostefoMeshes(dt) {
       }
       // Säkerställ rätt antal meshes
       while (joints.length < side.kostefoUltJoints.length) {
-        const jm = makeKostefoJointMesh(1.1);
+        const jm = makeKostefoJointMesh(2.4);
         scene.add(jm); joints.push(jm);
       }
       while (joints.length > side.kostefoUltJoints.length) {
         const jm = joints.pop();
         scene.remove(jm);
       }
-      const r = 1.8;
+      const r = 2.2;       // större orbit-radie
       const tt = performance.now() / 1000;
-      // Om Kostefo har en AA-target, peka joints mot target-pos (cherry framåt).
-      // Annars: peka utåt från hero (orbit-tangent).
       const hasTarget = side.aaActive && (side.targetX || side.targetZ);
       for (let i = 0; i < side.kostefoUltJoints.length; i++) {
         const j = side.kostefoUltJoints[i];
@@ -12684,7 +12723,7 @@ function updateKostefoMeshes(dt) {
         const jm = joints[i];
         const jx = side.hero.x + Math.cos(ang) * r;
         const jz = side.hero.z + Math.sin(ang) * r;
-        jm.position.set(jx, 1.5 + Math.sin(tt * 4 + i) * 0.15, jz);
+        jm.position.set(jx, 2.0 + Math.sin(tt * 4 + i) * 0.20, jz);
         if (hasTarget) {
           const ddx = side.targetX - jx;
           const ddz = side.targetZ - jz;
@@ -12692,7 +12731,6 @@ function updateKostefoMeshes(dt) {
         } else {
           jm.rotation.y = -ang + Math.PI / 2;
         }
-        // Lite roll-spinn för "levande" känsla
         jm.rotation.z = Math.sin(tt * 3 + i * 0.7) * 0.15;
       }
     } else if (joints) {
@@ -17637,9 +17675,6 @@ function simulateAll(dt) {
     tickClientThornPools(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
-  // Kostefo state-meshes (companion + cloud + ult-joints) — synkas mot side-state
-  // efter alla side-loops är klara. Spawnar/tar bort meshes baserat på timer-flaggor.
-  updateKostefoMeshes(dt);
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }
@@ -18643,6 +18678,9 @@ function tick() {
   tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
   tickAragurnVisuals(dt);
+  // Kostefo state-meshes (companion + cloud + ult-joints) — körs i alla lägen
+  // (även Line Wars MP där simulateAll inte körs). Synkas mot side-state från snap.
+  updateKostefoMeshes(dt);
   updateShieldAuras(now);
   checkShieldGain();
   checkHealGain();
