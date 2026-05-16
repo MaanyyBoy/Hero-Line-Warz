@@ -12417,6 +12417,34 @@ function makeKostefoSliderMesh() {
   return grp;
 }
 
+// Lättviktig joint-mesh för Joint Avengers (ult) — 8 spawnas samtidigt vid cast,
+// så vi måste minimera mesh/light-allokering. Den fullriga makeKostefoJointMesh
+// skapar 1 PointLight + 4 smoke-puffs per joint (8 nya lights = shader-rebuild
+// stall, 32 extra spheres = synlig hicka). Denna lättviktig-version skippar
+// båda: bara shaft + filter + glödande cherry (3 meshes per joint).
+function makeKostefoUltJointMesh(scale = 1) {
+  const grp = new THREE.Group();
+  const paperMat = new THREE.MeshStandardMaterial({ color: 0xf8f3e0, roughness: 0.62 });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.72, 12), paperMat);
+  shaft.rotation.x = Math.PI / 2;
+  shaft.position.z = 0.08;
+  grp.add(shaft);
+  const filterMat = new THREE.MeshStandardMaterial({ color: 0xd9b974, roughness: 0.85 });
+  const filter = new THREE.Mesh(new THREE.CylinderGeometry(0.087, 0.087, 0.20, 12), filterMat);
+  filter.rotation.x = Math.PI / 2;
+  filter.position.z = -0.32;
+  grp.add(filter);
+  const cherry = new THREE.Mesh(
+    new THREE.SphereGeometry(0.10, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3300, emissiveIntensity: 2.4, roughness: 0.4 })
+  );
+  cherry.position.z = 0.50;
+  grp.add(cherry);
+  if (scale !== 1) grp.scale.setScalar(scale);
+  grp.userData.kostefoJoint = true;
+  return grp;
+}
+
 // Eldexplosion vid Joint Slider:s slut (när projektilen når maxRange).
 // Spawnar en kortlivad eldring + flames-burst på (x, z).
 function spawnKostefoSliderExplosionFx(x, z) {
@@ -12704,7 +12732,9 @@ function updateKostefoMeshes(dt) {
       if (!joints) {
         joints = [];
         for (let i = 0; i < side.kostefoUltJoints.length; i++) {
-          const jm = makeKostefoJointMesh(2.4);   // STOR — användaren såg dem inte tidigare
+          // Lättviktig joint-mesh: ingen PointLight + ingen smoke-trail (sparar
+          // 8 lights + 32 spheres vid cast → eliminerar shader-rebuild-stall).
+          const jm = makeKostefoUltJointMesh(2.4);
           scene.add(jm);
           joints.push(jm);
         }
@@ -12712,7 +12742,7 @@ function updateKostefoMeshes(dt) {
       }
       // Säkerställ rätt antal meshes
       while (joints.length < side.kostefoUltJoints.length) {
-        const jm = makeKostefoJointMesh(2.4);
+        const jm = makeKostefoUltJointMesh(2.4);
         scene.add(jm); joints.push(jm);
       }
       while (joints.length > side.kostefoUltJoints.length) {

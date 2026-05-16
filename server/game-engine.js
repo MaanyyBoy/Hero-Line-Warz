@@ -3586,30 +3586,49 @@ function tickKostefoUltJoints(state, side, opp, dt) {
   if ((side.kostefoUltRemaining || 0) <= 0) return;
   side.kostefoUltRemaining -= dt;
   if (!side.kostefoUltJoints) return;
+  // Joints attackerar BARA samma target som Kostefo just nu AA:ar mot (global
+  // range — joints kan träffa oavsett avstånd). Om Kostefo inte attackerar
+  // (aaActive=false eller targetId=0) → joints attackerar inte heller.
+  // Resolverar target en gång per tick (inte per joint) — sparar ~8 lookups.
+  const heroIsAttacking = side.aaActive && !side.hero.dead && (side.targetId > 0 || side.targetType === 'hero' || side.targetType === 'duelOrb');
+  let target = null;          // entity (m / creep / opp.hero / orb)
+  let targetKind = null;      // 'monster' | 'creep' | 'hero' | 'duelOrb'
+  if (heroIsAttacking) {
+    target = resolveTargetEntity(side, opp, state);
+    if (target) {
+      if (side.targetType === 'hero') targetKind = 'hero';
+      else if (side.targetType === 'duelOrb') targetKind = 'duelOrb';
+      else if (side.targetType === 'monster') targetKind = 'monster';
+      else if (side.targetType === 'creep') targetKind = 'creep';
+    }
+  }
   for (const j of side.kostefoUltJoints) {
     j.angle += KOSTEFO_ULT_ORBIT_SPEED * dt;
     j.attackCd = Math.max(0, (j.attackCd || 0) - dt);
     if (j.attackCd > 0) continue;
-    // Hitta närmaste target inom range
-    const jx = side.hero.x + Math.cos(j.angle) * KOSTEFO_ULT_ORBIT_RADIUS;
-    const jz = side.hero.z + Math.sin(j.angle) * KOSTEFO_ULT_ORBIT_RADIUS;
-    const t = findClosestHostile(side, opp, jx, jz, KOSTEFO_COMPANION_AA_RANGE, state);
-    if (!t) continue;
+    if (!target || !targetKind) continue;   // Inget target → ingen attack
     const baseDmg = side.attackDmg * KOSTEFO_ULT_DMG_RATIO;
     const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
     const dmg = baseDmg * auraDmg;
     let dealt = 0;
-    if (t.isHero) {
+    if (targetKind === 'hero') {
       if (opp && !opp.hero.dead) { dealt = Math.min(opp.hero.hp, dmg); damageHero(opp, dmg); }
-    } else if (t.isMonster) {
-      const idx = side.monsters.indexOf(t.entity);
-      if (idx >= 0) { dealt = Math.min(t.entity.hp, dmg); applySkillDamageToMonster(state, side, opp, idx, dmg); }
-    } else if (!t.isDuelOrb) {
-      dealt = Math.min(t.entity.hp, dmg);
-      applySkillDamageToCreep(state, side, opp, t.entity, dmg);
-      if (t.entity.hp <= 0 && opp) {
-        const idx = opp.playerCreeps.indexOf(t.entity);
-        if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(t.entity); gainXp(side, minionXp(t.entity)); }
+    } else if (targetKind === 'monster') {
+      const idx = side.monsters.indexOf(target);
+      if (idx >= 0) { dealt = Math.min(target.hp, dmg); applySkillDamageToMonster(state, side, opp, idx, dmg); }
+    } else if (targetKind === 'creep') {
+      dealt = Math.min(target.hp, dmg);
+      applySkillDamageToCreep(state, side, opp, target, dmg);
+      if (target.hp <= 0 && opp) {
+        const idx = opp.playerCreeps.indexOf(target);
+        if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(target); gainXp(side, minionXp(target)); }
+      }
+    } else if (targetKind === 'duelOrb') {
+      // Duel big-orb: Kostefo's joints kan damaga orben under duel om Kostefo
+      // själv targetar den (annars förblir joints idle).
+      if (state.duelBigOrb && state.duelBigOrb.alive) {
+        dealt = Math.min(state.duelBigOrb.hp, dmg);
+        damageDuelBigOrb(state, dmg, side.idx);
       }
     }
     // Lifesteal: 50% av dealt dmg → heal Kostefo
