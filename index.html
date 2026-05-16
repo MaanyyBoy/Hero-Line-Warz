@@ -43,6 +43,30 @@
     }
     body:not(.in-game) #tower-hp-stack,
     body:not(.in-game) #respawn-overlay { display: none !important; }
+
+    /* Arena Wars: tower-HP-stack är aldrig relevant (inga torn i arena).
+       Säkerhetsbälte ovanpå JS-toggle i updateHud för att garantera dölj. */
+    body.arena-mode #tower-hp-stack,
+    body.arena-mode #gold-display,
+    body.arena-mode #wave-display { display: none !important; }
+    /* Arena Wars prep: bara items visas — talents-sektionen helt dold. */
+    body.arena-mode #ap-talents-section { display: none !important; }
+
+    /* Orb-spawn-timer: visar countdown till nästa orb-spawn i Arena Wars.
+       Placerad där wave-display normalt är (top center, höger om income). */
+    #arena-orb-timer {
+      color: #ffcc66;
+      font: 700 13px/1 system-ui, sans-serif;
+      background: rgba(40,25,10,0.78);
+      padding: 7px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,204,102,0.5);
+      letter-spacing: 0.3px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    #arena-orb-timer.hidden { display: none; }
+    body:not(.in-game) #arena-orb-timer { display: none !important; }
+    body:not(.arena-mode) #arena-orb-timer { display: none !important; }
     .tower-hp-row {
       display: flex;
       align-items: center;
@@ -2527,6 +2551,7 @@
     </div>
     <div id="income-display">Income: 2g / 15s</div>
     <div id="wave-display"><span id="wave-text">Wave 1</span></div>
+    <div id="arena-orb-timer" class="hidden">🔮 Orb <span id="arena-orb-timer-text">15s</span></div>
     <div id="duel-info" class="hidden">⏱ Duel <span id="duel-info-timer">5:00</span></div>
     <div id="gold-display"><span id="gold-text">0g</span></div>
   </div>
@@ -2652,12 +2677,16 @@
         </div>
         <div id="ap-timer">60</div>
       </div>
-      <div id="ap-talents-status">
-        <div>Talent points kvar: <strong id="ap-points">1</strong></div>
-        <div id="ap-opp-status" style="opacity:0.7;font-size:11px;"></div>
+      <!-- Talents-sektionen wrappad i en container så hela sektionen kan döljas
+           i Arena Wars (per user-spec: bara items visas under prep). -->
+      <div id="ap-talents-section">
+        <div id="ap-talents-status">
+          <div>Talent points kvar: <strong id="ap-points">1</strong></div>
+          <div id="ap-opp-status" style="opacity:0.7;font-size:11px;"></div>
+        </div>
+        <div class="ap-section-label">Talents</div>
+        <div id="ap-talents-grid"></div>
       </div>
-      <div class="ap-section-label">Talents</div>
-      <div id="ap-talents-grid"></div>
       <div class="ap-section-label">Items <span id="ap-gold-display"></span></div>
       <div id="ap-items-grid"></div>
       <div id="ap-actions">

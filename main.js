@@ -10906,6 +10906,8 @@ const waveTextEl = document.getElementById('wave-text');
 const respawnOverlayEl = document.getElementById('respawn-overlay');
 const respawnTimerEl = document.getElementById('respawn-timer');
 const towerHpStackEl = document.getElementById('tower-hp-stack');
+const arenaOrbTimerEl = document.getElementById('arena-orb-timer');
+const arenaOrbTimerTextEl = document.getElementById('arena-orb-timer-text');
 // Hero HP-HUD (under kugghjul-knappen, line wars endast — ersätter 3D HP-bar
 // ovanför hero-mesh som döljs i tickAllHpBars för classic-mode).
 const heroHpHudEl = document.getElementById('hero-hp-hud');
@@ -10948,6 +10950,15 @@ function updateHud() {
   // bara numerisk text kvar.
   const showTowers = !isArena && !isBossWars;
   if (towerHpStackEl) towerHpStackEl.classList.toggle('hidden', !showTowers);
+  // Arena orb-spawn-timer: visar countdown till nästa orb-spawn (när orb är död
+  // mellan respawns, 15s). Dölj när orb lever eller utanför arena.
+  if (arenaOrbTimerEl) {
+    const showOrbTimer = isArena && arenaState && arenaState.orb && !arenaState.orb.alive && (arenaState.orb.spawnTimer || 0) > 0;
+    arenaOrbTimerEl.classList.toggle('hidden', !showOrbTimer);
+    if (showOrbTimer && arenaOrbTimerTextEl) {
+      arenaOrbTimerTextEl.textContent = Math.ceil(arenaState.orb.spawnTimer) + 's';
+    }
+  }
   if (showTowers) {
     if (towerOwnTextEl) towerOwnTextEl.textContent = `${side.tower.hp}/${side.tower.maxHp}`;
     if (towerEnemyTextEl) towerEnemyTextEl.textContent = opp ? `${opp.tower.hp}/${opp.tower.maxHp}` : '–';
@@ -11085,6 +11096,12 @@ function fmtMs(sec) {
 function updateDuelHud() {
   if (!duelInfoEl || !duelBannerEl) return;
   if (APP.mode === 'lobby') {
+    duelInfoEl.classList.add('hidden');
+    duelBannerEl.classList.add('hidden');
+    return;
+  }
+  // Arena Wars: ingen duel-mekanik → göm timern + bannern helt.
+  if (APP.gameMode === 'arena1v1') {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.add('hidden');
     return;
@@ -17015,6 +17032,9 @@ function startMatch(mode) {
 
 function enterPlayPhase() {
   document.body.classList.add('in-game');
+  // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
+  // (göm tower-HP/wave/gold; visa orb-spawn-timer).
+  document.body.classList.toggle('arena-mode', APP.gameMode === 'arena1v1');
   if (heroPickEl) heroPickEl.classList.add('hidden');
   // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
   // i solo tickas den lokalt via simulateAll/tick.
@@ -17235,6 +17255,7 @@ function returnToLobby() {
   }
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
+  document.body.classList.remove('arena-mode');
   // Avbryt hero-pick om aktiv
   if (heroPickEl) heroPickEl.classList.add('hidden');
   if (heroPickState.timerHandle) {
