@@ -11698,17 +11698,105 @@ function renderArenaPrepItems() {
     }
     if (action === null) disabled = true;
     if (disabled) card.classList.add('disabled');
-    if (!disabled && action) {
+    // Klick öppnar info-modal med Buy-knapp (per user-spec). MAX-items har
+    // ingen click-handler (action=null → ingen modal eftersom inget att läsa
+    // om/köpa). Disabled items kan ändå öppnas för läs-info, men buy-knappen
+    // är inaktiv.
+    if (action !== null) {
       card.addEventListener('click', () => {
-        // Samma 'item' event hanterar både buy (inget existing) och upgrade
-        sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
-        // Re-render efter en kort delay så host hinner svara (eller direkt om solo/host)
-        setTimeout(() => { renderArenaPrepItems(); updateArenaPrepUI(); }, 80);
+        showArenaItemModal(itemId, { action, disabled });
       });
     }
     apItemsGridEl.appendChild(card);
   }
 }
+
+// Arena item-info-modal: liten ruta med item-beskrivning, stats-tabell per
+// level, active-effekt, samt Buy-knapp som triggar shop-event eller stänger
+// utan att köpa via X/backdrop. Återanvänder ITEM_TYPES + samma shop-event-
+// flöde som direkt-klicket tidigare.
+const apItemModalEl = document.getElementById('ap-item-modal');
+const apItemModalBackdropEl = document.getElementById('ap-item-modal-backdrop');
+const apItemModalCloseEl = document.getElementById('ap-item-modal-close');
+const apItemModalBodyEl = document.getElementById('ap-item-modal-body');
+const apItemModalBuyEl = document.getElementById('ap-item-modal-buy');
+let _apItemModalContext = null;
+
+function showArenaItemModal(itemId, opts) {
+  if (!apItemModalEl || !apItemModalBodyEl) return;
+  const def = ITEM_TYPES[itemId];
+  if (!def) return;
+  _apItemModalContext = { itemId, action: opts.action, disabled: !!opts.disabled };
+  apItemModalBodyEl.innerHTML = buildArenaItemModalContent(itemId, def, opts.action);
+  // Buy-knapp text + state
+  if (apItemModalBuyEl) {
+    let label = 'Buy';
+    if (opts.action === 'upgrade') label = 'Upgrade';
+    else if (opts.action === null) label = 'MAX';
+    apItemModalBuyEl.textContent = label;
+    apItemModalBuyEl.disabled = !!opts.disabled || opts.action === null;
+  }
+  apItemModalEl.classList.remove('hidden');
+}
+function hideArenaItemModal() {
+  if (apItemModalEl) apItemModalEl.classList.add('hidden');
+  _apItemModalContext = null;
+}
+function buildArenaItemModalContent(itemId, def, action) {
+  // Header
+  let cost = '';
+  const side = sides[APP.localSide];
+  const existing = side && side.inventory && side.inventory.find(it => it.itemId === itemId);
+  if (action === 'buy') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Köp: ${ITEM_BUY_COST}g</div>`;
+  else if (action === 'upgrade' && existing) cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera lvl ${existing.level} → ${existing.level + 1}: ${itemUpgradeCost(existing.level)}g</div>`;
+  else if (action === 'upgrade') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera: ${itemUpgradeCost(1)}g</div>`;
+  else cost = `<div style="color:#88dd88;font-weight:700;margin-bottom:8px">MAX LEVEL — kan inte uppgraderas</div>`;
+  // Variant-blocks (eller single-block för items utan varianter)
+  let blocks = '';
+  if (def.variants) {
+    blocks = Object.values(def.variants).map(v => renderApVariantBlock(v)).join('');
+  } else if (def.statsAtLevel) {
+    blocks = renderApVariantBlock({ name: def.name, icon: def.icon, description: '', statsAtLevel: def.statsAtLevel, activeAtMax: def.activeAtMax });
+  } else {
+    blocks = `<div class="api-desc">${def.description || '(detaljer kommer)'}</div>`;
+  }
+  return `<h4>${def.icon || ''} ${def.name}</h4>
+    <div class="api-desc">${def.description || ''}</div>
+    ${cost}${blocks}`;
+}
+function renderApVariantBlock(v) {
+  if (!v.statsAtLevel) {
+    return `<div class="api-variant"><div class="api-variant-name">${v.icon || ''} ${v.name}</div>
+      <div class="api-variant-desc">${v.description || ''}</div></div>`;
+  }
+  const sample = v.statsAtLevel(1);
+  const statKeys = Object.keys(sample);
+  const thead = `<th>Lvl</th>${statKeys.map(k => `<th>${(typeof STAT_LABELS !== 'undefined' && STAT_LABELS[k]) || k}</th>`).join('')}`;
+  const rows = [];
+  for (let lvl = 1; lvl <= 10; lvl++) {
+    const s = v.statsAtLevel(lvl);
+    rows.push(`<tr><td class="api-lv">${lvl}</td>${statKeys.map(k => `<td>${fmtStatVal(k, s[k])}</td>`).join('')}</tr>`);
+  }
+  const activeHtml = v.activeAtMax
+    ? `<div class="api-active"><b>Active (lvl 10):</b> ${v.activeAtMax.description || ''}${v.activeAtMax.duration ? ` — ${v.activeAtMax.duration}s effekt,` : ''} ${v.activeAtMax.cooldown}s cd</div>`
+    : '';
+  return `<div class="api-variant">
+    <div class="api-variant-name">${v.icon || ''} ${v.name}</div>
+    ${v.description ? `<div class="api-variant-desc">${v.description}</div>` : ''}
+    <table class="api-stat-table"><thead><tr>${thead}</tr></thead><tbody>${rows.join('')}</tbody></table>
+    ${activeHtml}
+  </div>`;
+}
+if (apItemModalBackdropEl) apItemModalBackdropEl.addEventListener('click', hideArenaItemModal);
+if (apItemModalCloseEl) apItemModalCloseEl.addEventListener('click', hideArenaItemModal);
+if (apItemModalBuyEl) apItemModalBuyEl.addEventListener('click', () => {
+  if (!_apItemModalContext) return;
+  const { itemId, disabled, action } = _apItemModalContext;
+  if (disabled || action === null) return;
+  sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
+  hideArenaItemModal();
+  setTimeout(() => { renderArenaPrepItems(); updateArenaPrepUI(); }, 80);
+});
 function hideArenaPrep() {
   if (arenaPrepEl) arenaPrepEl.classList.remove('visible');
 }
