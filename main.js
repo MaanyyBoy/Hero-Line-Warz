@@ -1379,6 +1379,7 @@ const HERO_DEFS = {
   legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
   gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Aragurn', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
+  kostefo: { name: 'Kostefo', baseHp: 95,  baseDmg: 5, attackRange: 4.5, attackInterval: 0.9, baseMoveSpeed: 6.2 },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -2236,6 +2237,7 @@ const HERO_GLTF_MAP = {
   legolas: 'ranger',
   gimlu:   'barbarian',
   aragurn: 'knight',
+  kostefo: 'mage',           // Återanvänd mage-mesh som bas, gröna emissive-accents
 };
 // Per-hero scale: {x,y,z}. X/Z mindre än Y → smalare silhuett (mindre lego-klump).
 const HERO_GLTF_SCALE = {
@@ -2243,6 +2245,7 @@ const HERO_GLTF_SCALE = {
   legolas: { x: 0.70, y: 0.82, z: 0.78 },
   gimlu:   { x: 0.80, y: 0.88, z: 0.86 },  // Barbarian = lite större för tank-känsla
   aragurn: { x: 0.95, y: 1.10, z: 0.98 },  // Knight, större + längre — soldat-bygge
+  kostefo: { x: 0.75, y: 0.86, z: 0.82 },
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -5416,6 +5419,13 @@ function createSide(idx) {
     legolusInvisRemaining: 0,
     legolusUltAaPending: false,
     thornPoolsLocal: [],
+    // Kostefo state — synkas helt via line-wars-server-snap. Solo/arena ej stödd.
+    kostefoCloudRemaining: 0,
+    kostefoUltRemaining: 0,
+    kostefoCompanion: null,
+    kostefoUltJoints: [],
+    kostefoGooseWaves: [],
+    kostefoSliders: [],
     gimluDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
@@ -9663,6 +9673,7 @@ function applyEvent(side, ev) {
     const isLegolus = side.heroId === 'legolas';
     const isGimlu = side.heroId === 'gimlu';
     const isAragurn = side.heroId === 'aragurn';
+    const isKostefo = side.heroId === 'kostefo';
     // Q/F/E skill-cast: reset per-cast ult-gain-budget (AoE-skills som leap
     // skulle annars fylla ult proportionellt till antal targets träffade).
     if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
@@ -9674,6 +9685,11 @@ function applyEvent(side, ev) {
       // från förra cast skulle göra ult-tickar bidra som "samma skill")
       side._currentSkillKey = 'r';
     }
+    // Kostefo: server-auth skill-cast i line wars. Klient skickar event till server
+    // via sendOrApplyEvent (icke-solo) och server sätter all state via snap.
+    // I solo/arena spawnas inga lokala fx — skills bail:ar tyst. Skill-CD sätts
+    // optimistic i castLocalSkill så UI inte hänger.
+    if (isKostefo) return;
     if (ev.key === 'r') {
       hostCastUlt(side, dx, dz);
     } else if (ev.key === 'q') {
@@ -9778,6 +9794,8 @@ const clientMeshes = {
   bossProjectiles: new Map(),
   bossPools: new Map(),
   thornPools: new Map(),
+  kostefoSliders: new Map(),
+  kostefoGooseWaves: new Map(),
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -10335,6 +10353,13 @@ function applyRemoteState(state) {
     // sätter hero-mesh-opacity nedan baserat på lInv.
     side.legolusInvisRemaining = sData.lInv || 0;
     side.legolusUltAaPending = !!sData.lAa;
+    // Kostefo state (cloud-timer, ult-joints, companion, goose-waves, sliders)
+    side.kostefoCloudRemaining = sData.kCloud || 0;
+    side.kostefoUltRemaining = sData.kUlt || 0;
+    side.kostefoCompanion = sData.kComp ? { x: sData.kComp.x, z: sData.kComp.z, ry: sData.kComp.ry || 0 } : null;
+    side.kostefoUltJoints = sData.kJoints || [];
+    side.kostefoGooseWaves = sData.kGW || [];
+    side.kostefoSliders = sData.kSL || [];
     // Gimlu buff-status
     side.titansTauntRemaining = sData.taunt || 0;
     side.ironWillRemaining = sData.iw || 0;
@@ -10590,6 +10615,27 @@ function applyRemoteState(state) {
       if (m && m.userData.tpRing) {
         m.userData.tpRing.material.opacity = 0.70 * tp.life;
         if (m.userData.tpInner) m.userData.tpInner.material.opacity = 0.45 * tp.life;
+      }
+    }
+    // Kostefo Joint Sliders — flygande cannabis-joint som piercar (rektangulär
+    // joint-mesh med glödande grön spets + flexibel rök-svans).
+    clientReconcileEntities(idx, 'kostefoSliders', sData.kSL || [], () => makeKostefoSliderMesh());
+    // Kostefo Goose-Waves — bred AoE-zon med springande gröna gäss-figurer.
+    clientReconcileEntities(idx, 'kostefoGooseWaves', sData.kGW || [], (e) => makeKostefoGooseWaveMesh(e));
+    const gwMap = clientMeshes.kostefoGooseWaves && clientMeshes.kostefoGooseWaves.get(idx);
+    if (gwMap && sData.kGW) for (const gw of sData.kGW) {
+      const m = gwMap.get(gw.id);
+      if (m && m.userData.gwGeese) {
+        // Animera gäss-figurer: hoppa upp/ned (stamping). dx/dz = wave-riktning.
+        const t = performance.now() / 1000;
+        m.rotation.y = Math.atan2(gw.dx, gw.dz);
+        for (let i = 0; i < m.userData.gwGeese.length; i++) {
+          const g = m.userData.gwGeese[i];
+          g.position.y = 0.18 + Math.max(0, Math.sin(t * 6 + i * 0.7)) * 0.32;
+        }
+        if (m.userData.gwBaseRing && m.userData.gwBaseRing.material) {
+          m.userData.gwBaseRing.material.opacity = 0.55 * gw.life;
+        }
       }
     }
     // Gimlu Hammers
@@ -12271,6 +12317,299 @@ function tickClientLegolusInvis(side, dt) {
   side.legolusInvisRemaining = Math.max(0, side.legolusInvisRemaining - dt);
   if (side.legolusInvisRemaining <= 0) {
     side.legolusUltAaPending = false;
+  }
+}
+
+// ============================================================
+// KOSTEFO CLIENT MESH-BUILDERS + UPDATERS (render-only, all logic är server-side)
+// ============================================================
+
+// Bygger en stiliserad cannabis-joint-mesh för Joint Slider-projektilen.
+// Rullat papper (vit cylinder) + brun rull-ände + glödande grön cherry + svag rök.
+function makeKostefoJointMesh(scale = 1) {
+  const grp = new THREE.Group();
+  // Papper-shaft (vit/cream-cylinder, något lutande)
+  const paperMat = new THREE.MeshStandardMaterial({ color: 0xf5efd9, roughness: 0.55, metalness: 0.0 });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.058, 0.55, 12), paperMat);
+  shaft.rotation.z = Math.PI / 2;        // horisontellt
+  grp.add(shaft);
+  // Tvinnade pappers-twist vid ena änden (brun)
+  const twistMat = new THREE.MeshStandardMaterial({ color: 0x7a5a30, roughness: 0.7 });
+  const twist = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.10, 8), twistMat);
+  twist.rotation.z = -Math.PI / 2;
+  twist.position.x = -0.30;
+  grp.add(twist);
+  // Glow-cherry vid spets (orange/röd ember) + grön smoke
+  const cherry = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 12, 8),
+    new THREE.MeshStandardMaterial({ color: 0xff7733, emissive: 0xff4411, emissiveIntensity: 1.8 })
+  );
+  cherry.position.x = 0.30;
+  grp.add(cherry);
+  // Grön glow-aura runt joint (Kostefo-tema)
+  const aura = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 14, 10),
+    new THREE.MeshBasicMaterial({ color: 0x66ff66, transparent: true, opacity: 0.22, depthWrite: false })
+  );
+  grp.add(aura);
+  // Roterande grön smoke-ring (planes som spinnar)
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.20, 16),
+      new THREE.MeshBasicMaterial({ color: 0x88ee66, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = ang;
+    grp.add(ring);
+  }
+  grp.userData.kostefoJoint = true;
+  grp.userData.cherry = cherry;
+  if (scale !== 1) grp.scale.setScalar(scale);
+  return grp;
+}
+
+function makeKostefoSliderMesh() {
+  const grp = makeKostefoJointMesh(1.4);   // större för slider
+  grp.position.y = 1.0;
+  grp.userData.orientToMotion = true;
+  return grp;
+}
+
+// Bygger en bred AoE-zon med stiliserade gäss (vita+orange näbb) som ska
+// stamper genom området. Gässen är små Cone+Sphere-figurer som hoppar via
+// per-frame y-animation (sätts i applySideData-loopen ovan).
+function makeKostefoGooseWaveMesh(e) {
+  const grp = new THREE.Group();
+  const w = (e && e.w) || 3.6;
+  const l = (e && e.l) || 6.5;
+  // Bas-zon (grön damaged-ring för AoE-indikator)
+  const ring = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, l),
+    new THREE.MeshBasicMaterial({ color: 0x66dd55, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.04;
+  grp.add(ring);
+  // Outline-rektangel (mörkare grön)
+  const outline = new THREE.Mesh(
+    new THREE.PlaneGeometry(w * 1.02, l * 1.02),
+    new THREE.MeshBasicMaterial({ color: 0x224418, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })
+  );
+  outline.rotation.x = -Math.PI / 2;
+  outline.position.y = 0.03;
+  grp.add(outline);
+  // Gäss-flock — 8 stiliserade figurer fördelade i zonen
+  const geese = [];
+  const gooseRows = 3, gooseCols = 4;
+  for (let r = 0; r < gooseRows; r++) {
+    for (let c = 0; c < gooseCols; c++) {
+      const g = new THREE.Group();
+      // Kropp (vit ellipsoid)
+      const body = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 12, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf2f0e8, roughness: 0.55 })
+      );
+      body.scale.set(1.0, 0.85, 1.55);
+      body.position.y = 0.18;
+      g.add(body);
+      // Hals + huvud
+      const neck = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.09, 0.32, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf2f0e8, roughness: 0.55 })
+      );
+      neck.position.set(0, 0.36, 0.22);
+      neck.rotation.x = -0.4;
+      g.add(neck);
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf2f0e8, roughness: 0.55 })
+      );
+      head.position.set(0, 0.52, 0.36);
+      g.add(head);
+      // Näbb (orange)
+      const beak = new THREE.Mesh(
+        new THREE.ConeGeometry(0.05, 0.14, 6),
+        new THREE.MeshStandardMaterial({ color: 0xff9933, roughness: 0.5 })
+      );
+      beak.position.set(0, 0.50, 0.50);
+      beak.rotation.x = Math.PI / 2;
+      g.add(beak);
+      // Ögon (svart)
+      for (const sx of [-0.06, 0.06]) {
+        const eye = new THREE.Mesh(
+          new THREE.SphereGeometry(0.022, 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0x111111 })
+        );
+        eye.position.set(sx, 0.55, 0.45);
+        g.add(eye);
+      }
+      // Position i zonen (jämt fördelad)
+      const localX = (c - (gooseCols - 1) / 2) * (w / gooseCols);
+      const localZ = (r - (gooseRows - 1) / 2) * (l / gooseRows);
+      g.position.set(localX, 0, localZ);
+      g.rotation.y = Math.random() * 0.5 - 0.25;
+      grp.add(g);
+      geese.push(g);
+    }
+  }
+  grp.userData.gwGeese = geese;
+  grp.userData.gwBaseRing = ring;
+  return grp;
+}
+
+// Smoke-cloud-mesh: tjock grön smoke runt Kostefo medan E aktiv.
+// 6 stora spheres med soft-edge material. Roterar långsamt för rörlig känsla.
+function makeKostefoCloudMesh() {
+  const grp = new THREE.Group();
+  const layers = [];
+  for (let i = 0; i < 7; i++) {
+    const r = 2.4 + Math.random() * 0.8;
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 16, 10),
+      new THREE.MeshBasicMaterial({
+        color: 0x99dd88,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+      })
+    );
+    const ang = (i / 7) * Math.PI * 2;
+    sphere.position.set(Math.cos(ang) * 1.0, 0.9 + Math.random() * 0.6, Math.sin(ang) * 1.0);
+    grp.add(sphere);
+    layers.push(sphere);
+  }
+  // Mörkare inre core (grön-grå)
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(2.0, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0x556a40, transparent: true, opacity: 0.35, depthWrite: false })
+  );
+  core.position.y = 1.0;
+  grp.add(core);
+  grp.userData.cloudLayers = layers;
+  grp.userData.kostefoCloud = true;
+  return grp;
+}
+
+// Companion-mesh: liten Kostefo-replika med grön glow.
+function makeKostefoCompanionMesh() {
+  const grp = new THREE.Group();
+  // Kropp
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.22, 0.45, 4, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a5028, roughness: 0.65, emissive: 0x224010, emissiveIntensity: 0.4 })
+  );
+  body.position.y = 0.55;
+  grp.add(body);
+  // Huvud
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0xdbb085, roughness: 0.55 })
+  );
+  head.position.y = 1.00;
+  grp.add(head);
+  // Glow-aura (grön smoke)
+  const aura = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 16, 10),
+    new THREE.MeshBasicMaterial({ color: 0x88ee66, transparent: true, opacity: 0.28, depthWrite: false })
+  );
+  aura.position.y = 0.6;
+  grp.add(aura);
+  // Mini-joint i handen
+  const mini = makeKostefoJointMesh(0.55);
+  mini.position.set(0.30, 0.65, 0.10);
+  grp.add(mini);
+  grp.userData.companionMesh = true;
+  return grp;
+}
+
+// Per-side tracking av Kostefo-meshes som följer hero-state (companion, cloud,
+// ult-joints). Inte hanterade via clientReconcileEntities (ej entity-listor).
+const kostefoMeshTrack = {
+  companions: new Map(),  // sideIdx → mesh
+  clouds: new Map(),      // sideIdx → mesh
+  joints: new Map(),      // sideIdx → mesh[] (8 joints orbit)
+};
+
+// Anropas per frame från main game-loop (efter applySideData) — synkar Kostefo-
+// state-meshes mot side-state. Spawnar/tar bort baserat på flaggor/timers.
+function updateKostefoMeshes(dt) {
+  for (const idx of [1, 2, 3, 4]) {
+    const side = sides[idx];
+    if (!side) continue;
+    const isKostefo = side.heroId === 'kostefo';
+    // === Companion ===
+    let comp = kostefoMeshTrack.companions.get(idx);
+    if (isKostefo && side.kostefoCompanion && !side.hero.dead) {
+      if (!comp) { comp = makeKostefoCompanionMesh(); scene.add(comp); kostefoMeshTrack.companions.set(idx, comp); }
+      // Lerp mot snap-pos (smoother än snap eftersom server tickar 30 Hz)
+      const t = comp.userData._target || { x: side.kostefoCompanion.x, z: side.kostefoCompanion.z, ry: side.kostefoCompanion.ry };
+      t.x = side.kostefoCompanion.x; t.z = side.kostefoCompanion.z; t.ry = side.kostefoCompanion.ry;
+      comp.userData._target = t;
+      const k = 1 - Math.pow(0.5, dt / 0.10);
+      comp.position.x += (t.x - comp.position.x) * k;
+      comp.position.z += (t.z - comp.position.z) * k;
+      let dr = t.ry - comp.rotation.y;
+      if (dr > Math.PI) dr -= 2 * Math.PI; else if (dr < -Math.PI) dr += 2 * Math.PI;
+      comp.rotation.y += dr * k;
+    } else if (comp) {
+      scene.remove(comp);
+      kostefoMeshTrack.companions.delete(idx);
+    }
+    // === Cannabis Cloud (E) ===
+    let cloud = kostefoMeshTrack.clouds.get(idx);
+    const cloudActive = isKostefo && (side.kostefoCloudRemaining || 0) > 0;
+    if (cloudActive) {
+      if (!cloud) { cloud = makeKostefoCloudMesh(); scene.add(cloud); kostefoMeshTrack.clouds.set(idx, cloud); }
+      cloud.position.set(side.hero.x, 0, side.hero.z);
+      cloud.rotation.y += dt * 0.6;
+      // Pulse-effect på opacity
+      const t = performance.now() / 1000;
+      const pulse = 0.85 + Math.sin(t * 1.8) * 0.15;
+      if (cloud.userData.cloudLayers) for (const l of cloud.userData.cloudLayers) {
+        if (l.material) l.material.opacity = 0.22 * pulse;
+      }
+    } else if (cloud) {
+      scene.remove(cloud);
+      kostefoMeshTrack.clouds.delete(idx);
+    }
+    // === Joint Avengers (R) — 8 orbiting joints ===
+    let joints = kostefoMeshTrack.joints.get(idx);
+    const jointsActive = isKostefo && (side.kostefoUltRemaining || 0) > 0 && side.kostefoUltJoints && side.kostefoUltJoints.length > 0;
+    if (jointsActive) {
+      if (!joints) {
+        joints = [];
+        for (let i = 0; i < side.kostefoUltJoints.length; i++) {
+          const jm = makeKostefoJointMesh(1.1);
+          scene.add(jm);
+          joints.push(jm);
+        }
+        kostefoMeshTrack.joints.set(idx, joints);
+      }
+      // Säkerställ rätt antal meshes
+      while (joints.length < side.kostefoUltJoints.length) {
+        const jm = makeKostefoJointMesh(1.1);
+        scene.add(jm); joints.push(jm);
+      }
+      while (joints.length > side.kostefoUltJoints.length) {
+        const jm = joints.pop();
+        scene.remove(jm);
+      }
+      const r = 1.8;
+      for (let i = 0; i < side.kostefoUltJoints.length; i++) {
+        const j = side.kostefoUltJoints[i];
+        const ang = j.a || 0;
+        const jm = joints[i];
+        jm.position.set(
+          side.hero.x + Math.cos(ang) * r,
+          1.4 + Math.sin(performance.now() / 200 + i) * 0.15,
+          side.hero.z + Math.sin(ang) * r
+        );
+        jm.rotation.y = -ang + Math.PI / 2;
+      }
+    } else if (joints) {
+      for (const jm of joints) scene.remove(jm);
+      kostefoMeshTrack.joints.delete(idx);
+    }
   }
 }
 
@@ -15134,7 +15473,7 @@ const HEROES = [
   { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
   { id: 'gimlu',     name: 'Gimlu',       role: 'Tank',         initial: 'Gi',  available: true  },
   { id: 'aragurn',   name: 'Aragurn',     role: 'Warrior',      initial: 'Ar',  available: true  },
-  { id: 'hero-5',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'kostefo',   name: 'Kostefo',     role: 'Smoke-Mage',   initial: 'K',   available: true  },
   { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-7',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-8',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -15179,6 +15518,15 @@ const HERO_INFO = {
     },
     passive: { name: 'War Veteran', icon: '🛡', desc: 'TVÅ-delad passive:\n• Lifesteal: 0.5% lifesteal per 1% HP loss på all skada han delar ut (skill + AA). Vid 50% HP = 25% lifesteal, vid 1% HP = ~50% lifesteal.\n• Damage Reduction baserat på fiender nära (5m radie): 1 fiende = 20% DR, varje extra fiende = +5% DR (max 40% vid 5+ fiender). Skalas för group fights.' },
     ult: { name: 'Berserk Form', icon: '⚔', desc: '5 sekunders berserk-form: Aragurn blir lite större, hans svärd dubbleras i storlek och får en glödande aura. +150% AA-damage, 100% cleave/splash (varje AA träffar ALLA fiender inom AA-range), och 25% lifesteal på all AA-damage. Ingen attack speed-nerf — full DPS-burst.' },
+  },
+  kostefo: {
+    skills: {
+      q: { name: 'Joint Attack', icon: '🦢', desc: 'Summonar en stampede av gäss som rusar i en bred zon (3.6 m × 6.5 m) framför Kostefo. Zonen är aktiv i 3 sekunder och tickar AoE DoT: 5% av target\'s max-HP per 0.5 sekund (totalt 6 tickar = 30% maxHP om en fiende står i zonen hela tiden). Drag-aim styr riktning, tap kastar i facing.' },
+      f: { name: 'Joint Slider', icon: '🌿', desc: 'Kastar en glödande cannabis-joint i rak linje (6 m) som piercar igenom alla targets. Direct damage på pierce: 15% av target\'s max-HP. Vid slutet av räckvidden exploderar joint:en i AoE (2.5 m radie) och applicerar: 30% movement-slow i 2 sekunder + DoT (15% max-HP/sek i 2 sekunder, totalt 30% max-HP).' },
+      e: { name: 'Cannabis Cloud', icon: '💨', desc: 'Kostefo blåser ut en tjock grön rök runt sig (4 m radie). Alla fiender inom blir stunnade i 1 sekund. Smoken varar 4 sekunder och tickar 5% av current HP/0.5s på fiender inom. Vid cast healar Kostefo 25% av maxHP direkt. Under smoken: +20% movement speed, +20% attack speed, och Kostefo blir osynlig för fiender (men ser och targetar dem som vanligt).' },
+    },
+    passive: { name: 'Smoke Companion', icon: '🌫', desc: 'En grön-glödande companion följer Kostefo överallt han går. Companion kopierar Kostefos auto-attack men skadar bara 25% av Kostefos AA-damage. All damage som companion delar ut healar Kostefo med samma summa (100% lifesteal-flöde via companion).' },
+    ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summonar 8 cannabis-joints som orbiterar Kostefo i 5 sekunder. Varje joint kopierar Kostefos AA och skadar 10% av hans AA-damage. 50% av all damage från joints healar Kostefo (stark sustain-burst). Med 8 joints som tickar AA = burst-DPS + heal-rush.' },
   },
 };
 
@@ -17200,6 +17548,9 @@ function simulateAll(dt) {
     tickClientThornPools(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
+  // Kostefo state-meshes (companion + cloud + ult-joints) — synkas mot side-state
+  // efter alla side-loops är klara. Spawnar/tar bort meshes baserat på timer-flaggor.
+  updateKostefoMeshes(dt);
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }
