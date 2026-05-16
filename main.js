@@ -10353,8 +10353,10 @@ function applyRemoteState(state) {
     // sätter hero-mesh-opacity nedan baserat på lInv.
     side.legolusInvisRemaining = sData.lInv || 0;
     side.legolusUltAaPending = !!sData.lAa;
-    // Kostefo state (cloud-timer, ult-joints, companion, goose-waves, sliders)
+    // Kostefo state (cloud-timer + stationär cast-pos, ult-joints, companion, goose-waves, sliders)
     side.kostefoCloudRemaining = sData.kCloud || 0;
+    side.kostefoCloudX = sData.kCloudX || 0;
+    side.kostefoCloudZ = sData.kCloudZ || 0;
     side.kostefoUltRemaining = sData.kUlt || 0;
     side.kostefoCompanion = sData.kComp ? { x: sData.kComp.x, z: sData.kComp.z, ry: sData.kComp.ry || 0 } : null;
     side.kostefoUltJoints = sData.kJoints || [];
@@ -12503,75 +12505,76 @@ function makeKostefoGooseWaveMesh(e) {
   return grp;
 }
 
-// Smoke-cloud-mesh: VIT genomskinlig cirkel-formad smoke (radie 4m runt hero).
-// Tjockare opacity + fler puffar + ground-disc + point-light så cirkulär smoke
-// syns ordentligt under cast.
+// Cannabis Cloud — stationär dim-area (radie 5m, +25% från 4m per user-spec).
+// Genomskinlig dim-effekt (mer subtil opacity = ser ut som riktig dimma istället
+// för tjock smoke). Cloud läggs på marken där Kostefo castade.
 function makeKostefoCloudMesh() {
   const grp = new THREE.Group();
   const layers = [];
-  const cloudR = 4.0;
-  // Bas-disc på marken (tjockare vit ring så cirkelformen syns från top-down-vinkel)
+  const cloudR = 5.0;     // 4.0 × 1.25 = 5.0 (25% större)
+  // Subtil bas-disc på marken (dim-fog look — låg opacity)
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(cloudR, 48),
-    new THREE.MeshBasicMaterial({ color: 0xf0f0f0, transparent: true, opacity: 0.60, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.MeshBasicMaterial({ color: 0xeeeeee, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
   );
   ground.rotation.x = -Math.PI / 2;
-  ground.position.y = 0.06;
+  ground.position.y = 0.05;
   grp.add(ground);
+  // Mjuk outline-ring som markerar cloud-radien (tunn)
   const groundRing = new THREE.Mesh(
-    new THREE.RingGeometry(cloudR * 0.88, cloudR * 1.02, 48),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.90, side: THREE.DoubleSide, depthWrite: false })
+    new THREE.RingGeometry(cloudR * 0.94, cloudR * 1.01, 48),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
   );
   groundRing.rotation.x = -Math.PI / 2;
-  groundRing.position.y = 0.08;
+  groundRing.position.y = 0.07;
   grp.add(groundRing);
-  // Yttre puff-ring (stora vita spheres längs cirkel-perimeter)
-  const ringCount = 14;
+  // Yttre dim-puff-ring (mjuk genomskinlig — dim-känsla, inte tjock smoke)
+  const ringCount = 16;
   for (let i = 0; i < ringCount; i++) {
     const ang = (i / ringCount) * Math.PI * 2;
-    const r = cloudR * 0.80;
+    const r = cloudR * 0.82;
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.85 + Math.random() * 0.4, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.65, depthWrite: false })
+      new THREE.SphereGeometry(2.10 + Math.random() * 0.5, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false })
     );
-    puff.position.set(Math.cos(ang) * r, 1.3 + Math.random() * 0.5, Math.sin(ang) * r);
+    puff.position.set(Math.cos(ang) * r, 1.0 + Math.random() * 0.7, Math.sin(ang) * r);
     grp.add(puff);
     layers.push(puff);
   }
   // Mellanring
-  for (let i = 0; i < 9; i++) {
-    const ang = (i / 9) * Math.PI * 2 + Math.PI / 9;
+  for (let i = 0; i < 11; i++) {
+    const ang = (i / 11) * Math.PI * 2 + Math.PI / 11;
     const r = cloudR * 0.55;
     const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.50 + Math.random() * 0.30, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false })
+      new THREE.SphereGeometry(1.70 + Math.random() * 0.35, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false })
+    );
+    puff.position.set(Math.cos(ang) * r, 1.3 + Math.random() * 0.6, Math.sin(ang) * r);
+    grp.add(puff);
+    layers.push(puff);
+  }
+  // Inre ring
+  for (let i = 0; i < 7; i++) {
+    const ang = (i / 7) * Math.PI * 2;
+    const r = cloudR * 0.25;
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(1.45, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.20, depthWrite: false })
     );
     puff.position.set(Math.cos(ang) * r, 1.5 + Math.random() * 0.5, Math.sin(ang) * r);
     grp.add(puff);
     layers.push(puff);
   }
-  // Inre ring
-  for (let i = 0; i < 6; i++) {
-    const ang = (i / 6) * Math.PI * 2;
-    const r = cloudR * 0.25;
-    const puff = new THREE.Mesh(
-      new THREE.SphereGeometry(1.30, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.50, depthWrite: false })
-    );
-    puff.position.set(Math.cos(ang) * r, 1.6 + Math.random() * 0.4, Math.sin(ang) * r);
-    grp.add(puff);
-    layers.push(puff);
-  }
-  // Center-puff (tjockaste mitten)
+  // Center-puff (subtilt tjockare mitten)
   const center = new THREE.Mesh(
-    new THREE.SphereGeometry(2.0, 18, 12),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.60, depthWrite: false })
+    new THREE.SphereGeometry(2.3, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, depthWrite: false })
   );
   center.position.y = 1.4;
   grp.add(center);
   layers.push(center);
-  // PointLight i centrum så smoken lyser från insidan
-  const light = new THREE.PointLight(0xffffff, 2.5, 6.0);
+  // PointLight för subtil dim-glow inom molnet
+  const light = new THREE.PointLight(0xffffff, 1.2, 7.0);
   light.position.y = 1.8;
   grp.add(light);
   grp.userData.cloudLayers = layers;
@@ -12665,9 +12668,12 @@ function updateKostefoMeshes(dt) {
     let cloud = kostefoMeshTrack.clouds.get(idx);
     const cloudActive = isKostefo && (side.kostefoCloudRemaining || 0) > 0;
     if (cloudActive) {
+      // Cloud är stationär vid cast-pos — använd kCloudX/Z från snap, INTE hero-pos.
+      const cx = side.kostefoCloudX || side.hero.x;
+      const cz = side.kostefoCloudZ || side.hero.z;
       if (!cloud) {
         cloud = makeKostefoCloudMesh();
-        cloud.position.set(side.hero.x, 0, side.hero.z);
+        cloud.position.set(cx, 0, cz);
         scene.add(cloud);
         kostefoMeshTrack.clouds.set(idx, cloud);
         // Cacha varje layers initial opacity så pulse-effekten kan multiplicera
@@ -12677,7 +12683,6 @@ function updateKostefoMeshes(dt) {
           if (l.material) cloud.userData._initOpacity.set(l, l.material.opacity);
         }
       }
-      cloud.position.set(side.hero.x, 0, side.hero.z);
       cloud.rotation.y += dt * 0.6;
       const t = performance.now() / 1000;
       const pulse = 0.90 + Math.sin(t * 1.8) * 0.10;

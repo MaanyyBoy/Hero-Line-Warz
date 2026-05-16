@@ -258,9 +258,9 @@ const KOSTEFO_SLIDER_SLOW_DUR = 2.0;
 const KOSTEFO_SLIDER_SLOW_MUL = 0.70;    // 30% slow → multiplier 0.7
 const KOSTEFO_SLIDER_EXPLOSION_RADIUS = 2.5;
 const KOSTEFO_SLIDER_CD = 7.0;
-// E: Cannabis Cloud — smoke + invis + heal + buff
+// E: Cannabis Cloud — smoke + invis + heal + buff (stationär dim-area vid cast-pos)
 const KOSTEFO_CLOUD_DURATION = 4.0;
-const KOSTEFO_CLOUD_RADIUS = 4.0;
+const KOSTEFO_CLOUD_RADIUS = 5.0;        // +25% från 4.0 per user-spec
 const KOSTEFO_CLOUD_STUN_DUR = 1.0;
 const KOSTEFO_CLOUD_TICK = 0.5;
 const KOSTEFO_CLOUD_DMG_PCT = 0.05;      // 5% current HP per tick
@@ -829,6 +829,9 @@ function respawnHero(side) {
   // Rensa Kostefo-state vid respawn så cloud/ult inte hänger kvar från död-tick
   side.kostefoCloudRemaining = 0;
   side.kostefoCloudTickAccum = 0;
+  side.kostefoCloudX = 0;
+  side.kostefoCloudZ = 0;
+  side.kostefoInCloud = false;
   side.kostefoUltRemaining = 0;
   side.kostefoUltJoints = [];
   side.kostefoGooseWaves = [];
@@ -880,8 +883,11 @@ function createSide(idx) {
     // Kostefo state
     kostefoGooseWaves: [],            // Q: {id,x,z,dx,dz,remaining,tickAccum}
     kostefoSliders: [],               // F: {id,x,z,dx,dz,traveled,hit:Set}
-    kostefoCloudRemaining: 0,         // E: sek kvar (invis + buffs)
+    kostefoCloudRemaining: 0,         // E: sek kvar (cloud existerar på marken)
     kostefoCloudTickAccum: 0,
+    kostefoCloudX: 0,                 // E: cast-position (cloud är stationär — följer ej hero)
+    kostefoCloudZ: 0,
+    kostefoInCloud: false,            // E: hero inom cloud-radius just nu (recalc per tick)
     kostefoUltRemaining: 0,           // R: sek kvar (joints summon:ade)
     kostefoUltJoints: [],             // R: [{angle, attackCd}] orbit-state
     kostefoCompanion: null,           // Passive: {x,z,ry,attackCd}
@@ -1180,11 +1186,12 @@ function updateMonsters(state, side, opp, dt) {
     }
     const dxh = heroX - m.x, dzh = heroZ - m.z;
     const distHero = Math.hypot(dxh, dzh);
-    // Legolus i Shadow Volley-invis + Kostefo i Cannabis Cloud — båda gör hero
-    // osynlig för fiender. Invis trumfar taunt (assassin-mekanik).
+    // Legolus i Shadow Volley-invis + Kostefo INOM Cannabis Cloud — båda gör hero
+    // osynlig för fiender. Invis trumfar taunt (assassin-mekanik). Kostefo förlorar
+    // invis så fort han kliver ut ur molnet (kostefoInCloud återställs i tick).
     const heroVisible = heroAlive
       && !((side.legolusInvisRemaining || 0) > 0)
-      && !((side.kostefoCloudRemaining || 0) > 0);
+      && !side.kostefoInCloud;
     if (!heroVisible) m.chasing = false;
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
     else if (m.chasing && distHero > MONSTER_LEASH_RANGE) m.chasing = false;
@@ -1291,9 +1298,9 @@ function startBossCastServer(state, side, m, skill) {
   const hero = side.hero;
   let originX = m.x, originZ = m.z;
   let targetX, targetZ, dirX, dirZ;
-  // Legolus i Shadow Volley-invis + Kostefo i Cannabis Cloud: boss kan inte se
+  // Legolus i Shadow Volley-invis + Kostefo INOM Cannabis Cloud: boss kan inte se
   // honom → casta i statisk standardriktning (lätt att undvika, men kan träffa).
-  const heroHidden = ((side.legolusInvisRemaining || 0) > 0) || ((side.kostefoCloudRemaining || 0) > 0);
+  const heroHidden = ((side.legolusInvisRemaining || 0) > 0) || !!side.kostefoInCloud;
   if (skill.originSelf) {
     targetX = m.x; targetZ = m.z;
   } else if (skill.targetHero && hero && !hero.dead && !heroHidden) {
@@ -1985,8 +1992,8 @@ function updateHeroAttack(state, side, opp, dt) {
   }
   // Legolas Hunter's Focus (F-buff): +30% attack speed under buff-duration
   const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
-  // Kostefo Cannabis Cloud: +20% AS medan cloud aktiv
-  const cloudAsMul = (side.kostefoCloudRemaining || 0) > 0 ? (1 + KOSTEFO_CLOUD_AS_BONUS) : 1;
+  // Kostefo Cannabis Cloud: +20% AS medan hero ÄR inom molnet
+  const cloudAsMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul);
 }
@@ -3284,7 +3291,9 @@ function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
   });
 }
 
-// E: Cannabis Cloud — invis + heal + initial stun + AS/MS buff i 4s.
+// E: Cannabis Cloud — stationär dim-area vid cast-pos. Invis + buffs ges bara
+// medan Kostefo står inom molnet (hero kan röra sig ut/in). Initial stun + heal
+// triggas vid cast.
 function castKostefoCannabisCloud(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (!side || side.hero.dead) return;
@@ -3292,11 +3301,15 @@ function castKostefoCannabisCloud(state, sideIdx) {
   side.skills.e.cd = side.skills.e.max || KOSTEFO_CLOUD_CD;
   side.kostefoCloudRemaining = KOSTEFO_CLOUD_DURATION;
   side.kostefoCloudTickAccum = 0;
+  // Cloud läggs vid hero-pos och stannar — följer ej hero.
+  side.kostefoCloudX = side.hero.x;
+  side.kostefoCloudZ = side.hero.z;
+  side.kostefoInCloud = true;          // hero startar inom radie (centered)
   // Initial heal: 25% maxHP direct
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * KOSTEFO_CLOUD_HEAL_PCT);
   // Initial stun + dmg-tick på alla inom radie
   const opp = state.sides[3 - sideIdx];
-  const cx = side.hero.x, cz = side.hero.z;
+  const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
   const r2 = KOSTEFO_CLOUD_RADIUS * KOSTEFO_CLOUD_RADIUS;
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
@@ -3496,13 +3509,21 @@ function tickKostefoSliderDots(state, side, opp, dt) {
   }
 }
 
-// Tickar Cannabis Cloud: dmg-tick på fiender inom radie, varar 4s.
+// Tickar Cannabis Cloud: stationär vid cast-pos. Beräknar hero-in-cloud per
+// tick (used för invis/buffs i andra funktioner). Dmg-tick på fiender inom radie.
 function tickKostefoCloud(state, side, opp, dt) {
-  if ((side.kostefoCloudRemaining || 0) <= 0) return;
+  if ((side.kostefoCloudRemaining || 0) <= 0) {
+    side.kostefoInCloud = false;
+    return;
+  }
   side.kostefoCloudRemaining -= dt;
   side.kostefoCloudTickAccum += dt;
-  const cx = side.hero.x, cz = side.hero.z;
+  const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
   const r2 = KOSTEFO_CLOUD_RADIUS * KOSTEFO_CLOUD_RADIUS;
+  // Recompute "hero inom moln" varje tick — buffs/invis baseras på detta.
+  const hddx = side.hero.x - cx, hddz = side.hero.z - cz;
+  side.kostefoInCloud = !side.hero.dead && (hddx * hddx + hddz * hddz < r2);
+  if (side.kostefoCloudRemaining <= 0) side.kostefoInCloud = false;
   while (side.kostefoCloudTickAccum >= KOSTEFO_CLOUD_TICK && side.kostefoCloudRemaining > -KOSTEFO_CLOUD_TICK) {
     side.kostefoCloudTickAccum -= KOSTEFO_CLOUD_TICK;
     const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
@@ -3645,7 +3666,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   side.hero.facingZ = ndz;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
-  const cloudMul = (side.kostefoCloudRemaining > 0) ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
+  const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
@@ -4464,6 +4485,8 @@ function serializeSide(side) {
     })),
     // Kostefo state (companion + cloud + ult-joints + goose-wave + sliders)
     kCloud: r2(side.kostefoCloudRemaining || 0),
+    kCloudX: r2(side.kostefoCloudX || 0),
+    kCloudZ: r2(side.kostefoCloudZ || 0),
     kUlt: r2(side.kostefoUltRemaining || 0),
     kComp: side.kostefoCompanion ? {
       x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0),
