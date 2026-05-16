@@ -23,7 +23,23 @@ const server = http.createServer((req, res) => {
   res.end(`Spel server running. Rooms: ${rooms.size}`);
 });
 
-const wss = new WebSocketServer({ server });
+// WebSocket compression (permessage-deflate). Reducerar text-JSON-payload med
+// 60-80% — på 10-15 KB game-state-snap blir det 3-5 KB över wire. Stort
+// bandbredds-spar för mobile + WiFi som kan stappla på bursts.
+// threshold:256 = skippa compression för små messages (input/ping).
+// level:1 = snabbaste zlib-compression (~1ms CPU, near-default ratio).
+const wss = new WebSocketServer({
+  server,
+  perMessageDeflate: {
+    zlibDeflateOptions: { level: 1, memLevel: 7 },
+    zlibInflateOptions: { chunkSize: 10 * 1024 },
+    clientNoContextTakeover: true,
+    serverNoContextTakeover: true,
+    serverMaxWindowBits: 10,
+    concurrencyLimit: 10,
+    threshold: 256,
+  },
+});
 
 // roomCode -> { host, client, game, tickHandle, lastStateMs, hostGoneAt? }
 const rooms = new Map();

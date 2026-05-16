@@ -10276,7 +10276,7 @@ function applyRemoteState(state) {
     side.hero.facingX = sData.h.fx;
     side.hero.facingZ = sData.h.fz;
     side.hero.dead = !!sData.h.d;
-    side.hero.respawnTimer = sData.h.rt;
+    side.hero.respawnTimer = sData.h.rt || 0;
     // Debuff-timers
     side.hero.frozenTime = sData.h.frz || 0;
     side.hero.dotRemaining = sData.h.dot || 0;
@@ -10316,8 +10316,11 @@ function applyRemoteState(state) {
     if (sData.ue !== undefined) side.ultEnergy = sData.ue;
     if (sData.incC !== undefined) side.incomeTickCount = sData.incC;
     // Portal-state (lvl-30 PvP-portal)
-    if (sData.ptu !== undefined) side.portalUsesLeft = sData.ptu;
-    if (sData.ptc !== undefined) side.portalCooldown = sData.ptc;
+    // Portal-fält skippas från payload när 0 (server skickar undefined för att
+    // spara bandbredd). Klient måste falla till 0 — annars fastnar UI på sista
+    // positiva värde när portal förbrukas helt eller cooldown löper ut.
+    side.portalUsesLeft = sData.ptu || 0;
+    side.portalCooldown = sData.ptc || 0;
     side.inEnemyTerritory = !!sData.pet;
     side.enemyTerritoryTimer = sData.petT || 0;
     if (sData.tu) side.tierUnlocks = sData.tu;

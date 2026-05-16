@@ -4432,28 +4432,35 @@ function arrOpt(arr, mapper) {
   return arr.map(mapper);
 }
 
+// Skip-helpers för 0-default-fält. JSON.stringify skippar undefined-värden,
+// så 0-värda timer-fält faller bort från payload. Klient läser med `|| 0`-fallback.
+function nz(v) { return v > 0 ? v : undefined; }            // numeric > 0
+function nzr2(v) { return v > 0 ? r2(v) : undefined; }      // numeric > 0, avrundad
+function nzr1(v) { return v > 0 ? r1(v) : undefined; }
+function flag(v) { return v ? 1 : undefined; }               // boolean flag
+
 function serializeSide(side) {
   return {
     h: {
       x: r2(side.hero.x), z: r2(side.hero.z),
       hp: ri(side.hero.hp), mh: ri(side.hero.maxHp),
       fx: r3(side.hero.facingX), fz: r3(side.hero.facingZ),
-      d: side.hero.dead, rt: r1(side.hero.respawnTimer),
-      // Debuff-timers (klienten visar ikoner)
-      frz: +(side.hero.frozenTime || 0).toFixed(2),
-      dot: +(side.hero.dotRemaining || 0).toFixed(2),
-      tnt: +(side.hero.tauntedTime || 0).toFixed(2),
-      poi: +(side.hero.poisonRemaining || 0).toFixed(2),
+      d: side.hero.dead, rt: nzr1(side.hero.respawnTimer),
+      // Debuff-timers — skippas helt när 0 (sparas i payload). Klient: `|| 0`.
+      frz: nzr2(side.hero.frozenTime),
+      dot: nzr2(side.hero.dotRemaining),
+      tnt: nzr2(side.hero.tauntedTime),
+      poi: nzr2(side.hero.poisonRemaining),
     },
     g: side.gold,
     inc: side.income,
     incT: +side.incomeTimer.toFixed(2),
     incC: side.incomeTickCount || 0,
-    // Portal-state
-    ptu: side.portalUsesLeft || 0,
-    ptc: +(side.portalCooldown || 0).toFixed(1),
-    pet: side.inEnemyTerritory ? 1 : 0,
-    petT: +(side.enemyTerritoryTimer || 0).toFixed(1),
+    // Portal-state — skippas helt om portal-features inte aktiva.
+    ptu: nz(side.portalUsesLeft),
+    ptc: nzr1(side.portalCooldown),
+    pet: flag(side.inEnemyTerritory),
+    petT: nzr1(side.enemyTerritoryTimer),
     tu: side.tierUnlocks,
     inv: side.inventory.map(it => ({
       id: it.itemId,
@@ -4466,12 +4473,12 @@ function serializeSide(side) {
     ad: r1(side.attackDmg),
     ac: side.attackCounter,
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
-    fa: side.heroFountainAura ? 1 : 0,
-    aa: side.aaActive ? 1 : 0,
-    tg: side.targetId || 0,
-    tt: side.targetType || '',
-    tx: r2(side.targetX || 0),
-    tz: r2(side.targetZ || 0),
+    fa: flag(side.heroFountainAura),
+    aa: flag(side.aaActive),
+    tg: nz(side.targetId),
+    tt: side.targetType || undefined,
+    tx: nzr2(side.targetX),
+    tz: nzr2(side.targetZ),
     lv: side.level || 1,
     xp: side.xp || 0,
     xpN: side.xpToNext || 0,
@@ -4479,12 +4486,13 @@ function serializeSide(side) {
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
     ue: +(side.ultEnergy || 0).toFixed(1),   // ult-energy 0-100 för klientens R-knapp + meter
-    // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc
-    wwR: +(side.whirlwindRemaining || 0).toFixed(2),
-    leapA: side.aragurnLeap ? 1 : 0,
-    leapU: side.aragurnLeap ? +(1 - (side.aragurnLeap.remaining / side.aragurnLeap.total)).toFixed(3) : 0,
-    leapTx: side.aragurnLeap ? +side.aragurnLeap.targetX.toFixed(2) : 0,
-    leapTz: side.aragurnLeap ? +side.aragurnLeap.targetZ.toFixed(2) : 0,
+    // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc.
+    // Skippas helt när inaktivt (undefined → JSON-skip).
+    wwR: nzr2(side.whirlwindRemaining),
+    leapA: flag(side.aragurnLeap),
+    leapU: side.aragurnLeap ? r3(1 - (side.aragurnLeap.remaining / side.aragurnLeap.total)) : undefined,
+    leapTx: side.aragurnLeap ? r2(side.aragurnLeap.targetX) : undefined,
+    leapTz: side.aragurnLeap ? r2(side.aragurnLeap.targetZ) : undefined,
     w: {
       c: side.wave.current,
       a: side.wave.active,
@@ -4495,8 +4503,8 @@ function serializeSide(side) {
     },
     M: arrOpt(side.monsters, m => ({
       id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
-      boss: m.isBoss ? 1 : 0, mb: m.isMiniBoss ? 1 : 0, r: m.attackType === 'range' ? 1 : 0,
-      fz: (m.frozenTime || 0) > 0 ? 1 : 0, dot: (m.dotRemaining || 0) > 0 ? 1 : 0,
+      boss: flag(m.isBoss), mb: flag(m.isMiniBoss), r: flag(m.attackType === 'range'),
+      fz: flag((m.frozenTime || 0) > 0), dot: flag((m.dotRemaining || 0) > 0),
       // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
       c: m.activeCast && m.activeCast.skill ? {
         n: m.activeCast.skill.id || '',
@@ -4518,7 +4526,7 @@ function serializeSide(side) {
     })),
     BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })),
     BPL: arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) })),
-    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: (c.frozenTime || 0) > 0 ? 1 : 0, dot: (c.dotRemaining || 0) > 0 ? 1 : 0 })),
+    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
     F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
     P: arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
     N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
@@ -4529,20 +4537,20 @@ function serializeSide(side) {
     BH: arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
     SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
     VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
-    lbuf: +(side.legolusBuffRemaining || 0).toFixed(2),
-    ldash: side.legolusDashBuffPending ? 1 : 0,
+    lbuf: nzr2(side.legolusBuffRemaining),
+    ldash: flag(side.legolusDashBuffPending),
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
-    lInv: +(side.legolusInvisRemaining || 0).toFixed(2),
-    lAa: side.legolusUltAaPending ? 1 : 0,
+    lInv: nzr2(side.legolusInvisRemaining),
+    lAa: flag(side.legolusUltAaPending),
     TP: arrOpt(side.thornPools, p => ({
       id: p.id, x: r2(p.x), z: r2(p.z),
       r: p.radius, life: r3(p.remaining / p.duration),
     })),
-    // Kostefo state (companion + cloud + ult-joints + goose-wave + sliders)
-    kCloud: r2(side.kostefoCloudRemaining || 0),
-    kCloudX: r2(side.kostefoCloudX || 0),
-    kCloudZ: r2(side.kostefoCloudZ || 0),
-    kUlt: r2(side.kostefoUltRemaining || 0),
+    // Kostefo state — alla fält skippas när 0 / null. kCloudX/Z bara om cloud aktiv.
+    kCloud: nzr2(side.kostefoCloudRemaining),
+    kCloudX: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudX) : undefined,
+    kCloudZ: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudZ) : undefined,
+    kUlt: nzr2(side.kostefoUltRemaining),
     kComp: side.kostefoCompanion ? {
       x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0),
     } : undefined,
@@ -4555,13 +4563,13 @@ function serializeSide(side) {
       id: s.id, x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz),
     })),
     HM: arrOpt(side.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 })),
-    taunt: +(side.titansTauntRemaining || 0).toFixed(2),
-    iw: +(side.ironWillRemaining || 0).toFixed(2),
-    iwS: +(side.ironWillStored || 0).toFixed(1),
-    gbuf: +(side.gandulfBuffRemaining || 0).toFixed(2),
-    gbStk: side.gandulfBuffStacks || 0,
-    shld: +(side.shield || 0).toFixed(1),
-    dSp: +(side.duelSpeedBuffRemaining || 0).toFixed(2),
+    taunt: nzr2(side.titansTauntRemaining),
+    iw: nzr2(side.ironWillRemaining),
+    iwS: nzr1(side.ironWillStored),
+    gbuf: nzr2(side.gandulfBuffRemaining),
+    gbStk: nz(side.gandulfBuffStacks),
+    shld: nzr1(side.shield),
+    dSp: nzr2(side.duelSpeedBuffRemaining),
     IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
   };
 }
