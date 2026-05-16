@@ -29,15 +29,15 @@
     body:not(.in-game) #income-display,
     body:not(.in-game) #shop-container { display: none !important; }
 
-    /* Tower HP-stack längst till vänster (egen + enemy ovanför varandra) */
+    /* Tower HP-stack — placerad under hero-HP-baren (som är under kugghjul-knappen).
+       Egen + enemy ovanför varandra, bara label + numerisk text (ingen bar). */
     #tower-hp-stack {
       position: fixed;
-      top: 50%;
-      left: max(10px, env(safe-area-inset-left));
-      transform: translateY(-50%);
+      top: max(104px, calc(env(safe-area-inset-top) + 104px));
+      left: max(8px, env(safe-area-inset-left));
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       z-index: 55;
       pointer-events: none;
     }

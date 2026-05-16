@@ -1944,17 +1944,13 @@ function updateEntityHpBar(mesh, hp, maxHp, now, shield = 0) {
 function tickAllHpBars() {
   const now = performance.now() / 1000;
   // Heroes — skicka in shield så HP-baren ritar shield-raden.
-  // I line wars (classic) döljs hero-baren helt — HP visas i HUD under kugghjul-knappen.
-  const hideHeroBar = APP.gameMode === 'classic';
+  // 3D HP-bar visas ovanför hero-mesh i alla lägen (även line wars).
   for (const idx of [1, 2, 3, 4]) {
     const s = sides[idx];
     if (!s || !s.mesh) continue;
     const shieldTotal = (s.shield || 0) + (s.lingShieldHp || 0);
     updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now, shieldTotal);
-    if (s.mesh.userData.hpBar) {
-      if (hideHeroBar) s.mesh.userData.hpBar.visible = false;
-      else s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
-    }
+    if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead && s.mesh.userData.hpBar.visible;
   }
   if (APP.mode === 'solo') {
     for (const idx of [1, 2]) {
