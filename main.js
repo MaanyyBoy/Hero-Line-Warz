@@ -208,23 +208,29 @@ function instantiateCharacter(charName, animGroup) {
 // Stega alla aktiva mixers — anropas från tick().
 // Auto-rensar mixers vars root inte längre är i scenen (efter scene.remove).
 const activeMixers = new Set();
+// Throttle parent-tree-validation till ~2 Hz — i 99% av fallen är mixern i scenen.
+// Tidigare body kallades EVERY frame och walkade parent-tree per mixer (30+ chars
+// × N parents). Nu valideras bara periodvis; m.update() körs varje frame.
+let _mixerValidateAccum = 0;
 function tickMixers(dt) {
   if (!activeMixers.size) return;
-  const toRemove = [];
+  _mixerValidateAccum += dt;
+  const shouldValidate = _mixerValidateAccum >= 0.5;
+  if (shouldValidate) _mixerValidateAccum = 0;
+  const toRemove = shouldValidate ? [] : null;
   for (const m of activeMixers) {
-    let cur = m.getRoot();
-    let inScene = false;
-    while (cur) {
-      if (cur === scene) { inScene = true; break; }
-      cur = cur.parent;
-    }
-    if (!inScene) {
-      toRemove.push(m);
-      continue;
+    if (shouldValidate) {
+      let cur = m.getRoot();
+      let inScene = false;
+      while (cur) {
+        if (cur === scene) { inScene = true; break; }
+        cur = cur.parent;
+      }
+      if (!inScene) { toRemove.push(m); continue; }
     }
     m.update(dt);
   }
-  for (const m of toRemove) activeMixers.delete(m);
+  if (toRemove) for (const m of toRemove) activeMixers.delete(m);
 }
 
 // Starta preload direkt vid sidladdning (medan resten av main.js körs)
@@ -11005,6 +11011,7 @@ const perfBarFillEl = document.getElementById('perf-bar-fill');
 const _perfFrames = [];
 let _perfLastUpdateMs = 0;
 let _lastHudMs = 0;   // throttle-tracker för HUD-textuppdateringar
+let _heavyTickAccum = 0;   // ackumulator för 30 Hz throttle av tickAllHpBars + animateAllCharacters
 const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
@@ -18712,9 +18719,17 @@ function tick() {
   }
 
   tickMixers(dt);
-  animateAllCharacters(dt);
+  // Throttle heavy per-frame loops till ~30 Hz (33ms intervall) — halverar
+  // klient-CPU för dessa loops utan synlig visuell skillnad (HP-bars/animationer
+  // ändras inte snabbare än 30 Hz ändå). Pass:ar ackumulerad dt så delta-baserade
+  // animationer behåller korrekt timing.
+  _heavyTickAccum += dt;
+  if (_heavyTickAccum >= 0.033) {
+    animateAllCharacters(_heavyTickAccum);
+    tickAllHpBars();
+    _heavyTickAccum = 0;
+  }
   animateSceneProps(dt, now);
-  tickAllHpBars();
   tickDuelOrbVisual(dt);
   tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
