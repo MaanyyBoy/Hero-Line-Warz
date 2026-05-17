@@ -183,15 +183,6 @@ async function preloadAllAssets() {
               }
             }
             o.material.needsUpdate = true;
-            // Debug-log INLINE så vi ser slut-state efter normalization
-            const mapImg = o.material.map && o.material.map.image;
-            const mapDim = mapImg ? `${mapImg.width}x${mapImg.height}` : 'none';
-            const colHex = o.material.color ? o.material.color.getHexString() : '?';
-            console.log(
-              `[mat] ${name}/${o.name || '?'} | type=${o.material.type} | color=#${colHex} ` +
-              `| map=${!!o.material.map} | mapImg=${mapDim} | rough=${o.material.roughness} ` +
-              `| metal=${o.material.metalness} | opacity=${o.material.opacity} | vc=${o.material.vertexColors}`
-            );
           }
         }
       });
