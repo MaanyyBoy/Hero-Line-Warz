@@ -138,8 +138,9 @@ async function preloadAllAssets() {
     if (al) al.classList.add('hidden');
   }, 45000);
 
-  const charPromises = charEntries.map(([name, path]) =>
-    loader.loadAsync(ASSET_BASE + path).then(gltf => {
+  const charPromises = charEntries.map(([name, path]) => {
+    const isMixamoHero = path.indexOf('heroes/mixamo/') >= 0;
+    return loader.loadAsync(ASSET_BASE + path).then(gltf => {
       loadedCharacters.set(name, { scene: gltf.scene, animations: gltf.animations || [] });
       gltf.scene.traverse(o => {
         if (o.isMesh) {
@@ -147,20 +148,33 @@ async function preloadAllAssets() {
           o.receiveShadow = false;
           if (o.material && o.material.map) {
             o.material.map.magFilter = THREE.NearestFilter;
-            // GLTF baseColor multipliceras med texture. Vissa Mixamo-FBX:er har
-            // diffuse=black i sina materialer (T-pose-konverteringen bevarar inte
-            // alltid base-color-värdet), så svart × texture = svart. När en mesh
-            // har en texture-map ska color vara vit så texture renderar korrekt.
-            if (o.material.color) {
-              const c = o.material.color;
-              if (c.r < 0.1 && c.g < 0.1 && c.b < 0.1) c.setRGB(1, 1, 1);
-            }
           }
-          // Defensiv: om material saknar map OCH är helt svart, ge en neutral
-          // fallback-grå så modellen åtminstone syns (bättre än osynlig svart).
-          if (o.material && !o.material.map && o.material.color) {
+          // Mixamo-hjälte-specifik color-normalize: vissa Mixamo-FBX:er förlorar
+          // baseColor under Blender-konverteringen (color faller ner till svart
+          // eller texture-binding bryts), så modellen renderar som svart silhuett.
+          // Heuristik: om material-luminance är väldigt låg, antingen wash:a base
+          // till vit (om texture finns, så den syns multiplikativt) eller ge en
+          // neutral hudfärg som fallback (om ingen texture).
+          if (isMixamoHero && o.material && o.material.color) {
             const c = o.material.color;
-            if (c.r < 0.05 && c.g < 0.05 && c.b < 0.05) c.setRGB(0.5, 0.5, 0.5);
+            const lum = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
+            if (lum < 0.15) {
+              if (o.material.map) c.setRGB(1, 1, 1);
+              else c.setRGB(0.65, 0.55, 0.45);
+            }
+            // Debug-log första gången per hero så vi ser material-state om
+            // problemet kvarstår. Kommenteras bort när allt fungerar.
+            console.log(`[mixamo-mat] ${name}/${o.name || '(noname)'}`, {
+              type: o.material.type,
+              color: c.getHexString(),
+              hasMap: !!o.material.map,
+              mapValid: !!(o.material.map && o.material.map.image),
+              roughness: o.material.roughness,
+              metalness: o.material.metalness,
+              opacity: o.material.opacity,
+              transparent: o.material.transparent,
+              vertexColors: o.material.vertexColors,
+            });
           }
         }
       });
@@ -168,8 +182,8 @@ async function preloadAllAssets() {
     }).catch(err => {
       console.error(`[asset] Failed character ${name} (${path}):`, err);
       updateProgress(name + ' (FAILED)');
-    })
-  );
+    });
+  });
   const animPromises = animEntries.map(([name, path]) =>
     loader.loadAsync(ASSET_BASE + path).then(gltf => {
       const group = name.startsWith('hero_') ? 'hero' : 'skel';
