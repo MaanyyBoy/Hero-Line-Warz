@@ -162,19 +162,14 @@ async function preloadAllAssets() {
               if (o.material.map) c.setRGB(1, 1, 1);
               else c.setRGB(0.65, 0.55, 0.45);
             }
-            // Debug-log första gången per hero så vi ser material-state om
-            // problemet kvarstår. Kommenteras bort när allt fungerar.
-            console.log(`[mixamo-mat] ${name}/${o.name || '(noname)'}`, {
-              type: o.material.type,
-              color: c.getHexString(),
-              hasMap: !!o.material.map,
-              mapValid: !!(o.material.map && o.material.map.image),
-              roughness: o.material.roughness,
-              metalness: o.material.metalness,
-              opacity: o.material.opacity,
-              transparent: o.material.transparent,
-              vertexColors: o.material.vertexColors,
-            });
+            // Debug-log INLINE så allt syns utan att klicka. Tas bort när stabilt.
+            const mapImg = o.material.map && o.material.map.image;
+            const mapDim = mapImg ? `${mapImg.width}x${mapImg.height}` : 'none';
+            console.log(
+              `[mat] ${name}/${o.name || '?'} | type=${o.material.type} | color=#${c.getHexString()} ` +
+              `| map=${!!o.material.map} | mapImg=${mapDim} | rough=${o.material.roughness} ` +
+              `| metal=${o.material.metalness} | opacity=${o.material.opacity} | vc=${o.material.vertexColors}`
+            );
           }
         }
       });
