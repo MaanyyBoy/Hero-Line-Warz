@@ -3634,6 +3634,17 @@ function arenaOppTeamSides(side) {
   return arenaTeamMates(oppTeam).map(i => sides[i]).filter(s => s);
 }
 
+// Returnerar PRIMÄRA opp-side för skill-cast i arena. För 1v1: sides[3 - side.idx].
+// För 2v2: första levande motståndare. Fix för bug där sides[3]/sides[4] tappade
+// opp-referens via `sides[3 - side.idx]` (3-3=0 → undefined; 3-4=-1 → undefined).
+function arenaPrimaryOpp(side) {
+  if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
+    const opps = arenaOppTeamSides(side);
+    return opps.find(s => s && !s.hero.dead) || opps[0] || null;
+  }
+  return sides[3 - side.idx] || null;
+}
+
 // Returnerar alla aktiva sidor (filtered null). 1v1: [s1, s2]. 2v2 arena: [s1,s2,s3,s4].
 function activeSides() {
   if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
@@ -7636,7 +7647,9 @@ function hostCastSoulDrain(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   if (side.soulDrain) removeSoulDrainBeam(side);
   side.soulDrain = null;
-  const opp = sides[3 - side.idx];
+  // arenaPrimaryOpp: korrekt 2v2-opp-resolution (sides[3]/sides[4] tappar opp
+  // via gamla `sides[3 - side.idx]`). 1v1 oförändrat (sides[3-1]=sides[2]).
+  const opp = arenaPrimaryOpp(side);
   // Hitta target: tap-aim → låst target, annars närmaste i range
   let target = null;
   let targetType = null;
@@ -7651,9 +7664,25 @@ function hostCastSoulDrain(side, ev) {
       targetType = t.targetType || (t.isMonster ? 'monster' : 'creep');
     }
   }
+  // Arena fallback: om inget target hittats via tap eller findClosestHostile,
+  // lock direkt på opp-hero så Q inte tyst-bail:ar när opp är utanför 10m-range
+  // i 1v1/2v2 (vanligaste arena-scenario — ingen monster/creep att target:a).
+  if (!target && APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && arenaState.phase === 'fight') {
+    if (!arenaState.heroTargets) arenaState.heroTargets = {};
+    if (!arenaState.heroTargets[opp.idx]) {
+      arenaState.heroTargets[opp.idx] = {
+        id: -200 + opp.idx, isArenaHero: true, sideIdx: opp.idx,
+        get mesh() { return sides[this.sideIdx]?.mesh; },
+      };
+    }
+    target = arenaState.heroTargets[opp.idx];
+    targetType = 'arena-hero';
+  }
   if (!target || !target.mesh) return;
   const tx = target.mesh.position.x, tz = target.mesh.position.z;
-  if (Math.hypot(tx - side.hero.x, tz - side.hero.z) > SOULDRAIN_RANGE) return;
+  // Initial range-check skippas för arena-hero target — Soul Drain tickar och
+  // bryter automatiskt via tickSoulDrain om hero springer ut ur range under cast.
+  if (targetType !== 'arena-hero' && Math.hypot(tx - side.hero.x, tz - side.hero.z) > SOULDRAIN_RANGE) return;
   // Talent: Lasting Drain — +2s duration
   const duration = SOULDRAIN_DURATION + (arenaHasTalent(side, 'm_drain_extend') ? 2 : 0);
   side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
@@ -7690,9 +7719,13 @@ function resolveSoulDrainTarget(side, sd, opp) {
     return (arenaState.orb && arenaState.orb.alive && arenaState.orbTarget) ? arenaState.orbTarget : null;
   }
   if (sd.targetType === 'arena-hero') {
-    const oppSide = sides[3 - side.idx];
+    // sd.targetId = -200 + opp.idx — invert: opp.idx = sd.targetId + 200.
+    // Tidigare `sides[3 - side.idx]` antog 1v1-layout (3-1=2, 3-2=1) men
+    // för 2v2 ger 3-3=0 och 3-4=-1 → undefined → Soul Drain bröts på tick.
+    const oppIdx = (sd.targetId || 0) + 200;
+    const oppSide = sides[oppIdx];
     if (!oppSide || oppSide.hero.dead) return null;
-    return (arenaState.heroTargets && arenaState.heroTargets[oppSide.idx]) || null;
+    return (arenaState.heroTargets && arenaState.heroTargets[oppIdx]) || null;
   }
   return null;
 }
@@ -8091,7 +8124,7 @@ function updateFireballs(side, dt) {
 function hostCastFrostnova(side, ev) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
-  const opp = sides[3 - side.idx];
+  const opp = arenaPrimaryOpp(side);
   const center = soloResolveSkillGroundTarget(side, ev || {}, NOVA_CAST_DISTANCE);
   // Cast-FX vid hero + target — ger tydlig visuell signal var Frostnovan landar
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ddff, 1.0);
