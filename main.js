@@ -7705,6 +7705,114 @@ function hostCastSoulDrain(side, ev) {
   }
 }
 
+// ============================================================
+// GANDULF Q — WIND PUFF (matchar server-side castWindPuff)
+// Cone-AoE framför hero: 20% maxHP dmg, 3m pushback, +20% taken-dmg-debuff i 4s.
+// Inget target-krav (cone-aim) → fungerar i alla lägen inkl arena utan
+// target-lock. Drag-aim styr riktning, tap använder hero-facing.
+// ============================================================
+const WIND_PUFF_LENGTH = 5.5;
+const WIND_PUFF_HALF_ANGLE = Math.PI / 4;        // 90° total cone
+const WIND_PUFF_DMG_PCT = 0.20;
+const WIND_PUFF_PUSH_DIST = 3;
+const WIND_PUFF_DEBUFF_DURATION = 4.0;
+const WIND_PUFF_DEBUFF_MUL = 1.20;
+
+function hostCastWindPuff(side, ev) {
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  // Drag-aim eller facing-fallback
+  let dirX = (ev && ev.dx) || 0, dirZ = (ev && ev.dz) || 0;
+  const len = Math.hypot(dirX, dirZ);
+  if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
+  else { dirX /= len; dirZ /= len; }
+  const opp = arenaPrimaryOpp(side);
+  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+  // Visuell cone-effekt (lagras i side.fireWaves — updateFireballs-tick:n
+  // itererar mesh.children.forEach för opacity-fade, så cone:n MÅSTE wrappas
+  // i en Group eller mesh.children är tom → ingen fade.
+  side.fireWaves = side.fireWaves || [];
+  const coneGrp = new THREE.Group();
+  const coneMat = new THREE.MeshBasicMaterial({
+    color: 0xddeeff, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+  });
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(WIND_PUFF_LENGTH * Math.tan(WIND_PUFF_HALF_ANGLE), WIND_PUFF_LENGTH, 18, 1, true),
+    coneMat
+  );
+  cone.rotation.x = -Math.PI / 2;
+  coneGrp.add(cone);
+  coneGrp.rotation.y = Math.atan2(dirX, dirZ);
+  coneGrp.position.set(
+    side.hero.x + dirX * (WIND_PUFF_LENGTH / 2),
+    0.6,
+    side.hero.z + dirZ * (WIND_PUFF_LENGTH / 2),
+  );
+  scene.add(coneGrp);
+  side.fireWaves.push({
+    mesh: coneGrp, life: 0.6, maxLife: 0.6,
+    dx: dirX, dz: dirZ,
+  });
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xccddff, 1.4);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaccff);
+  triggerCameraShake(0.14, 0.20);
+  // Cone hit-test: punkt inom cone-area
+  const inCone = (ex, ez) => {
+    const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
+    const d = Math.hypot(ddx, ddz);
+    if (d > WIND_PUFF_LENGTH || d < 0.001) return false;
+    const dot = (ddx * dirX + ddz * dirZ) / d;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < WIND_PUFF_HALF_ANGLE;
+  };
+  // Monsters (side.monsters för PvE waves)
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
+    const dmg = (m.maxHp || m.hp) * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, m);
+    m.hp -= dmg;
+    if (m.hp <= 0) hostKillMonster(side, j, side);
+    else {
+      m.mesh.position.x += dirX * WIND_PUFF_PUSH_DIST;
+      m.mesh.position.z += dirZ * WIND_PUFF_PUSH_DIST;
+      m.x = m.mesh.position.x; m.z = m.mesh.position.z;
+      m.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      m.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    }
+  }
+  // Opp creeps (line wars / arena med minions)
+  if (opp && opp.playerCreeps) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (!inCone(c.mesh.position.x, c.mesh.position.z)) continue;
+    const dmg = (c.maxHp || c.hp) * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, c);
+    c.hp -= dmg;
+    if (c.hp <= 0) {
+      scene.remove(c.mesh);
+      opp.playerCreeps.splice(j, 1);
+      side.gold += minionBounty(c); gainXp(side, minionXp(c));
+    } else {
+      c.mesh.position.x += dirX * WIND_PUFF_PUSH_DIST;
+      c.mesh.position.z += dirZ * WIND_PUFF_PUSH_DIST;
+      c.x = c.mesh.position.x; c.z = c.mesh.position.z;
+      c.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      c.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    }
+  }
+  // Arena: opp-hero i cone
+  if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
+    const dmg = opp.hero.maxHp * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, opp.hero);
+    damageHero(opp, dmg);
+    if (!opp.hero.dead) {
+      opp.hero.x += dirX * WIND_PUFF_PUSH_DIST;
+      opp.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
+      opp.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      opp.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+    }
+  }
+}
+
 function resolveSoulDrainTarget(side, sd, opp) {
   if (!sd) return null;
   if (sd.targetType === 'monster') {
@@ -9747,7 +9855,7 @@ function applyEvent(side, ev) {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
       else if (isGimlu) hostCastGimluTaunt(side);
       else if (isAragurn) hostCastAragurnWhirlwind(side);
-      else hostCastSoulDrain(side, ev);
+      else hostCastWindPuff(side, ev);   // Magiker Q = Wind Puff (matchar server)
     } else if (ev.key === 'f') {
       if (isLegolus) hostCastLegolusBuff(side);
       else if (isGimlu) hostCastGimluIronWill(side);
