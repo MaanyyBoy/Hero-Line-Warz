@@ -147,6 +147,20 @@ async function preloadAllAssets() {
           o.receiveShadow = false;
           if (o.material && o.material.map) {
             o.material.map.magFilter = THREE.NearestFilter;
+            // GLTF baseColor multipliceras med texture. Vissa Mixamo-FBX:er har
+            // diffuse=black i sina materialer (T-pose-konverteringen bevarar inte
+            // alltid base-color-värdet), så svart × texture = svart. När en mesh
+            // har en texture-map ska color vara vit så texture renderar korrekt.
+            if (o.material.color) {
+              const c = o.material.color;
+              if (c.r < 0.1 && c.g < 0.1 && c.b < 0.1) c.setRGB(1, 1, 1);
+            }
+          }
+          // Defensiv: om material saknar map OCH är helt svart, ge en neutral
+          // fallback-grå så modellen åtminstone syns (bättre än osynlig svart).
+          if (o.material && !o.material.map && o.material.color) {
+            const c = o.material.color;
+            if (c.r < 0.05 && c.g < 0.05 && c.b < 0.05) c.setRGB(0.5, 0.5, 0.5);
           }
         }
       });
