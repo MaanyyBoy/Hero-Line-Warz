@@ -7552,9 +7552,11 @@ function soloResolveSkillGroundTarget(side, ev, maxDistance) {
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
-  // Drag-fraktion (0..1) skalar avståndet — användaren bestämmer exakt vart inom max-range
-  // mag=undefined (keyboard/tap) → 1 (full distans). mag=0 → cast under hero.
-  const mag = (ev && typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+  // Drag-fraktion (0..1) skalar avståndet. Min-clamp 0.3 så liten drag aldrig
+  // gör att skill landar PÅ hero (pitfall #3) — annars känns skill "broken" på
+  // små drag-gester. Mag=undefined (keyboard/tap utan drag) → 1 (full distans).
+  let mag = (ev && typeof ev.mag === 'number') ? Math.min(1, Math.max(0, ev.mag)) : 1;
+  if (mag > 0 && mag < 0.3) mag = 0.3;
   return { x: side.hero.x + dx * maxDistance * mag, z: side.hero.z + dz * maxDistance * mag };
 }
 
