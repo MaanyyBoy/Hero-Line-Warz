@@ -149,27 +149,27 @@ async function preloadAllAssets() {
           if (o.material && o.material.map) {
             o.material.map.magFilter = THREE.NearestFilter;
           }
-          // Mixamo-hjälte-specifik color-normalize: vissa Mixamo-FBX:er förlorar
-          // baseColor under Blender-konverteringen (color faller ner till svart
-          // eller texture-binding bryts), så modellen renderar som svart silhuett.
-          // Heuristik: om material-luminance är väldigt låg, antingen wash:a base
-          // till vit (om texture finns, så den syns multiplikativt) eller ge en
-          // neutral hudfärg som fallback (om ingen texture).
-          if (isMixamoHero && o.material && o.material.color) {
-            const c = o.material.color;
-            const lum = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
-            if (lum < 0.15) {
-              if (o.material.map) c.setRGB(1, 1, 1);
-              else c.setRGB(0.65, 0.55, 0.45);
+          // Mixamo-hjälte-material-normalize: Mixamo→Blender→GLB exporterar ibland
+          // shaders med metalness=1 (100% metallisk = svart utan envMap eftersom
+          // diffuse contribution = 0) eller baseColor=svart (svart × texture = svart).
+          // Båda gör att modellen renderar som svart silhuett.
+          if (isMixamoHero && o.material) {
+            // Tvinga ned metalness — Mixamo-texturer är diffuse-baserade (skin,
+            // cloth, leather), aldrig 100% metalliska. Värden > 0.3 är troligen
+            // shader-importfel och ska clampas så texture/diffuse syns korrekt.
+            if ('metalness' in o.material && o.material.metalness > 0.3) {
+              o.material.metalness = 0.0;
             }
-            // Debug-log INLINE så allt syns utan att klicka. Tas bort när stabilt.
-            const mapImg = o.material.map && o.material.map.image;
-            const mapDim = mapImg ? `${mapImg.width}x${mapImg.height}` : 'none';
-            console.log(
-              `[mat] ${name}/${o.name || '?'} | type=${o.material.type} | color=#${c.getHexString()} ` +
-              `| map=${!!o.material.map} | mapImg=${mapDim} | rough=${o.material.roughness} ` +
-              `| metal=${o.material.metalness} | opacity=${o.material.opacity} | vc=${o.material.vertexColors}`
-            );
+            // BaseColor wash: om luminance < 0.15, antingen → vit (med texture)
+            // eller fallback hudfärg (utan texture).
+            if (o.material.color) {
+              const c = o.material.color;
+              const lum = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
+              if (lum < 0.15) {
+                if (o.material.map) c.setRGB(1, 1, 1);
+                else c.setRGB(0.65, 0.55, 0.45);
+              }
+            }
           }
         }
       });
