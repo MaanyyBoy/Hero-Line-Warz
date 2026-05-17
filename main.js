@@ -15866,6 +15866,19 @@ function handleNetworkMessage(msg) {
     if (msg.side === 1 || msg.side === 2) arenaState.ready[msg.side] = !!msg.value;
     return;
   }
+  // Arena map-vote (mellan join och hero-pick)
+  if (msg.t === 'a-mvote' && APP.mode === 'host' && isArenaMp()) {
+    applyArenaMapVoteMsg(msg);
+    return;
+  }
+  if (msg.t === 'a-mvstate' && APP.mode === 'client' && isArenaMp()) {
+    applyArenaMapVoteState(msg);
+    return;
+  }
+  if (msg.t === 'a-mvres' && APP.mode === 'client' && isArenaMp()) {
+    applyArenaMapVoteResolve(msg);
+    return;
+  }
   // Hero-pick i arena MP (peer-to-peer, server bypassad)
   if (msg.t === 'a-pick' && isArenaMp()) {
     if (heroPickState.active && heroPickState.mode !== 'solo') {
@@ -17664,6 +17677,200 @@ async function tryReclaimHostRoom(code) {
   }
 }
 
+// ============================================================
+// ARENA MAP-VOTE (MP-only) — visas mellan join och hero-pick. 30s timer eller
+// alla röstat → vinnande map (most votes, tie = random). Host-auth: klient
+// skickar 'a-mvote', host samlar + broadcastar 'a-mvstate', host resolverar.
+// ============================================================
+const ARENA_MAPVOTE_DURATION = 30;
+
+const arenaMapVoteState = {
+  active: false,
+  mode: null,            // 'host' | 'client'
+  timer: 0,
+  votes: {},             // { sideIdx: mapIdx }
+  finalized: false,
+  resolvedMapIdx: null,
+};
+
+const amvEl = document.getElementById('arena-mapvote');
+const amvCardEl = document.getElementById('amv-card');
+const amvTimerEl = document.getElementById('amv-timer');
+const amvCardsEl = document.getElementById('amv-cards');
+const amvStatusEl = document.getElementById('amv-status');
+
+function showArenaMapVote(mode) {
+  if (!amvEl) { showHeroPick(mode); return; }
+  setupMatch(mode);              // skapar sides + sätter APP.mode (samma som showHeroPick)
+  arenaMapVoteState.active = true;
+  arenaMapVoteState.mode = mode;
+  arenaMapVoteState.timer = ARENA_MAPVOTE_DURATION;
+  arenaMapVoteState.votes = {};
+  arenaMapVoteState.finalized = false;
+  arenaMapVoteState.resolvedMapIdx = null;
+  amvEl.classList.add('visible');
+  if (amvStatusEl) amvStatusEl.textContent = '';
+  renderArenaMapVoteCards();
+  updateArenaMapVoteUI();
+}
+
+function hideArenaMapVote() {
+  if (amvEl) amvEl.classList.remove('visible');
+  arenaMapVoteState.active = false;
+}
+
+function renderArenaMapVoteCards() {
+  if (!amvCardsEl) return;
+  amvCardsEl.innerHTML = '';
+  const myVote = arenaMapVoteState.votes[APP.localSide];
+  for (let i = 0; i < ARENA_MAPS.length; i++) {
+    const m = ARENA_MAPS[i];
+    const voteCount = Object.values(arenaMapVoteState.votes).filter(v => v === i).length;
+    const card = document.createElement('div');
+    card.className = 'amv-mapcard' + (myVote === i ? ' voted' : '');
+    card.innerHTML = `
+      <div class="amv-mvotes">${voteCount}</div>
+      <div class="amv-mname">${m.name}</div>
+      <div class="amv-mdesc">${m.desc || ''}</div>`;
+    card.addEventListener('click', () => voteForArenaMap(i));
+    amvCardsEl.appendChild(card);
+  }
+}
+
+function updateArenaMapVoteUI() {
+  if (!arenaMapVoteState.active) return;
+  if (amvTimerEl) {
+    amvTimerEl.textContent = Math.max(0, Math.ceil(arenaMapVoteState.timer));
+    amvTimerEl.classList.toggle('urgent', arenaMapVoteState.timer <= 5);
+  }
+  if (amvStatusEl) {
+    const totalPlayers = arenaSideIdxs().length;
+    const voted = Object.keys(arenaMapVoteState.votes).length;
+    amvStatusEl.textContent = `Röstat: ${voted}/${totalPlayers}`;
+  }
+}
+
+function voteForArenaMap(mapIdx) {
+  if (!arenaMapVoteState.active || arenaMapVoteState.finalized) return;
+  if (mapIdx < 0 || mapIdx >= ARENA_MAPS.length) return;
+  const myIdx = APP.localSide;
+  // Optimistic local: visa egen vote direkt
+  arenaMapVoteState.votes[myIdx] = mapIdx;
+  renderArenaMapVoteCards();
+  updateArenaMapVoteUI();
+  // Host: applicera direkt + broadcast. Klient: skicka till host.
+  if (arenaMapVoteState.mode === 'host') {
+    broadcastArenaMapVoteState();
+    checkArenaMapVoteComplete();
+  } else if (arenaMapVoteState.mode === 'client' && wsOpen()) {
+    sendGameMsg({ t: 'a-mvote', side: myIdx, mapIdx });
+  }
+}
+
+// Host: ta emot vote från klient.
+function applyArenaMapVoteMsg(msg) {
+  if (arenaMapVoteState.mode !== 'host' || arenaMapVoteState.finalized) return;
+  if (typeof msg.mapIdx !== 'number' || typeof msg.side !== 'number') return;
+  arenaMapVoteState.votes[msg.side] = msg.mapIdx;
+  renderArenaMapVoteCards();
+  updateArenaMapVoteUI();
+  broadcastArenaMapVoteState();
+  checkArenaMapVoteComplete();
+}
+
+// Klient: ta emot state från host.
+function applyArenaMapVoteState(msg) {
+  if (arenaMapVoteState.mode !== 'client') return;
+  if (msg.votes) arenaMapVoteState.votes = msg.votes;
+  if (typeof msg.timer === 'number') arenaMapVoteState.timer = msg.timer;
+  renderArenaMapVoteCards();
+  updateArenaMapVoteUI();
+}
+
+function broadcastArenaMapVoteState() {
+  if (arenaMapVoteState.mode !== 'host' || !wsOpen()) return;
+  sendGameMsg({ t: 'a-mvstate', votes: arenaMapVoteState.votes, timer: arenaMapVoteState.timer });
+}
+
+function checkArenaMapVoteComplete() {
+  if (arenaMapVoteState.mode !== 'host' || arenaMapVoteState.finalized) return;
+  const totalPlayers = arenaSideIdxs().length;
+  const voted = Object.keys(arenaMapVoteState.votes).length;
+  if (voted >= totalPlayers) resolveArenaMapVote();
+}
+
+function resolveArenaMapVote() {
+  if (arenaMapVoteState.finalized) return;
+  arenaMapVoteState.finalized = true;
+  // Tally votes per mapIdx
+  const tally = {};
+  for (const v of Object.values(arenaMapVoteState.votes)) {
+    tally[v] = (tally[v] || 0) + 1;
+  }
+  // Hitta high-vote (om inga votes alls → random map)
+  let bestIdx = 0, bestCount = -1;
+  const winners = [];
+  for (let i = 0; i < ARENA_MAPS.length; i++) {
+    const c = tally[i] || 0;
+    if (c > bestCount) { bestCount = c; winners.length = 0; winners.push(i); }
+    else if (c === bestCount) winners.push(i);
+  }
+  if (bestCount <= 0) bestIdx = Math.floor(Math.random() * ARENA_MAPS.length);
+  else bestIdx = winners[Math.floor(Math.random() * winners.length)];   // tie-break random
+  arenaMapVoteState.resolvedMapIdx = bestIdx;
+  arenaState.mapIdx = bestIdx;
+  setArenaMap(bestIdx);
+  if (typeof buildArenaScene === 'function') buildArenaScene();
+  if (amvStatusEl) amvStatusEl.textContent = `Vinnare: ${ARENA_MAPS[bestIdx].name}`;
+  // Host broadcastar resolve så klienter hoppar till hero-pick
+  if (arenaMapVoteState.mode === 'host' && wsOpen()) {
+    sendGameMsg({ t: 'a-mvres', mapIdx: bestIdx });
+  }
+  // Vänta 1.5s så spelarna ser vinnaren, sen hero-pick
+  setTimeout(() => {
+    hideArenaMapVote();
+    showHeroPickFromMapVote(arenaMapVoteState.mode);
+  }, 1500);
+}
+
+// Klient: ta emot resolve från host
+function applyArenaMapVoteResolve(msg) {
+  if (arenaMapVoteState.mode !== 'client' || arenaMapVoteState.finalized) return;
+  arenaMapVoteState.finalized = true;
+  const mapIdx = msg.mapIdx | 0;
+  arenaMapVoteState.resolvedMapIdx = mapIdx;
+  arenaState.mapIdx = mapIdx;
+  setArenaMap(mapIdx);
+  if (typeof buildArenaScene === 'function') buildArenaScene();
+  if (amvStatusEl) amvStatusEl.textContent = `Vinnare: ${ARENA_MAPS[mapIdx].name}`;
+  setTimeout(() => {
+    hideArenaMapVote();
+    showHeroPickFromMapVote(arenaMapVoteState.mode);
+  }, 1500);
+}
+
+// Övergång map-vote → hero-pick (skip setupMatch eftersom redan körts i showArenaMapVote)
+function showHeroPickFromMapVote(mode) {
+  // showHeroPick kör setupMatch igen — det är OK eftersom det är idempotent
+  // (samma sides + samma mode). Men för säkerhet, vi bara körs hero-pick-uppsättning.
+  showHeroPick(mode);
+}
+
+function tickArenaMapVote(dt) {
+  if (!arenaMapVoteState.active || arenaMapVoteState.finalized) return;
+  arenaMapVoteState.timer -= dt;
+  updateArenaMapVoteUI();
+  // Host broadcastar timer per sekund för smooth countdown på klient
+  if (arenaMapVoteState.mode === 'host') {
+    arenaMapVoteState._lastBcast = (arenaMapVoteState._lastBcast || 0) + dt;
+    if (arenaMapVoteState._lastBcast >= 1.0) {
+      arenaMapVoteState._lastBcast = 0;
+      broadcastArenaMapVoteState();
+    }
+    if (arenaMapVoteState.timer <= 0) resolveArenaMapVote();
+  }
+}
+
 function onReclaimed(code, hasClient) {
   pendingHostCode = code;
   if (lobbyCodeDisplayEl) lobbyCodeDisplayEl.textContent = code;
@@ -17680,11 +17887,14 @@ function onHosted(code) {
 
 function onPeerJoined() {
   if (APP.mode !== 'lobby') return;
+  // Arena MP: visa map-vote FÖRE hero-pick. Solo + classic + boss går direkt.
+  if (APP.gameMode === 'arena1v1') { showArenaMapVote('host'); return; }
   showHeroPick('host');
 }
 
 function onJoined(code) {
   if (APP.mode !== 'lobby') return;
+  if (APP.gameMode === 'arena1v1') { showArenaMapVote('client'); return; }
   showHeroPick('client');
 }
 
@@ -19610,6 +19820,8 @@ function tick() {
   updateKostefoMeshes(dt);
   // Arena power-up pickups — reconcileas mot arenaState.powerUps (host-auth state).
   updateArenaPowerUpMeshes(dt);
+  // Arena map-vote timer (host-auth) — tickas alltid när voting aktivt, oavsett mode.
+  tickArenaMapVote(dt);
   updateShieldAuras(now);
   checkShieldGain();
   checkHealGain();

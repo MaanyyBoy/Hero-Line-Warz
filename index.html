@@ -1963,6 +1963,108 @@
       border-color: rgba(180,255,180,0.8);
     }
 
+    /* Arena map-vote panel — visar 3 map-cards med vote-count + timer.
+       Mobile-first: stora touch-targets (≥ 44px), 3-kolumns grid på landskap
+       (auto-fill minmax), max-height med inner scroll om litet viewport. */
+    #arena-mapvote {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(800px, 95vw);
+      max-height: 96vh;
+      display: none;
+      z-index: 260;
+    }
+    #arena-mapvote.visible { display: flex; flex-direction: column; }
+    /* Inget body:not(.in-game)-guard här — map-vote visas FÖRE enterPlayPhase
+       (innan body.in-game-klassen läggs på), så guarden skulle blockera panelen. */
+    #amv-card {
+      background: linear-gradient(135deg, #1a2640, #0c1424);
+      border: 2px solid rgba(120,200,255,0.6);
+      border-radius: 14px;
+      padding: 14px 18px;
+      box-shadow: 0 12px 36px rgba(0,0,0,0.75);
+      color: #fff;
+      font: 13px/1.4 system-ui, sans-serif;
+      max-height: 96vh;
+      overflow-y: auto;
+    }
+    #amv-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(120,200,255,0.3);
+    }
+    #amv-title { font: 800 20px/1.1 system-ui, sans-serif; color: #88ddff; letter-spacing: 0.6px; }
+    #amv-sub { font: 500 12px/1.2 system-ui, sans-serif; opacity: 0.72; margin-top: 3px; }
+    #amv-timer {
+      font: 800 26px/1 ui-monospace, monospace;
+      color: #88ddff;
+      background: rgba(0,0,0,0.45);
+      border: 2px solid rgba(120,200,255,0.55);
+      border-radius: 10px;
+      padding: 6px 14px;
+      min-width: 56px;
+      text-align: center;
+    }
+    #amv-timer.urgent {
+      color: #ff7755;
+      border-color: rgba(255,119,85,0.7);
+      animation: amv-pulse 0.7s ease-in-out infinite;
+    }
+    @keyframes amv-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+    #amv-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .amv-mapcard {
+      background: rgba(15,30,50,0.7);
+      border: 2px solid rgba(160,190,230,0.4);
+      border-radius: 10px;
+      padding: 12px;
+      cursor: pointer;
+      transition: transform 0.1s, border-color 0.12s, background 0.12s;
+      text-align: left;
+      min-height: 110px;
+      position: relative;
+    }
+    .amv-mapcard:hover { border-color: rgba(180,210,255,0.85); transform: translateY(-2px); }
+    .amv-mapcard:active { transform: scale(0.97); }
+    .amv-mapcard.voted {
+      background: linear-gradient(135deg, rgba(80,160,200,0.55), rgba(60,120,160,0.45));
+      border-color: #88ddff;
+      box-shadow: 0 0 12px rgba(136,221,255,0.4);
+    }
+    .amv-mapcard .amv-mname {
+      font: 700 16px/1.15 system-ui, sans-serif;
+      color: #ffd34a;
+      margin-bottom: 4px;
+    }
+    .amv-mapcard.voted .amv-mname { color: #aaffff; }
+    .amv-mapcard .amv-mdesc {
+      font: 400 12px/1.4 system-ui, sans-serif;
+      opacity: 0.85;
+      margin-bottom: 8px;
+    }
+    .amv-mapcard .amv-mvotes {
+      position: absolute;
+      top: 8px; right: 10px;
+      background: rgba(0,0,0,0.55);
+      color: #88ddff;
+      font: 700 13px/1 ui-monospace, monospace;
+      padding: 4px 9px;
+      border-radius: 12px;
+      border: 1px solid rgba(120,200,255,0.5);
+    }
+    #amv-status {
+      font: 600 12px/1.3 system-ui, sans-serif;
+      color: rgba(180,210,255,0.85);
+      text-align: center;
+      padding: 6px 0;
+    }
+
     /* Arena item-detail-modal — liten ruta över prep-panelen.
        Visar item-namn, stats-tabell, active-effekt + Buy/Close-knappar. */
     #ap-item-modal {
@@ -2687,6 +2789,24 @@
       <span id="arena-score-1" class="ascore">0</span>
       <span class="asep">–</span>
       <span id="arena-score-2" class="ascore">0</span>
+    </div>
+  </div>
+
+  <!-- Arena map-vote: spelarna röstar på vilken map som ska spelas (30s timer
+       eller tills alla röstat). Visas i Arena MP mellan join och hero-pick.
+       Inget class="hidden" — #arena-mapvote startas dold via display: none,
+       blir synlig via .visible-klass i showArenaMapVote(). -->
+  <div id="arena-mapvote">
+    <div id="amv-card">
+      <div id="amv-header">
+        <div>
+          <div id="amv-title">Välj karta</div>
+          <div id="amv-sub">Rösta på map — högst röster vinner</div>
+        </div>
+        <div id="amv-timer">30</div>
+      </div>
+      <div id="amv-cards"></div>
+      <div id="amv-status"></div>
     </div>
   </div>
 
