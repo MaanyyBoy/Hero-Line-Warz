@@ -15578,6 +15578,15 @@ function readLocalJoystick() {
 // ============================================================
 
 let lastInputJoy = { x: 0, z: 0 };
+// Senaste input som faktiskt skickats (för dedupe). Skiljd från lastInputJoy som
+// uppdateras innan dedupe-check i flushClientInput. Vi vill bara sända om
+// nya värden skiljer sig från SENAST SKICKADE — annars 60 redundant packets/sek
+// när spelaren står still. Sparar bandbredd + server-CPU.
+let lastSentJoy = { x: 0, z: 0 };
+// Bandbredds-tröskel: om WS-bufferten är fylld (mobil-nätverk-glitch, TCP-stockning)
+// skippa input-frames istället för att stacka upp. Input är aldrig kritisk — server
+// använder senast mottagna joystick som "håll riktningen" tills nästa kommer.
+const WS_INPUT_BACKPRESSURE_LIMIT = 32 * 1024;
 // Network rates: med klient-interpolation (smoothEntityMeshes lerpar mesh.position
 // mot _target varje frame vid 60 fps, 80 ms halflife) ger 30 Hz broadcasts samma
 // visuella smoothness som 45 Hz — men halva CPU + nätverk-pressen, vilket sänker
@@ -15610,6 +15619,8 @@ function flushClientInput() {
     sendGameMsg({ t: 'in', j: { x: dir.x, z: dir.z }, ev: evs });
   }
   lastInputJoy = dir;
+  lastSentJoy.x = dir.x;
+  lastSentJoy.z = dir.z;
 }
 
 function maybeSendClientInput(now) {
@@ -15622,6 +15633,28 @@ function maybeSendClientInput(now) {
   // stod still i state, host upplevde lag/icke-fri rörelse. Decision 019 säger
   // explicit "Båda klienter blir tunna i MP (skickar inputs, renderar state)".
   if (now - APP.lastInputSent < INPUT_SEND_INTERVAL && APP.pendingEvents.length === 0) return;
+  // Backpressure: om WS-bufferten är fylld (mobil-nätverk-stockning), skippa
+  // frame — server faller tillbaka på senast mottagna joystick tills bufferten
+  // töms. Förhindrar exponentiell input-lag-spiral över laggig anslutning.
+  if (APP.pendingEvents.length === 0 && APP.ws.bufferedAmount > WS_INPUT_BACKPRESSURE_LIMIT) return;
+  // Dedupe: om joystick-input är identisk med SENAST SKICKADE och inga events,
+  // skippa packet. Server har redan vår joystick — att repeta det 60 ggr/sek
+  // när man står still är ren overhead. Events tvingar alltid send (de är
+  // diskreta händelser och måste levereras). Tolerans 0.005 ≈ ~halft pixel-värde
+  // efter joystick-deadzone (0.05) — säkerställer att riktigt små skakningar
+  // i thumbstick inte fyller nätverket men verkliga rörelse-ändringar går igenom.
+  if (APP.pendingEvents.length === 0) {
+    const raw = readLocalJoystick();
+    const dir = screenToWorld(raw.x, raw.z);
+    const dx = dir.x - lastSentJoy.x;
+    const dz = dir.z - lastSentJoy.z;
+    if (dx * dx + dz * dz < 0.005 * 0.005) {
+      // Ingen rörelse-ändring — uppdatera ändå "lastInputSent" så vi inte
+      // gör samma jobb varje frame, men skippa själva send.
+      APP.lastInputSent = now;
+      return;
+    }
+  }
   APP.lastInputSent = now;
   flushClientInput();
 }
@@ -15683,6 +15716,9 @@ function broadcastBossWarsState() {
   // Defensiv: vänta tills sides[1] + boss faktiskt finns. Skyddar mot
   // edge-case där tick() fyrar mellan matchActive=true och enterPlayPhase().
   if (!sides[1] || !sides[1].monsters || !sides[1].bossWarsBossId) return;
+  // Backpressure-skip: 3-peer co-op = 2 mottagare per state. Om server-side
+  // relay-bufferten stockas, skippa frame istället för att amplifiera stockningen.
+  if (APP.ws.bufferedAmount > 96 * 1024) return;
   const snap = buildBossWarsSnap();
   sendGameMsg({
     t: 'b-state',
@@ -16163,6 +16199,11 @@ function applyHeroSnap(side, snap) {
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
+  // Backpressure-skip: om WS-bufferten redan har > 96 KB obesvarade frames,
+  // skippa state istället för att stacka upp. State är redundant (nästa snap
+  // 33ms senare är färskare). Förhindrar exponentiell latens-spiral när
+  // mobil-nätverket har en spik. 96KB > 32KB input-tröskeln så input prioriteras.
+  if (APP.ws.bufferedAmount > 96 * 1024) return;
   sendGameMsg({
     t: 'a-state',
     ph: arenaState.phase,

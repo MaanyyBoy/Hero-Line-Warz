@@ -23,13 +23,25 @@ const server = http.createServer((req, res) => {
   res.end(`Spel server running. Rooms: ${rooms.size}`);
 });
 
+// TCP_NODELAY på alla inkommande sockets — disable Nagle's algorithm. Utan
+// detta buntar OS-kärnan små paket (60Hz input ~50 byte, pong, små state-deltas)
+// i upp till ~40-200ms innan send → upplevs som input-lag i MP. Med setNoDelay
+// skickas varje paket direkt → snappast möjlig svarstid över WebSocket.
+// 'connection'-eventet emit:as INNAN socket upgradas till WS, vilket är när
+// vi vill sätta TCP-flaggor. Påverkar både HTTP- och WS-trafik.
+server.on('connection', (socket) => {
+  try { socket.setNoDelay(true); } catch (_) {}
+});
+
 // WebSocket compression (permessage-deflate). Reducerar text-JSON-payload med
 // 60-80% — på 10-15 KB game-state-snap blir det 3-5 KB över wire. Stort
 // bandbredds-spar för mobile + WiFi som kan stappla på bursts.
 // threshold:256 = skippa compression för små messages (input/ping).
 // level:1 = snabbaste zlib-compression (~1ms CPU, near-default ratio).
+// maxPayload:256KB = DoS-skydd; spel-state är aldrig nära det.
 const wss = new WebSocketServer({
   server,
+  maxPayload: 256 * 1024,
   perMessageDeflate: {
     zlibDeflateOptions: { level: 1, memLevel: 7 },
     zlibInflateOptions: { chunkSize: 10 * 1024 },
@@ -110,10 +122,15 @@ function gameLoopTick(room) {
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
       const payload = JSON.stringify({ t: 'msg', d: stateMsg });
-      if (room.host && room.host.readyState === 1) {
+      // Backpressure-skip: om peer-socket har > 64 KB buffrad (TCP-stockning,
+      // långsam klient, mobil-nätverk-spik), skippa frame istället för att stacka
+      // upp. State är redundant — nästa snap (33ms senare) är redan färskare.
+      // Att skicka mer på en stockad socket ger bara exponentiell latens-spiral.
+      const BACKPRESSURE_LIMIT = 64 * 1024;
+      if (room.host && room.host.readyState === 1 && room.host.bufferedAmount < BACKPRESSURE_LIMIT) {
         try { room.host.send(payload); } catch (_) {}
       }
-      if (room.client && room.client.readyState === 1) {
+      if (room.client && room.client.readyState === 1 && room.client.bufferedAmount < BACKPRESSURE_LIMIT) {
         try { room.client.send(payload); } catch (_) {}
       }
     } catch (e) {
@@ -150,6 +167,23 @@ function handleGameInput(room, ws, payload) {
   }
 }
 
+// Backpressure-tröskel: om mottagar-socketens skicka-buffert är fylld (TCP-stockning,
+// långsam mobil), skippa redundanta state-frames istället för att stacka upp.
+// Input/pick/ready är kritiska och skickas alltid. State är redundant —
+// nästa snap kommer 33-50ms senare och är färskare.
+const RELAY_STATE_BACKPRESSURE_LIMIT = 96 * 1024;
+
+function isStateMsgType(t) {
+  // Frames som är säkra att skippa under backpressure (redundant snapshot-data).
+  return t === 'a-state' || t === 'b-state';
+}
+
+function relayPeerSend(peer, envelope, isState) {
+  if (!peer || peer.readyState !== 1) return;
+  if (isState && peer.bufferedAmount > RELAY_STATE_BACKPRESSURE_LIMIT) return;
+  send(peer, envelope);
+}
+
 // Arena MP är peer-to-peer (host simulerar lokalt). Servern relayar
 // arena-meddelanden mellan peers; den klassiska engine tickar fortfarande
 // men ignoreras av klienterna när APP.gameMode === 'arena1v1'.
@@ -157,7 +191,8 @@ function relayArenaMessage(room, fromWs, envelope) {
   // Spoof-skydd: bara host får broadcasta auktoritativ state.
   if (envelope.d && envelope.d.t === 'a-state' && fromWs !== room.host) return;
   const peer = (fromWs === room.host) ? room.client : room.host;
-  if (peer) send(peer, envelope);
+  const isState = isStateMsgType(envelope.d && envelope.d.t);
+  relayPeerSend(peer, envelope, isState);
 }
 
 // Boss Wars MP relay (3-peer). Host broadcastar state till alla; klienter
@@ -172,10 +207,11 @@ function relayBossWarsMessage(room, fromWs, envelope) {
     if (room.host && fromWs !== room.host) send(room.host, envelope);
     return;
   }
+  const isState = isStateMsgType(envelope.d && envelope.d.t);
   // Annars broadcast till alla peers utom avsändaren
-  if (room.host && fromWs !== room.host) send(room.host, envelope);
-  if (room.client && fromWs !== room.client) send(room.client, envelope);
-  for (const c of room.clients) if (c !== fromWs) send(c, envelope);
+  if (room.host && fromWs !== room.host) relayPeerSend(room.host, envelope, isState);
+  if (room.client && fromWs !== room.client) relayPeerSend(room.client, envelope, isState);
+  for (const c of room.clients) if (c !== fromWs) relayPeerSend(c, envelope, isState);
 }
 
 wss.on('connection', (ws) => {
