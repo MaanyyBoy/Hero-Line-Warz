@@ -14780,16 +14780,6 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
   if (!isGimluE && side.skills[key].cd > 0) return;
-  // Optimistic lokal cd: sätt cd till max direkt så användaren ser knappen
-  // gå på cooldown utan ~150 ms broadcast-fördröjning. Förhindrar också att
-  // click-spam genererar dropped duplicate-events (host hade redan satt cd
-  // på första). Sticky-stash i _localCastAt så applyHeroSnap inte snap:ar
-  // tillbaka till 0 under första ~500 ms efter klick (innan host-broadcast
-  // bekräftar).
-  if (!isGimluE) {
-    side.skills[key].cd = side.skills[key].max || 1;
-    side.skills[key]._localCastAt = performance.now();
-  }
   // Trigga visuell skill-effekt direkt på klient (instant feedback).
   // Gäller alla MP-lägen (classic line wars, arena, boss wars) eftersom servern
   // / hosten inte skickar dedikerade fx-events — klienten måste själv spawna
@@ -14807,7 +14797,21 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     if (key === 'q') spawnClientLocalVineTrap(side, worldDx, worldDz, tap, mag);
     else if (key === 'e') spawnClientLocalDash(side, worldDx, worldDz);
   }
+  // sendOrApplyEvent FÖRE optimistic CD-set. För Arena/Solo-host kör detta
+  // applyEvent SYNKRONT → hostCastX sätter CD med korrekt CDR-modifier. Om vi
+  // optimistic-satte CD INNAN, hostCastX bail:ade på `cd > 0` och ALLA skills
+  // (Wind Puff, Frost Nova, Black Hole etc) verkade broken: CD gick på, inget
+  // visual, ingen damage. Klassisk skill-pipeline-pitfall #1 (CD desync).
   sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
+  // Optimistic CD-set EFTER: om hostCastX redan satt CD synkront (Arena/Solo
+  // host), skip. För klient (ws-send) eller om hostCast bail:ade av annan
+  // anledning, sätt optimistic så UI känns responsiv. Sticky-stash i
+  // _localCastAt så applyHeroSnap inte snap:ar tillbaka till 0 under första
+  // ~500 ms efter klick (innan host-broadcast bekräftar).
+  if (!isGimluE && side.skills[key].cd === 0) {
+    side.skills[key].cd = side.skills[key].max || 1;
+    side.skills[key]._localCastAt = performance.now();
+  }
 }
 
 // ============================================================
