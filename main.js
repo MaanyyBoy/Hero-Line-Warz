@@ -9864,27 +9864,29 @@ function applyEvent(side, ev) {
       // från förra cast skulle göra ult-tickar bidra som "samma skill")
       side._currentSkillKey = 'r';
     }
-    // Kostefo: server-auth skill-cast i line wars. Klient skickar event till server
-    // via sendOrApplyEvent (icke-solo) och server sätter all state via snap.
-    // I solo/arena spawnas inga lokala fx — skills bail:ar tyst. Skill-CD sätts
-    // optimistic i castLocalSkill så UI inte hänger.
-    if (isKostefo) return;
+    // Kostefo: i Arena/Solo körs klient-side hostCastKostefo*-funktioner.
+    // I classic-MP är server auktoritativ — events skickas till server och
+    // simulering körs där. Detect classic-MP via isClassicMpForKostefo nedan.
     if (ev.key === 'r') {
-      hostCastUlt(side, dx, dz);
+      if (isKostefo) hostCastKostefoJointAvengers(side);
+      else hostCastUlt(side, dx, dz);
     } else if (ev.key === 'q') {
       if (isLegolus) hostCastLegolusVineTrap(side, ev);
       else if (isGimlu) hostCastGimluTaunt(side);
       else if (isAragurn) hostCastAragurnWhirlwind(side);
+      else if (isKostefo) hostCastKostefoJointAttack(side, ev);
       else hostCastWindPuff(side, ev);   // Magiker Q = Wind Puff (matchar server)
     } else if (ev.key === 'f') {
       if (isLegolus) hostCastLegolusBuff(side);
       else if (isGimlu) hostCastGimluIronWill(side);
       else if (isAragurn) hostCastAragurnShout(side, dx, dz);
+      else if (isKostefo) hostCastKostefoJointSlider(side, ev);
       else hostCastFrostnova(side, ev);
     } else if (ev.key === 'e') {
       if (isLegolus) hostCastLegolusDash(side, ev);
       else if (isGimlu) hostCastGimluHammer(side, dx, dz);
       else if (isAragurn) hostCastAragurnLeap(side, ev);
+      else if (isKostefo) hostCastKostefoCannabisCloud(side);
       else hostCastBlink(side, ev);
     }
     return;
@@ -12923,6 +12925,305 @@ function makeKostefoCompanionMesh() {
   grp.userData.companionMesh = true;
   grp.userData.companionJoint = joint;
   return grp;
+}
+
+// ============================================================
+// KOSTEFO KLIENT-SIDE SKILL-CAST + TICKS (arena/solo). Mirror av server-side
+// castKostefoX + tickKostefoX i game-engine.js. Body är förenklad — direkt
+// damage på opp.hero + side.monsters + opp.playerCreeps utan shatter/poison.
+// ============================================================
+
+const _K_GOOSEWAVE_DURATION = 3.0;
+const _K_GOOSEWAVE_TICK = 0.5;
+const _K_GOOSEWAVE_DMG_PCT = 0.05;
+const _K_GOOSEWAVE_WIDTH = 3.6;
+const _K_GOOSEWAVE_LENGTH = 6.5;
+const _K_GOOSEWAVE_OFFSET = 4.0;
+const _K_GOOSEWAVE_CD = 8.0;
+const _K_SLIDER_RANGE = 6.0;
+const _K_SLIDER_SPEED = 7.0;
+const _K_SLIDER_RADIUS = 0.55;
+const _K_SLIDER_DIRECT_PCT = 0.15;
+const _K_SLIDER_DOT_DUR = 2.0;
+const _K_SLIDER_DOT_PER_SEC = 0.15;
+const _K_SLIDER_SLOW_DUR = 2.0;
+const _K_SLIDER_SLOW_MUL = 0.70;
+const _K_SLIDER_EXPLOSION_R = 2.5;
+const _K_SLIDER_CD = 7.0;
+const _K_CLOUD_DURATION = 4.0;
+const _K_CLOUD_RADIUS = 5.0;
+const _K_CLOUD_STUN_DUR = 1.0;
+const _K_CLOUD_TICK = 0.5;
+const _K_CLOUD_DMG_PCT = 0.05;
+const _K_CLOUD_HEAL_PCT = 0.25;
+const _K_CLOUD_MS_BONUS = 0.20;
+const _K_CLOUD_AS_BONUS = 0.20;
+const _K_CLOUD_CD = 12.0;
+const _K_ULT_DURATION = 5.0;
+const _K_ULT_JOINT_COUNT = 8;
+const _K_ULT_DMG_RATIO = 0.10;
+const _K_ULT_LIFESTEAL = 0.50;
+const _K_ULT_ORBIT_SPEED = 1.8;
+const _K_COMPANION_DMG_RATIO = 0.25;
+const _K_COMPANION_AA_INTERVAL = 0.9;
+const _K_COMPANION_FOLLOW_DIST = 1.6;
+
+// Q: Joint Attack — stationär gås-wave-zon framför hero (kastas 4m fram).
+function hostCastKostefoJointAttack(side, ev) {
+  if (side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max || _K_GOOSEWAVE_CD;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  const fwd = _K_GOOSEWAVE_OFFSET + _K_GOOSEWAVE_LENGTH / 2;
+  side.kostefoGooseWaves = side.kostefoGooseWaves || [];
+  side.kostefoGooseWaves.push({
+    id: (side._kostefoNextId = (side._kostefoNextId || 1) + 1),
+    x: side.hero.x + dx * fwd,
+    z: side.hero.z + dz * fwd,
+    dx, dz,
+    width: _K_GOOSEWAVE_WIDTH,
+    length: _K_GOOSEWAVE_LENGTH,
+    remaining: _K_GOOSEWAVE_DURATION,
+    duration: _K_GOOSEWAVE_DURATION,
+    tickAccum: 0,
+  });
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66dd55, 1.6);
+}
+
+// F: Joint Slider — piercing projectile, 6m, exploderar vid slut.
+function hostCastKostefoJointSlider(side, ev) {
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max || _K_SLIDER_CD;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
+  else { dx /= len; dz /= len; }
+  side.kostefoSliders = side.kostefoSliders || [];
+  side.kostefoSliders.push({
+    id: (side._kostefoNextId = (side._kostefoNextId || 1) + 1),
+    x: side.hero.x, z: side.hero.z,
+    dx, dz,
+    traveled: 0,
+    maxRange: _K_SLIDER_RANGE,
+    hitMon: [], hitCreep: [], hitOppHero: false,
+  });
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddaa44, 1.2);
+}
+
+// E: Cannabis Cloud — stationär dim-area vid cast-pos. Heal 25% maxHP direct,
+// stun + dmg-tick inom radie, +20% MS/AS medan inom moln.
+function hostCastKostefoCannabisCloud(side) {
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max || _K_CLOUD_CD;
+  side.kostefoCloudRemaining = _K_CLOUD_DURATION;
+  side.kostefoCloudTickAccum = 0;
+  side.kostefoCloudX = side.hero.x;
+  side.kostefoCloudZ = side.hero.z;
+  side.kostefoInCloud = true;
+  side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * _K_CLOUD_HEAL_PCT);
+  // Initial stun på fiender inom radie
+  const opp = arenaPrimaryOpp(side);
+  const r2 = _K_CLOUD_RADIUS * _K_CLOUD_RADIUS;
+  if (opp && !opp.hero.dead) {
+    const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, _K_CLOUD_STUN_DUR);
+    }
+  }
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xeeeeee, 2.0);
+}
+
+// R (Ult): Joint Avengers — 8 orbit-joints i 5s. AA-kopia mot Kostefos target.
+function hostCastKostefoJointAvengers(side) {
+  if (side.hero.dead) return;
+  if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
+  if ((side._ultLockoutTime || 0) > 0) return;
+  side.ultEnergy = 0;
+  side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
+  side.kostefoUltRemaining = _K_ULT_DURATION;
+  side.kostefoUltJoints = [];
+  for (let i = 0; i < _K_ULT_JOINT_COUNT; i++) {
+    side.kostefoUltJoints.push({
+      angle: (i / _K_ULT_JOINT_COUNT) * Math.PI * 2,
+      attackCd: i * (_K_COMPANION_AA_INTERVAL / _K_ULT_JOINT_COUNT),
+    });
+  }
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 2.5);
+}
+
+// Hjälpare: applicera dmg på opp.hero (arena) — använder damageHero som
+// hanterar shield + opp-side-side-effects.
+function _kostefoDamageOppHero(side, opp, dmg) {
+  if (!opp || opp.hero.dead) return 0;
+  const dealt = Math.min(opp.hero.hp, dmg);
+  damageHero(opp, dmg);
+  return dealt;
+}
+
+// Tick Joint Attack-zoner: 0.5s damage-ticks inom rektangel.
+function tickClientKostefoGooseWaves(side, dt) {
+  if (!side.kostefoGooseWaves || side.kostefoGooseWaves.length === 0) return;
+  const opp = arenaPrimaryOpp(side);
+  const skillMul = side.skillDmgMul || 1;
+  for (let i = side.kostefoGooseWaves.length - 1; i >= 0; i--) {
+    const w = side.kostefoGooseWaves[i];
+    w.remaining -= dt;
+    w.tickAccum += dt;
+    while (w.tickAccum >= _K_GOOSEWAVE_TICK && w.remaining > -_K_GOOSEWAVE_TICK) {
+      w.tickAccum -= _K_GOOSEWAVE_TICK;
+      const halfW = w.width / 2, halfL = w.length / 2;
+      // Hit-test för opp.hero (rektangel-projektion)
+      if (opp && !opp.hero.dead) {
+        const rx = opp.hero.x - w.x, rz = opp.hero.z - w.z;
+        const along = rx * w.dx + rz * w.dz;
+        const aside = rx * (-w.dz) + rz * w.dx;
+        if (Math.abs(along) <= halfL && Math.abs(aside) <= halfW) {
+          _kostefoDamageOppHero(side, opp, opp.hero.maxHp * _K_GOOSEWAVE_DMG_PCT * skillMul);
+        }
+      }
+    }
+    if (w.remaining <= 0) side.kostefoGooseWaves.splice(i, 1);
+  }
+}
+
+// Tick Joint Sliders: rör projektil, hit-detect på opp + monster + creep,
+// explosion + DoT + slow vid maxRange. Tickar även opp.hero.dotRemaining (slow-
+// dot från slider-explosion) eftersom inget annat klient-tick gör det för hero.
+function tickClientKostefoSliders(side, dt) {
+  const opp = arenaPrimaryOpp(side);
+  // DoT-tick på opp-hero (slider-explosion satte opp.hero.dotRemaining/dotPerSec)
+  if (opp && !opp.hero.dead && (opp.hero.dotRemaining || 0) > 0) {
+    opp.hero.dotRemaining -= dt;
+    damageHero(opp, (opp.hero.dotPerSec || 0) * dt);
+    if (opp.hero.dotRemaining <= 0) { opp.hero.dotRemaining = 0; opp.hero.dotPerSec = 0; }
+  }
+  if (!side.kostefoSliders || side.kostefoSliders.length === 0) return;
+  const skillMul = side.skillDmgMul || 1;
+  const hitR2 = _K_SLIDER_RADIUS * _K_SLIDER_RADIUS;
+  for (let i = side.kostefoSliders.length - 1; i >= 0; i--) {
+    const s = side.kostefoSliders[i];
+    const step = _K_SLIDER_SPEED * dt;
+    s.x += s.dx * step;
+    s.z += s.dz * step;
+    s.traveled += step;
+    // Pierce opp-hero
+    if (opp && !opp.hero.dead && !s.hitOppHero) {
+      const rdx = opp.hero.x - s.x, rdz = opp.hero.z - s.z;
+      if (rdx * rdx + rdz * rdz < hitR2) {
+        s.hitOppHero = true;
+        _kostefoDamageOppHero(side, opp, opp.hero.maxHp * _K_SLIDER_DIRECT_PCT * skillMul);
+      }
+    }
+    if (s.traveled >= s.maxRange) {
+      // Explosion: slow + DoT + AoE
+      const r2 = _K_SLIDER_EXPLOSION_R * _K_SLIDER_EXPLOSION_R;
+      if (opp && !opp.hero.dead) {
+        const ddx = opp.hero.x - s.x, ddz = opp.hero.z - s.z;
+        if (ddx * ddx + ddz * ddz < r2) {
+          _kostefoDamageOppHero(side, opp, opp.hero.maxHp * _K_SLIDER_DIRECT_PCT * skillMul);
+          if (!opp.hero.dead) {
+            opp.heroSlowTime = _K_SLIDER_SLOW_DUR;
+            opp.heroSlowMul = _K_SLIDER_SLOW_MUL;
+            opp.hero.dotRemaining = _K_SLIDER_DOT_DUR;
+            opp.hero.dotPerSec = opp.hero.maxHp * _K_SLIDER_DOT_PER_SEC;
+          }
+        }
+      }
+      spawnSkillCastFx(s.x, s.z, 0xff5511, 2.2);
+      triggerCameraShake(0.15, 0.2);
+      side.kostefoSliders.splice(i, 1);
+    }
+  }
+}
+
+// Tick Cannabis Cloud: stationär dim, dmg-tick, recompute inCloud.
+function tickClientKostefoCloud(side, dt) {
+  if ((side.kostefoCloudRemaining || 0) <= 0) { side.kostefoInCloud = false; return; }
+  side.kostefoCloudRemaining -= dt;
+  side.kostefoCloudTickAccum = (side.kostefoCloudTickAccum || 0) + dt;
+  const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
+  const r2 = _K_CLOUD_RADIUS * _K_CLOUD_RADIUS;
+  const hddx = side.hero.x - cx, hddz = side.hero.z - cz;
+  side.kostefoInCloud = !side.hero.dead && (hddx * hddx + hddz * hddz < r2);
+  if (side.kostefoCloudRemaining <= 0) side.kostefoInCloud = false;
+  const opp = arenaPrimaryOpp(side);
+  while (side.kostefoCloudTickAccum >= _K_CLOUD_TICK && side.kostefoCloudRemaining > -_K_CLOUD_TICK) {
+    side.kostefoCloudTickAccum -= _K_CLOUD_TICK;
+    if (opp && !opp.hero.dead) {
+      const ddx = opp.hero.x - cx, ddz = opp.hero.z - cz;
+      if (ddx * ddx + ddz * ddz < r2) {
+        _kostefoDamageOppHero(side, opp, opp.hero.hp * _K_CLOUD_DMG_PCT * (side.skillDmgMul || 1));
+      }
+    }
+  }
+}
+
+// Tick Joint Avengers — 8 joints orbit + AA mot Kostefos AA-target.
+function tickClientKostefoUltJoints(side, dt) {
+  if ((side.kostefoUltRemaining || 0) <= 0) return;
+  side.kostefoUltRemaining -= dt;
+  if (!side.kostefoUltJoints) return;
+  const opp = arenaPrimaryOpp(side);
+  const heroIsAttacking = side.aaActive && !side.hero.dead && opp && !opp.hero.dead;
+  for (const j of side.kostefoUltJoints) {
+    j.angle += _K_ULT_ORBIT_SPEED * dt;
+    j.attackCd = Math.max(0, (j.attackCd || 0) - dt);
+    if (j.attackCd > 0) continue;
+    if (!heroIsAttacking) continue;
+    const dmg = side.attackDmg * _K_ULT_DMG_RATIO;
+    const dealt = _kostefoDamageOppHero(side, opp, dmg);
+    if (dealt > 0 && !side.hero.dead) {
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * _K_ULT_LIFESTEAL);
+    }
+    j.attackCd = _K_COMPANION_AA_INTERVAL;
+  }
+  if (side.kostefoUltRemaining <= 0) {
+    side.kostefoUltRemaining = 0;
+    side.kostefoUltJoints = [];
+  }
+}
+
+// Smoke Companion (passive): följer Kostefo + AA-kopia 25% dmg + 100% heal.
+function tickClientKostefoCompanion(side, dt) {
+  if (side.heroId !== 'kostefo' || side.hero.dead) {
+    side.kostefoCompanion = null;
+    return;
+  }
+  if (!side.kostefoCompanion) {
+    side.kostefoCompanion = {
+      x: side.hero.x - _K_COMPANION_FOLLOW_DIST,
+      z: side.hero.z, ry: 0, attackCd: 0,
+    };
+  }
+  const comp = side.kostefoCompanion;
+  const tx = side.hero.x - side.hero.facingX * _K_COMPANION_FOLLOW_DIST;
+  const tz = side.hero.z - side.hero.facingZ * _K_COMPANION_FOLLOW_DIST;
+  const lerpK = 1 - Math.pow(0.5, dt / 0.10);
+  comp.x += (tx - comp.x) * lerpK;
+  comp.z += (tz - comp.z) * lerpK;
+  comp.ry = Math.atan2(side.hero.facingX, side.hero.facingZ);
+  comp.attackCd = Math.max(0, comp.attackCd - dt);
+  if (comp.attackCd > 0) return;
+  const opp = arenaPrimaryOpp(side);
+  if (!opp || opp.hero.dead || !side.aaActive) return;
+  const dmg = side.attackDmg * _K_COMPANION_DMG_RATIO;
+  const dealt = _kostefoDamageOppHero(side, opp, dmg);
+  if (dealt > 0 && !side.hero.dead) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt);
+  }
+  comp.attackCd = _K_COMPANION_AA_INTERVAL;
+}
+
+// Samlad Kostefo client-side tick — anropas en gång per side per frame.
+function tickClientKostefoSkills(side, dt) {
+  if (side.heroId !== 'kostefo') return;
+  tickClientKostefoGooseWaves(side, dt);
+  tickClientKostefoSliders(side, dt);
+  tickClientKostefoCloud(side, dt);
+  tickClientKostefoUltJoints(side, dt);
+  tickClientKostefoCompanion(side, dt);
 }
 
 // Per-side tracking av Kostefo-meshes som följer hero-state (companion, cloud,
@@ -18023,6 +18324,7 @@ function simulateAll(dt) {
     // dessa client-side ticks är no-op då (state.legolusInvisRemaining nollställs av snap).
     tickClientLegolusInvis(side, dt);
     tickClientThornPools(side, dt);
+    tickClientKostefoSkills(side, dt);
     if (!isArena) tickIncome(side, dt);
   }
   if (!isArena) checkMatchEnd();
