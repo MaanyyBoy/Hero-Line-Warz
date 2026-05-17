@@ -7805,8 +7805,28 @@ function hostCastWindPuff(side, ev) {
     onGandulfSkillHit(side, opp.hero);
     damageHero(opp, dmg);
     if (!opp.hero.dead) {
-      opp.hero.x += dirX * WIND_PUFF_PUSH_DIST;
-      opp.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
+      // Push opp 3m i cone-riktning. Walkability-clamp: stoppa vid första wall
+      // (annars kan opp klippa in i cover-prop). Sätt mesh.position SYNKRONT
+      // så push syns direkt på host's klient (mesh syncas annars bara via
+      // applyMovement som bail:ar tidigt om opp inte rör joystick).
+      const fromX = opp.hero.x, fromZ = opp.hero.z;
+      // Stega 0.5m åt gången tills wall eller full distance (3m totalt)
+      const steps = 6;
+      let pushX = fromX, pushZ = fromZ;
+      for (let s = 1; s <= steps; s++) {
+        const tx = fromX + dirX * WIND_PUFF_PUSH_DIST * (s / steps);
+        const tz = fromZ + dirZ * WIND_PUFF_PUSH_DIST * (s / steps);
+        if (typeof isHeroWalkable === 'function' && !isHeroWalkable(opp.idx, tx, tz)) break;
+        pushX = tx; pushZ = tz;
+      }
+      opp.hero.x = pushX;
+      opp.hero.z = pushZ;
+      if (opp.mesh) {
+        opp.mesh.position.x = pushX;
+        opp.mesh.position.z = pushZ;
+        // Rensa _target så smoothEntityMeshes inte lerpar tillbaka till stale pos
+        if (opp.mesh._target) { opp.mesh._target.x = pushX; opp.mesh._target.z = pushZ; }
+      }
       opp.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
       opp.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
     }
