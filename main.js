@@ -150,18 +150,30 @@ async function preloadAllAssets() {
             o.material.map.magFilter = THREE.NearestFilter;
           }
           // Mixamo-hjälte-material-normalize: Mixamo→Blender→GLB exporterar ibland
-          // shaders med metalness=1 (100% metallisk = svart utan envMap eftersom
-          // diffuse contribution = 0) eller baseColor=svart (svart × texture = svart).
-          // Båda gör att modellen renderar som svart silhuett.
+          // shaders med fel värden (metalness=1, vertexColors=true, transparent=true,
+          // baseColor=svart). Alla gör att modellen renderar som svart eller osynlig.
+          // Tvinga sane PBR-värden för alla Mixamo-meshes.
           if (isMixamoHero && o.material) {
-            // Tvinga ned metalness — Mixamo-texturer är diffuse-baserade (skin,
-            // cloth, leather), aldrig 100% metalliska. Värden > 0.3 är troligen
-            // shader-importfel och ska clampas så texture/diffuse syns korrekt.
+            // Metalness > 0.3 → 0. Mixamo-textures är diffuse-baserade (skin, cloth,
+            // leather, painted metal). 100% metallisk = svart utan envMap.
             if ('metalness' in o.material && o.material.metalness > 0.3) {
               o.material.metalness = 0.0;
             }
-            // BaseColor wash: om luminance < 0.15, antingen → vit (med texture)
-            // eller fallback hudfärg (utan texture).
+            // Roughness clamp: < 0.4 ger spegellika reflektioner (helt svart utan
+            // envMap), > 0.95 dödar all spekulär respons. Håll i sane range.
+            if ('roughness' in o.material) {
+              o.material.roughness = Math.max(0.4, Math.min(0.95, o.material.roughness || 0.5));
+            }
+            // VertexColors=true överskuggar texture/baseColor med vertex-data; om
+            // mesh inte har vertex-färger blir det svart.
+            if (o.material.vertexColors) o.material.vertexColors = false;
+            // Transparent=true med fully opaque mesh kan skapa render-order-bugs +
+            // mörka områden där alpha-blending hamnar fel.
+            if (o.material.transparent && (o.material.opacity == null || o.material.opacity >= 0.99)) {
+              o.material.transparent = false;
+              o.material.opacity = 1;
+            }
+            // BaseColor wash: lum < 0.15 → vit (med texture) eller hudfärg (utan).
             if (o.material.color) {
               const c = o.material.color;
               const lum = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
@@ -170,6 +182,16 @@ async function preloadAllAssets() {
                 else c.setRGB(0.65, 0.55, 0.45);
               }
             }
+            o.material.needsUpdate = true;
+            // Debug-log INLINE så vi ser slut-state efter normalization
+            const mapImg = o.material.map && o.material.map.image;
+            const mapDim = mapImg ? `${mapImg.width}x${mapImg.height}` : 'none';
+            const colHex = o.material.color ? o.material.color.getHexString() : '?';
+            console.log(
+              `[mat] ${name}/${o.name || '?'} | type=${o.material.type} | color=#${colHex} ` +
+              `| map=${!!o.material.map} | mapImg=${mapDim} | rough=${o.material.roughness} ` +
+              `| metal=${o.material.metalness} | opacity=${o.material.opacity} | vc=${o.material.vertexColors}`
+            );
           }
         }
       });
