@@ -75,8 +75,8 @@ const WAVE_GAP_TIME = 10;              // sek mellan waves
 const WAVE_COUNT_PER_LANE = 10;        // 10 per lane = 20 totalt
 const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5]; // 3 kolumner inom lane-bredden
 const WAVE_CLUMP_ROW_SPACING = 1.0;       // m mellan rader bakåt
-const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
-const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Dragonkin'];
+const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Dragon King'];
 // Per 10 waves: 5 melee, 3 mix, 2 range. Boss räknas som melee (singel-spawn).
 // Index 0..9 = wave (n-1) % 10
 const WAVE_TYPE_PATTERN = ['melee', 'mix', 'range', 'melee', 'mix', 'melee', 'range', 'melee', 'mix', 'boss'];

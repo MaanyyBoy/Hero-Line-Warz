@@ -207,7 +207,7 @@ async function preloadAllAssets() {
   await Promise.all([...charPromises, ...animPromises]);
   clearTimeout(safetyTimer);
   assetsReady = true;
-  if (statusEl) statusEl.textContent = `${total} / ${total} · klart`;
+  if (statusEl) statusEl.textContent = `${total} / ${total} · done`;
   console.log('[asset] preloadAllAssets DONE');
   setTimeout(() => {
     const al = document.getElementById('asset-loading');
@@ -1449,8 +1449,8 @@ const WAVE_GAP_TIME = 10;
 const WAVE_COUNT_PER_LANE = 10;
 const WAVE_CLUMP_COLS_Z = [-1.5, 0, 1.5];
 const WAVE_CLUMP_ROW_SPACING = 1.0;
-const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Drakätt'];
-const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Drakkonungen'];
+const WAVE_NAMES = ['Soldiers', 'Knights', 'Berserkers', 'Demons', 'Dragonkin'];
+const BOSS_NAMES = ['Captain', 'General', 'Warlord', 'Demon Prince', 'Dragon King'];
 const WAVE_TYPE_PATTERN = ['melee', 'mix', 'range', 'melee', 'mix', 'melee', 'range', 'melee', 'mix', 'boss'];
 const RANGE_MONSTER_RANGE = 4.5;
 const RANGE_MONSTER_INTERVAL = 1.5;
@@ -1466,7 +1466,7 @@ const BOSS_DEFS = {
   10: {
     name: 'Captain', scale: 3.5,
     bodyTint: 0x6a85a8, auraColor: 0x1a2434, eyeColor: 0xff5533,
-    intro: 'Klubbväggen marscherar.',
+    intro: 'The shield wall marches.',
     skills: [
       // Shield Bash — telegraph röd linje, sen dasha 11m fram + skada allt i linjen
       { id: 'shieldBash', kind: 'lineDash', telegraph: 1.4, length: 11, width: 3.2, execTime: 0.5, dmgMul: 2.2, cd: 7.5 },
@@ -1479,7 +1479,7 @@ const BOSS_DEFS = {
   20: {
     name: 'General', scale: 3.8,
     bodyTint: 0x886a40, auraColor: 0x2a1c08, eyeColor: 0xffaa44,
-    intro: 'Krigsorder ekar över slagfältet.',
+    intro: 'War orders echo across the battlefield.',
     skills: [
       // Lightning Strike — targetar hjältens nuvarande position
       { id: 'lightningStrike', kind: 'groundCircle', telegraph: 1.0, radius: 4.2, dmgMul: 2.4, targetHero: true, cd: 5.5 },
@@ -1492,7 +1492,7 @@ const BOSS_DEFS = {
   30: {
     name: 'Warlord', scale: 4.1,
     bodyTint: 0xaa4030, auraColor: 0x331008, eyeColor: 0xffbb00,
-    intro: 'Marken sviktar under hans steg.',
+    intro: 'The ground trembles beneath his steps.',
     skills: [
       // Cleave Wave — 90° kon framför boss, 12m lång
       { id: 'cleaveWave', kind: 'cone', telegraph: 1.0, length: 12, halfAngle: Math.PI / 3, dmgMul: 2.6, cd: 6.0 },
@@ -1505,7 +1505,7 @@ const BOSS_DEFS = {
   40: {
     name: 'Demon Prince', scale: 4.4,
     bodyTint: 0x5a30a0, auraColor: 0x180830, eyeColor: 0xff44ff,
-    intro: 'Helvetet öppnar sina portar.',
+    intro: 'Hell opens its gates.',
     skills: [
       // Hellfire Beam — roterande sweep-beam
       { id: 'hellfireBeam', kind: 'sweepBeam', telegraph: 1.3, sweepDuration: 2.2, length: 16, halfAngle: Math.PI / 1.8, dpsMul: 1.8, cd: 10.0 },
@@ -1516,9 +1516,9 @@ const BOSS_DEFS = {
     ],
   },
   50: {
-    name: 'Drakkonungen', scale: 4.8,
+    name: 'Dragon King', scale: 4.8,
     bodyTint: 0x2a1a1a, auraColor: 0x080404, eyeColor: 0xff7700,
-    intro: 'Drakelden brinner ikapp natten.',
+    intro: 'Dragonfire burns the night.',
     skills: [
       // Dragon Breath — sustained kon-flam 2.5s, bredare
       { id: 'dragonBreath', kind: 'sustainedCone', telegraph: 1.3, sustainDuration: 2.8, length: 16, halfAngle: Math.PI / 2.8, dpsMul: 2.0, cd: 8.5 },
@@ -1545,27 +1545,27 @@ function getNextBossDef(waveNum) {
 const BOSS_WARS_DEFS = [
   {
     tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
-    desc: 'En klubb-wieldande veteran från fronten. Förlitar sig på direkta attacker. Bra att börja med — men gå inte in oförberedd, han har en överraskning vid 50% HP.',
+    desc: 'A club-wielding veteran from the front. Relies on direct attacks. A good place to start — but don\'t go in unprepared, he has a surprise at 50% HP.',
     hp: 5000, dmgScale: 1.5, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
-    desc: 'Krigsstrateg som blandar ranged-attacker med AoE-stomp. Mer aggressiv än Captain. Räkna med att läget förändras mid-fight.',
+    desc: 'A war strategist mixing ranged attacks with AoE stomps. More aggressive than the Captain. Expect the fight to shift mid-battle.',
     hp: 8000, dmgScale: 1.8, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 3, wave: 30, name: 'Warlord', diff: 'Hard', diffClass: 'hard',
-    desc: 'Brutal närstrid + poison-zoner som denyar terräng. Tål mycket och slår hårt. Något säger oss att han inte stannar på samma skill-set hela fighten...',
+    desc: 'Brutal melee + poison zones that deny terrain. Tanky and hits hard. Something tells us he won\'t stick to the same skill set the whole fight...',
     hp: 13000, dmgScale: 2.2, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 4, wave: 40, name: 'Demon Prince', diff: 'Extreme', diffClass: 'extreme',
-    desc: 'Hellfire-magiker med roterande beam-attacker och meteor-bombardemang. Punishar dålig positionering hårt — straffar en miss med en stor HP-bit. Något ondskefullt aktiveras vid 30% HP.',
+    desc: 'A Hellfire mage with rotating beam attacks and meteor bombardment. Punishes bad positioning hard — a single miss costs a big chunk of HP. Something evil triggers at 30% HP.',
     hp: 20000, dmgScale: 2.8, hasPhase2: true, phaseThreshold: 0.3,
   },
   {
-    tier: 5, wave: 50, name: 'Drakkonungen', diff: 'Nightmare', diffClass: 'nightmare',
-    desc: 'Drak-kungen. Sustained kon-flam, AoE-knockback och ständigt fallande meteorer. Ultimate raid-test — räkna med 5+ minuter om ditt team är skickliga. När han når 30% HP utlöses apokalypsen.',
+    tier: 5, wave: 50, name: 'Dragon King', diff: 'Nightmare', diffClass: 'nightmare',
+    desc: 'The dragon king. Sustained cone-flame, AoE knockback and ever-falling meteors. The ultimate raid test — expect 5+ minutes if your team is skilled. When he reaches 30% HP, the apocalypse begins.',
     hp: 30000, dmgScale: 3.5, hasPhase2: true, phaseThreshold: 0.3,
   },
 ];
@@ -1617,7 +1617,7 @@ const BOSS_WARS_TALENTS = [
   { id: 'bwt_dr',       icon: '🛡', name: 'Iron Skin',           desc: '+18% damage reduction',      stats: { dmgReductionPct: 0.18 } },
   { id: 'bwt_ls',       icon: '🩸', name: 'Bloodthirst',         desc: '+12% lifesteal på AA',       stats: {} /* applied via aaLifestealPct */, lifestealOnAa: 0.12 },
   { id: 'bwt_crit',     icon: '🎯', name: 'Crit Master',         desc: '+15% crit chans, +25% crit dmg', stats: { critChancePct: 0.15 } /* crit dmg appliceras separat */, critDmgBonus: 0.25 },
-  { id: 'bwt_ms',       icon: '💨', name: 'Swift Runner',        desc: '+15% rörelsehastighet',      stats: { moveSpeedPct: 0.15 } },
+  { id: 'bwt_ms',       icon: '💨', name: 'Swift Runner',        desc: '+15% movement speed',      stats: { moveSpeedPct: 0.15 } },
   { id: 'bwt_heal',     icon: '✚', name: 'Healing Aura',        desc: '+2% maxHP regen per sekund', stats: { healPerSecPct: 0.02 } },
 ];
 
@@ -1626,14 +1626,14 @@ const BOSS_WARS_TALENTS = [
 const BOSS_WARS_ITEMS = [
   { id: 'bwi_blade',    icon: '🗡', name: 'Slayer Blade',         desc: '+15 AA dmg + 15% AS',         stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
   { id: 'bwi_helm',     icon: '⛑', name: 'Helm of Vitality',     desc: '+35% maxHP',                  stats: { maxHpPct: 0.35 } },
-  { id: 'bwi_boots',    icon: '👢', name: 'Boots of Haste',       desc: '+25% rörelsehastighet',       stats: { moveSpeedPct: 0.25 } },
+  { id: 'bwi_boots',    icon: '👢', name: 'Boots of Haste',       desc: '+25% movement speed',       stats: { moveSpeedPct: 0.25 } },
   { id: 'bwi_cape',     icon: '🧥', name: 'Cape of Wards',        desc: '+20% damage reduction',       stats: { dmgReductionPct: 0.20 } },
   { id: 'bwi_amulet',   icon: '🔮', name: 'Amulet of Power',      desc: '+30% skill damage',           stats: { skillDmgPct: 0.30 } },
   { id: 'bwi_ring',     icon: '💍', name: 'Ring of Mastery',      desc: '+20% CDR + 15% AS',           stats: { cdrPct: 0.20, attackSpeedPct: 0.15 } },
   { id: 'bwi_tome',     icon: '📖', name: 'Tome of Arcana',       desc: '+35% skill dmg + 15% maxHP',  stats: { skillDmgPct: 0.35, maxHpPct: 0.15 } },
   { id: 'bwi_gauntlet', icon: '🥊', name: 'Berserker Gauntlet',   desc: '+18 AA dmg + 15% lifesteal',  stats: { attackDmg: 18 }, lifestealOnAa: 0.15 },
-  { id: 'bwi_crit',     icon: '💎', name: 'Crystal Eye',          desc: '+25% crit chans + 35% crit dmg', stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
-  { id: 'bwi_phoenix',  icon: '🔥', name: 'Phoenix Amulet',       desc: 'Revive en gång vid 50% HP (engångs)', stats: { maxHpPct: 0.10 }, phoenixRevive: true },
+  { id: 'bwi_crit',     icon: '💎', name: 'Crystal Eye',          desc: '+25% crit chance + 35% crit dmg', stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
+  { id: 'bwi_phoenix',  icon: '🔥', name: 'Phoenix Amulet',       desc: 'Revive once at 50% HP (one-time)', stats: { maxHpPct: 0.10 }, phoenixRevive: true },
 ];
 // Mini-bossar spawnar bara på jämna waves (2,4,6,8 / 12,14,16,18 / etc).
 // Skill-rotation per tier: 1:a even-waven i tier → skill 0, 2:a → 1, 3:e → 2, 4:e → 0.
@@ -1705,12 +1705,12 @@ const ARCHETYPE_BASE = {
 };
 const ARCHETYPE_ORDER = ['slasher', 'archer', 'bruiser', 'mage', 'tank', 'champion'];
 const ARCHETYPE_NAMES = {
-  slasher: 'Knivman', archer: 'Bågskytt', bruiser: 'Krossare',
-  mage: 'Mystiker', tank: 'Sköldbärare', champion: 'Hövding',
+  slasher: 'Slasher', archer: 'Archer', bruiser: 'Bruiser',
+  mage: 'Mystic', tank: 'Shieldbearer', champion: 'Champion',
 };
 
 const TIER_MULT = { 1: 1.0, 2: 2.0, 3: 4.0, 4: 7.0, 5: 11.0 };
-const TIER_NAMES = { 1: 'Goblin', 2: 'Ork', 3: 'Vandöd', 4: 'Demon', 5: 'Drakätt' };
+const TIER_NAMES = { 1: 'Goblin', 2: 'Orc', 3: 'Undead', 4: 'Demon', 5: 'Dragonkin' };
 const TIER_SCALE = { 1: 1.0, 2: 1.08, 3: 1.14, 4: 1.20, 5: 1.28 };
 const TIER_PALETTE = {
   1: { body: 0x4d6e3a, armor: 0x5a4f3a, accent: 0x2c3a1a, eye: 0x222222, glow: 0 },
@@ -3562,7 +3562,7 @@ const ARENA_CFG = {
 const ARENA_MAPS = [
   {
     name: 'Desert Ruins',
-    desc: 'Klassisk öken-arena: stenar, murar, vagnar, fallna torn',
+    desc: 'Classic desert arena: rocks, walls, wagons, fallen towers',
     floorTint: 0x5a4a36,
     props: [
       // Stenar — små punkt-cover spridda över banan
@@ -3600,7 +3600,7 @@ const ARENA_MAPS = [
   },
   {
     name: 'Stone Maze',
-    desc: 'Maze med smala korridorer av höga murar — täta cover-vinklar',
+    desc: 'Maze with narrow corridors of tall walls — tight cover angles',
     floorTint: 0x4a4234,
     props: [
       // Centralt zigzag-maze: 6 långa murar i mönster
@@ -3631,7 +3631,7 @@ const ARENA_MAPS = [
   },
   {
     name: 'Open Battlefield',
-    desc: 'Öppet slagfält — få stora cover-platser, hög rörelse-fokus',
+    desc: 'Open battlefield — few large cover spots, movement-focused',
     floorTint: 0x4a3a2a,
     props: [
       // 4 stora fallna torn som "kapsuler" för cover
@@ -3748,22 +3748,22 @@ const ARENA_TALENTS = {
     { id: 'm_cdr',     icon: '⏱', name: 'Quick Casting',     desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
     { id: 'm_hp',      icon: '❤', name: 'Mana Shield',       desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
     { id: 'm_dr',      icon: '🛡', name: 'Magic Resistance',  desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
-    { id: 'm_ms',      icon: '💨', name: 'Swift Robes',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    { id: 'm_ms',      icon: '💨', name: 'Swift Robes',       desc: '+10% movement speed', stats: { moveSpeedPct: 0.10 } },
     // Skill-modifiers
-    { id: 'm_frost_heal', icon: '❄', name: 'Frost Vampirism', desc: 'Frost Nova healar dig 15% av skadan den gör' },
-    { id: 'm_drain_extend', icon: '💀', name: 'Lasting Drain',  desc: 'Soul Drain pågår 2s längre (5s → 7s)' },
-    { id: 'm_bh_radius',  icon: '⚫', name: 'Singularity',     desc: 'Black Hole-radie + explosionsradie +30%' },
+    { id: 'm_frost_heal', icon: '❄', name: 'Frost Vampirism', desc: 'Frost Nova heals you for 15% of damage dealt' },
+    { id: 'm_drain_extend', icon: '💀', name: 'Lasting Drain',  desc: 'Soul Drain lasts 2s longer (5s → 7s)' },
+    { id: 'm_bh_radius',  icon: '⚫', name: 'Singularity',     desc: 'Black Hole radius + explosion radius +30%' },
   ],
   legolas: [
     // Stat-talents
     { id: 'l_dmg',     icon: '🏹', name: 'Marksman Training', desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'l_as',      icon: '⚡', name: 'Quick Draw',        desc: '+15% attack speed',     stats: { attackSpeedPct: 0.15 } },
-    { id: 'l_crit',    icon: '🎯', name: 'Sharpshooter',      desc: '+10% crit chans',       stats: { critChancePct: 0.10 } },
-    { id: 'l_ms',      icon: '💨', name: 'Light Boots',       desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    { id: 'l_crit',    icon: '🎯', name: 'Sharpshooter',      desc: '+10% crit chance',       stats: { critChancePct: 0.10 } },
+    { id: 'l_ms',      icon: '💨', name: 'Light Boots',       desc: '+10% movement speed', stats: { moveSpeedPct: 0.10 } },
     { id: 'l_cdr',     icon: '⏱', name: 'Forest Sense',      desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
     // Skill-modifiers
-    { id: 'l_vine_dot',   icon: '🌿', name: 'Toxic Roots',     desc: 'Vine Trap DoT dubbel skada' },
-    { id: 'l_focus_dur',  icon: '🎯', name: 'Patient Hunter',  desc: 'Hunter\'s Focus håller 2s längre' },
+    { id: 'l_vine_dot',   icon: '🌿', name: 'Toxic Roots',     desc: 'Vine Trap DoT doubles damage' },
+    { id: 'l_focus_dur',  icon: '🎯', name: 'Patient Hunter',  desc: 'Hunter\'s Focus lasts 2s longer' },
     { id: 'l_dash_buff',  icon: '💨', name: 'Phantom Dash',    desc: 'Shadow Dash lifesteal 20% → 50%' },
   ],
   gimlu: [
@@ -3772,11 +3772,11 @@ const ARENA_TALENTS = {
     { id: 'g_dr',      icon: '🪨', name: 'Stone Skin',        desc: '+15% damage reduction', stats: { dmgReductionPct: 0.15 } },
     { id: 'g_dmg',     icon: '🔨', name: 'Forged Strength',   desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'g_as',      icon: '⚔', name: 'Battle Rhythm',     desc: '+10% attack speed',     stats: { attackSpeedPct: 0.10 } },
-    { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+1% HP regen per sek',  stats: { healPerSecPct: 0.01 } },
+    { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+1% HP regen per sec',  stats: { healPerSecPct: 0.01 } },
     // Skill-modifiers
-    { id: 'g_taunt_heal', icon: '📢', name: 'Vengeful Roar',   desc: 'Titan\'s Taunt heal +50% (20% → 30% av maxHP/s)' },
-    { id: 'g_iron_radius',icon: '🛡', name: 'Wrath Unleashed', desc: 'Iron Will explosionsradie +30%' },
-    { id: 'g_hammer_full',icon: '🔨', name: 'Mighty Throw',    desc: 'Hammer återvänder med 100% skada (var 50%)' },
+    { id: 'g_taunt_heal', icon: '📢', name: 'Vengeful Roar',   desc: 'Titan\'s Taunt heal +50% (20% → 30% of maxHP/s)' },
+    { id: 'g_iron_radius',icon: '🛡', name: 'Wrath Unleashed', desc: 'Iron Will explosion radius +30%' },
+    { id: 'g_hammer_full',icon: '🔨', name: 'Mighty Throw',    desc: 'Hammer returns with 100% damage (was 50%)' },
   ],
   aragurn: [
     // Stat-talents
@@ -3784,11 +3784,11 @@ const ARENA_TALENTS = {
     { id: 'a_hp',      icon: '💪', name: 'Battle Hardened',    desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
     { id: 'a_as',      icon: '⚡', name: 'Swift Strikes',      desc: '+12% attack speed',     stats: { attackSpeedPct: 0.12 } },
     { id: 'a_dr',      icon: '🛡', name: 'Plate Mastery',      desc: '+12% damage reduction', stats: { dmgReductionPct: 0.12 } },
-    { id: 'a_ms',      icon: '💨', name: 'Light Steps',        desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    { id: 'a_ms',      icon: '💨', name: 'Light Steps',        desc: '+10% movement speed', stats: { moveSpeedPct: 0.10 } },
     // Skill-modifiers
-    { id: 'a_spin_extend', icon: '🌀', name: 'Endless Spin',  desc: 'Whirlwind pågår 1.5s längre (3s → 4.5s)' },
-    { id: 'a_shout_radius',icon: '📣', name: 'Booming Voice', desc: 'Shout-konen +30% längre och bredare' },
-    { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap healar +50% per träffad fiende (10%→15%)' },
+    { id: 'a_spin_extend', icon: '🌀', name: 'Endless Spin',  desc: 'Whirlwind lasts 1.5s longer (3s → 4.5s)' },
+    { id: 'a_shout_radius',icon: '📣', name: 'Booming Voice', desc: 'Shout cone is +30% longer and wider' },
+    { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap heals +50% per enemy hit (10%→15%)' },
   ],
   kostefo: [
     // Stat-talents — använder befintliga stat-systemet (recomputeArenaSideStats).
@@ -3797,7 +3797,7 @@ const ARENA_TALENTS = {
     { id: 'k_cdr',    icon: '⏱', name: 'Rolling Practice',  desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
     { id: 'k_hp',     icon: '❤', name: 'Iron Lungs',         desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
     { id: 'k_dr',     icon: '🛡', name: 'Smoke Veil',         desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
-    { id: 'k_ms',     icon: '💨', name: 'Quick Feet',         desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+    { id: 'k_ms',     icon: '💨', name: 'Quick Feet',         desc: '+10% movement speed', stats: { moveSpeedPct: 0.10 } },
   ],
 };
 
@@ -9247,44 +9247,44 @@ const ITEM_TYPES = {
     id: 'item1',
     name: 'Boots',
     icon: '👢',
-    description: '3 stilar att välja mellan',
+    description: '3 styles to choose from',
     variants: {
       speed: {
         id: 'speed', parentId: 'item1', name: 'Boots of Speed', icon: '⚡',
-        description: 'Snabbare rörelse och attacker',
+        description: 'Faster movement and attacks',
         statsAtLevel: (level) => ({
           moveSpeedPct: bootsPct(level),
           attackSpeedPct: bootsPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% rörelse och attackfart i 5s',
+          description: '+50% movement and attack speed for 5s',
           stats: { moveSpeedPct: 0.5, attackSpeedPct: 0.5 },
         },
       },
       magic: {
         id: 'magic', parentId: 'item1', name: 'Boots of Magic', icon: '✨',
-        description: 'Förstärker skills och kortar cooldowns',
+        description: 'Boosts skills and shortens cooldowns',
         statsAtLevel: (level) => ({
           skillDmgPct: bootsPct(level),
           cdrPct: bootsPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% skill-skada och CDR i 5s',
+          description: '+50% skill damage and CDR for 5s',
           stats: { skillDmgPct: 0.5, cdrPct: 0.5 },
         },
       },
       tank: {
         id: 'tank', parentId: 'item1', name: 'Boots of Tank', icon: '🛡',
-        description: 'Mer HP och mindre inkommande skada',
+        description: 'More HP and less incoming damage',
         statsAtLevel: (level) => ({
           dmgReductionPct: bootsPct(level),
           maxHpPct: bootsPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% skadereduktion och max HP i 5s',
+          description: '+50% damage reduction and max HP for 5s',
           stats: { dmgReductionPct: 0.5, maxHpPct: 0.5 },
         },
       },
@@ -9294,44 +9294,44 @@ const ITEM_TYPES = {
     id: 'item2',
     name: 'Glove of Haste',
     icon: '🧤',
-    description: '3 stilar att välja mellan',
+    description: '3 styles to choose from',
     variants: {
       haste: {
         id: 'haste', parentId: 'item2', name: 'Glove of Haste', icon: '⚡',
-        description: 'Snabbare AA + chans till crit',
+        description: 'Faster AA + chance to crit',
         statsAtLevel: (level) => ({
           attackSpeedPct: gloveBigPct(level),
           critChancePct: gloveBigPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% attackfart och crit chans i 5s',
+          description: '+50% attack speed and crit chance for 5s',
           stats: { attackSpeedPct: 0.5, critChancePct: 0.5 },
         },
       },
       spell: {
         id: 'spell', parentId: 'item2', name: 'Glove of Spell', icon: '🔮',
-        description: 'Mer skill-skada och CDR',
+        description: 'More skill damage and CDR',
         statsAtLevel: (level) => ({
           skillDmgPct: gloveBigPct(level),
           cdrPct: gloveBigPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% skill-skada och CDR i 5s',
+          description: '+50% skill damage and CDR for 5s',
           stats: { skillDmgPct: 0.5, cdrPct: 0.5 },
         },
       },
       tank: {
         id: 'tank', parentId: 'item2', name: 'Glove of Tank', icon: '🛡',
-        description: 'Skadereduktion + passiv HP-regen',
+        description: 'Damage reduction + passive HP regen',
         statsAtLevel: (level) => ({
           dmgReductionPct: gloveBigPct(level),
           healPerSecPct: gloveHealPctSlow(level),
         }),
         activeAtMax: {
           duration: 5, cooldown: 30,
-          description: '+50% skadereduktion och 5%/s heal i 5s',
+          description: '+50% damage reduction and 5%/s heal for 5s',
           stats: { dmgReductionPct: 0.5, healPerSecPct: 0.05 },
         },
       },
@@ -9339,7 +9339,7 @@ const ITEM_TYPES = {
   },
   item3: {
     id: 'item3', name: 'Ling & Lang', icon: '🌪',
-    description: 'Snabbhet, fury-stacks, CC-immunitet — krockreduktion. Vid Lv 10: explosiv sköld var 20:e sek.',
+    description: 'Speed, fury stacks, CC immunity — knockback reduction. At Lv 10: explosive shield every 20 sec.',
     statsAtLevel: (level) => {
       const v = 0.10 * Math.pow(1.1, level - 1);  // 10% → 23.6% vid lvl 10 (1.1× compound)
       return {
@@ -9351,12 +9351,12 @@ const ITEM_TYPES = {
     },
     activeAtMax: {
       kind: 'lingShield', duration: 0, cooldown: 20,
-      description: 'Sköld 20% maxHP. Vid kollaps: AoE-explosion. Medan aktiv: +20% AA-räckvidd och +10% AA-skada.',
+      description: 'Shield 20% maxHP. On collapse: AoE explosion. While active: +20% AA range and +10% AA damage.',
     },
   },
   item4: {
     id: 'item4', name: 'Onyx Orb', icon: '🔮',
-    description: 'CDR, skill-skada, skill-lifesteal. Movement +10% per skill på CD. Vid Lv 10: aktiv is-block.',
+    description: 'CDR, skill damage, skill lifesteal. Movement +10% per skill on CD. At Lv 10: active ice block.',
     statsAtLevel: (level) => {
       const v = 0.10 * Math.pow(1.1, level - 1);
       return {
@@ -9369,12 +9369,12 @@ const ITEM_TYPES = {
     },
     activeAtMax: {
       kind: 'iceBlock', duration: 1.5, cooldown: 45,
-      description: 'Fryser hjälten i 1.5s, healar 15% maxHP/0.5s (total 45%). Avbryt med en till tap. Vid utgång: 50% slow runt i 2s, +50% MS i 1s.',
+      description: 'Freezes the hero for 1.5s, heals 15% maxHP/0.5s (total 45%). Cancel with another tap. On exit: 50% slow nearby for 2s, +50% MS for 1s.',
     },
   },
   item5: {
     id: 'item5', name: 'Titans Armor', icon: '🛡',
-    description: 'Skadereduktion, regen från förlorad HP, block-chans. Block var 3:e AA + 30% return. Stacking DR/CDR per damage taken. Vid Lv 10: aktiv fear-våg.',
+    description: 'Damage reduction, regen from lost HP, block chance. Block every 3rd AA + 30% return. Stacking DR/CDR per damage taken. At Lv 10: active fear wave.',
     statsAtLevel: (level) => {
       const v = 0.10 * Math.pow(1.1, level - 1);
       return {
@@ -9385,7 +9385,7 @@ const ITEM_TYPES = {
     },
     activeAtMax: {
       kind: 'fearWave', duration: 1.5, cooldown: 45,
-      description: 'Skräm-våg AoE i 1.5s. Fiender spring slumpmässigt och kan inte agera. När fear slutar tar de 20% av nuvarande HP som skada.',
+      description: 'Fear wave AoE for 1.5s. Enemies run randomly and cannot act. When fear ends they take 20% of current HP as damage.',
     },
   },
   item6: { id: 'item6', name: 'Item 6', icon: '⑥', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
@@ -11380,16 +11380,16 @@ function updateHud() {
     const won = matchState.winner === APP.localSide;
     endgameEl.classList.toggle('win', won);
     endgameEl.classList.toggle('lose', !won);
-    endgameTitle.textContent = won ? 'VINST!' : 'FÖRLUST';
+    endgameTitle.textContent = won ? 'VICTORY!' : 'DEFEAT';
     if (APP.gameMode === 'bosswars') {
       const bossInfo = getBossWarsDef(APP.bossWars && APP.bossWars.tier || 1);
       endgameInfo.textContent = won
-        ? `Du besegrade ${bossInfo.name} (Tier ${bossInfo.tier} · ${bossInfo.diff})!`
-        : `${bossInfo.name} besegrade dig. Försök igen!`;
+        ? `You defeated ${bossInfo.name} (Tier ${bossInfo.tier} · ${bossInfo.diff})!`
+        : `${bossInfo.name} defeated you. Try again!`;
     } else {
       endgameInfo.textContent = won
-        ? `Du krossade motståndarens torn på wave ${side.wave.current}.`
-        : `Ditt torn föll på wave ${side.wave.current}.`;
+        ? `You destroyed the enemy tower on wave ${side.wave.current}.`
+        : `Your tower fell on wave ${side.wave.current}.`;
     }
     return;
   }
@@ -11446,7 +11446,7 @@ function updateHud() {
       waveDisplayEl.classList.remove('hidden');
       if (waveTextEl) {
         if (side.wave.active) waveTextEl.textContent = `Wave ${side.wave.current}`;
-        else waveTextEl.textContent = `Wave ${side.wave.current + 1} om ${side.wave.betweenTimer.toFixed(1)}s`;
+        else waveTextEl.textContent = `Wave ${side.wave.current + 1} in ${side.wave.betweenTimer.toFixed(1)}s`;
       }
     } else {
       waveDisplayEl.classList.add('hidden');
@@ -11584,7 +11584,7 @@ function updateDuelHud() {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.remove('hidden');
     duelBannerTitleEl.textContent = `DUEL ${duelState.count + 1}`;
-    duelBannerSubEl.textContent = 'Sista mannen kvar vinner';
+    duelBannerSubEl.textContent = 'Last one standing wins';
   } else if (duelState.active) {
     // Pågående duel: göm banner + info så skärmen är fri
     duelInfoEl.classList.add('hidden');
@@ -11593,16 +11593,16 @@ function updateDuelHud() {
     duelInfoEl.classList.add('hidden');
     duelBannerEl.classList.remove('hidden');
     if (duelState.lastWinner === 0) {
-      duelBannerTitleEl.textContent = 'DUELN OAVGJORD';
+      duelBannerTitleEl.textContent = 'DUEL DRAW';
       duelBannerSubEl.textContent = '';
     } else if (duelState.lastWinner === APP.localSide) {
-      duelBannerTitleEl.textContent = 'DU VANN DUELN!';
+      duelBannerTitleEl.textContent = 'YOU WON THE DUEL!';
       const rewards = [500, 1500, 5000, 10000];
       const r = rewards[Math.min(duelState.count - 1, 3)] || 0;
-      duelBannerSubEl.textContent = `+${r} guld · +1 level`;
+      duelBannerSubEl.textContent = `+${r} gold · +1 level`;
     } else {
-      duelBannerTitleEl.textContent = 'DU FÖRLORADE DUELN';
-      duelBannerSubEl.textContent = 'Bättre lycka nästa gång';
+      duelBannerTitleEl.textContent = 'YOU LOST THE DUEL';
+      duelBannerSubEl.textContent = 'Better luck next time';
     }
   } else if (duelState.count < 4 && duelState.timer > 0) {
     duelBannerEl.classList.add('hidden');
@@ -12225,7 +12225,7 @@ function buildArenaItemModalContent(itemId, def, action) {
   let cost = '';
   const side = sides[APP.localSide];
   const existing = side && side.inventory && side.inventory.find(it => it.itemId === itemId);
-  if (action === 'buy') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Köp: ${ITEM_BUY_COST}g</div>`;
+  if (action === 'buy') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Buy: ${ITEM_BUY_COST}g</div>`;
   else if (action === 'upgrade' && existing) cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera lvl ${existing.level} → ${existing.level + 1}: ${itemUpgradeCost(existing.level)}g</div>`;
   else if (action === 'upgrade') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera: ${itemUpgradeCost(1)}g</div>`;
   else cost = `<div style="color:#88dd88;font-weight:700;margin-bottom:8px">MAX LEVEL — kan inte uppgraderas</div>`;
@@ -12309,9 +12309,9 @@ function showArenaEnd(winnerIdx, isMatchEnd) {
       aeTitleEl.textContent = 'Match Draw';
       aeTitleEl.classList.remove('win', 'lose');
     }
-    aeInfoEl.textContent = `Slutresultat: ${arenaState.wins[1]} – ${arenaState.wins[2]}`;
+    aeInfoEl.textContent = `Final score: ${arenaState.wins[1]} – ${arenaState.wins[2]}`;
     if (aeContinueBtn) {
-      aeContinueBtn.textContent = 'Tillbaka till lobby';
+      aeContinueBtn.textContent = 'Back to lobby';
       aeContinueBtn.style.display = '';   // återställ — kan ha gömts av round-end
     }
   } else {
@@ -12325,7 +12325,7 @@ function showArenaEnd(winnerIdx, isMatchEnd) {
       aeTitleEl.textContent = 'Round Lost';
       aeTitleEl.classList.add('lose'); aeTitleEl.classList.remove('win');
     }
-    aeInfoEl.textContent = `Score: ${arenaState.wins[1]} – ${arenaState.wins[2]} · nästa runda börjar...`;
+    aeInfoEl.textContent = `Score: ${arenaState.wins[1]} – ${arenaState.wins[2]} · next round starting...`;
     if (aeContinueBtn) aeContinueBtn.style.display = 'none';
   }
 }
@@ -12366,9 +12366,9 @@ function updateArenaPrepUI() {
     const opp = sides[otherIdx];
     const oppReady = arenaState.ready[otherIdx];
     let txt;
-    if (!opp) txt = '· (Ingen motståndare)';
-    else if (opp.isBot) txt = `· Bot (${(opp.botDifficulty || 'medium').toUpperCase()}) väntar`;
-    else txt = oppReady ? '· Motståndaren är redo' : '· Motståndaren väljer talents...';
+    if (!opp) txt = '· (No opponent)';
+    else if (opp.isBot) txt = `· Bot (${(opp.botDifficulty || 'medium').toUpperCase()}) waiting`;
+    else txt = oppReady ? '· Opponent is ready' : '· Opponent is choosing talents...';
     apOppStatusEl.textContent = txt;
   }
   // Uppdatera ready-knappen
@@ -14723,7 +14723,7 @@ function refreshShopUI() {
       if (otherVariantOwned) { primary.classList.add('locked-variant'); sub = 'Annan variant ägs'; }
       else if (invFull) sub = 'Inventory full';
       else if (side.gold < ITEM_BUY_COST) sub = `${ITEM_BUY_COST}g · saknar`;
-      else sub = `${ITEM_BUY_COST}g · köp`;
+      else sub = `${ITEM_BUY_COST}g · buy`;
       primary.innerHTML = `${icon} ${name}<small>${sub}</small>`;
       primary.disabled = false;  // alltid klickbar → öppnar info-modal
     } else if (existing.level >= ITEM_MAX_LEVEL) {
@@ -14764,10 +14764,10 @@ function refreshShopUI() {
       btn.innerHTML = `Tier ${tier}`;
       btn.disabled = false;
     } else if (isNext) {
-      btn.innerHTML = `Tier ${tier}<small>Lås upp ${cost}g</small>`;
+      btn.innerHTML = `Tier ${tier}<small>Unlock ${cost}g</small>`;
       btn.disabled = !canUnlock || side.hero.dead;
     } else {
-      btn.innerHTML = `Tier ${tier}<small>Låst</small>`;
+      btn.innerHTML = `Tier ${tier}<small>Locked</small>`;
       btn.disabled = true;
     }
   }
@@ -14884,14 +14884,14 @@ function refreshIsdButtonsOnly() {
       isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
     } else if (otherVariantOwned) {
       isdBuyBtn.disabled = true;
-      isdBuyBtn.innerHTML = `Buy<small>annan variant ägs</small>`;
+      isdBuyBtn.innerHTML = `Buy<small>other variant owned</small>`;
     } else {
       const variantOk = !needsVariantChoice || !!isdState.variantId;
       const canAfford = side && side.gold >= ITEM_BUY_COST;
       isdBuyBtn.disabled = heroDead || invFull || !variantOk || !canAfford;
       const sub = invFull ? 'inventory full'
-                : !variantOk ? 'välj variant först'
-                : !canAfford ? `behöver ${ITEM_BUY_COST}g`
+                : !variantOk ? 'choose a variant first'
+                : !canAfford ? `need ${ITEM_BUY_COST}g`
                 : `${ITEM_BUY_COST}g`;
       isdBuyBtn.innerHTML = `Buy<small>${sub}</small>`;
     }
@@ -14899,10 +14899,10 @@ function refreshIsdButtonsOnly() {
   if (isdUpgradeBtn) {
     if (!existing) {
       isdUpgradeBtn.disabled = true;
-      isdUpgradeBtn.innerHTML = `Upgrade<small>kräver ägd</small>`;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>requires owned</small>`;
     } else if (existing.level >= ITEM_MAX_LEVEL) {
       isdUpgradeBtn.disabled = true;
-      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX nivå</small>`;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX level</small>`;
     } else {
       const cost = itemUpgradeCost(existing.level);
       const canAfford = side && side.gold >= cost;
@@ -14950,7 +14950,7 @@ function refreshItemShopDetail() {
     const buttons = Object.entries(def.variants).map(([vid, v]) => {
       return `<button class="var-btn" data-vid="${vid}">${v.icon || ''} ${v.name}<small>${v.description || ''}</small></button>`;
     }).join('');
-    isdVariantsEl.innerHTML = `<div class="vt-title">VÄLJ VARIANT</div>${buttons}`;
+    isdVariantsEl.innerHTML = `<div class="vt-title">CHOOSE VARIANT</div>${buttons}`;
     isdVariantsEl.classList.remove('hidden');
     isdVariantsEl.querySelectorAll('button[data-vid]').forEach(b => {
       b.onclick = () => {
@@ -15013,7 +15013,7 @@ function refreshItemShopDetail() {
     if (adef) {
       const unlocked = existing && existing.level >= ITEM_MAX_LEVEL;
       isdActiveEl.innerHTML =
-        `<div class="stats-title">ACTIVE — låses upp vid Lvl ${ITEM_MAX_LEVEL}</div>` +
+        `<div class="stats-title">ACTIVE — unlocks at Lvl ${ITEM_MAX_LEVEL}</div>` +
         `<div class="stat-line">${adef.description || ''}</div>` +
         `<div class="stat-line" style="opacity:0.75">${adef.duration}s effekt · ${adef.cooldown}s cooldown` +
         (unlocked ? ' · <span style="color:#aaffaa">UPPLÅST</span>' : '') + `</div>`;
@@ -15033,14 +15033,14 @@ function refreshItemShopDetail() {
       isdBuyBtn.innerHTML = `Buy<small>redan i inventory</small>`;
     } else if (otherVariantOwned) {
       isdBuyBtn.disabled = true;
-      isdBuyBtn.innerHTML = `Buy<small>annan variant ägs</small>`;
+      isdBuyBtn.innerHTML = `Buy<small>other variant owned</small>`;
     } else {
       const variantOk = !needsVariantChoice || !!isdState.variantId;
       const canAfford = side && side.gold >= ITEM_BUY_COST;
       isdBuyBtn.disabled = heroDead || invFull || !variantOk || !canAfford;
       const sub = invFull ? 'inventory full'
-                : !variantOk ? 'välj variant först'
-                : !canAfford ? `behöver ${ITEM_BUY_COST}g`
+                : !variantOk ? 'choose a variant first'
+                : !canAfford ? `need ${ITEM_BUY_COST}g`
                 : `${ITEM_BUY_COST}g`;
       isdBuyBtn.innerHTML = `Buy<small>${sub}</small>`;
     }
@@ -15048,10 +15048,10 @@ function refreshItemShopDetail() {
   if (isdUpgradeBtn) {
     if (!existing) {
       isdUpgradeBtn.disabled = true;
-      isdUpgradeBtn.innerHTML = `Upgrade<small>kräver ägd</small>`;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>requires owned</small>`;
     } else if (existing.level >= ITEM_MAX_LEVEL) {
       isdUpgradeBtn.disabled = true;
-      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX nivå</small>`;
+      isdUpgradeBtn.innerHTML = `Upgrade<small>MAX level</small>`;
     } else {
       const cost = itemUpgradeCost(existing.level);
       const canAfford = side && side.gold >= cost;
@@ -15178,13 +15178,13 @@ function showItemTooltipForSlot(slotEl) {
     tooltipActiveEl.classList.remove('hidden');
     tooltipActiveDescEl.textContent = def.activeAtMax.description || '';
     if (level < ITEM_MAX_LEVEL) {
-      tooltipActiveStatusEl.innerHTML = `<span>Låses upp vid level ${ITEM_MAX_LEVEL}</span>`;
+      tooltipActiveStatusEl.innerHTML = `<span>Unlocks at level ${ITEM_MAX_LEVEL}</span>`;
     } else if ((entry.activeRemaining || 0) > 0) {
-      tooltipActiveStatusEl.innerHTML = `<span class="ready">AKTIV: ${entry.activeRemaining.toFixed(1)}s</span>`;
+      tooltipActiveStatusEl.innerHTML = `<span class="ready">ACTIVE: ${entry.activeRemaining.toFixed(1)}s</span>`;
     } else if ((entry.activeCd || 0) > 0) {
-      tooltipActiveStatusEl.innerHTML = `<span class="cd">Klar om ${entry.activeCd.toFixed(1)}s</span>`;
+      tooltipActiveStatusEl.innerHTML = `<span class="cd">Ready in ${entry.activeCd.toFixed(1)}s</span>`;
     } else {
-      tooltipActiveStatusEl.innerHTML = `<span class="ready">Tap för att aktivera</span>`;
+      tooltipActiveStatusEl.innerHTML = `<span class="ready">Tap to activate</span>`;
     }
   } else if (tooltipActiveEl) {
     tooltipActiveEl.classList.add('hidden');
@@ -15991,9 +15991,9 @@ function handleNetworkMessage(msg) {
       heroPickState.oppSelected = msg.heroId || null;
       const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
       if (heroPickState.oppConfirmed) {
-        hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : msg.heroId}`;
+        hpOppStatusEl.textContent = `Opponent ready: ${oppHero ? oppHero.name : msg.heroId}`;
       } else {
-        hpOppStatusEl.textContent = `Motståndaren tittar på: ${oppHero ? oppHero.name : '...'}`;
+        hpOppStatusEl.textContent = `Opponent is viewing: ${oppHero ? oppHero.name : '...'}`;
       }
       refreshHeroCardUI();
     }
@@ -16004,7 +16004,7 @@ function handleNetworkMessage(msg) {
       heroPickState.oppSelected = msg.heroId || heroPickState.oppSelected;
       heroPickState.oppConfirmed = true;
       const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
-      hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : '?'}`;
+      hpOppStatusEl.textContent = `Opponent ready: ${oppHero ? oppHero.name : '?'}`;
       refreshHeroCardUI();
       // Om vi också är confirm:ade → starta direkt
       if (heroPickState.confirmed) finishHeroPick();
@@ -16014,7 +16014,7 @@ function handleNetworkMessage(msg) {
   // Boss Wars MP-meddelanden (3-spelar co-op)
   if (msg.t === 'b-start' && bossMpState.active && bossMpState.role === 'client') {
     // Host gick till boss-pick. Vi stannar på wait-panel tills b-tier kommer.
-    if (bossMpState.waitMsgEl) bossMpState.waitMsgEl.textContent = 'Hosten väljer boss... vänta...';
+    if (bossMpState.waitMsgEl) bossMpState.waitMsgEl.textContent = 'Host is choosing boss... please wait...';
     return;
   }
   if (msg.t === 'b-tier' && bossMpState.active && bossMpState.role === 'client' && !bossMpState.matchActive) {
@@ -16650,48 +16650,48 @@ const HEROES = [
 const HERO_INFO = {
   magiker: {
     skills: {
-      q: { name: 'Wind Puff', icon: '💨', desc: 'Skickar en vindstöt i en kon framför Gandulf (5.5 m × 90°). Skadar alla träffade fiender med 20% av deras max-HP, pushar tillbaka dem 3 meter i vindens riktning, och applicerar en debuff (4s) som gör att de tar +20% mer skada av all efterföljande damage. Drag-aim styr riktning.' },
-      f: { name: 'Frost Nova', icon: '❄', desc: 'AoE-explosion (3.8 m radie) vid target eller drag-position. Skadar och fryser fiender i 2 sekunder. Om en frusen fiende träffas av en ny skill splittras isen (shatter) och skickar ut shards som skadar närliggande fiender.' },
-      e: { name: 'Black Hole', icon: '⚫', desc: 'Spawnar en black hole vid target/drag-position som lever i 3 sekunder. Suger in fiender mot mitten och tickar 3% av deras max-HP per sekund medan de står i radien. Vid slutet exploderar den i AoE-damage (4 m radie).' },
+      q: { name: 'Wind Puff', icon: '💨', desc: 'Sends a wind blast in a cone in front of Gandulf (5.5 m × 90°). Deals 20% of max HP to all enemies hit, pushes them back 3 meters in the wind direction, and applies a debuff (4s) that makes them take +20% more damage from all subsequent damage. Drag-aim sets direction.' },
+      f: { name: 'Frost Nova', icon: '❄', desc: 'AoE explosion (3.8 m radius) at the target or drag position. Damages and freezes enemies for 2 seconds. If a frozen enemy is hit by another skill the ice shatters and sends out shards that damage nearby enemies.' },
+      e: { name: 'Black Hole', icon: '⚫', desc: 'Spawns a black hole at the target/drag position that lasts 3 seconds. Pulls enemies toward the center and ticks 3% of their max HP per second while they remain inside. At the end it explodes in AoE damage (4 m radius).' },
     },
-    passive: { name: 'Soul Mark', icon: '✦', desc: 'Träffar du SAMMA mål med 3 OLIKA skills inom 3 sekunder så får target en mark som tickar 5% av dess current HP per sekund i 3 sekunder (DoT) — och healar Gandulf 10% av hans max HP per sekund under hela markens varaktighet. Kombinera Wind Puff + Frost Nova + Black Hole för max sustain.' },
-    ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Skjuter en kontinuerlig laserstråle rakt fram i 3 sekunder (60 m räckvidd, smal). Strålen tickar var 0.5 s och gör 15% av targets max-HP per tick — totalt 90% maxHP över hela varaktigheten. Träffar alla fiender, bossar, motståndarhjälte och arena-orb i strålens väg. Medan strålen är aktiv: 90% skadereduktion på Magikern, CC-immun (kan inte frysas/stunnas/tauntas) men kan röra sig fritt.' },
+    passive: { name: 'Soul Mark', icon: '✦', desc: 'Hit the SAME target with 3 DIFFERENT skills within 3 seconds and the target gets a mark that ticks 5% of its current HP per second for 3 seconds (DoT) — and heals Gandulf 10% of his max HP per second for the entire mark duration. Combine Wind Puff + Frost Nova + Black Hole for max sustain.' },
+    ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Fires a continuous laser beam straight ahead for 3 seconds (60 m range, narrow). The beam ticks every 0.5s for 15% of target max HP per tick — total 90% maxHP over the full duration. Hits all enemies, bosses, enemy hero and arena orb in the beam\'s path. While the beam is active: 90% damage reduction on the Mage, CC-immune (cannot be frozen/stunned/taunted) and free to move.' },
   },
   legolas: {
     skills: {
-      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Skjuter en pil i luften som regnar ner pilar över en zon i 3 sekunder. Gör inget direkt damage — bara DoT och rotar fiender på plats. Om Legolas själv står i sin egen trap får han 20% damage reduction och healar 5% av sin max-HP per sekund så länge han stannar i zonen.' },
-      f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5 sekunders self-buff: +10% auto-attack damage, +10% crit chans, +30% crit damage, +30% attack speed.' },
-      e: { name: 'Shadow Dash', icon: '💨', desc: 'Snabb dash framåt (4 m). 6 sek cooldown. Nästa auto-attack är garanterat crit + 20% lifesteal. Om den buffade AA dödar fienden, resetas dash-cooldown så du kan kedja.' },
+      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Fires an arrow into the air that rains arrows over a zone for 3 seconds. No direct damage — only DoT and roots enemies in place. If Legolus stands in his own trap he gets 20% damage reduction and heals 5% of his max HP per second as long as he stays inside.' },
+      f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5-second self buff: +10% auto-attack damage, +10% crit chance, +30% crit damage, +30% attack speed.' },
+      e: { name: 'Shadow Dash', icon: '💨', desc: 'Quick dash forward (4 m). 6s cooldown. The next auto-attack is a guaranteed crit + 20% lifesteal. If the buffed AA kills the enemy, the dash cooldown resets so you can chain.' },
     },
-    passive: { name: 'Toxic Volley', icon: '☣', desc: 'Var 3:e auto-attack blir splittad: huvudtarget + 2 närmaste extra fiender inom 6 m. Alla 3 träffar applicerar en poison-stack som tickar damage i 4 sekunder. Stackar refreshar duration. Damage per sekund = 5 × stacks × (1 + 10% × (stacks − 1)), så varje stack gör 10% mer skada än föregående.' },
-    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Legolus blir osynlig för alla fiender och motspelare i 5 sekunder, får +20% movement speed och hans nästa auto-attack blir empowered: dubbel räckvidd, gör 25% av targetens max-HP i direct damage, stunnar target + alla fiender inom 2.5 m i 1.5 sekunder och lämnar en torn-pool under target som tickar 5% av max-HP i AoE-damage var 0.5 sekund i 3 sekunder (totalt 30% maxHP). Legolus revealas så fort han skjuter pilen eller efter 5 sekunder. Skill-skada som träffar honom under invis dealar damage men avslöjar INTE hans position.' },
+    passive: { name: 'Toxic Volley', icon: '☣', desc: 'Every 3rd auto-attack splits: main target + the 2 nearest extra enemies within 6 m. All 3 hits apply a poison stack that ticks damage for 4 seconds. Stacks refresh duration. Damage per second = 5 × stacks × (1 + 10% × (stacks − 1)), so each stack does 10% more damage than the previous.' },
+    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Legolus becomes invisible to all enemies and opponents for 5 seconds, gains +20% movement speed and his next auto-attack becomes empowered: double range, deals 25% of the target\'s max HP as direct damage, stuns the target + all enemies within 2.5 m for 1.5 seconds and leaves a thorn pool under the target that ticks 5% of max HP in AoE damage every 0.5 seconds for 3 seconds (total 30% maxHP). Legolus reveals as soon as he fires the arrow or after 5 seconds. Skill damage that hits him during invis deals damage but does NOT reveal his position.' },
   },
   gimlu: {
     skills: {
-      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'Skrik som tauntar alla fiender inom 5.5 m i 3 sekunder — de tvingas attackera Gimlu (auto-attack bara, inga skills). Under buffen får Gimlu 30% damage reduction, healas 20% av all skada han tar och 10% av maxHP per halv sekund.' },
-      f: { name: 'Iron Will', icon: '🛡', desc: '3 sekunders aktiveringsfönster. All damage Gimlu tar lagras i en mätare. Vid slutet exploderar han i AoE (6 m radie) och gör damage = den lagrade summan till alla fiender runt.' },
-      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Kastar hammaren i en rak sträcka (9 m) som sedan flyger tillbaka. Full damage på vägen ut, halv damage på vägen tillbaka. Gimlu healas 15% av damage done. Tryck E igen medan hammaren är ute för att byta plats med den (teleport).' },
+      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'A roar that taunts all enemies within 5.5 m for 3 seconds — they are forced to attack Gimlu (auto-attack only, no skills). During the buff Gimlu gains 30% damage reduction, heals 20% of all damage he takes and 10% of maxHP per half second.' },
+      f: { name: 'Iron Will', icon: '🛡', desc: '3-second activation window. All damage Gimlu takes is stored in a gauge. At the end he explodes in AoE (6 m radius) and deals damage equal to the stored amount to all enemies around.' },
+      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Throws the hammer in a straight line (9 m) and it returns. Full damage on the way out, half damage on the way back. Gimlu heals 15% of damage done. Press E again while the hammer is out to swap places with it (teleport).' },
     },
-    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Skiktad defensiv passiv som triggar på olika HP-trösklar:\n• Under 80% HP: 10% damage reduction (alltid på).\n• Under 60% HP: + 2.5% av maxHP regen per sekund (förutom DR från tier 1).\n• Under 40% HP: + 10% mer damage reduction (20% totalt) och var 6:e inkommande damage-instance blockas helt.\n\nBonus: Gimlu bygger ult-energy genom att tanka skada (5% av damage taken, max 2% per hit).' },
-    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 sekunders raseri: Gimlu växer till dubbel storlek, blir CC-immun (ingen kan frysa, taunta, fear:a eller slow:a honom) och får 50% skadereduktion. Var 0.5 s pulsar han en AoE-våg runt sig (4.5 m radie) som gör 3.5% av targets max-HP i skada — totalt 35% max-HP över 5 s (10 pulser). 20% av all skada Gimlu delar ut healar honom själv. Pulserna träffar monster, creeps, bossar, motståndarhjälte och arena-orb.' },
+    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Layered defensive passive that triggers at different HP thresholds:\n• Below 80% HP: 10% damage reduction (always on).\n• Below 60% HP: + 2.5% of maxHP regen per second (in addition to DR from tier 1).\n• Below 40% HP: + 10% more damage reduction (20% total) and every 6th incoming damage instance is fully blocked.\n\nBonus: Gimlu builds ult energy by tanking damage (5% of damage taken, max 2% per hit).' },
+    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 seconds of rage: Gimlu grows to double size, becomes CC-immune (no one can freeze, taunt, fear or slow him) and gains 50% damage reduction. Every 0.5s he pulses an AoE wave around him (4.5 m radius) dealing 3.5% of target max HP — total 35% max HP over 5s (10 pulses). 20% of all damage Gimlu deals heals him. The pulses hit monsters, creeps, bosses, the enemy hero and the arena orb.' },
   },
   aragurn: {
     skills: {
-      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn snurrar med svärdet utstärkt i 3 sekunder och skadar alla fiender inom 3m — 7.5% av deras max-HP per 0.5s. Healar Aragurn 10% av all damage done från whirlwinden. CC-immun (rensar alla CC förutom stun), +20% MS. Kan inte AA eller cast:a andra skills under spin. Cooldown börjar räknas FÖRST när spin är slut.' },
-      f: { name: 'War Shout', icon: '📣', desc: 'TVÅ separata zoner: KON framför Aragurn (8m × 120°) gör 15% max-HP damage + 20% slow (3s) + 20% mer skada taken (4s, mot hjältar). CIRKEL runt Aragurn (6m) ger buff till allierade hjältar: +20% damage reduction + +20% movement speed (4s) + HoT (5% maxHP/s i 2s). Aragurn själv: bara damage reduction-buff + HoT (10% maxHP/s i 2s).' },
-      e: { name: 'Hero Leap', icon: '🦘', desc: 'Hoppa i båge till en mark-targetad punkt (drag-aim styr landing). Walkability-clampas så hero inte landar i väggar/tower. AoE-landning (4.5m radie). Fiender träffade: 20% max-HP damage + stunnas 1 sekund. Aragurn healar 25% av förlorad HP per fiende träffad.' },
+      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn spins with his sword extended for 3 seconds and damages all enemies within 3m — 7.5% of their max HP per 0.5s. Heals Aragurn 10% of all damage done by the whirlwind. CC-immune (clears all CC except stun), +20% MS. Cannot AA or cast other skills during the spin. Cooldown starts ONLY when the spin ends.' },
+      f: { name: 'War Shout', icon: '📣', desc: 'TWO separate zones: CONE in front of Aragurn (8m × 120°) deals 15% max-HP damage + 20% slow (3s) + 20% more damage taken (4s, vs heroes). CIRCLE around Aragurn (6m) buffs allied heroes: +20% damage reduction + +20% movement speed (4s) + HoT (5% maxHP/s for 2s). Aragurn himself: damage reduction buff + HoT (10% maxHP/s for 2s) only.' },
+      e: { name: 'Hero Leap', icon: '🦘', desc: 'Jump in an arc to a ground-targeted point (drag-aim controls landing). Walkability-clamped so the hero doesn\'t land in walls/towers. AoE landing (4.5m radius). Enemies hit: 20% max-HP damage + stunned for 1 second. Aragurn heals 25% of lost HP per enemy hit.' },
     },
-    passive: { name: 'War Veteran', icon: '🛡', desc: 'TVÅ-delad passive:\n• Lifesteal: 0.5% lifesteal per 1% HP loss på all skada han delar ut (skill + AA). Vid 50% HP = 25% lifesteal, vid 1% HP = ~50% lifesteal.\n• Damage Reduction baserat på fiender nära (5m radie): 1 fiende = 20% DR, varje extra fiende = +5% DR (max 40% vid 5+ fiender). Skalas för group fights.' },
-    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 sekunders berserk-form: Aragurn blir lite större, hans svärd dubbleras i storlek och får en glödande aura. +150% AA-damage, 100% cleave/splash (varje AA träffar ALLA fiender inom AA-range), och 25% lifesteal på all AA-damage. Ingen attack speed-nerf — full DPS-burst.' },
+    passive: { name: 'War Veteran', icon: '🛡', desc: 'TWO-part passive:\n• Lifesteal: 0.5% lifesteal per 1% HP loss on all damage he deals (skill + AA). At 50% HP = 25% lifesteal, at 1% HP = ~50% lifesteal.\n• Damage Reduction based on nearby enemies (5m radius): 1 enemy = 20% DR, each additional enemy = +5% DR (max 40% at 5+ enemies). Scales for group fights.' },
+    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 seconds of berserk form: Aragurn grows slightly larger, his sword doubles in size and gains a glowing aura. +150% AA damage, 100% cleave/splash (every AA hits ALL enemies within AA range), and 25% lifesteal on all AA damage. No attack speed nerf — full DPS burst.' },
   },
   kostefo: {
     skills: {
-      q: { name: 'Joint Attack', icon: '🦢', desc: 'Summonar en stampede av gäss som rusar i en bred zon (3.6 m × 6.5 m) framför Kostefo. Zonen är aktiv i 3 sekunder och tickar AoE DoT: 5% av target\'s max-HP per 0.5 sekund (totalt 6 tickar = 30% maxHP om en fiende står i zonen hela tiden). Drag-aim styr riktning, tap kastar i facing.' },
-      f: { name: 'Joint Slider', icon: '🌿', desc: 'Kastar en glödande cannabis-joint i rak linje (6 m) som piercar igenom alla targets. Direct damage på pierce: 15% av target\'s max-HP. Vid slutet av räckvidden exploderar joint:en i AoE (2.5 m radie) och applicerar: 30% movement-slow i 2 sekunder + DoT (15% max-HP/sek i 2 sekunder, totalt 30% max-HP).' },
-      e: { name: 'Cannabis Cloud', icon: '💨', desc: 'Kostefo blåser ut en tjock grön rök runt sig (4 m radie). Alla fiender inom blir stunnade i 1 sekund. Smoken varar 4 sekunder och tickar 5% av current HP/0.5s på fiender inom. Vid cast healar Kostefo 25% av maxHP direkt. Under smoken: +20% movement speed, +20% attack speed, och Kostefo blir osynlig för fiender (men ser och targetar dem som vanligt).' },
+      q: { name: 'Joint Attack', icon: '🦢', desc: 'Summons a stampede of geese that charge in a wide zone (3.6 m × 6.5 m) in front of Kostefo. The zone is active for 3 seconds and ticks AoE DoT: 5% of target max HP per 0.5 seconds (total 6 ticks = 30% maxHP if an enemy stays in the zone the whole time). Drag-aim controls direction, tap throws in facing direction.' },
+      f: { name: 'Joint Slider', icon: '🌿', desc: 'Throws a glowing cannabis joint in a straight line (6 m) that pierces through all targets. Direct damage on pierce: 15% of target max HP. At the end of the range the joint explodes in AoE (2.5 m radius) and applies: 30% movement slow for 2 seconds + DoT (15% max HP/sec for 2 seconds, total 30% max HP).' },
+      e: { name: 'Cannabis Cloud', icon: '💨', desc: 'Kostefo blows out a thick green smoke around himself (4 m radius). All enemies inside are stunned for 1 second. The smoke lasts 4 seconds and ticks 5% of current HP/0.5s on enemies inside. On cast Kostefo instantly heals 25% of maxHP. While in the smoke: +20% movement speed, +20% attack speed, and Kostefo becomes invisible to enemies (but sees and targets them normally).' },
     },
-    passive: { name: 'Smoke Companion', icon: '🌫', desc: 'En grön-glödande companion följer Kostefo överallt han går. Companion kopierar Kostefos auto-attack men skadar bara 25% av Kostefos AA-damage. All damage som companion delar ut healar Kostefo med samma summa (100% lifesteal-flöde via companion).' },
-    ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summonar 8 cannabis-joints som orbiterar Kostefo i 5 sekunder. Varje joint kopierar Kostefos AA och skadar 10% av hans AA-damage. 50% av all damage från joints healar Kostefo (stark sustain-burst). Med 8 joints som tickar AA = burst-DPS + heal-rush.' },
+    passive: { name: 'Smoke Companion', icon: '🌫', desc: 'A green-glowing companion follows Kostefo everywhere. The companion copies Kostefo\'s auto-attack but only deals 25% of Kostefo\'s AA damage. All damage the companion deals heals Kostefo for the same amount (100% lifesteal flow via the companion).' },
+    ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summons 8 cannabis joints that orbit Kostefo for 5 seconds. Each joint copies Kostefo\'s AA and deals 10% of his AA damage. 50% of all damage from the joints heals Kostefo (strong sustain burst). With 8 joints ticking AA = burst DPS + heal rush.' },
   },
 };
 
@@ -16799,6 +16799,163 @@ const itemDetailModal = document.getElementById('item-detail-modal');
 const itemDetailBody = document.getElementById('item-detail-body');
 let heroesBrowserSkillKey = null;
 
+// ============================================================
+// 3D HERO-PREVIEW — separat liten THREE.js-scen för hero-detail-modalen.
+// Lazy-init vid första öppning. Byter mesh när användaren öppnar en annan
+// hjälte. Render-loop körs bara medan modalen är synlig.
+// ============================================================
+const heroPreviewState = {
+  initialized: false,
+  failed: false,
+  renderer: null,
+  scene: null,
+  camera: null,
+  canvas: null,
+  currentMesh: null,
+  currentHeroId: null,
+  mixer: null,
+  clock: null,
+  rafHandle: null,
+};
+
+function initHeroPreview() {
+  if (heroPreviewState.initialized) return true;
+  if (heroPreviewState.failed) return false;
+  const canvas = document.createElement('canvas');
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' });
+  } catch (e) {
+    console.warn('[hero-preview] WebGL init fail', e);
+    heroPreviewState.failed = true;
+    return false;
+  }
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
+  const previewScene = new THREE.Scene();
+  // Bakgrund: transparent (CSS-gradient under canvas syns igenom)
+
+  const previewCamera = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
+  previewCamera.position.set(0, 1.55, 3.6);
+  previewCamera.lookAt(0, 1.05, 0);
+
+  // 3-punkts-belysning (hemisphere + key + fill + rim)
+  previewScene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.7));
+  const key = new THREE.DirectionalLight(0xffe9c2, 1.3);
+  key.position.set(2.5, 4, 3);
+  previewScene.add(key);
+  const fill = new THREE.DirectionalLight(0xaaccff, 0.5);
+  fill.position.set(-2, 2, 2);
+  previewScene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.6);
+  rim.position.set(0, 3, -3);
+  previewScene.add(rim);
+
+  // Gyllene ring under fötter (markerar hero-foot-plate)
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.48, 0.66, 36),
+    new THREE.MeshBasicMaterial({ color: 0xffd34a, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.02;
+  previewScene.add(ring);
+
+  heroPreviewState.canvas = canvas;
+  heroPreviewState.renderer = renderer;
+  heroPreviewState.scene = previewScene;
+  heroPreviewState.camera = previewCamera;
+  heroPreviewState.clock = new THREE.Clock();
+  heroPreviewState.initialized = true;
+  return true;
+}
+
+function showHeroPreview(containerEl, heroId) {
+  if (!containerEl) return;
+  if (!initHeroPreview()) {
+    containerEl.innerHTML = '<div class="preview-fallback">3D preview unavailable</div>';
+    return;
+  }
+  const st = heroPreviewState;
+  // Mount canvas in container
+  if (!containerEl.contains(st.canvas)) {
+    containerEl.innerHTML = '';
+    containerEl.appendChild(st.canvas);
+  }
+  if (heroId !== st.currentHeroId) swapPreviewHero(heroId);
+  startHeroPreviewLoop();
+}
+
+function swapPreviewHero(heroId) {
+  const st = heroPreviewState;
+  // Riv gammal mesh
+  if (st.currentMesh) {
+    st.scene.remove(st.currentMesh);
+    st.currentMesh = null;
+    st.mixer = null;
+  }
+  const charName = HERO_GLTF_MAP[heroId] || HERO_GLTF_MAP.magiker;
+  const mesh = instantiateCharacter(charName, 'mixamo_hero');
+  if (!mesh) { st.currentHeroId = null; return; }
+  const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
+  mesh.scale.set(sc.x, sc.y, sc.z);
+  mesh.position.set(0, 0, 0);
+  mesh.userData.heroId = heroId;
+  st.scene.add(mesh);
+  st.currentMesh = mesh;
+  st.mixer = mesh.userData.mixer;
+  // Spela idle om finns
+  const actions = mesh.userData.actions;
+  if (actions) {
+    const idleName = findClipName(actions, 'Idle');
+    if (idleName && actions[idleName]) actions[idleName].reset().play();
+  }
+  st.currentHeroId = heroId;
+}
+
+function startHeroPreviewLoop() {
+  const st = heroPreviewState;
+  if (st.rafHandle != null) return;
+  if (!st.clock) st.clock = new THREE.Clock();
+  st.clock.start();
+  const loop = () => {
+    // Stop när modal döljs
+    if (!heroDetailModal || heroDetailModal.classList.contains('hidden')) {
+      stopHeroPreviewLoop();
+      return;
+    }
+    const dt = Math.min(0.1, st.clock.getDelta());
+    if (st.mixer) st.mixer.update(dt);
+    if (st.currentMesh) st.currentMesh.rotation.y += dt * 0.55;
+    // Resize: matcha canvas drawing-buffer mot CSS-storlek (3:4-aspect via CSS)
+    const w = st.canvas.clientWidth | 0;
+    const h = st.canvas.clientHeight | 0;
+    if (w > 0 && h > 0) {
+      const dpr = st.renderer.getPixelRatio();
+      const needW = Math.round(w * dpr);
+      const needH = Math.round(h * dpr);
+      if (st.canvas.width !== needW || st.canvas.height !== needH) {
+        st.renderer.setSize(w, h, false);
+        st.camera.aspect = w / h;
+        st.camera.updateProjectionMatrix();
+      }
+    }
+    st.renderer.render(st.scene, st.camera);
+    st.rafHandle = requestAnimationFrame(loop);
+  };
+  st.rafHandle = requestAnimationFrame(loop);
+}
+
+function stopHeroPreviewLoop() {
+  const st = heroPreviewState;
+  if (st.rafHandle != null) {
+    cancelAnimationFrame(st.rafHandle);
+    st.rafHandle = null;
+  }
+}
+
 function renderHeroesBrowser() {
   if (!heroesBrowserContent) return;
   heroesBrowserContent.innerHTML = '';
@@ -16828,7 +16985,6 @@ function openHeroDetailModal(heroId) {
 function closeHeroDetailModal() { if (heroDetailModal) heroDetailModal.classList.add('hidden'); }
 
 function renderHeroDetail(heroId, hero, info, def) {
-  const portrait = heroPortraitSVG(heroId) || `<div style="font:800 36px/100px sans-serif;text-align:center;color:#ffd34a">${hero.initial}</div>`;
   const statRows = [
     ['HP', def.baseHp],
     ['AA-dmg', def.baseDmg],
@@ -16851,26 +17007,35 @@ function renderHeroDetail(heroId, hero, info, def) {
     : '';
   const passive = info.passive
     ? `<div class="skill-item${heroesBrowserSkillKey === 'p' ? ' expanded' : ''}" data-skill="p">
-        <div class="skill-head"><div class="skill-key p">${info.passive.icon || 'P'}</div><span>Passiv · ${info.passive.name}</span></div>
+        <div class="skill-head"><div class="skill-key p">${info.passive.icon || 'P'}</div><span>Passive · ${info.passive.name}</span></div>
         <div class="skill-desc">${info.passive.desc}</div>
       </div>`
     : '';
   heroDetailBody.innerHTML = `
-    <div class="hero-modal-head">
-      <div class="hero-modal-portrait">${portrait}</div>
-      <div>
-        <h2>${hero.name}</h2>
-        <div class="sub-role">${hero.role}</div>
+    <div class="hero-modal-split">
+      <div class="hero-modal-preview" id="hero-modal-preview"></div>
+      <div class="hero-modal-info">
+        <div class="hero-modal-info-head">
+          <h2>${hero.name}</h2>
+          <div class="sub-role">${hero.role}</div>
+        </div>
+        <div class="stat-grid">${statRows}</div>
+        <div class="skill-list">${skillItems}${ultimate}${passive}</div>
       </div>
     </div>
-    <div class="stat-grid">${statRows}</div>
-    <div class="skill-list">${skillItems}${ultimate}${passive}</div>
   `;
+  // Mount 3D-preview i den nya containern
+  const previewEl = document.getElementById('hero-modal-preview');
+  if (previewEl) showHeroPreview(previewEl, heroId);
+  // Skill-klick toggle:ar bara .expanded-klassen på items — re-renderar INTE hela
+  // bodyn, så preview-canvas stannar i DOM:en och behåller WebGL-context.
   heroDetailBody.querySelectorAll('.skill-item').forEach(el => {
     el.addEventListener('click', () => {
       const k = el.dataset.skill;
       heroesBrowserSkillKey = (heroesBrowserSkillKey === k) ? null : k;
-      renderHeroDetail(heroId, hero, info, def);
+      heroDetailBody.querySelectorAll('.skill-item').forEach(it => {
+        it.classList.toggle('expanded', it.dataset.skill === heroesBrowserSkillKey);
+      });
     });
   });
 }
@@ -16956,7 +17121,7 @@ function renderItemsBrowser() {
     const hasContent = itemHasContent(def);
     const card = document.createElement('div');
     card.className = 'browser-card' + (hasContent ? '' : ' locked');
-    card.innerHTML = `<div class="card-icon" style="font-size:34px;background:linear-gradient(135deg,#2a2456,#15102a)">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasContent ? 'Klicka för detaljer' : 'Coming Soon'}</div>`;
+    card.innerHTML = `<div class="card-icon" style="font-size:34px;background:linear-gradient(135deg,#2a2456,#15102a)">${def.icon || '?'}</div><div class="card-name">${def.name}</div><div class="card-role">${hasContent ? 'Click for details' : 'Coming Soon'}</div>`;
     if (hasContent) card.addEventListener('click', () => openItemDetailModal(itemId));
     grid.appendChild(card);
   }
@@ -17003,48 +17168,48 @@ function renderHowtoLine() {
   if (!howtoContent) return;
   const sections = [
     {
-      icon: 'overview', title: 'Översikt',
-      html: `<p>Hero Line Wars är en <strong>1v1 MOBA-light</strong>. Ni har varsin arena. Var 10:e sekund spawnar en wave av fiender i din arena — du måste döda dem innan de når din <strong>fontän</strong>. När fontänen är död förlorar du.</p><p>Vid sidan dödar du fiender för guld och XP, köper items till din hjälte och <strong>minions till motståndarens lane</strong> så hens wave blir tuffare.</p>`
+      icon: 'overview', title: 'Overview',
+      html: `<p>Hero Line Wars is a <strong>1v1 MOBA-lite</strong>. You each have your own arena. Every 10 seconds a wave of enemies spawns in your arena — you must kill them before they reach your <strong>fountain</strong>. When the fountain dies, you lose.</p><p>On the side, you kill enemies for gold and XP, buy items for your hero, and send <strong>minions to the opponent's lane</strong> to make their wave tougher.</p>`
     },
     {
-      icon: 'lanes', title: 'Lanes & arenor',
-      html: `<p>Du har <strong>2 lanes</strong> (övre + nedre) i din arena. Vägg-barriärer skiljer dem så fiender stannar i sin lane. Du kan röra dig fritt mellan dem.</p><p>Motståndarens arena är spegelvänt nedanför (för host). Joinern ser den uppochnedvänd så hens arena är "nere".</p>`
+      icon: 'lanes', title: 'Lanes & arenas',
+      html: `<p>You have <strong>2 lanes</strong> (upper + lower) in your arena. Wall barriers separate them so enemies stay in their lane. You can move freely between them.</p><p>The opponent's arena is mirrored below (for the host). The joiner sees it flipped so their arena is "below".</p>`
     },
     {
-      icon: 'waves', title: 'Waves (50 totalt)',
-      html: `<p><strong>10s prep</strong> i början, sedan kommer en ny wave var 10:e sekund. 30 fiender per wave (15 per lane), alla spawnar samtidigt i kolumn.</p><ul><li><strong>5 tiers:</strong> Soldiers → Knights → Berserkers → Demons → Drakätt.</li><li><strong>Boss var 10:e wave</strong> (10, 20, 30, 40, 50) — enorm HP, hård dmg.</li><li>Wave-banner längst upp visar nästa wave.</li></ul>`
+      icon: 'waves', title: 'Waves (50 total)',
+      html: `<p><strong>10s prep</strong> at the start, then a new wave every 10 seconds. 30 enemies per wave (15 per lane), all spawning at the same time in a column.</p><ul><li><strong>5 tiers:</strong> Soldiers → Knights → Berserkers → Demons → Dragonkin.</li><li><strong>Boss every 10th wave</strong> (10, 20, 30, 40, 50) — huge HP, hard hitting.</li><li>The wave banner at the top shows the next wave.</li></ul>`
     },
     {
       icon: 'income', title: 'Income (passive + boost)',
-      html: `<p>Du får <strong>passivt guld var 15:e sekund</strong>. Starten är låg — boosta den genom att <strong>köpa minions</strong> till hens lane.</p><ul><li>Varje minion-köp ger dig <strong>+20% av minions kostnad som permanent income-boost</strong>.</li><li>Köp dyrare minions ⇒ mer income snabbare.</li><li>Income-display visas top center: "Income: Xg/15s".</li></ul>`
+      html: `<p>You earn <strong>passive gold every 15 seconds</strong>. Starts low — boost it by <strong>buying minions</strong> to the opponent's lane.</p><ul><li>Each minion buy gives you <strong>+20% of the minion's cost as permanent income boost</strong>.</li><li>Buy more expensive minions ⇒ more income faster.</li><li>Income display is shown top center: "Income: Xg/15s".</li></ul>`
     },
     {
-      icon: 'shop', title: 'Shop (höger sida)',
-      html: `<p>Shoppen är delad i två paneler på höger sida:</p><ul><li><strong>Hjälte-items (ovan):</strong> Boots, Glove of Haste osv — flat stat-boost för din hjälte. Upp till level 10 per item, dyrare per level.</li><li><strong>Minion-shop (under):</strong> 30 olika minions (5 tiers × 6 arketyper). Köp så spawnar de i hens lane som "din armé". De drar income, gör skada på hens torn/hero.</li></ul>`
+      icon: 'shop', title: 'Shop (right side)',
+      html: `<p>The shop is split into two panels on the right side:</p><ul><li><strong>Hero items (top):</strong> Boots, Glove of Haste etc. — flat stat boosts for your hero. Up to level 10 per item, more expensive per level.</li><li><strong>Minion shop (bottom):</strong> 30 different minions (5 tiers × 6 archetypes). Buy them and they spawn in the opponent's lane as "your army". They generate income and damage their tower/hero.</li></ul>`
     },
     {
-      icon: 'minions', title: 'Minions du köper',
-      html: `<p>När du köper en minion <strong>spawnar den i motståndarens lane</strong> tillsammans med hens nuvarande wave. Den marscherar mot hens fontän.</p><ul><li>5 tier-nivåer låses upp vid <strong>200g / 500g / 1000g / 2000g</strong> guld du tjänat.</li><li>Minions kan attackera motståndarens hjälte också.</li><li>Att skicka många minions trycker hens wave-defense — och boostar din income.</li></ul>`
+      icon: 'minions', title: 'Minions you buy',
+      html: `<p>When you buy a minion it <strong>spawns in the opponent's lane</strong> along with their current wave. It marches toward their fountain.</p><ul><li>5 tier levels unlock at <strong>200g / 500g / 1000g / 2000g</strong> gold earned.</li><li>Minions can attack the opponent's hero too.</li><li>Sending many minions pressures their wave defense — and boosts your income.</li></ul>`
     },
     {
-      icon: 'items', title: 'Hjälte-items',
-      html: `<p>Items har <strong>10 levels</strong>. Köp första gången för 200g, sedan dyrare per level (500 × 2^(lvl-1)).</p><ul><li><strong>Boots</strong> — 3 varianter: Speed / Magic / Tank. Vid lvl 10 unlock active: +50% buff i 5s, 30s CD.</li><li><strong>Glove of Haste</strong> — attack-speed/skill-dmg fokus.</li><li>Max 4 items i inventoryn längst ner i mitten. Tap/hover för tooltip.</li></ul>`
+      icon: 'items', title: 'Hero items',
+      html: `<p>Items have <strong>10 levels</strong>. First purchase costs 200g, then more expensive per level (500 × 2^(lvl-1)).</p><ul><li><strong>Boots</strong> — 3 variants: Speed / Magic / Tank. At lvl 10 unlock active: +50% buff for 5s, 30s CD.</li><li><strong>Glove of Haste</strong> — attack-speed/skill-dmg focus.</li><li>Max 4 items in the inventory at the bottom center. Tap/hover for tooltip.</li></ul>`
     },
     {
-      icon: 'fountain', title: 'Fontän-aura',
-      html: `<p>Din fontän är inte bara mål — den <strong>healar och boostar dig</strong> när du är nära.</p><ul><li>Inom ~4.5m radie: <strong>+2% av maxHP/s heal</strong>, +10% skada, -10% inkommande skada, +10% CDR, +10% attack speed.</li><li>Stå nära fontänen mellan waves för att returna full HP gratis.</li></ul>`
+      icon: 'fountain', title: 'Fountain aura',
+      html: `<p>Your fountain is not just an objective — it <strong>heals and buffs you</strong> when you're near.</p><ul><li>Within ~4.5m radius: <strong>+2% maxHP/s heal</strong>, +10% damage, -10% incoming damage, +10% CDR, +10% attack speed.</li><li>Stand near the fountain between waves to return to full HP for free.</li></ul>`
     },
     {
-      icon: 'duel', title: 'Duel (var 5:e min)',
-      html: `<p>Var 5:e minut teleporteras båda hjältar till en <strong>cirkulär stenarena</strong>. 90-sekunder deathmatch — sista mannen kvar (eller högsta HP% vid timeout) vinner.</p><ul><li>Vinst: <strong>500 / 1500 / 5000 / 10000g</strong> + 1 level (skalar med duel-nummer).</li><li>Max 4 dueler per match. Lanes är pausade under duel.</li></ul>`
+      icon: 'duel', title: 'Duel (every 5 min)',
+      html: `<p>Every 5 minutes, both heroes are teleported to a <strong>circular stone arena</strong>. 90-second deathmatch — last one standing (or highest HP% at timeout) wins.</p><ul><li>Win: <strong>500 / 1500 / 5000 / 10000g</strong> + 1 level (scales with duel number).</li><li>Max 4 duels per match. Lanes are paused during the duel.</li></ul>`
     },
     {
-      icon: 'copy', title: 'Lvl 30 hero-copy (belöning)',
-      html: `<p>Om du når <strong>level 30</strong> och vinner en duel spawnar en <strong>bot-styrd kopia av din hjälte</strong> i motståndarens lane.</p><ul><li>Kopian har 70% av dina stats och marscherar mot hens fontän.</li><li>Gör 10 skada på fontänen vid kontakt och aggro:ar hens hjälte.</li><li>Game-changing — pressar matchen mot vinst.</li></ul>`
+      icon: 'copy', title: 'Lvl 30 hero copy (reward)',
+      html: `<p>If you reach <strong>level 30</strong> and win a duel, a <strong>bot-controlled copy of your hero</strong> spawns in the opponent's lane.</p><ul><li>The copy has 70% of your stats and marches toward their fountain.</li><li>Deals 10 damage to the fountain on contact and aggros their hero.</li><li>Game-changing — pushes the match toward victory.</li></ul>`
     },
     {
-      icon: 'goal', title: 'Hur du vinner',
-      html: `<p>Förstör <strong>motståndarens fontän</strong>. Båda fontäner har 50 HP. Skada kommer från:</p><ul><li>Dina <strong>minions</strong> som når hens fontän (största källan).</li><li>Din <strong>hero-copy</strong> på lvl 30.</li><li>Indirekt: hens hjälte dör → 5s respawn → 5g till dig per kill.</li></ul>`
+      icon: 'goal', title: 'How to win',
+      html: `<p>Destroy <strong>the opponent's fountain</strong>. Both fountains have 50 HP. Damage comes from:</p><ul><li>Your <strong>minions</strong> reaching their fountain (the main source).</li><li>Your <strong>hero copy</strong> at lvl 30.</li><li>Indirect: their hero dies → 5s respawn → 5g per kill for you.</li></ul>`
     },
   ];
   howtoContent.innerHTML = sections.map(s => `
@@ -17062,36 +17227,36 @@ function renderHowtoArena() {
   if (!howtoContent) return;
   const sections = [
     {
-      icon: 'overview', title: 'Översikt',
-      html: `<p>Arena Wars är ren <strong>PvP-duell</strong> mellan hjältar (1v1 eller 2v2). Inga waves, ingen fontän — bara hero-vs-hero combat över flera rundor.</p><p>Vinner du <strong>3 av 5 rundor</strong> vinner du matchen. Mellan rundor får du välja talents och köpa items.</p>`
+      icon: 'overview', title: 'Overview',
+      html: `<p>Arena Wars is pure <strong>PvP duel</strong> between heroes (1v1 or 2v2). No waves, no fountain — just hero-vs-hero combat over multiple rounds.</p><p>Win <strong>3 of 5 rounds</strong> to win the match. Between rounds you can choose talents and buy items.</p>`
     },
     {
-      icon: 'controls', title: 'Kontroller',
-      html: `<ul><li><strong>Vänster joystick</strong> — flytta hjälten.</li><li><strong>AA-knapp (stor, hörnet)</strong> — toggle auto-attack på närmaste fiende.</li><li><strong>Skills (Q / F / E)</strong> — tap för auto-aim, drag-hold för manuell aim med riktnings-indicator på marken.</li><li><strong>Ult (R)</strong> — kräver 100% energy. 5s lockout efter cast.</li><li><strong>Desktop:</strong> WASD/piltangenter + Q/F/E + Space = AA.</li></ul>`
+      icon: 'controls', title: 'Controls',
+      html: `<ul><li><strong>Left joystick</strong> — move the hero.</li><li><strong>AA button (large, corner)</strong> — toggle auto-attack on the closest enemy.</li><li><strong>Skills (Q / F / E)</strong> — tap for auto-aim, drag-hold for manual aim with a direction indicator on the ground.</li><li><strong>Ult (R)</strong> — requires 100% energy. 5s lockout after cast.</li><li><strong>Desktop:</strong> WASD/arrow keys + Q/F/E + Space = AA.</li></ul>`
     },
     {
       icon: 'overview', title: 'Hero pick (60s)',
-      html: `<p>Innan matchen startar väljer båda spelare hjälte från grid-vyn. 60-sekunders timer. <strong>Tap på en hjälte</strong> sen <strong>Confirm</strong>. Båda måste bekräfta innan matchen börjar — eller 0s timer.</p><p>Du kan se motståndarens val live under pick-fasen.</p>`
+      html: `<p>Before the match starts, both players pick a hero from the grid view. 60-second timer. <strong>Tap a hero</strong> then <strong>Confirm</strong>. Both must confirm before the match starts — or the 0s timer runs out.</p><p>You can see the opponent's pick live during the pick phase.</p>`
     },
     {
-      icon: 'waves', title: 'Round-struktur',
-      html: `<p>Varje round består av två faser:</p><ul><li><strong>Prep (60s):</strong> Välj 1 talent + köp items. Båda måste klicka Ready (eller timer går ut) för att starta fight-fasen.</li><li><strong>Fight:</strong> Sista hjälten som lever vinner round. Vid timeout vinner högsta HP%. Ingen respawn — dö = round-förlust.</li></ul><p>+1 talent-point per vunnen round + 500g bonus.</p>`
+      icon: 'waves', title: 'Round structure',
+      html: `<p>Each round has two phases:</p><ul><li><strong>Prep (60s):</strong> Pick 1 talent + buy items. Both must click Ready (or the timer must run out) to start the fight phase.</li><li><strong>Fight:</strong> The last hero alive wins the round. On timeout, highest HP% wins. No respawn — dying = round loss.</li></ul><p>+1 talent point per round won + 500g bonus.</p>`
     },
     {
-      icon: 'items', title: 'Items + talents under prep',
-      html: `<p>Prep-skärmen visar talents (övre delen) och items (under). Du kan både välja talent OCH köpa items i samma prep-fas.</p><ul><li><strong>Talents:</strong> Hero-specifika passive buffs (t.ex. +20% skill damage, +10% MS). 1 poäng per round, max 5 över hela matchen.</li><li><strong>Items:</strong> Standard hero-items (Boots, Glove of Haste osv). 200g köp / 500×2^(lvl-1)g upgrade. Stats ackumuleras genom matchen.</li></ul>`
+      icon: 'items', title: 'Items + talents during prep',
+      html: `<p>The prep screen shows talents (top) and items (bottom). You can both pick a talent AND buy items in the same prep phase.</p><ul><li><strong>Talents:</strong> Hero-specific passive buffs (e.g. +20% skill damage, +10% MS). 1 point per round, max 5 over the entire match.</li><li><strong>Items:</strong> Standard hero items (Boots, Glove of Haste etc.). 200g buy / 500×2^(lvl-1)g upgrade. Stats accumulate through the match.</li></ul>`
     },
     {
-      icon: 'duel', title: 'Orb + shrink-circle',
-      html: `<p>Under fight-fasen spawnar en <strong>magisk orb</strong> i mitten av arenan. Skada den för gold/buff-belöning.</p><p>En <strong>krymp-cirkel</strong> drar in arenan över tid — utanför cirkeln tar du 5% maxHP/sek + stackar (1% mer per stack). Tvingar engagement i mitten.</p>`
+      icon: 'duel', title: 'Orb + shrink circle',
+      html: `<p>During the fight phase a <strong>magic orb</strong> spawns in the center of the arena. Damage it for gold/buff rewards.</p><p>A <strong>shrink circle</strong> closes in over time — outside the circle you take 5% maxHP/s + stacks (1% more per stack). Forces engagement in the middle.</p>`
     },
     {
       icon: 'heroes', title: 'Heroes & skills',
-      html: `<p>Alla 4 hjältar (Gandulf, Legolus, Gimlu, Aragurn) tillgängliga. Se Heroes-fliken för full skill-beskrivning. Ultimates har <strong>5s lockout</strong> efter cast — kan inte spammas.</p><ul><li>Skill-cast har per-cast cap på ult-gain (max 10% oavsett targets).</li><li>Drag-aim ger exakt landing-position (mag = drag-fraktion av max-range).</li></ul>`
+      html: `<p>All 4 heroes (Gandulf, Legolus, Gimlu, Aragurn) available. See the Heroes tab for full skill descriptions. Ultimates have a <strong>5s lockout</strong> after cast — can't be spammed.</p><ul><li>Skill casts have a per-cast cap on ult gain (max 10% regardless of targets).</li><li>Drag-aim gives exact landing position (mag = drag fraction of max range).</li></ul>`
     },
     {
-      icon: 'goal', title: 'Hur du vinner',
-      html: `<p>Döda motståndaren <strong>3 gånger</strong> (Best of 5). Skill-kombos och positionering avgör. Spara ult till rätt moment — 5s lockout efter cast.</p><p><strong>2v2-läge:</strong> teamet med flest lvande hjältar vid round-end vinner. Allierad shout-buff (Aragurn F) ger DR + MS + HoT till lagkompis.</p>`
+      icon: 'goal', title: 'How to win',
+      html: `<p>Kill the opponent <strong>3 times</strong> (Best of 5). Skill combos and positioning decide the round. Save your ult for the right moment — 5s lockout after cast.</p><p><strong>2v2 mode:</strong> the team with the most living heroes at round end wins. Allied shout buff (Aragurn F) gives DR + MS + HoT to teammate.</p>`
     },
   ];
   howtoContent.innerHTML = sections.map(s => `
@@ -17109,40 +17274,40 @@ function renderHowtoBoss() {
   if (!howtoContent) return;
   const sections = [
     {
-      icon: 'overview', title: 'Översikt',
-      html: `<p>Boss Wars är en <strong>3-spelar co-op raid</strong> mot en enskild gigantisk boss (eller solo om du vill träna). Inga waves, ingen PvP — bara du och dina vänner mot bossen.</p><p>5 olika bosstar med stigande svårighet (Captain → Drakkonungen).</p>`
+      icon: 'overview', title: 'Overview',
+      html: `<p>Boss Wars is a <strong>3-player co-op raid</strong> against a single gigantic boss (or solo if you want to practice). No waves, no PvP — just you and your friends against the boss.</p><p>5 different bosses with rising difficulty (Captain → Dragon King).</p>`
     },
     {
-      icon: 'controls', title: 'Kontroller',
-      html: `<ul><li>Samma som andra modes: joystick + AA + Q/F/E/R + skill-aim med drag.</li><li><strong>Hjältar är 15% större</strong> i Boss Wars — bättre synlighet mot stor boss.</li><li>Aragurns svärd är dock 40% mindre för att inte täcka skärmen.</li></ul>`
+      icon: 'controls', title: 'Controls',
+      html: `<ul><li>Same as other modes: joystick + AA + Q/F/E/R + skill-aim with drag.</li><li><strong>Heroes are 15% larger</strong> in Boss Wars — better visibility against the big boss.</li><li>Aragurn's sword is 40% smaller so it doesn't cover the screen.</li></ul>`
     },
     {
-      icon: 'lanes', title: 'Spawn-rum + korridor + boss-rum',
-      html: `<p>Mappen är trippeldelad:</p><ul><li><strong>Spawn-rum (väster):</strong> Alla 3 hjältar spawnar tätt tillsammans här. Trygg start-zon.</li><li><strong>Korridor:</strong> Smal väg österut. Springa genom denna till boss-rummet.</li><li><strong>Boss-rum (öster):</strong> Cirkulär arena där bossen står inaktiv tills alla är inne.</li></ul>`
+      icon: 'lanes', title: 'Spawn room + corridor + boss room',
+      html: `<p>The map has three sections:</p><ul><li><strong>Spawn room (west):</strong> All 3 heroes spawn close together here. Safe start zone.</li><li><strong>Corridor:</strong> Narrow path heading east. Run through this to the boss room.</li><li><strong>Boss room (east):</strong> Circular arena where the boss stays inactive until everyone has entered.</li></ul>`
     },
     {
-      icon: 'duel', title: 'Boss-aktivering + gate',
-      html: `<p>Bossen <strong>står helt still</strong> tills <strong>ALLA</strong> aktiva hjältar är inne i boss-rummet. När alla är inne:</p><ul><li>Gate stängs vid ingången — ingen kan springa ut.</li><li>Bossen aktiveras: börjar jaga, attackera och casta skills.</li><li>Coordinate som team — vänta på varandra!</li></ul>`
+      icon: 'duel', title: 'Boss activation + gate',
+      html: `<p>The boss <strong>stands completely still</strong> until <strong>ALL</strong> active heroes are inside the boss room. When everyone is inside:</p><ul><li>Gate closes at the entrance — nobody can run out.</li><li>The boss activates: starts hunting, attacking and casting skills.</li><li>Coordinate as a team — wait for each other!</li></ul>`
     },
     {
-      icon: 'waves', title: 'Boss-skills (telegraphade)',
-      html: `<p>Varje boss har <strong>3 unika skills</strong>. Alla har <strong>telegraph-fas</strong> (röd varnings-zon på marken) innan execute — du kan <strong>dodga</strong> ut ur damage-zonen.</p><ul><li><strong>Captain:</strong> Shield Bash (line-dash), Throwing Axe (projektil), Battle Roar (AoE + slow).</li><li><strong>Drakkonungen:</strong> Dragon Breath (sustained cone), Wing Slam (huge AoE + knockback), Skyfire Rain (10 meteorer).</li><li>Andra bossar har mix av target-AoE, cones, sweep-beams, pools.</li></ul>`
+      icon: 'waves', title: 'Boss skills (telegraphed)',
+      html: `<p>Each boss has <strong>3 unique skills</strong>. All have a <strong>telegraph phase</strong> (red warning zone on the ground) before execute — you can <strong>dodge</strong> out of the damage zone.</p><ul><li><strong>Captain:</strong> Shield Bash (line-dash), Throwing Axe (projectile), Battle Roar (AoE + slow).</li><li><strong>Dragon King:</strong> Dragon Breath (sustained cone), Wing Slam (huge AoE + knockback), Skyfire Rain (10 meteors).</li><li>Other bosses mix target AoE, cones, sweep beams, and pools.</li></ul>`
     },
     {
-      icon: 'minions', title: 'Phase 2 (vid 50% HP)',
-      html: `<p>När bossen tappar <strong>50% HP</strong> aktiveras phase 2:</p><ul><li>Bossen flyger upp i luften — invulnerable i 2.5s.</li><li>Lander med <strong>knockback + 3s stun</strong> på alla hjältar.</li><li>Spawnar nytt skill-set (annorlunda än fas 1).</li><li>Får <strong>glow/aura</strong> i tier-specifik färg (blå smoke / grön eld / gold-halo / lila skugga / röd eld).</li><li>+25% AA-damage.</li></ul>`
+      icon: 'minions', title: 'Phase 2 (at 50% HP)',
+      html: `<p>When the boss drops below <strong>50% HP</strong>, phase 2 activates:</p><ul><li>The boss flies up — invulnerable for 2.5s.</li><li>Lands with <strong>knockback + 3s stun</strong> on all heroes.</li><li>Spawns a new skill set (different from phase 1).</li><li>Gets <strong>glow/aura</strong> in tier-specific color (blue smoke / green flame / gold halo / purple shadow / red fire).</li><li>+25% AA damage.</li></ul>`
     },
     {
       icon: 'shop', title: 'Talents + items (prep)',
-      html: `<p>Innan striden får du <strong>välja talents</strong> och köpa <strong>raid-items</strong> som matchar din build. Boss Wars-talents är mer aggressiva än arena-talents.</p><ul><li>Phoenix Revive: en automatisk revive vid 0 HP.</li><li>Lifesteal-on-AA: vampire-builds.</li><li>Crit-dmg-bonus: burst-builds.</li></ul>`
+      html: `<p>Before the fight you can <strong>pick talents</strong> and buy <strong>raid items</strong> matching your build. Boss Wars talents are more aggressive than arena talents.</p><ul><li>Phoenix Revive: an automatic revive at 0 HP.</li><li>Lifesteal-on-AA: vampire builds.</li><li>Crit-dmg-bonus: burst builds.</li></ul>`
     },
     {
-      icon: 'fountain', title: 'Boss HP-bar (top center)',
-      html: `<p>En stor HP-bar visas <strong>högst upp i mitten</strong> av skärmen under hela striden. Visar bossens procent (inte siffror). Färgen byts till lila i phase 2.</p><p>Hjälper hela teamet att tracka boss-HP utan att kolla på bossen själv.</p>`
+      icon: 'fountain', title: 'Boss HP bar (top center)',
+      html: `<p>A large HP bar is displayed <strong>at the top center</strong> of the screen during the entire fight. Shows the boss's percent (not numbers). Color changes to purple in phase 2.</p><p>Helps the whole team track boss HP without watching the boss itself.</p>`
     },
     {
-      icon: 'goal', title: 'Damage-skalning + win',
-      html: `<p>Mot bossar är <strong>% max-HP-skador nerfas 10×</strong> (en 5%-skill blir 0.5%). Bossens enormous HP skulle annars få whirlwind/laser att one-shot:a. Flat-damage AA + skill-base-damage är oförändrade.</p><p><strong>Vinst:</strong> Döda bossen innan teamet wipe:as. Bossen ger inte respawn — om en spelare dör är det till nästa matchstart.</p>`
+      icon: 'goal', title: 'Damage scaling + win',
+      html: `<p>Against bosses, <strong>% max-HP damage is nerfed 10×</strong> (a 5% skill becomes 0.5%). The boss's enormous HP would otherwise let whirlwind/laser one-shot them. Flat-damage AA + skill base damage are unchanged.</p><p><strong>Win:</strong> Kill the boss before the team wipes. The boss gives no respawn — if a player dies it's until the next match start.</p>`
     },
   ];
   howtoContent.innerHTML = sections.map(s => `
@@ -17179,7 +17344,7 @@ function selectHero(heroId) {
   heroPickState.selected = heroId;
   refreshHeroCardUI();
   hpConfirmBtn.disabled = false;
-  hpStatusEl.textContent = `Vald: ${hero.name}`;
+  hpStatusEl.textContent = `Selected: ${hero.name}`;
   if (heroPickState.mode === 'host' || heroPickState.mode === 'client') {
     // Arena-MP: peer-to-peer (server bypassad). Classic-MP: via server.
     if (isArenaMp()) {
@@ -17207,12 +17372,12 @@ function confirmHero() {
     hpConfirmBtn.textContent = 'Startar...';
     finishHeroPick();
   } else if (isArenaMp()) {
-    hpConfirmBtn.textContent = 'Väntar på motståndaren...';
+    hpConfirmBtn.textContent = 'Waiting for opponent...';
     sendGameMsg({ t: 'a-pick-confirm', heroId: heroPickState.selected });
     // Om motståndaren redan confirm:at → starta nu
     if (heroPickState.oppConfirmed) finishHeroPick();
   } else {
-    hpConfirmBtn.textContent = 'Väntar på motståndaren...';
+    hpConfirmBtn.textContent = 'Waiting for opponent...';
     sendOrApplyEvent({ type: 'hero-confirm' });
   }
 }
@@ -17353,7 +17518,7 @@ function updateBossPrepWaitingStatus() {
     return;
   }
   const total = bossMpState.peersTotal || 3;
-  waitEl.textContent = `Klar! Väntar på andra spelare (${count}/${total} klara)...`;
+  waitEl.textContent = `Ready! Waiting for other players (${count}/${total} ready)...`;
   waitEl.classList.remove('hidden');
   startBtn.classList.add('hidden');
 }
@@ -17438,7 +17603,7 @@ function showHeroPick(mode) {
   hpConfirmBtn.disabled = true;
   hpConfirmBtn.classList.remove('confirmed');
   hpConfirmBtn.textContent = 'Confirm';
-  hpStatusEl.textContent = 'Välj en hjälte';
+  hpStatusEl.textContent = 'Choose a hero';
   hpOppStatusEl.textContent = (mode === 'solo') ? '' : 'Motståndaren väljer...';
   hpTimerEl.textContent = '60';
   hpTimerEl.classList.remove('urgent');
@@ -17503,12 +17668,12 @@ function handleRemotePickState(state) {
     refreshHeroCardUI();
     if (heroPickState.oppConfirmed) {
       const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
-      hpOppStatusEl.textContent = `Motståndaren klar: ${oppHero ? oppHero.name : heroPickState.oppSelected}`;
+      hpOppStatusEl.textContent = `Opponent ready: ${oppHero ? oppHero.name : heroPickState.oppSelected}`;
     } else if (heroPickState.oppSelected) {
       const oppHero = HEROES.find(h => h.id === heroPickState.oppSelected);
-      hpOppStatusEl.textContent = `Motståndaren tittar på: ${oppHero ? oppHero.name : '...'}`;
+      hpOppStatusEl.textContent = `Opponent is viewing: ${oppHero ? oppHero.name : '...'}`;
     } else {
-      hpOppStatusEl.textContent = 'Motståndaren väljer...';
+      hpOppStatusEl.textContent = 'Opponent is choosing...';
     }
   }
   // Transition till spel
@@ -17624,7 +17789,7 @@ function handleRelayEnvelope(e) {
       bossMpState.code = env.code;
       bossMpState.peerIdx = env.peerIdx || 1;
       if (bossMpState.codeDisplayEl) bossMpState.codeDisplayEl.textContent = env.code;
-      if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Dela koden med två vänner — väntar på spelare...';
+      if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Share the code with two friends — waiting for players...';
       updateBossPeerCount(1, env.maxPeers || 3);
       return;
     }
@@ -17664,7 +17829,7 @@ function handleRelayEnvelope(e) {
           updateBossPrepWaitingStatus();
         }
         if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
-          bossMpState.hostMsgEl.textContent = `En spelare lämnade. Väntar på ${bossMpState.maxPeers - bossMpState.peersTotal} till...`;
+          bossMpState.hostMsgEl.textContent = `A player left. Waiting for ${bossMpState.maxPeers - bossMpState.peersTotal} more...`;
         }
         return;
       }
@@ -17762,7 +17927,7 @@ async function tryReclaimHostRoom(code) {
   if (_reclaimInProgress) return;
   _reclaimInProgress = true;
   try {
-    lobbyHostMsgEl.textContent = 'Anslutningen tappades — försöker återansluta...';
+    lobbyHostMsgEl.textContent = 'Connection lost — trying to reconnect...';
     let attempts = 0;
     const maxAttempts = 3;
     while (attempts < maxAttempts) {
@@ -17960,7 +18125,7 @@ function updateArenaMapVoteUI() {
   if (amvStatusEl) {
     const totalPlayers = arenaSideIdxs().length;
     const voted = Object.keys(arenaMapVoteState.votes).length;
-    amvStatusEl.textContent = `Röstat: ${voted}/${totalPlayers}`;
+    amvStatusEl.textContent = `Voted: ${voted}/${totalPlayers}`;
   }
 }
 
@@ -18096,7 +18261,7 @@ function onReclaimed(code, hasClient) {
 function onHosted(code) {
   pendingHostCode = code;
   lobbyCodeDisplayEl.textContent = code;
-  lobbyHostMsgEl.textContent = 'Väntar på spelare...';
+  lobbyHostMsgEl.textContent = 'Waiting for players...';
 }
 
 function onPeerJoined() {
@@ -18146,7 +18311,7 @@ async function joinGame() {
     showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
-  lobbyJoinMsgEl.textContent = 'Söker rummet...';
+  lobbyJoinMsgEl.textContent = 'Searching for room...';
   wsSendEnvelope({ t: 'join', code });
 }
 
@@ -18474,7 +18639,7 @@ lobbyCodeDisplayEl.addEventListener('click', () => {
   const code = lobbyCodeDisplayEl.textContent.trim();
   if (code && code !== '----' && navigator.clipboard) {
     navigator.clipboard.writeText(code).then(() => {
-      lobbyHostMsgEl.textContent = `Kopierat: ${code} — väntar på spelare...`;
+      lobbyHostMsgEl.textContent = `Copied: ${code} — waiting for players...`;
     });
   }
 });
@@ -18754,7 +18919,7 @@ async function bossWarsJoinGame() {
     bossMpState.active = false;
     return;
   }
-  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Söker rummet...';
+  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Searching for room...';
   wsSendEnvelope({ t: 'join', code });
 }
 function bossWarsLeaveLobby() {
@@ -18815,7 +18980,7 @@ if (bossMpState.codeDisplayEl) {
     const code = bossMpState.codeDisplayEl.textContent.trim();
     if (code && code !== '----' && navigator.clipboard) {
       navigator.clipboard.writeText(code).then(() => {
-        if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = `Kopierat: ${code} — dela med vänner!`;
+        if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = `Copied: ${code} — share with friends!`;
       });
     }
   });

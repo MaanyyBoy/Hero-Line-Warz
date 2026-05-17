@@ -1433,12 +1433,66 @@
       position: relative;
       color: #fff;
     }
+    /* Hero-detail bredare än item-detail för att rymma 3D-preview + info side-by-side */
+    #hero-detail-card { max-width: 1100px; }
     #btn-hero-detail-back, #btn-item-detail-back {
       margin-bottom: 14px !important;
       padding: 8px 16px !important;
       font-size: 13px !important;
       min-width: auto !important;
     }
+    /* Hero-detail split: 3D-canvas vänster, info höger. Stack:as vertikalt på
+       smala viewports (portrait/små tablets) så inget hamnar utanför. */
+    .hero-modal-split {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.3fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    @media (max-width: 700px) {
+      .hero-modal-split { grid-template-columns: 1fr; }
+    }
+    .hero-modal-preview {
+      position: relative;
+      background: linear-gradient(180deg, #0f1830, #04060d);
+      border: 2px solid rgba(255,211,74,0.45);
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 320px;
+      aspect-ratio: 3 / 4;
+      box-shadow: inset 0 0 18px rgba(0,0,0,0.6);
+    }
+    @media (max-width: 700px) {
+      .hero-modal-preview { aspect-ratio: 4 / 3; min-height: 240px; }
+    }
+    .hero-modal-preview canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .hero-modal-preview .preview-fallback {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font: 700 14px/1.2 system-ui, sans-serif;
+      color: #ffd34a;
+      opacity: 0.75;
+    }
+    .hero-modal-info {
+      display: flex; flex-direction: column;
+      min-width: 0;
+    }
+    .hero-modal-info-head {
+      margin-bottom: 12px;
+    }
+    .hero-modal-info-head h2 {
+      margin: 0 0 4px; font: 800 26px/1 system-ui, sans-serif;
+      color: #ffd34a; letter-spacing: 1.3px;
+    }
+    .hero-modal-info-head .sub-role {
+      opacity: 0.78; font: 500 13px/1.2 system-ui, sans-serif;
+    }
+    /* Legacy hero-modal-head + portrait — behålls för bakåtkompat om någon annan
+       använder dem; nya layouten använder .hero-modal-split + .hero-modal-info. */
     .hero-modal-head {
       display: flex; align-items: center; gap: 18px; margin-bottom: 16px;
     }
@@ -2451,28 +2505,28 @@
 
     <div class="lobby-panel" id="lobby-boss-mode">
       <div style="font-size: 28px; color: #aa44ff; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">👹 Boss Wars</div>
-      <div class="sub" style="margin-bottom: 18px;">Co-op raid · 3 spelare</div>
+      <div class="sub" style="margin-bottom: 18px;">Co-op raid · 3 players</div>
       <button class="lobby-btn" id="btn-boss-host" style="background: rgba(150,60,180,0.85); border-color: rgba(220,150,255,0.7);">Host Game</button>
       <button class="lobby-btn" id="btn-boss-join" style="background: rgba(150,60,180,0.85); border-color: rgba(220,150,255,0.7);">Join Game</button>
       <button class="lobby-btn secondary" id="btn-boss-info">ℹ Info</button>
       <button class="lobby-btn secondary" id="btn-howto-boss" style="margin-top: 10px;">📖 How to Play</button>
-      <button class="lobby-btn secondary" id="btn-boss-mode-back" style="margin-top: 8px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-boss-mode-back" style="margin-top: 8px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-pick">
-      <div style="font-size: 26px; color: #aa44ff; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">👹 Välj Boss</div>
-      <div class="sub" style="margin-bottom: 14px;">Klicka på en boss för att se skills och starta strid</div>
+      <div style="font-size: 26px; color: #aa44ff; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">👹 Choose Boss</div>
+      <div class="sub" style="margin-bottom: 14px;">Click a boss to see skills and start the fight</div>
       <div id="boss-pick-grid"></div>
-      <button class="lobby-btn secondary" id="btn-boss-back" style="margin-top: 18px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-boss-back" style="margin-top: 18px;">← Back</button>
     </div>
 
     <div id="boss-info-modal" class="hidden">
       <div id="boss-info-card">
-        <button class="lobby-btn secondary browser-back" id="btn-boss-info-back">← Stäng</button>
+        <button class="lobby-btn secondary browser-back" id="btn-boss-info-back">← Close</button>
         <h2 style="margin:0 0 12px;color:#aa66ff;font:800 26px/1.1 system-ui,sans-serif;letter-spacing:1px;">ℹ Boss Wars — Game Mode Info</h2>
         <div style="font:400 14px/1.55 system-ui,sans-serif;opacity:0.92;">
-          <p><strong>Boss Wars</strong> är ett <strong>3-spelar co-op raid-mode</strong> där laget möter en av 5 epic-bossar på en dedikerad arena.</p>
-          <p style="margin-top:12px;"><strong>⚔ 5 bossar att möta:</strong></p>
+          <p><strong>Boss Wars</strong> is a <strong>3-player co-op raid mode</strong> where the team faces one of 5 epic bosses on a dedicated arena.</p>
+          <p style="margin-top:12px;"><strong>⚔ 5 bosses to face:</strong></p>
           <ul style="margin:6px 0;padding-left:24px;">
             <li><strong>Tier 1 — Captain</strong> (Easy, 5 000 HP)</li>
             <li><strong>Tier 2 — Werewolf General</strong> (Medium, 8 000 HP)</li>
@@ -2482,21 +2536,21 @@
           </ul>
           <p style="margin-top:12px;"><strong>🌟 Pre-match prep:</strong></p>
           <ul style="margin:6px 0;padding-left:24px;">
-            <li>Välj din hjälte (Gandulf, Legolus, Gimlu, Aragurn)</li>
-            <li>Välj <strong>3 talents</strong> av 10 möjliga (HP/dmg/AS/crit/lifesteal/etc.)</li>
-            <li>Välj <strong>4 items</strong> av 10 möjliga (Slayer Blade / Phoenix Amulet / etc.)</li>
+            <li>Choose your hero (Gandulf, Legolus, Gimlu, Aragurn)</li>
+            <li>Pick <strong>3 talents</strong> of 10 possible (HP/dmg/AS/crit/lifesteal/etc.)</li>
+            <li>Pick <strong>4 items</strong> of 10 possible (Slayer Blade / Phoenix Amulet / etc.)</li>
           </ul>
-          <p style="margin-top:12px;"><strong>🧠 Boss-mekaniker:</strong></p>
+          <p style="margin-top:12px;"><strong>🧠 Boss mechanics:</strong></p>
           <ul style="margin:6px 0;padding-left:24px;">
-            <li>Varje boss har 3 unika skills med röd telegraph på marken — <strong>dodga!</strong></li>
-            <li>Bossar 1–3 har en <strong>phase 2 vid 50% HP</strong>: knockback + 3s stun + nya skills</li>
-            <li>Bossar 4–5 har en <strong>phase 2 vid 30% HP</strong>: hårdare nya skills (apokalyps-läge)</li>
+            <li>Every boss has 3 unique skills with a red telegraph on the ground — <strong>dodge!</strong></li>
+            <li>Bosses 1–3 have a <strong>phase 2 at 50% HP</strong>: knockback + 3s stun + new skills</li>
+            <li>Bosses 4–5 have a <strong>phase 2 at 30% HP</strong>: harder new skills (apocalypse mode)</li>
           </ul>
           <p style="margin-top:12px;"><strong>🏆 Win/Loss:</strong></p>
           <ul style="margin:6px 0;padding-left:24px;">
-            <li>Vinn = döda bossen innan alla i raid-gruppen är döda</li>
-            <li>Förlust = hela raid-gruppen wipas</li>
-            <li>Ingen respawn under raid — håll dig vid liv</li>
+            <li>Win = kill the boss before the whole raid group is dead</li>
+            <li>Loss = the whole raid group is wiped</li>
+            <li>No respawn during raid — stay alive</li>
           </ul>
         </div>
       </div>
@@ -2504,22 +2558,22 @@
 
     <div id="boss-detail-modal" class="hidden">
       <div id="boss-detail-card">
-        <button class="lobby-btn secondary browser-back" id="btn-boss-detail-back">← Tillbaka</button>
+        <button class="lobby-btn secondary browser-back" id="btn-boss-detail-back">← Back</button>
         <div id="boss-detail-body"></div>
         <div style="text-align: center; margin-top: 18px;">
-          <button class="lobby-btn" id="btn-boss-detail-fight" style="background: rgba(170,60,170,0.85); border-color: rgba(220,150,255,0.7);">⚔ Möt denna boss</button>
+          <button class="lobby-btn" id="btn-boss-detail-fight" style="background: rgba(170,60,170,0.85); border-color: rgba(220,150,255,0.7);">⚔ Fight this boss</button>
         </div>
       </div>
     </div>
 
     <div class="lobby-panel" id="lobby-line-team">
       <div style="font-size: 26px; color: #ffd34a; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ Line Wars</div>
-      <div class="sub" style="margin-bottom: 18px;">Välj lagstorlek</div>
+      <div class="sub" style="margin-bottom: 18px;">Choose team size</div>
       <button class="lobby-btn" id="btn-line-1v1">1 v 1</button>
       <button class="lobby-btn" id="btn-line-2v2" disabled title="Kommer senare">2 v 2 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
       <button class="lobby-btn" id="btn-line-3v3" disabled title="Kommer senare">3 v 3 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
       <button class="lobby-btn secondary" id="btn-howto-line" style="margin-top: 10px;">📖 How to Play</button>
-      <button class="lobby-btn secondary" id="btn-line-team-back" style="margin-top: 8px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-line-team-back" style="margin-top: 8px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-line-wars">
@@ -2528,17 +2582,17 @@
       <button class="lobby-btn" id="btn-host">Host Game</button>
       <button class="lobby-btn" id="btn-join">Join Game</button>
       <button class="lobby-btn secondary" id="btn-solo">Singleplayer</button>
-      <button class="lobby-btn secondary" id="btn-line-back" style="margin-top: 18px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-line-back" style="margin-top: 18px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-team">
       <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars</div>
-      <div class="sub" style="margin-bottom: 18px;">Välj lagstorlek</div>
+      <div class="sub" style="margin-bottom: 18px;">Choose team size</div>
       <button class="lobby-btn" id="btn-arena-1v1" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">1 v 1</button>
       <button class="lobby-btn" id="btn-arena-2v2" style="background: rgba(180,80,80,0.85); border-color: rgba(255,180,180,0.7);">2 v 2</button>
       <button class="lobby-btn" id="btn-arena-3v3" disabled title="Kommer senare">3 v 3 <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon</small></button>
       <button class="lobby-btn secondary" id="btn-howto-arena" style="margin-top: 10px;">📖 How to Play</button>
-      <button class="lobby-btn secondary" id="btn-arena-team-back" style="margin-top: 8px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-arena-team-back" style="margin-top: 8px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-wars">
@@ -2547,25 +2601,25 @@
       <button class="lobby-btn" id="btn-arena-host" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Host Game</button>
       <button class="lobby-btn" id="btn-arena-join" style="background: rgba(180,60,60,0.85); border-color: rgba(255,160,160,0.7);">Join Game</button>
       <button class="lobby-btn secondary" id="btn-arena-solo">Singleplayer</button>
-      <button class="lobby-btn secondary" id="btn-arena-back" style="margin-top: 18px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-arena-back" style="margin-top: 18px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-2v2">
       <div style="font-size: 26px; color: #ff7755; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · 2v2</div>
       <div class="sub" style="margin-bottom: 18px;">2 vs 2 · Best of 5</div>
-      <button class="lobby-btn" id="btn-arena-2v2-host" disabled title="Kräver server-utbyggnad för 4-peer rooms">Host Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
-      <button class="lobby-btn" id="btn-arena-2v2-join" disabled title="Kräver server-utbyggnad">Join Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
+      <button class="lobby-btn" id="btn-arena-2v2-host" disabled title="Requires server extension for 4-peer rooms">Host Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
+      <button class="lobby-btn" id="btn-arena-2v2-join" disabled title="Requires server extension">Join Game <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">Coming soon (server)</small></button>
       <button class="lobby-btn secondary" id="btn-arena-2v2-solo">Solo Practice <small style="display:block;font-size:10px;opacity:0.6;margin-top:3px;">(du + 1 ally vs 2 fiender, du styr ett team)</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-2v2-back" style="margin-top: 18px;">← Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-arena-2v2-back" style="margin-top: 18px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-arena-bot">
       <div style="font-size: 26px; color: #ff7733; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · Singleplayer</div>
-      <div class="sub" style="margin-bottom: 18px;">Välj svårighetsgrad för boten</div>
-      <button class="lobby-btn" id="btn-bot-easy" style="background: rgba(80,170,90,0.85); border-color: rgba(160,255,180,0.7);">Easy <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Lugn bot, casar sällan, lätt att dodga</small></button>
-      <button class="lobby-btn" id="btn-bot-medium" style="background: rgba(190,140,40,0.85); border-color: rgba(255,210,120,0.7);">Medium <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Aggressivare, strafar, kombo-skills</small></button>
-      <button class="lobby-btn" id="btn-bot-hard" style="background: rgba(180,40,40,0.85); border-color: rgba(255,140,140,0.7);">Hard <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Maxar skills, dodgar, kiter hårt</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-bot-back" style="margin-top: 18px;">← Tillbaka</button>
+      <div class="sub" style="margin-bottom: 18px;">Choose bot difficulty</div>
+      <button class="lobby-btn" id="btn-bot-easy" style="background: rgba(80,170,90,0.85); border-color: rgba(160,255,180,0.7);">Easy <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Calm bot, rarely casts, easy to dodge</small></button>
+      <button class="lobby-btn" id="btn-bot-medium" style="background: rgba(190,140,40,0.85); border-color: rgba(255,210,120,0.7);">Medium <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">More aggressive, strafes, combo skills</small></button>
+      <button class="lobby-btn" id="btn-bot-hard" style="background: rgba(180,40,40,0.85); border-color: rgba(255,140,140,0.7);">Hard <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Maxes skills, dodges, kites hard</small></button>
+      <button class="lobby-btn secondary" id="btn-arena-bot-back" style="margin-top: 18px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-heroes">
@@ -2594,13 +2648,13 @@
 
     <div id="hero-detail-modal" class="hidden">
       <div id="hero-detail-card">
-        <button class="lobby-btn secondary browser-back" id="btn-hero-detail-back">← Tillbaka</button>
+        <button class="lobby-btn secondary browser-back" id="btn-hero-detail-back">← Back</button>
         <div id="hero-detail-body"></div>
       </div>
     </div>
     <div id="item-detail-modal" class="hidden">
       <div id="item-detail-card">
-        <button class="lobby-btn secondary browser-back" id="btn-item-detail-back">← Tillbaka</button>
+        <button class="lobby-btn secondary browser-back" id="btn-item-detail-back">← Back</button>
         <div id="item-detail-body"></div>
       </div>
     </div>
@@ -2608,43 +2662,43 @@
     <div class="lobby-panel" id="lobby-hosting">
       <div>Din rumskod:</div>
       <div id="lobby-code-display">----</div>
-      <div class="msg" id="lobby-host-msg">Förbereder...</div>
-      <button class="lobby-btn danger" id="btn-host-cancel">Avbryt</button>
+      <div class="msg" id="lobby-host-msg">Preparing...</div>
+      <button class="lobby-btn danger" id="btn-host-cancel">Cancel</button>
     </div>
 
     <div class="lobby-panel" id="lobby-joining">
-      <div>Ange 4-tecken kod:</div>
+      <div>Enter 4-character code:</div>
       <input id="lobby-code-input" maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text" />
-      <button class="lobby-btn" id="btn-join-connect">Anslut</button>
+      <button class="lobby-btn" id="btn-join-connect">Connect</button>
       <div class="msg" id="lobby-join-msg"></div>
-      <button class="lobby-btn secondary" id="btn-join-back">Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-join-back">Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-host">
       <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Boss Wars · Co-op Raid</div>
-      <div>Din rumskod (dela med två vänner):</div>
+      <div>Your room code (share with two friends):</div>
       <div id="lobby-boss-code-display" style="font-size: 38px; font-weight: 800; letter-spacing: 6px; color: #ffd34a; margin: 8px 0;">----</div>
-      <div id="lobby-boss-peer-count" style="font-size: 18px; color: #aaccff; margin: 6px 0 12px 0;">Spelare: 1 / 3</div>
-      <div class="msg" id="lobby-boss-host-msg">Väntar på spelare...</div>
-      <button class="lobby-btn" id="btn-boss-start-match" disabled style="background: rgba(60,160,80,0.85); border-color: rgba(120,220,150,0.7); opacity: 0.5;">Starta matchen (3/3)</button>
-      <button class="lobby-btn danger" id="btn-boss-host-cancel">Avbryt</button>
+      <div id="lobby-boss-peer-count" style="font-size: 18px; color: #aaccff; margin: 6px 0 12px 0;">Players: 1 / 3</div>
+      <div class="msg" id="lobby-boss-host-msg">Waiting for players...</div>
+      <button class="lobby-btn" id="btn-boss-start-match" disabled style="background: rgba(60,160,80,0.85); border-color: rgba(120,220,150,0.7); opacity: 0.5;">Start match (3/3)</button>
+      <button class="lobby-btn danger" id="btn-boss-host-cancel">Cancel</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-join">
       <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Join Boss Raid</div>
-      <div>Ange 4-tecken kod:</div>
+      <div>Enter 4-character code:</div>
       <input id="lobby-boss-code-input" maxlength="4" autocomplete="off" autocapitalize="characters" inputmode="text" />
-      <button class="lobby-btn" id="btn-boss-join-connect">Anslut</button>
+      <button class="lobby-btn" id="btn-boss-join-connect">Connect</button>
       <div class="msg" id="lobby-boss-join-msg"></div>
-      <button class="lobby-btn secondary" id="btn-boss-join-back">Tillbaka</button>
+      <button class="lobby-btn secondary" id="btn-boss-join-back">Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-wait">
-      <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Väntar i raid-rummet</div>
-      <div>Rumskod: <span id="lobby-boss-wait-code" style="color:#ffd34a;font-weight:800;letter-spacing:4px;">----</span></div>
-      <div id="lobby-boss-wait-count" style="font-size: 18px; color: #aaccff; margin: 12px 0;">Spelare: 1 / 3</div>
-      <div class="msg" id="lobby-boss-wait-msg">Väntar på att hosten startar matchen...</div>
-      <button class="lobby-btn danger" id="btn-boss-wait-leave">Lämna rum</button>
+      <div style="font-size: 22px; color: #aa44ff; font-weight: 800; margin-bottom: 4px;">👹 Waiting in raid room</div>
+      <div>Room code: <span id="lobby-boss-wait-code" style="color:#ffd34a;font-weight:800;letter-spacing:4px;">----</span></div>
+      <div id="lobby-boss-wait-count" style="font-size: 18px; color: #aaccff; margin: 12px 0;">Players: 1 / 3</div>
+      <div class="msg" id="lobby-boss-wait-msg">Waiting for host to start the match...</div>
+      <button class="lobby-btn danger" id="btn-boss-wait-leave">Leave room</button>
     </div>
   </div>
 
@@ -2652,11 +2706,11 @@
        bort — bara label + numerisk text kvar enligt user-spec. -->
   <div id="tower-hp-stack">
     <div class="tower-hp-row">
-      <span class="tower-label own-color">Du</span>
+      <span class="tower-label own-color">You</span>
       <span class="tower-hp-text" id="tower-hp-own-text">50/50</span>
     </div>
     <div class="tower-hp-row">
-      <span class="tower-label enemy-color">Fiende</span>
+      <span class="tower-label enemy-color">Enemy</span>
       <span class="tower-hp-text" id="tower-hp-enemy-text">50/50</span>
     </div>
   </div>
@@ -2686,8 +2740,8 @@
   <div id="options-overlay" class="hidden">
     <div id="options-card">
       <h3>Options</h3>
-      <button class="opt-btn opt-resume" id="opt-resume">Tillbaka till spelet</button>
-      <button class="opt-btn opt-leave" id="opt-leave">Lämna match</button>
+      <button class="opt-btn opt-resume" id="opt-resume">Resume</button>
+      <button class="opt-btn opt-leave" id="opt-leave">Leave match</button>
     </div>
   </div>
 
@@ -2811,8 +2865,8 @@
     <div id="amv-card">
       <div id="amv-header">
         <div>
-          <div id="amv-title">Välj karta</div>
-          <div id="amv-sub">Rösta på map — högst röster vinner</div>
+          <div id="amv-title">Choose map</div>
+          <div id="amv-sub">Vote for a map — most votes wins</div>
         </div>
         <div id="amv-timer">30</div>
       </div>
@@ -2825,7 +2879,7 @@
   <div id="ap-item-modal" class="hidden">
     <div id="ap-item-modal-backdrop"></div>
     <div id="ap-item-modal-card">
-      <button id="ap-item-modal-close" aria-label="Stäng">×</button>
+      <button id="ap-item-modal-close" aria-label="Close">×</button>
       <div id="ap-item-modal-body"></div>
       <div id="ap-item-modal-actions">
         <button id="ap-item-modal-buy" class="lobby-btn">Buy</button>
@@ -2839,7 +2893,7 @@
       <div id="ap-header">
         <div>
           <div id="ap-title">Round 1 · Prep</div>
-          <div id="ap-subtitle">Välj talents, köp items och tryck Ready</div>
+          <div id="ap-subtitle">Choose talents, buy items and press Ready</div>
         </div>
         <div id="ap-timer">60</div>
       </div>
@@ -2847,7 +2901,7 @@
            i Arena Wars (per user-spec: bara items visas under prep). -->
       <div id="ap-talents-section">
         <div id="ap-talents-status">
-          <div>Talent points kvar: <strong id="ap-points">1</strong></div>
+          <div>Talent points left: <strong id="ap-points">1</strong></div>
           <div id="ap-opp-status" style="opacity:0.7;font-size:11px;"></div>
         </div>
         <div class="ap-section-label">Talents</div>
@@ -2877,7 +2931,7 @@
 
   <div id="item-shop-detail" class="hidden">
     <div id="isd-card">
-      <button id="isd-close" aria-label="Stäng">×</button>
+      <button id="isd-close" aria-label="Close">×</button>
       <div id="isd-header">
         <div id="isd-icon"></div>
         <div id="isd-headtext">
@@ -2900,22 +2954,22 @@
   <div id="endgame">
     <h1 id="endgame-title"></h1>
     <div class="info" id="endgame-info"></div>
-    <button id="restart-btn">Spela igen</button>
+    <button id="restart-btn">Play again</button>
   </div>
 
   <div id="orient">
     <div class="icon">🔄</div>
-    <div><strong>Rotera enheten till landskap</strong><br>Spelet är gjort för bredskärm.</div>
+    <div><strong>Rotate your device to landscape</strong><br>The game is designed for widescreen.</div>
   </div>
 
   <div id="hero-pick" class="hidden">
     <div class="hp-header">
-      <h2>Välj din hjälte</h2>
+      <h2>Choose your hero</h2>
       <div id="hp-timer">60</div>
     </div>
     <div id="hp-grid"></div>
     <div class="hp-footer">
-      <div id="hp-status">Välj en hjälte</div>
+      <div id="hp-status">Choose a hero</div>
       <div id="hp-opp-status"></div>
       <button id="hp-confirm" disabled>Confirm</button>
     </div>
@@ -2925,24 +2979,24 @@
   <div id="boss-prep" class="hidden">
     <div id="bp-card">
       <h2 id="bp-title">⚔ Boss Wars · Prep</h2>
-      <div id="bp-subtitle">Välj 3 talents och 4 items innan striden börjar</div>
+      <div id="bp-subtitle">Pick 3 talents and 4 items before the fight starts</div>
 
-      <div class="bp-section-title">🌟 TALENTS <span id="bp-talents-status">(0/3 valda)</span></div>
+      <div class="bp-section-title">🌟 TALENTS <span id="bp-talents-status">(0/3 picked)</span></div>
       <div id="bp-talents-grid"></div>
 
-      <div class="bp-section-title">🎒 ITEMS <span id="bp-items-status">(0/4 valda)</span></div>
+      <div class="bp-section-title">🎒 ITEMS <span id="bp-items-status">(0/4 picked)</span></div>
       <div id="bp-items-grid"></div>
 
       <div class="bp-footer">
-        <button id="bp-start-btn" disabled>Starta strid</button>
-        <div id="bp-mp-waiting" class="hidden" style="margin-top:14px; padding:10px 16px; background:rgba(60,40,120,0.55); border:1px solid rgba(170,140,255,0.6); border-radius:8px; color:#cbb8ff; font:600 14px/1.3 system-ui,sans-serif; text-align:center;">Väntar på andra spelare (1/3 klar)...</div>
+        <button id="bp-start-btn" disabled>Start fight</button>
+        <div id="bp-mp-waiting" class="hidden" style="margin-top:14px; padding:10px 16px; background:rgba(60,40,120,0.55); border:1px solid rgba(170,140,255,0.6); border-radius:8px; color:#cbb8ff; font:600 14px/1.3 system-ui,sans-serif; text-align:center;">Waiting for other players (1/3 ready)...</div>
       </div>
     </div>
   </div>
 
   <div id="asset-loading">
     <div class="al-spinner"></div>
-    <div class="al-title">Laddar grafik...</div>
+    <div class="al-title">Loading graphics...</div>
     <div class="al-bar"><div id="al-bar-fill"></div></div>
     <div id="al-status">0 / 0</div>
   </div>
