@@ -3702,6 +3702,15 @@ const ARENA_TALENTS = {
     { id: 'a_shout_radius',icon: '📣', name: 'Booming Voice', desc: 'Shout-konen +30% längre och bredare' },
     { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap healar +50% per träffad fiende (10%→15%)' },
   ],
+  kostefo: [
+    // Stat-talents — använder befintliga stat-systemet (recomputeArenaSideStats).
+    // Inga skill-modifiers tills skill-mekanik specas (skill-pipeline = no-touch).
+    { id: 'k_skill',  icon: '✦', name: 'Cannabis Potency', desc: '+10% skill damage',     stats: { skillDmgPct: 0.10 } },
+    { id: 'k_cdr',    icon: '⏱', name: 'Rolling Practice',  desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
+    { id: 'k_hp',     icon: '❤', name: 'Iron Lungs',         desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
+    { id: 'k_dr',     icon: '🛡', name: 'Smoke Veil',         desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
+    { id: 'k_ms',     icon: '💨', name: 'Quick Feet',         desc: '+10% rörelsehastighet', stats: { moveSpeedPct: 0.10 } },
+  ],
 };
 
 // Helper för att kolla om sidan valt en specifik talent i arenan
