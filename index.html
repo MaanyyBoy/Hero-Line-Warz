@@ -50,6 +50,37 @@
     body.arena-mode #gold-display,
     body.arena-mode #wave-display { display: none !important; }
 
+    /* Power-up buff-HUD: chips top-left under hero-HP-bar.
+       Synlig endast i arena-mode + när minst en buff aktiv. */
+    #arena-buff-hud {
+      position: fixed;
+      top: max(140px, calc(env(safe-area-inset-top) + 140px));
+      left: max(8px, env(safe-area-inset-left));
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 55;
+      pointer-events: none;
+    }
+    body:not(.arena-mode) #arena-buff-hud { display: none !important; }
+    .ab-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,0,0,0.65);
+      padding: 6px 12px;
+      border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.4);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      font: 700 14px/1 system-ui, sans-serif;
+      color: #fff;
+    }
+    .ab-chip.hidden { display: none; }
+    #arena-buff-speed { border-color: rgba(255,221,68,0.85); color: #ffdd44; }
+    #arena-buff-damage { border-color: rgba(255,85,68,0.85); color: #ff8866; }
+    .ab-chip .ab-icon { font-size: 18px; }
+    .ab-chip .ab-timer { font: 700 13px/1 ui-monospace, monospace; min-width: 28px; text-align: right; }
+
     /* Orb-spawn-timer: visar countdown till nästa orb-spawn i Arena Wars.
        Placerad där wave-display normalt är (top center, höger om income). */
     #arena-orb-timer {
@@ -2530,6 +2561,12 @@
   <div id="hero-hp-hud">
     <div id="hero-hp-bar"><div id="hero-hp-fill"></div></div>
     <span id="hero-hp-text">100/100</span>
+  </div>
+
+  <!-- Arena power-up buff-indikatorer (active timers för speed/damage) -->
+  <div id="arena-buff-hud">
+    <div id="arena-buff-speed" class="ab-chip hidden"><span class="ab-icon">⚡</span><span class="ab-timer">0s</span></div>
+    <div id="arena-buff-damage" class="ab-chip hidden"><span class="ab-icon">🔥</span><span class="ab-timer">0s</span></div>
   </div>
 
   <!-- Options-overlay (Lämna match / Stäng) -->

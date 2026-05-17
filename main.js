@@ -3617,6 +3617,25 @@ const ARENA_GOLD_PER_ROUND = 250;          // alla får 250 vid round-end
 const ARENA_GOLD_WIN_BONUS = 500;          // winners får 500 extra
 const ARENA_GOLD_START = 400;              // start-gold per spelare i runda 1
 
+// === Power-up pickups (Arena Wars) ===
+// 3 pickups spawnar var 20s på random platser. Tar plockas via collision (hero
+// rör pickup-mesh). Buffs aktiveras direkt — speed/damage 8s, heal instant.
+const ARENA_POWERUP_SPAWN_INTERVAL = 20;
+const ARENA_POWERUP_COUNT_PER_SPAWN = 3;
+const ARENA_POWERUP_PICKUP_RADIUS = 1.0;
+const ARENA_POWERUP_BUFF_DURATION = 8.0;       // speed/damage duration
+const ARENA_POWERUP_SPEED_BOOST = 0.30;        // +30% MS
+const ARENA_POWERUP_DAMAGE_BOOST = 0.30;       // +30% dmg + skill-dmg
+const ARENA_POWERUP_HEAL_PCT = 0.30;           // 30% maxHP instant
+const ARENA_POWERUP_SAFE_MARGIN = 4;           // håll spawn-pos innanför arena-edge
+// 3 typer — random val vid spawn. Färgkodad mesh för instant recognition på mobil.
+const ARENA_POWERUP_TYPES = ['speed', 'damage', 'heal'];
+const ARENA_POWERUP_COLORS = {
+  speed:  { core: 0xffdd44, glow: 0xffee88, icon: '⚡' },
+  damage: { core: 0xff5544, glow: 0xff8866, icon: '🔥' },
+  heal:   { core: 0x55dd66, glow: 0x88ee99, icon: '💚' },
+};
+
 // Team-helpers för 2v2: side 1+3 = team A, side 2+4 = team B
 function arenaTeamOf(idx) { return (idx === 1 || idx === 3) ? 'A' : 'B'; }
 function arenaTeamRep(team) { return team === 'A' ? 1 : 2; }
@@ -4395,6 +4414,85 @@ function triggerBossPhaseTransition(side, boss) {
 let arenaOrbMesh = null;     // Three.js Group för orb
 let arenaOrbLight = null;
 let arenaOrbBuilt = false;
+// Arena power-ups: id → mesh-Group. Reconcilieras varje frame mot arenaState.powerUps.
+const arenaPowerUpMeshes = new Map();
+
+function makeArenaPowerUpMesh(type) {
+  const c = ARENA_POWERUP_COLORS[type] || ARENA_POWERUP_COLORS.speed;
+  const grp = new THREE.Group();
+  // Central glow-sphere (stor + emissive för synlighet på mobil)
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(0.45, 18, 14),
+    new THREE.MeshStandardMaterial({ color: c.core, emissive: c.core, emissiveIntensity: 1.8, roughness: 0.3 })
+  );
+  core.position.y = 1.0;
+  grp.add(core);
+  // Outer pulse-halo
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.75, 14, 10),
+    new THREE.MeshBasicMaterial({ color: c.glow, transparent: true, opacity: 0.35, depthWrite: false })
+  );
+  halo.position.y = 1.0;
+  grp.add(halo);
+  // Roterande ring på marken (visual anchor + landar tydligt)
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.85, 28),
+    new THREE.MeshBasicMaterial({ color: c.glow, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  grp.add(ring);
+  // Point-light för dynamic glow på närliggande terräng
+  const light = new THREE.PointLight(c.glow, 1.5, 4.0);
+  light.position.y = 1.2;
+  grp.add(light);
+  grp.userData.core = core;
+  grp.userData.halo = halo;
+  grp.userData.ring = ring;
+  grp.userData.spawnedAt = performance.now() / 1000;
+  return grp;
+}
+
+// Reconcilea power-up-meshes mot arenaState.powerUps (host-auth state).
+// Anropas per frame när Arena är aktiv. Spawnar nya meshes för nya powerUps,
+// tar bort meshes för borttagna (picked up), animerar pulse + rotation.
+function updateArenaPowerUpMeshes(dt) {
+  if (APP.gameMode !== 'arena1v1' || arenaState.phase !== 'fight') {
+    // Rensa alla meshes utanför fight-fas
+    if (arenaPowerUpMeshes.size > 0) {
+      for (const m of arenaPowerUpMeshes.values()) scene.remove(m);
+      arenaPowerUpMeshes.clear();
+    }
+    return;
+  }
+  const seen = new Set();
+  for (const pu of arenaState.powerUps) {
+    seen.add(pu.id);
+    let mesh = arenaPowerUpMeshes.get(pu.id);
+    if (!mesh) {
+      mesh = makeArenaPowerUpMesh(pu.type);
+      mesh.position.set(pu.x, 0, pu.z);
+      scene.add(mesh);
+      arenaPowerUpMeshes.set(pu.id, mesh);
+    }
+    // Pulse-animation
+    const t = performance.now() / 1000;
+    const age = t - (mesh.userData.spawnedAt || t);
+    const pulse = 1 + Math.sin(age * 4) * 0.18;
+    if (mesh.userData.halo) mesh.userData.halo.scale.setScalar(pulse);
+    if (mesh.userData.core) mesh.userData.core.position.y = 1.0 + Math.sin(age * 2.5) * 0.12;
+    if (mesh.userData.ring) mesh.userData.ring.rotation.z += dt * 1.5;
+  }
+  // Cleanup borttagna (picked up)
+  for (const [id, mesh] of arenaPowerUpMeshes) {
+    if (!seen.has(id)) {
+      // Pickup-burst-effekt
+      spawnSkillCastFx(mesh.position.x, mesh.position.z, mesh.userData.halo?.material.color.getHex() || 0xffffff, 1.4);
+      scene.remove(mesh);
+      arenaPowerUpMeshes.delete(id);
+    }
+  }
+}
 
 function makeArenaProp(type) {
   const g = new THREE.Group();
@@ -4801,6 +4899,10 @@ const arenaState = {
   },
   // Orb
   orb: { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 },
+  // Power-up pickups: 3 spawnar var 20s. {id, x, z, type ('speed'|'damage'|'heal')}
+  powerUps: [],
+  powerUpSpawnTimer: 0,
+  _powerUpNextId: 1,
   // Aktuell map — väljs innan match-start (random i solo, host väljer i MP)
   mapIdx: 0,
   // Battle-royale shrink-circle: börjar krympa 60s in i fight-fasen
@@ -5019,6 +5121,15 @@ function transitionArenaToFight() {
   arenaState.shrinkRadius = 0;
   arenaState.shrinkDamageAccum = 0;
   arenaState.ready = { 1: false, 2: false, 3: false, 4: false };
+  // Power-ups: rensa från förra rundan + reset spawn-timer så första
+  // spawn-event sker 20s in i fight-fasen (inte direkt).
+  arenaState.powerUps = [];
+  arenaState.powerUpSpawnTimer = ARENA_POWERUP_SPAWN_INTERVAL;
+  // Rensa eventuella aktiva buffs så hero startar runda neutral
+  for (const idx of arenaSideIdxs()) {
+    const s = sides[idx];
+    if (s) { s.arenaSpeedBuff = 0; s.arenaDamageBuff = 0; }
+  }
   hideArenaPrep();
   hideArenaCountdown();
   // Orb spawnar direkt vid fight-start (visuell pop)
@@ -5157,6 +5268,89 @@ function tickShrinkCircle(dt) {
         damageHero(s, dmg);
         s.shrinkHitStacks = stacks + 1;   // ökar för nästa tick
       }
+    }
+  }
+}
+
+// ============================================================
+// ARENA POWER-UPS — 3 pickups spawnar var 20s, ger temp buff (8s) eller
+// instant heal vid plockup. Skapar movement-incentives + risk/reward
+// (gå ut ur cover för att picka). Per durable mobile-first memory: stora
+// färgkodade meshes + HUD-icon för instant recognition.
+// ============================================================
+
+function spawnArenaPowerUps() {
+  if (!arenaState) return;
+  const bounds = ARENA_CFG.bounds;
+  const margin = ARENA_POWERUP_SAFE_MARGIN;
+  const minX = bounds.minX + margin, maxX = bounds.maxX - margin;
+  const minZ = bounds.minZ + margin, maxZ = bounds.maxZ - margin;
+  // Shrink-zone-skydd: om shrinkRadius > 0, spawna inom inner safe-zone
+  const shrinkR = arenaState.shrinkRadius || 0;
+  const cx = ARENA_CFG.orb.x, cz = ARENA_CFG.orb.z;
+  for (let i = 0; i < ARENA_POWERUP_COUNT_PER_SPAWN; i++) {
+    let x, z, tries = 0;
+    do {
+      x = minX + Math.random() * (maxX - minX);
+      z = minZ + Math.random() * (maxZ - minZ);
+      tries++;
+      // Stanna inom shrink-zone om aktiv
+      const dx = x - cx, dz = z - cz;
+      if (shrinkR > 0 && (dx * dx + dz * dz) > (shrinkR - 2) * (shrinkR - 2)) continue;
+      break;
+    } while (tries < 20);
+    const type = ARENA_POWERUP_TYPES[Math.floor(Math.random() * ARENA_POWERUP_TYPES.length)];
+    arenaState.powerUps.push({
+      id: arenaState._powerUpNextId++,
+      x, z, type,
+    });
+  }
+}
+
+function applyArenaPowerUp(side, type) {
+  if (!side || side.hero.dead) return;
+  if (type === 'speed') {
+    side.arenaSpeedBuff = ARENA_POWERUP_BUFF_DURATION;
+    spawnSkillCastFx(side.hero.x, side.hero.z, ARENA_POWERUP_COLORS.speed.glow, 1.5);
+  } else if (type === 'damage') {
+    side.arenaDamageBuff = ARENA_POWERUP_BUFF_DURATION;
+    spawnSkillCastFx(side.hero.x, side.hero.z, ARENA_POWERUP_COLORS.damage.glow, 1.5);
+  } else if (type === 'heal') {
+    const healAmt = side.hero.maxHp * ARENA_POWERUP_HEAL_PCT;
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
+    spawnSkillCastFx(side.hero.x, side.hero.z, ARENA_POWERUP_COLORS.heal.glow, 1.5);
+  }
+}
+
+function tickArenaPowerUps(dt) {
+  // Tick buff-timers per side (Arena-host kör alltid; klient får via snap)
+  for (const idx of arenaSideIdxs()) {
+    const s = sides[idx];
+    if (!s) continue;
+    if ((s.arenaSpeedBuff || 0) > 0) s.arenaSpeedBuff = Math.max(0, s.arenaSpeedBuff - dt);
+    if ((s.arenaDamageBuff || 0) > 0) s.arenaDamageBuff = Math.max(0, s.arenaDamageBuff - dt);
+  }
+  // Spawn-timer: var 20s skapa 3 nya pickups
+  arenaState.powerUpSpawnTimer -= dt;
+  if (arenaState.powerUpSpawnTimer <= 0) {
+    arenaState.powerUpSpawnTimer = ARENA_POWERUP_SPAWN_INTERVAL;
+    spawnArenaPowerUps();
+  }
+  // Pickup-collision: iter alla hero-sides vs alla powerups
+  if (arenaState.powerUps.length === 0) return;
+  const pickupR2 = ARENA_POWERUP_PICKUP_RADIUS * ARENA_POWERUP_PICKUP_RADIUS;
+  for (let i = arenaState.powerUps.length - 1; i >= 0; i--) {
+    const pu = arenaState.powerUps[i];
+    let pickedBy = null;
+    for (const idx of arenaSideIdxs()) {
+      const s = sides[idx];
+      if (!s || s.hero.dead) continue;
+      const dx = s.hero.x - pu.x, dz = s.hero.z - pu.z;
+      if (dx * dx + dz * dz < pickupR2) { pickedBy = s; break; }
+    }
+    if (pickedBy) {
+      applyArenaPowerUp(pickedBy, pu.type);
+      arenaState.powerUps.splice(i, 1);
     }
   }
 }
@@ -5328,6 +5522,7 @@ function tickArena(dt) {
     arenaState.fightTimer += dt;
     updateArenaOrb(dt);
     tickShrinkCircle(dt);
+    tickArenaPowerUps(dt);
     checkArenaRoundEnd();
   } else if (arenaState.phase === 'roundEnd') {
     arenaState.endTimer -= dt;
@@ -5452,6 +5647,9 @@ function createSide(idx) {
     kostefoUltJoints: [],
     kostefoGooseWaves: [],
     kostefoSliders: [],
+    // Arena Wars power-up buffs (sek kvar; 0 = inaktiv)
+    arenaSpeedBuff: 0,
+    arenaDamageBuff: 0,
     gimluDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
@@ -7269,7 +7467,9 @@ function updateHeroAttack(side, dt) {
   const aragurnPassive = aragurnPassiveMul(side);
   const berserkActive = (side.berserkRemaining || 0) > 0;
   const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul;
+  // Arena power-up damage-buff: +30% AA-dmg i 8s efter pickup
+  const arenaDmgMul = (side.arenaDamageBuff || 0) > 0 ? (1 + ARENA_POWERUP_DAMAGE_BOOST) : 1;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul * arenaDmgMul;
   // Berserk: 25% lifesteal på AA. Stackar additivt med dash-buff (annars dash overrider).
   const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
   const aaLifesteal = dashBuffed ? dashLs : berserkLs;
@@ -9769,7 +9969,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const slowMul = (side.heroSlowMul || 1);
   // Shadow Volley (Legolus ult): +20% movespeed under invis
   const invisMs = (side.legolusInvisRemaining || 0) > 0 ? LEGOLUS_INVIS_SPEED_BONUS : 0;
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs) * slowMul;
+  // Arena power-up speed-buff: +30% MS i 8s efter pickup
+  const arenaSpeedMs = (side.arenaSpeedBuff || 0) > 0 ? ARENA_POWERUP_SPEED_BOOST : 0;
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -11082,6 +11284,10 @@ const respawnTimerEl = document.getElementById('respawn-timer');
 const towerHpStackEl = document.getElementById('tower-hp-stack');
 const arenaOrbTimerEl = document.getElementById('arena-orb-timer');
 const arenaOrbTimerTextEl = document.getElementById('arena-orb-timer-text');
+const arenaBuffSpeedEl = document.getElementById('arena-buff-speed');
+const arenaBuffSpeedTimerEl = arenaBuffSpeedEl ? arenaBuffSpeedEl.querySelector('.ab-timer') : null;
+const arenaBuffDamageEl = document.getElementById('arena-buff-damage');
+const arenaBuffDamageTimerEl = arenaBuffDamageEl ? arenaBuffDamageEl.querySelector('.ab-timer') : null;
 // Hero HP-HUD (under kugghjul-knappen, line wars endast — ersätter 3D HP-bar
 // ovanför hero-mesh som döljs i tickAllHpBars för classic-mode).
 const heroHpHudEl = document.getElementById('hero-hp-hud');
@@ -11132,6 +11338,17 @@ function updateHud() {
     if (showOrbTimer && arenaOrbTimerTextEl) {
       arenaOrbTimerTextEl.textContent = Math.ceil(arenaState.orb.spawnTimer) + 's';
     }
+  }
+  // Arena power-up buff-chips (speed + damage). Visas när buff > 0 på local side.
+  if (arenaBuffSpeedEl) {
+    const sp = (side.arenaSpeedBuff || 0);
+    arenaBuffSpeedEl.classList.toggle('hidden', !(isArena && sp > 0));
+    if (sp > 0 && arenaBuffSpeedTimerEl) arenaBuffSpeedTimerEl.textContent = Math.ceil(sp) + 's';
+  }
+  if (arenaBuffDamageEl) {
+    const dm = (side.arenaDamageBuff || 0);
+    arenaBuffDamageEl.classList.toggle('hidden', !(isArena && dm > 0));
+    if (dm > 0 && arenaBuffDamageTimerEl) arenaBuffDamageTimerEl.textContent = Math.ceil(dm) + 's';
   }
   if (showTowers) {
     if (towerOwnTextEl) towerOwnTextEl.textContent = `${side.tower.hp}/${side.tower.maxHp}`;
@@ -15774,6 +15991,9 @@ function heroSnap(side) {
     ibr: _nzr2(side.iceBlockRemaining),
     slm: (side.heroSlowMul != null && side.heroSlowMul !== 1) ? _r3(side.heroSlowMul) : undefined,
     slt: _nzr2(side.heroSlowTime),
+    // Arena power-up buffs (undefined när inaktiva)
+    asp: _nzr2(side.arenaSpeedBuff),
+    adm: _nzr2(side.arenaDamageBuff),
   };
 }
 
@@ -15882,6 +16102,9 @@ function applyHeroSnap(side, snap) {
   side.iceBlockRemaining = snap.ibr || 0;
   side.heroSlowMul = snap.slm != null ? snap.slm : 1;     // default = 1 (no slow)
   side.heroSlowTime = snap.slt || 0;
+  // Arena power-up buffs — undefined i snap → 0 (inaktiv)
+  side.arenaSpeedBuff = snap.asp || 0;
+  side.arenaDamageBuff = snap.adm || 0;
   if (side.mesh) {
     if (!isLocalMpClient) {
       // Non-local: _target-baserad interpolation (smoothEntityMeshes lerpar
@@ -15947,6 +16170,8 @@ function broadcastArenaState() {
     mp: arenaState.mapIdx || 0,
     sr: _r2(arenaState.shrinkRadius || 0),
     ft: _r2(arenaState.fightTimer || 0),
+    // Power-ups: id, x, z, t (typ). Klient rendrar pickup-meshes baserat på snap.
+    pu: _arrOpt(arenaState.powerUps, p => ({ id: p.id, x: _r2(p.x), z: _r2(p.z), t: p.type })),
     h1: heroSnap(sides[1]),
     h2: heroSnap(sides[2]),
   });
@@ -15966,6 +16191,9 @@ function applyArenaState(msg) {
   }
   if (msg.sr !== undefined) arenaState.shrinkRadius = msg.sr;
   if (msg.ft !== undefined) arenaState.fightTimer = msg.ft;
+  // Power-ups: ersätt hela listan från snap (host-auth). Klient mesh-render
+  // i updateArenaPowerUpMeshes per frame reconciliear via id.
+  arenaState.powerUps = (msg.pu || []).map(p => ({ id: p.id, x: p.x, z: p.z, type: p.t }));
   // Använd numeriska keys för wins/ready så vi inte blandar med strings efter JSON-roundtrip
   arenaState.wins[1] = (msg.w && msg.w[1]) || 0;
   arenaState.wins[2] = (msg.w && msg.w[2]) || 0;
@@ -19380,6 +19608,8 @@ function tick() {
   // Kostefo state-meshes (companion + cloud + ult-joints) — körs i alla lägen
   // (även Line Wars MP där simulateAll inte körs). Synkas mot side-state från snap.
   updateKostefoMeshes(dt);
+  // Arena power-up pickups — reconcileas mot arenaState.powerUps (host-auth state).
+  updateArenaPowerUpMeshes(dt);
   updateShieldAuras(now);
   checkShieldGain();
   checkHealGain();
