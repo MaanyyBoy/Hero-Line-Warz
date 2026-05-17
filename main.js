@@ -12969,6 +12969,8 @@ const _K_COMPANION_AA_INTERVAL = 0.9;
 const _K_COMPANION_FOLLOW_DIST = 1.6;
 
 // Q: Joint Attack — stationär gås-wave-zon framför hero (kastas 4m fram).
+// Spawnar mesh direkt + lagrar ref i entry så Arena/Solo ser visuellt (Arena
+// kör inte applySideData-reconcile som annars skulle skapa meshen).
 function hostCastKostefoJointAttack(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max || _K_GOOSEWAVE_CD;
@@ -12977,22 +12979,29 @@ function hostCastKostefoJointAttack(side, ev) {
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
   const fwd = _K_GOOSEWAVE_OFFSET + _K_GOOSEWAVE_LENGTH / 2;
+  const cx = side.hero.x + dx * fwd;
+  const cz = side.hero.z + dz * fwd;
+  const mesh = makeKostefoGooseWaveMesh({ w: _K_GOOSEWAVE_WIDTH, l: _K_GOOSEWAVE_LENGTH });
+  mesh.position.set(cx, 0, cz);
+  mesh.rotation.y = Math.atan2(dx, dz);
+  scene.add(mesh);
   side.kostefoGooseWaves = side.kostefoGooseWaves || [];
   side.kostefoGooseWaves.push({
     id: (side._kostefoNextId = (side._kostefoNextId || 1) + 1),
-    x: side.hero.x + dx * fwd,
-    z: side.hero.z + dz * fwd,
-    dx, dz,
+    x: cx, z: cz, dx, dz,
     width: _K_GOOSEWAVE_WIDTH,
     length: _K_GOOSEWAVE_LENGTH,
     remaining: _K_GOOSEWAVE_DURATION,
     duration: _K_GOOSEWAVE_DURATION,
     tickAccum: 0,
+    mesh,                          // lokal mesh-ref (Arena/Solo)
   });
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66dd55, 1.6);
 }
 
 // F: Joint Slider — piercing projectile, 6m, exploderar vid slut.
+// Spawnar slider-mesh + lagrar ref i entry för Arena/Solo (line-wars-snap-
+// reconcile körs inte här).
 function hostCastKostefoJointSlider(side, ev) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max || _K_SLIDER_CD;
@@ -13000,6 +13009,10 @@ function hostCastKostefoJointSlider(side, ev) {
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
   else { dx /= len; dz /= len; }
+  const mesh = makeKostefoSliderMesh();
+  mesh.position.set(side.hero.x, 1.4, side.hero.z);
+  mesh.rotation.y = Math.atan2(dx, dz);
+  scene.add(mesh);
   side.kostefoSliders = side.kostefoSliders || [];
   side.kostefoSliders.push({
     id: (side._kostefoNextId = (side._kostefoNextId || 1) + 1),
@@ -13008,6 +13021,7 @@ function hostCastKostefoJointSlider(side, ev) {
     traveled: 0,
     maxRange: _K_SLIDER_RANGE,
     hitMon: [], hitCreep: [], hitOppHero: false,
+    mesh,                          // lokal mesh-ref
   });
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddaa44, 1.2);
 }
@@ -13084,7 +13098,26 @@ function tickClientKostefoGooseWaves(side, dt) {
         }
       }
     }
-    if (w.remaining <= 0) side.kostefoGooseWaves.splice(i, 1);
+    // Animera flygande joints inom mesh (bobbar + svänger + roterar) + fade-out
+    if (w.mesh && w.mesh.userData.gwGeese) {
+      const t = performance.now() / 1000;
+      for (let g = 0; g < w.mesh.userData.gwGeese.length; g++) {
+        const j = w.mesh.userData.gwGeese[g];
+        const ph = j.userData.gwPhase || 0;
+        j.position.y = 0.45 + Math.sin(t * 3.5 + ph) * 0.18;
+        j.position.z = (j.userData.gwBaseZ || 0) + Math.cos(t * 2.4 + ph) * 0.45;
+        j.position.x = (j.userData.gwBaseX || 0) + Math.sin(t * 2.1 + ph * 0.6) * 0.20;
+        j.rotation.z = Math.sin(t * 2.0 + ph) * 0.20;
+        j.rotation.y = Math.cos(t * 1.6 + ph) * 0.30;
+      }
+      if (w.mesh.userData.gwBaseRing && w.mesh.userData.gwBaseRing.material) {
+        w.mesh.userData.gwBaseRing.material.opacity = 0.55 * Math.max(0, w.remaining / w.duration);
+      }
+    }
+    if (w.remaining <= 0) {
+      if (w.mesh) scene.remove(w.mesh);
+      side.kostefoGooseWaves.splice(i, 1);
+    }
   }
 }
 
@@ -13108,6 +13141,12 @@ function tickClientKostefoSliders(side, dt) {
     s.x += s.dx * step;
     s.z += s.dz * step;
     s.traveled += step;
+    // Sync mesh-pos + orient mot flygriktning
+    if (s.mesh) {
+      s.mesh.position.x = s.x;
+      s.mesh.position.z = s.z;
+      s.mesh.rotation.y = Math.atan2(s.dx, s.dz);
+    }
     // Pierce opp-hero
     if (opp && !opp.hero.dead && !s.hitOppHero) {
       const rdx = opp.hero.x - s.x, rdz = opp.hero.z - s.z;
@@ -13131,8 +13170,8 @@ function tickClientKostefoSliders(side, dt) {
           }
         }
       }
-      spawnSkillCastFx(s.x, s.z, 0xff5511, 2.2);
-      triggerCameraShake(0.15, 0.2);
+      spawnKostefoSliderExplosionFx(s.x, s.z);
+      if (s.mesh) scene.remove(s.mesh);
       side.kostefoSliders.splice(i, 1);
     }
   }
