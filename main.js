@@ -17719,6 +17719,104 @@ function hideArenaMapVote() {
   arenaMapVoteState.active = false;
 }
 
+// Ritar en top-down minimap av en ARENA_MAPS-entry på given canvas.
+// Arena-koord-system: x ∈ [-44,44], z ∈ [-28,28] (props-koord relativa arena-mitten).
+// Ritas med pixel-DPR-aware skalning så previewen är skarp på mobiler.
+function drawArenaMapPreview(canvas, map) {
+  if (!canvas || !map) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const cssW = canvas.clientWidth || 180;
+  const cssH = canvas.clientHeight || Math.round(cssW * 7 / 11);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const aMinX = -44, aMaxX = 44, aMinZ = -28, aMaxZ = 28;
+  const aw = aMaxX - aMinX, ah = aMaxZ - aMinZ;
+  const pad = 3;
+  const scale = Math.min((cssW - pad * 2) / aw, (cssH - pad * 2) / ah);
+  const ox = (cssW - aw * scale) / 2;
+  const oy = (cssH - ah * scale) / 2;
+  const x2 = (x) => ox + (x - aMinX) * scale;
+  const z2 = (z) => oy + (z - aMinZ) * scale;
+
+  // Bakgrund (utanför arena-rektangel)
+  ctx.fillStyle = '#0c0a07';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  // Golv-tint
+  const tintHex = '#' + (map.floorTint >>> 0).toString(16).padStart(6, '0');
+  ctx.fillStyle = tintHex;
+  ctx.fillRect(ox, oy, aw * scale, ah * scale);
+
+  // Subtil vinjett via mörk inner-stroke
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(ox + 0.5, oy + 0.5, aw * scale - 1, ah * scale - 1);
+
+  // Mitt-linje (dottad)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.setLineDash([2, 3]);
+  ctx.beginPath();
+  ctx.moveTo(x2(0), oy + 2);
+  ctx.lineTo(x2(0), oy + ah * scale - 2);
+  ctx.stroke();
+  ctx.restore();
+
+  // Spawns (vänster blå, höger röd)
+  const spawnR = 2.2;
+  ctx.fillStyle = 'rgba(120,200,255,0.85)';
+  ctx.beginPath(); ctx.arc(x2(-32), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2(-32), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,140,110,0.85)';
+  ctx.beginPath(); ctx.arc(x2( 32), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2( 32), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
+
+  // Orb (mittpunkt, guld)
+  ctx.fillStyle = '#ffd34a';
+  ctx.beginPath(); ctx.arc(x2(0), z2(0), Math.max(1.8, 2.0), 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  // Props (top-down, rotation appliceras på box-shapes för visuell match)
+  const PROP_STYLE = {
+    rock:        { fill: '#7a6a4c', stroke: '#2c2316' },
+    wall:        { fill: '#9a917b', stroke: '#3a3528' },
+    pillar:      { fill: '#b0a890', stroke: '#3a3528' },
+    wagon:       { fill: '#6b4628', stroke: '#241608' },
+    fallenTower: { fill: '#aaa090', stroke: '#352f24' },
+  };
+  for (const p of (map.props || [])) {
+    const st = PROP_STYLE[p.type] || { fill: '#888', stroke: '#222' };
+    const c = p.collision;
+    if (!c) continue;
+    const cx = x2(p.x), cy = z2(p.z);
+    ctx.fillStyle = st.fill;
+    ctx.strokeStyle = st.stroke;
+    ctx.lineWidth = 0.6;
+    if (c.shape === 'circle') {
+      const r = Math.max(1.4, c.radius * scale);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (c.shape === 'box') {
+      const hx = Math.max(0.9, c.halfX * scale);
+      const hz = Math.max(0.9, c.halfZ * scale);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(p.rot || 0);
+      ctx.fillRect(-hx, -hz, hx * 2, hz * 2);
+      ctx.strokeRect(-hx, -hz, hx * 2, hz * 2);
+      ctx.restore();
+    }
+  }
+}
+
 function renderArenaMapVoteCards() {
   if (!amvCardsEl) return;
   amvCardsEl.innerHTML = '';
@@ -17730,10 +17828,15 @@ function renderArenaMapVoteCards() {
     card.className = 'amv-mapcard' + (myVote === i ? ' voted' : '');
     card.innerHTML = `
       <div class="amv-mvotes">${voteCount}</div>
+      <canvas class="amv-mpreview" aria-label="${m.name} karta"></canvas>
       <div class="amv-mname">${m.name}</div>
       <div class="amv-mdesc">${m.desc || ''}</div>`;
     card.addEventListener('click', () => voteForArenaMap(i));
     amvCardsEl.appendChild(card);
+    const canvas = card.querySelector('.amv-mpreview');
+    // rAF: canvas är i DOM men aspect-ratio-storleken är inte ännu uträknad
+    // på synkron path. requestAnimationFrame ger layout-pass innan vi mäter.
+    if (canvas) requestAnimationFrame(() => drawArenaMapPreview(canvas, m));
   }
 }
 
