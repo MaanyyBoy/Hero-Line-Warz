@@ -77,7 +77,16 @@ if (window.visualViewport) {
 
 const ASSET_BASE = './assets/';
 const CHARACTER_ASSETS = {
-  // Heroes (Adventurers-pack)
+  // Heroes (Mixamo, decision 034 — ersätter KayKit Adventurers för hjältar).
+  // Animationerna är embedded i varje GLB med våra namn-konventioner:
+  // Idle / Walking / Running / 1H_Slash / 2H_Slash / Magic_Attack / Bow_Attack /
+  // Spellcast / Hit_Reaction / Dive / Death.
+  gandulf_mx:  'heroes/mixamo/gandulf.glb',
+  legolus_mx:  'heroes/mixamo/legolus.glb',
+  gimlu_mx:    'heroes/mixamo/gimlu.glb',
+  aragurn_mx:  'heroes/mixamo/aragurn.glb',
+  kostefos_mx: 'heroes/mixamo/kostefos.glb',
+  // KayKit Heroes (legacy — fallback om någon framtida hjälte saknar Mixamo-asset)
   knight:    'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Knight.glb',
   mage:      'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Mage.glb',
   ranger:    'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Ranger.glb',
@@ -2236,22 +2245,32 @@ function makeHeroCopyMesh(ownerSideIdx, heroId) {
   return grp;
 }
 
-// Hero-mesh-dispatcher per heroId — GLTF-laddat från KayKit Adventurers.
-// Mappning: magiker→Mage, legolas→Ranger, gimlu→Barbarian.
+// Hero-mesh-dispatcher per heroId — GLTF-laddat från Mixamo (decision 034).
 const HERO_GLTF_MAP = {
-  magiker: 'mage',
-  legolas: 'ranger',
-  gimlu:   'barbarian',
-  aragurn: 'knight',
-  kostefo: 'rogue',          // Rogue-mesh (smal, street-stil) — inte wizard-look
+  magiker: 'gandulf_mx',
+  legolas: 'legolus_mx',
+  gimlu:   'gimlu_mx',
+  aragurn: 'aragurn_mx',
+  kostefo: 'kostefos_mx',
 };
-// Per-hero scale: {x,y,z}. X/Z mindre än Y → smalare silhuett (mindre lego-klump).
+// Per-hero scale: {x,y,z}. Mixamo-modeller är vanligen i meter-skala efter
+// Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
 const HERO_GLTF_SCALE = {
-  magiker: { x: 0.70, y: 0.82, z: 0.78 },
-  legolas: { x: 0.70, y: 0.82, z: 0.78 },
-  gimlu:   { x: 0.80, y: 0.88, z: 0.86 },  // Barbarian = lite större för tank-känsla
-  aragurn: { x: 0.95, y: 1.10, z: 0.98 },  // Knight, större + längre — soldat-bygge
-  kostefo: { x: 0.75, y: 0.86, z: 0.82 },
+  magiker: { x: 1.0, y: 1.0, z: 1.0 },
+  legolas: { x: 1.0, y: 1.0, z: 1.0 },
+  gimlu:   { x: 1.1, y: 1.1, z: 1.1 },     // tank-känsla
+  aragurn: { x: 1.05, y: 1.05, z: 1.05 },  // soldat-bygge
+  kostefo: { x: 1.0, y: 1.0, z: 1.0 },
+};
+// Per-hero AA-clip: vilken animation som triggas vid auto-attack.
+// Mappar fight-stilen till rätt Mixamo-clip vi exporterat i hero-GLB:n.
+// Fallback i getCachedClipNames letar bredare om denna saknas på rigg:en.
+const HERO_ATTACK_CLIP = {
+  magiker: 'Magic_Attack',   // 2H magic cast
+  legolas: 'Bow_Attack',     // standing aim recoil
+  gimlu:   '2H_Slash',       // great sword slash (närmast hammer-anim)
+  aragurn: '1H_Slash',       // sword slash
+  kostefo: 'Spellcast',      // long cast
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -2259,7 +2278,10 @@ function makeHeroMesh(idx, heroId) {
   grp.userData.heroId = heroId || 'magiker';
 
   const charName = HERO_GLTF_MAP[heroId] || HERO_GLTF_MAP.magiker;
-  const inner = instantiateCharacter(charName, 'hero');
+  // 'mixamo_hero'-grupp = ingen shared-anim-pool injiceras (KayKit-rigg har annan
+  // bone-naming än Mixamo, så delade clips skulle inte mappa korrekt).
+  // Animationerna är embedded i Mixamo-GLB:n.
+  const inner = instantiateCharacter(charName, 'mixamo_hero');
   if (inner) {
     const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
     inner.scale.set(sc.x, sc.y, sc.z);
@@ -10343,16 +10365,28 @@ const ATTACK_DURATION = 0.4;     // sek per attack-thrust
 const HERO_ATTACK_DURATION = 0.4;
 const CREEP_ATTACK_DURATION = 0.3;
 
-// Cache:a relevant clip-namnen per mesh (kostar att traversa actions varje frame)
+// Cache:a relevant clip-namnen per mesh (kostar att traversa actions varje frame).
+// Per-hero AA-clip: heroes/hjälte-grupper har olika fight-stil (magic / bow / sword
+// / hammer / spellcast), så `HERO_ATTACK_CLIP[heroId]` slås upp först. Faller
+// tillbaka på en bred sökning för icke-hero-meshes (monster, minions).
 function getCachedClipNames(mesh) {
   if (mesh.userData._cachedClips) return mesh.userData._cachedClips;
   const actions = mesh.userData.actions;
   if (!actions) return null;
+  const heroId = mesh.userData.heroId;
+  const heroAtkName = (heroId && typeof HERO_ATTACK_CLIP !== 'undefined') ? HERO_ATTACK_CLIP[heroId] : null;
+  // findClipName matchar substring case-insensitivt — om HERO_ATTACK_CLIP-clip
+  // saknas på rigg:en (t.ex. konvertering tappade en anim) faller den tillbaka
+  // till bred-sökningen och plockar närmaste matchning.
+  const attackClip = (heroAtkName && findClipName(actions, heroAtkName))
+    || findClipName(actions, '1H_Melee_Attack', '2H_Melee_Attack', 'Attack', 'Chop',
+                    'Spellcast_Shoot', 'Spellcast',
+                    '1H_Slash', '2H_Slash', 'Magic_Attack', 'Bow_Attack');
   const cache = {
     idle:   findClipName(actions, 'Idle'),
     walk:   findClipName(actions, 'Walking', 'Walk'),
     run:    findClipName(actions, 'Running', 'Run'),
-    attack: findClipName(actions, '1H_Melee_Attack', '2H_Melee_Attack', 'Attack', 'Chop', 'Spellcast_Shoot', 'Spellcast'),
+    attack: attackClip,
     death:  findClipName(actions, 'Death_A', 'Death'),
   };
   mesh.userData._cachedClips = cache;
