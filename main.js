@@ -299,9 +299,9 @@ function swapTowersToMedieval() {
     grp.position.copy(pos);
     // Deep-clone GLB-scenen så båda sidor får egna instanser.
     const tower = towerScene.clone(true);
-    // Skala 0.8 (uniform) — halverar tornets höjd jämfört med första iterationen
-    // (var 1.6). Mer kompakt fästning som inte dominerar arenan.
-    tower.scale.set(0.8, 0.8, 0.8);
+    // X/Z = 1.6 (dubbel tjocklek mot förra), Y = 0.8 (oförändrad halverad höjd).
+    // Ger en bredare, mer fästning-aktig silhuett.
+    tower.scale.set(1.6, 0.8, 1.6);
     tower.traverse(o => {
       if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
     });
