@@ -16888,6 +16888,13 @@ function showHeroPreview(containerEl, heroId) {
   startHeroPreviewLoop();
 }
 
+// Mål-höjd för preview-rutan (canvas-fit). Camera FOV 32° på distans 3.6m ger
+// ~2.07m vertikal area; vi vill att hjälten fyller ~85% = 1.76m. Auto-fit:ar
+// alla heroes till samma visuella storlek så Gimlu (HERO_GLTF_SCALE 1.1 + större
+// Mixamo-mesh) inte spiller utanför rutan. HERO_GLTF_SCALE används fortsatt
+// in-match för "tank-känsla" — bara preview-rutan auto-normaliseras.
+const HERO_PREVIEW_TARGET_HEIGHT = 1.76;
+
 function swapPreviewHero(heroId) {
   const st = heroPreviewState;
   // Riv gammal mesh
@@ -16899,10 +16906,18 @@ function swapPreviewHero(heroId) {
   const charName = HERO_GLTF_MAP[heroId] || HERO_GLTF_MAP.magiker;
   const mesh = instantiateCharacter(charName, 'mixamo_hero');
   if (!mesh) { st.currentHeroId = null; return; }
-  const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
-  mesh.scale.set(sc.x, sc.y, sc.z);
   mesh.position.set(0, 0, 0);
   mesh.userData.heroId = heroId;
+  // Auto-fit: mät unscaled-bbox och skala så mesh-höjd = HERO_PREVIEW_TARGET_HEIGHT.
+  // updateMatrixWorld krävs för att Box3.setFromObject ska se rätt transforms.
+  mesh.scale.set(1, 1, 1);
+  mesh.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(mesh);
+  const meshH = bbox.max.y - bbox.min.y;
+  if (meshH > 0.01) {
+    const fit = HERO_PREVIEW_TARGET_HEIGHT / meshH;
+    mesh.scale.set(fit, fit, fit);
+  }
   st.scene.add(mesh);
   st.currentMesh = mesh;
   st.mixer = mesh.userData.mixer;
