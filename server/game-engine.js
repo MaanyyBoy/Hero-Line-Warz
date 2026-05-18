@@ -528,10 +528,10 @@ const ITEM_TYPES = {
   item6: { id: 'item6', name: 'Item 6', statsAtLevel: () => ({}) },
 };
 
-// === Side config ===
+// === Side config === (decision 041: lane-Z ×1.2, lane-X ×1.3)
 const SIDE_CFG = {
-  1: { laneZ: { 1: 12, 2: 4 },   spawnX: -27, baseZRange: [0.5, 14.55],   tower: { x: 24, z: 8 },  heroSpawn: { x: 15, z: 8 } },
-  2: { laneZ: { 1: -4, 2: -12 }, spawnX: -27, baseZRange: [-14.55, -0.5], tower: { x: 24, z: -8 }, heroSpawn: { x: 15, z: -8 } },
+  1: { laneZ: { 1: 14.4, 2: 4.8 },   spawnX: -38, baseZRange: [0.5, 17.5],   tower: { x: 24, z: 9.6 },  heroSpawn: { x: 15, z: 9.6 } },
+  2: { laneZ: { 1: -4.8, 2: -14.4 }, spawnX: -38, baseZRange: [-17.5, -0.5], tower: { x: 24, z: -9.6 }, heroSpawn: { x: 15, z: -9.6 } },
 };
 
 // Portal-feature: lvl-30 hero kan teleportera till motståndarens lanes för PvP-raid.
@@ -541,17 +541,18 @@ const PORTAL_ENEMY_DURATION = 30;    // 30s i fiendens territorium
 const PORTAL_REQUIRED_LEVEL = 30;
 const PORTAL_ENTER_RADIUS = 1.3;
 const PORTAL_POS = {
-  1: { x: 26, z: 13 },   // side 1 portal i hörnet bakom torn (z=8)
-  2: { x: 26, z: -13 },  // side 2 spegelvänt
+  // Matchar visuella portal-mesharna (decision 041: z ±15.6, x 22)
+  1: { x: 22, z: 15.6 },
+  2: { x: 22, z: -15.6 },
 };
-// Mål-punkt på motståndarens lanes (mitten av deras lane 1)
+// Teleport-destination i motståndarens territorium (decision 041: z ±8 → ±9.6)
 const PORTAL_DEST = {
-  1: { x: 0, z: -8 },    // side 1 → opp:s (side 2) lane
-  2: { x: 0, z: 8 },     // side 2 → opp:s (side 1) lane
+  1: { x: 0, z: -9.6 },
+  2: { x: 0, z: 9.6 },
 };
-// === Walk-checks ===
+// === Walk-checks === (decision 041: lane-X ×1.3, lane-Z ×1.2)
 function inLane(x, z, centerZ) {
-  return x >= -27.95 && x <= 11 && z >= centerZ - 2.85 && z <= centerZ + 2.85;
+  return x >= -39.35 && x <= 11 && z >= centerZ - 3.42 && z <= centerZ + 3.42;
 }
 function inSideLanes(idx, x, z) {
   const cfg = SIDE_CFG[idx];
@@ -581,13 +582,11 @@ function isArenaWalkable(x, z) {
   return (dx * dx + dz * dz) < (ARENA_RADIUS - HERO_R) * (ARENA_RADIUS - HERO_R);
 }
 function isCreepPos(x, z) {
-  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 14.55) return true;
-  if (x >= 10.6 && x <= 27.55 && z >= -14.55 && z <= -0.5) return true;
-  // Lane-bounds är utvidgade bakåt (x ned till -45) så att monster-spawn-stagger
-  // (15 i kolumn bakom portalen) ryms och de kan röra sig in i lanen.
-  // Hero använder en smalare inLane via isHeroWalkable som inte ändras.
-  const inLaneWide = (cz) => x >= -45 && x <= 11 && z >= cz - 2.85 && z <= cz + 2.85;
-  return inLaneWide(12) || inLaneWide(4) || inLaneWide(-4) || inLaneWide(-12);
+  // Decision 041: bas-z 14.55 → 17.5, lane-bounds utvidgade bakåt -45 → -55, laneZ skalade ×1.2
+  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 17.5) return true;
+  if (x >= 10.6 && x <= 27.55 && z >= -17.5 && z <= -0.5) return true;
+  const inLaneWide = (cz) => x >= -55 && x <= 11 && z >= cz - 3.42 && z <= cz + 3.42;
+  return inLaneWide(14.4) || inLaneWide(4.8) || inLaneWide(-4.8) || inLaneWide(-14.4);
 }
 
 // === Helpers ===
