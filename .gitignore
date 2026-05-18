@@ -1,0 +1,22 @@
+# Raw asset-source-filer (Quaternius/Mixamo FBX/ZIP).
+# Endast konverterade .glb/.gltf-filer ska checkas in.
+# Decision 048 fix: GitHub 100 MB-gräns blocker pushen om FBX:er sneakar med.
+
+# FBX överallt (rå-källa, ska konverteras till GLB)
+*.fbx
+
+# ZIPs (rå-pack-arkiv)
+*.zip
+
+# Quaternius extracted raw (vi behåller bara hand-plockade .gltf-filer)
+assets/enemies/quaternius_monsters_raw/
+
+# OBJ/MTL/Blend-filer från Quaternius/Mixamo (bara GLB behövs)
+*.blend
+*.blend1
+*.obj
+*.mtl
+
+# OS/IDE-skräp
+.DS_Store
+Thumbs.db
