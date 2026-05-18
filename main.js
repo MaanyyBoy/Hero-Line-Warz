@@ -108,7 +108,15 @@ const ANIMATION_ASSETS = {
   skel_movement: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/Animations/gltf/Rig_Medium/Rig_Medium_MovementBasic.glb',
 };
 
+// Static environment-assets (Quaternius, CC0). Inga animationer. Klonas
+// per användning via .clone(true). Decision 037 — börjar med medieval-tower
+// som ersätter Rivendell-fontänen.
+const ENVIRONMENT_ASSETS = {
+  medieval_tower: 'environment/quaternius/medieval-castle/glTF/LargeTower.glb',
+};
+
 const loadedCharacters = new Map();   // name → { scene, animations }
+const loadedEnvironment = new Map();  // name → scene
 const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
   hero: [],
   skel: [],
@@ -120,7 +128,8 @@ async function preloadAllAssets() {
   const loader = new GLTFLoader();
   const charEntries = Object.entries(CHARACTER_ASSETS);
   const animEntries = Object.entries(ANIMATION_ASSETS);
-  const total = charEntries.length + animEntries.length;
+  const envEntries = Object.entries(ENVIRONMENT_ASSETS);
+  const total = charEntries.length + animEntries.length + envEntries.length;
   let done = 0;
   const fillEl = document.getElementById('al-bar-fill');
   const statusEl = document.getElementById('al-status');
@@ -204,11 +213,32 @@ async function preloadAllAssets() {
       updateProgress(name + ' (FAILED)');
     })
   );
-  await Promise.all([...charPromises, ...animPromises]);
+  // Static environment-assets (Quaternius). Sparas i loadedEnvironment som
+  // gltf.scene direkt — kallaren använder .clone(true) för att skapa instanser.
+  const envPromises = envEntries.map(([name, path]) =>
+    loader.loadAsync(ASSET_BASE + path).then(gltf => {
+      gltf.scene.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      loadedEnvironment.set(name, gltf.scene);
+      updateProgress(name);
+    }).catch(err => {
+      console.error(`[asset] Failed env ${name} (${path}):`, err);
+      updateProgress(name + ' (FAILED)');
+    })
+  );
+  await Promise.all([...charPromises, ...animPromises, ...envPromises]);
   clearTimeout(safetyTimer);
   assetsReady = true;
   if (statusEl) statusEl.textContent = `${total} / ${total} · done`;
   console.log('[asset] preloadAllAssets DONE');
+  // Swap proceduella torn-meshes till Quaternius medieval-tower nu när asseten
+  // är laddad. Static-scene bygdes synkront vid script-load med proceduell
+  // fallback (Rivendell-fontän); detta byter ut dem in-place.
+  swapTowersToMedieval();
   setTimeout(() => {
     const al = document.getElementById('asset-loading');
     if (al) al.classList.add('hidden');
@@ -248,6 +278,52 @@ function instantiateCharacter(charName, animGroup) {
   clone.userData.currentAction = null;
   clone.userData.gltfCharName = charName;
   return clone;
+}
+
+// Swap:ar proceduella Rivendell-fontäner mot Quaternius medieval-LargeTower.
+// Anropas EN gång efter preloadAllAssets är klar. Behåller pointlight + aura-ring
+// (gameplay-visuals: sida-färg + fountain-aura-radius). Renderloopen som
+// animerar f.water/f.crystal är redan guardad med if (f.water)/if (f.crystal),
+// så att dessa blir null på den nya towerMeshes-strukturen är säkert.
+function swapTowersToMedieval() {
+  const towerScene = loadedEnvironment.get('medieval_tower');
+  if (!towerScene) return;
+  for (const idx of [1, 2]) {
+    const old = towerMeshes[idx];
+    if (!old || !old.group) continue;
+    const pos = old.group.position.clone();
+    const color = idx === 1 ? 0x4aa0ff : 0xff5a4a;
+    scene.remove(old.group);
+
+    const grp = new THREE.Group();
+    grp.position.copy(pos);
+    // Deep-clone GLB-scenen så båda sidor får egna instanser.
+    const tower = towerScene.clone(true);
+    // Mätning: LargeTower är ~3m hög i Quaternius-skala. Vi vill ha ~4m för
+    // synlig "fästning-feel" på arenan (matchar gamla fountain-höjden).
+    tower.scale.set(1.6, 1.6, 1.6);
+    tower.traverse(o => {
+      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+    });
+    grp.add(tower);
+
+    // Pointlight = sida-färgens glöd (matchar gamla fountain)
+    const light = new THREE.PointLight(color, 1.0, 7, 2);
+    light.position.set(0, 3.0, 0);
+    grp.add(light);
+
+    // Aura-ring = gameplay-radius för fountain-aura (heal/buff-zon)
+    const auraRing = new THREE.Mesh(
+      new THREE.RingGeometry(FOUNTAIN_AURA_RADIUS - 0.08, FOUNTAIN_AURA_RADIUS, 56),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
+    );
+    auraRing.rotation.x = -Math.PI / 2;
+    auraRing.position.y = 0.03;
+    grp.add(auraRing);
+
+    scene.add(grp);
+    towerMeshes[idx] = { group: grp, water: null, topWater: null, light, auraRing, crystal: null };
+  }
 }
 
 // Stega alla aktiva mixers — anropas från tick().
