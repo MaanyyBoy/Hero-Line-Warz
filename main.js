@@ -4449,33 +4449,151 @@ arenaSceneGroup.userData.isArena = true;
 scene.add(arenaSceneGroup);
 
 // === BOSS WARS ARENA ===
-// 5 olika maps (en per boss), 20% större än innan, olika former.
+// Decision 049: 5 tematiska maps (en per boss), större arena (radius 36),
+// per-tier theme-props (träd/lava/eld/etc) + korridor-facklor.
 const BOSSWARS_CX = 0;
 const BOSSWARS_CZ = 90;
-const BOSSWARS_RADIUS = 30;   // 25 × 1.2 = 30 (20% större)
+const BOSSWARS_RADIUS = 36;   // 30 → 36 (20% större, mer rörelseutrymme för boss-fight)
 
 // Rum-system: hjältarna spawnar i ett separat rum, springer genom en korridor
 // in i boss-rummet. När alla är inne aktiveras bossen + en gate stängs så
 // ingen kan springa ut. Alla mått relativt världs-origin.
-const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;   // -30 — boss-rummets västsida
-const CORRIDOR_LENGTH = 22;
+const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;   // -36 — boss-rummets västsida
+const CORRIDOR_LENGTH = 26;                          // 22 → 26 (lite längre = mer drama)
 const CORRIDOR_WIDTH = 9;
 const CORRIDOR_HALF_W = CORRIDOR_WIDTH / 2;
-const CORRIDOR_X_MIN = BOSS_GATE_X - CORRIDOR_LENGTH;   // -52
-const CORRIDOR_X_MAX = BOSS_GATE_X;                       // -30
+const CORRIDOR_X_MIN = BOSS_GATE_X - CORRIDOR_LENGTH;   // -62
+const CORRIDOR_X_MAX = BOSS_GATE_X;                       // -36
 const SPAWN_ROOM_SIZE = 24;
 const SPAWN_ROOM_HALF = SPAWN_ROOM_SIZE / 2;
-const SPAWN_ROOM_CX = CORRIDOR_X_MIN - SPAWN_ROOM_HALF;   // -64
+const SPAWN_ROOM_CX = CORRIDOR_X_MIN - SPAWN_ROOM_HALF;   // -74
 const SPAWN_ROOM_CZ = BOSSWARS_CZ;                          // 90
 // Gate-thickness — used for visual mesh + walkability "wall" when stängd
 const GATE_THICKNESS = 0.5;
-// Map-config per tier — shape, color-tema, ev. accent
+// Map-config per tier — tema, färg, fack-eld-färg, ambient-ljus, decoration-props.
+// Props x/z är relativa BOSSWARS_CX/CZ. Walk-bounds är cirkel r=BOSSWARS_RADIUS
+// — props placeras > 24m från center så de inte krockar med boss-fight.
 const BOSSWARS_MAPS = {
-  1: { name: 'Stone Arena',    shape: 'circle',  color: 0x6a5a44, edgeColor: 0x2a2218, accent: 0x9a8a6a },
-  2: { name: 'Forest Hollow',  shape: 'square',  color: 0x4a5a36, edgeColor: 0x1a2410, accent: 0x6a8a4a },
-  3: { name: 'Heavenly Cross', shape: 'cross',   color: 0xc8d4e0, edgeColor: 0x8090a0, accent: 0xffe8a0 },
-  4: { name: 'Bloodmoon Keep', shape: 'octagon', color: 0x3a2030, edgeColor: 0x100808, accent: 0x6a0a0a },
-  5: { name: 'Volcano Crater', shape: 'hexagon', color: 0x40180c, edgeColor: 0x100400, accent: 0xff5010 },
+  // Tier 1 — Goblin Archer — FOREST HOLLOW (grön natur, träd överallt)
+  1: {
+    name: 'Forest Hollow',
+    color: 0x3a5028, edgeColor: 0x1a2810, accent: 0x88c060,
+    torchColor: 0x88ff66,                                   // grön mystisk flamma
+    ambient: { color: 0x6a9050, intensity: 0.25 },
+    props: [
+      { type: 'tree_maple', x: -26, z: -22, rot: 0.5 },
+      { type: 'tree_maple', x:  26, z:  22, rot: 1.2 },
+      { type: 'tree_birch', x: -28, z:  20, rot: 0.0 },
+      { type: 'tree_birch', x:  28, z: -20, rot: 0.0 },
+      { type: 'tree_maple', x:   0, z: -30, rot: 0.0 },
+      { type: 'tree_maple', x:   0, z:  30, rot: 0.0 },
+      { type: 'tree_birch', x: -30, z:   0, rot: 0.0 },
+      { type: 'tree_birch', x:  30, z:   0, rot: 0.0 },
+      { type: 'bush_flowers', x: -18, z:  10 },
+      { type: 'bush_flowers', x:  18, z: -10 },
+      { type: 'bush',         x: -10, z: -22 },
+      { type: 'bush',         x:  10, z:  22 },
+      { type: 'flowers', x: -22, z:  -8 },
+      { type: 'flowers', x:  22, z:   8 },
+      { type: 'flowers', x:  -8, z:  24 },
+    ],
+  },
+  // Tier 2 — Warlock Female — WITCH'S SANCTUM (mörk magi, lila pelare)
+  2: {
+    name: "Witch's Sanctum",
+    color: 0x2a1840, edgeColor: 0x100a18, accent: 0xaa66ff,
+    torchColor: 0xaa44ff,                                   // lila magi-flamma
+    ambient: { color: 0x4a2068, intensity: 0.30 },
+    props: [
+      { type: 'pillar', x: -22, z: -22 },
+      { type: 'pillar', x:  22, z:  22 },
+      { type: 'pillar', x: -22, z:  22 },
+      { type: 'pillar', x:  22, z: -22 },
+      { type: 'pillar', x:   0, z: -28 },
+      { type: 'pillar', x:   0, z:  28 },
+      { type: 'pillar', x: -28, z:   0 },
+      { type: 'pillar', x:  28, z:   0 },
+      { type: 'rock', x: -16, z: -10 },
+      { type: 'rock', x:  16, z:  10 },
+      { type: 'bigBoulder', x: -10, z:  20 },
+      { type: 'bigBoulder', x:  10, z: -20 },
+      { type: 'firePatch', x: -24, z: -16 },                // magisk eld-altare
+      { type: 'firePatch', x:  24, z:  16 },
+    ],
+  },
+  // Tier 3 — No-Face Alien — BIO LAB (cyan slime, alien-tech pelare)
+  3: {
+    name: 'Bio Lab',
+    color: 0x1a2828, edgeColor: 0x080e10, accent: 0x66ffcc,
+    torchColor: 0x44ffcc,                                   // cyan alien-glow
+    ambient: { color: 0x2a5050, intensity: 0.30 },
+    props: [
+      { type: 'pillar', x: -24, z: -20 },
+      { type: 'pillar', x:  24, z:  20 },
+      { type: 'pillar', x: -24, z:  20 },
+      { type: 'pillar', x:  24, z: -20 },
+      { type: 'pillar', x:   0, z: -28 },
+      { type: 'pillar', x:   0, z:  28 },
+      { type: 'lavaPool', x: -18, z:   0 },                 // grön slime-look via tint
+      { type: 'lavaPool', x:  18, z:   0 },
+      { type: 'lavaPool', x:   0, z:  20 },
+      { type: 'lavaPool', x:   0, z: -20 },
+      { type: 'bigBoulder', x: -12, z: -22 },
+      { type: 'bigBoulder', x:  12, z:  22 },
+      { type: 'rock', x: -28, z:   8 },
+      { type: 'rock', x:  28, z:  -8 },
+    ],
+  },
+  // Tier 4 — Big Alien — HIVE CHAMBER (rosa/röd organic, fallna torn = tentakler)
+  4: {
+    name: 'Hive Chamber',
+    color: 0x2a0e1a, edgeColor: 0x100408, accent: 0xff4488,
+    torchColor: 0xff44aa,                                   // hot pink alien
+    ambient: { color: 0x4a1830, intensity: 0.30 },
+    props: [
+      { type: 'fallenTower', x: -22, z: -12, rot: 0.4 },    // ser ut som tentakler
+      { type: 'fallenTower', x:  22, z:  12, rot: 2.4 },
+      { type: 'fallenTower', x: -10, z:  22, rot: 1.6 },
+      { type: 'fallenTower', x:  10, z: -22, rot: 1.6 },
+      { type: 'pillar', x: -28, z:   0 },
+      { type: 'pillar', x:  28, z:   0 },
+      { type: 'firePatch', x: -16, z:  18 },
+      { type: 'firePatch', x:  16, z: -18 },
+      { type: 'firePatch', x: -22, z: -22 },
+      { type: 'firePatch', x:  22, z:  22 },
+      { type: 'lavaPool', x:  -8, z: -10 },
+      { type: 'lavaPool', x:   8, z:  10 },
+      { type: 'bigBoulder', x: -26, z:  18 },
+      { type: 'bigBoulder', x:  26, z: -18 },
+    ],
+  },
+  // Tier 5 — Alien Soldier — VOLCANO CRATER (eld, lava, mörka stenar)
+  5: {
+    name: 'Volcano Crater',
+    color: 0x40180c, edgeColor: 0x100400, accent: 0xff5010,
+    torchColor: 0xff5010,                                   // orange flame
+    ambient: { color: 0x4a1808, intensity: 0.40 },
+    props: [
+      { type: 'firePatch', x: -18, z: -18 },
+      { type: 'firePatch', x:  18, z:  18 },
+      { type: 'firePatch', x: -18, z:  18 },
+      { type: 'firePatch', x:  18, z: -18 },
+      { type: 'firePatch', x: -26, z:   0 },
+      { type: 'firePatch', x:  26, z:   0 },
+      { type: 'firePatch', x:   0, z: -26 },
+      { type: 'firePatch', x:   0, z:  26 },
+      { type: 'lavaPool', x: -12, z: -12 },
+      { type: 'lavaPool', x:  12, z:  12 },
+      { type: 'lavaPool', x: -12, z:  12 },
+      { type: 'lavaPool', x:  12, z: -12 },
+      { type: 'rock', x: -22, z: -24 },
+      { type: 'rock', x:  22, z:  24 },
+      { type: 'bigBoulder', x: -20, z:  22 },
+      { type: 'bigBoulder', x:  20, z: -22 },
+      { type: 'bigBoulder', x: -28, z:  10 },
+      { type: 'bigBoulder', x:  28, z: -10 },
+    ],
+  },
 };
 const bossWarsSceneGroup = new THREE.Group();
 bossWarsSceneGroup.visible = false;
@@ -4689,6 +4807,109 @@ function buildBossWarsScene() {
   bossWarsSceneGroup.add(gateGlow);
   bossWarsSceneGroup.userData.gate = gate;
   bossWarsSceneGroup.userData.gateGlow = gateGlow;
+
+  // Decision 049: korridor-facklor + tier-specifika theme-props + ambient-ljus.
+  buildBossCorridorTorches(map);
+  buildBossArenaProps(map);
+  buildBossArenaAmbient(map);
+}
+
+// Decision 049: tier-färgad fackla (sten-bracket + flame-cone, emissive-only).
+// Ingen PointLight per torch (skulle skapa 12+ shader-permutationer).
+// EN central korridor-PointLight läggs separat för warm ambience.
+function makeBossWarsTorch(flameColor) {
+  const grp = new THREE.Group();
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.30, 0.40, 0.5, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a3028, roughness: 0.95 })
+  );
+  base.position.y = 0.25;
+  base.castShadow = true;
+  grp.add(base);
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.10, 1.7, 6),
+    new THREE.MeshStandardMaterial({ color: 0x4a3018, roughness: 0.9 })
+  );
+  pole.position.y = 1.35;
+  pole.castShadow = true;
+  grp.add(pole);
+  const bowl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.24, 0.16, 0.18, 10),
+    new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 0.85, metalness: 0.3 })
+  );
+  bowl.position.y = 2.25;
+  grp.add(bowl);
+  // Flamma — kon med tier-färg, hög emissive för glow utan PointLight
+  const flameMat = new THREE.MeshStandardMaterial({
+    color: flameColor, emissive: flameColor, emissiveIntensity: 2.2,
+    roughness: 0.4, transparent: true, opacity: 0.92,
+  });
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.65, 8), flameMat);
+  flame.position.y = 2.65;
+  grp.add(flame);
+  // Yttre glow-puff för "halo"-känsla utan light
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.35, 10, 8),
+    new THREE.MeshBasicMaterial({ color: flameColor, transparent: true, opacity: 0.32, depthWrite: false })
+  );
+  glow.position.y = 2.65;
+  grp.add(glow);
+  return grp;
+}
+
+// Placerar 12 facklor (6 per sida) längs korridoren + 1 central PointLight.
+function buildBossCorridorTorches(map) {
+  const torchColor = map.torchColor || 0xff7733;
+  const torchCount = 6;          // per sida
+  const inset = 0.7;             // hur långt utanför korridoren facklan står
+  for (let i = 0; i < torchCount; i++) {
+    const t = (i + 0.5) / torchCount;
+    const x = CORRIDOR_X_MIN + t * CORRIDOR_LENGTH;
+    for (const side of [-1, 1]) {
+      const z = BOSSWARS_CZ + side * (CORRIDOR_HALF_W + inset);
+      const torch = makeBossWarsTorch(torchColor);
+      torch.position.set(x, 0.4, z);
+      bossWarsSceneGroup.add(torch);
+    }
+  }
+  // EN central PointLight i mid-korridor — tier-färgad warmth.
+  // Adderas vid scene-build (en gång per tier-byte) så shader-recompile är OK.
+  const corrLight = new THREE.PointLight(torchColor, 1.4, 18, 2);
+  corrLight.position.set((CORRIDOR_X_MIN + CORRIDOR_X_MAX) / 2, 2.5, BOSSWARS_CZ);
+  bossWarsSceneGroup.add(corrLight);
+}
+
+// Spawnar tier-specifika props runt arena-perimetern.
+// Återanvänder makeArenaProp-fabriken (alla tree/bush/lava/fire-typer stöds).
+// Props placeras i lokalkoord (relativt arena-mitten) och translateras till
+// världs-koord via BOSSWARS_CX/CZ-offset.
+// VIKTIGT: firePatch/lavaPool har egna PointLights — strippas här för att
+// undvika 12+ lights i boss-wars-scenen (mobil GPU clampar shader-light-count
+// → tysta visual-bugs + FPS-drop). Emissive-materialet ger glow ändå.
+function buildBossArenaProps(map) {
+  if (!map.props) return;
+  for (const p of map.props) {
+    const mesh = makeArenaProp(p.type);
+    if (!mesh) continue;
+    // Strippa per-prop PointLights — för många = shader-recompile-bomb.
+    mesh.traverse(o => {
+      if (o.isLight) {
+        if (o.parent) o.parent.remove(o);
+      }
+    });
+    mesh.position.set(BOSSWARS_CX + p.x, 0, BOSSWARS_CZ + p.z);
+    mesh.rotation.y = p.rot || 0;
+    bossWarsSceneGroup.add(mesh);
+  }
+}
+
+// Tier-färgad ambient-light som lyser upp hela arenan med tier-tema-färg.
+// Adderas EN GÅNG per scene-build (acceptable shader-recompile-kostnad).
+function buildBossArenaAmbient(map) {
+  if (!map.ambient) return;
+  const amb = new THREE.PointLight(map.ambient.color, map.ambient.intensity || 0.3, BOSSWARS_RADIUS * 2);
+  amb.position.set(BOSSWARS_CX, 8, BOSSWARS_CZ);
+  bossWarsSceneGroup.add(amb);
 }
 
 // Walkable area i boss wars = spawn-rum + korridor + boss-rum (+ gate-block om stängd).
