@@ -562,6 +562,166 @@ function makeDesertLaneTexture(seed = 1) {
   return tex;
 }
 
+// MLBB-stil gräs-lane med cobblestone-stenstig
+function makeGrassLaneTexture(seed = 1) {
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 2048, H = 384;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // 1) Gräs-bas — varm grön gradient + tonvariation
+  const grassGrad = ctx.createLinearGradient(0, 0, 0, H);
+  grassGrad.addColorStop(0, '#3f6b2c');
+  grassGrad.addColorStop(0.5, '#4d7d36');
+  grassGrad.addColorStop(1, '#3f6b2c');
+  ctx.fillStyle = grassGrad;
+  ctx.fillRect(0, 0, W, H);
+  // Stora fläckar i avvikande gröna toner
+  for (let i = 0; i < 80; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const r = 20 + rnd() * 55;
+    const lighter = rnd() < 0.5;
+    ctx.fillStyle = lighter
+      ? `rgba(120, 165, 70, ${0.10 + rnd() * 0.12})`
+      : `rgba(40, 70, 25, ${0.12 + rnd() * 0.14})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // Gräs-noise (många små prickar för textur)
+  for (let i = 0; i < 8000; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const a = 0.05 + rnd() * 0.12;
+    const tone = rnd() < 0.55 ? '90, 130, 50' : '40, 70, 25';
+    ctx.fillStyle = `rgba(${tone}, ${a})`;
+    ctx.fillRect(x, y, 1 + rnd() * 1.4, 1 + rnd() * 1.4);
+  }
+
+  // 2) Stenstig — cobblestone-band genom mitten med lätt vågig kant
+  const pathCenterY = H * 0.5;
+  const pathHalfH = H * 0.20; // ~2.4m bred på 6m lane
+  // Klipp-region för stigen
+  ctx.save();
+  ctx.beginPath();
+  const segments = 80;
+  ctx.moveTo(0, pathCenterY - pathHalfH);
+  for (let i = 0; i <= segments; i++) {
+    const x = (i / segments) * W;
+    const wob = (rnd() - 0.5) * H * 0.04;
+    ctx.lineTo(x, pathCenterY - pathHalfH + wob);
+  }
+  for (let i = segments; i >= 0; i--) {
+    const x = (i / segments) * W;
+    const wob = (rnd() - 0.5) * H * 0.04;
+    ctx.lineTo(x, pathCenterY + pathHalfH + wob);
+  }
+  ctx.closePath();
+  // Bas-färg (mortar mellan stenarna) — mörkbrun jord
+  ctx.fillStyle = '#3a2a1c';
+  ctx.fill();
+  ctx.clip();
+
+  // Cobblestones — packade oregelbundna polygoner
+  const stoneCols = 28; // längs lane
+  const stoneRows = 5;  // tvärs lane
+  const cellW = W / stoneCols;
+  const cellH = (pathHalfH * 2) / stoneRows;
+  for (let r = 0; r < stoneRows; r++) {
+    const offsetX = (r % 2) * cellW * 0.5; // tegelförband
+    for (let cIdx = -1; cIdx < stoneCols + 1; cIdx++) {
+      const baseX = cIdx * cellW + offsetX + cellW * 0.5;
+      const baseY = pathCenterY - pathHalfH + r * cellH + cellH * 0.5;
+      const jitterX = (rnd() - 0.5) * cellW * 0.25;
+      const jitterY = (rnd() - 0.5) * cellH * 0.25;
+      const cx = baseX + jitterX;
+      const cy = baseY + jitterY;
+      const rx = cellW * (0.40 + rnd() * 0.15);
+      const ry = cellH * (0.40 + rnd() * 0.18);
+      // Sten-färg — varierad grå
+      const grey = 110 + Math.floor(rnd() * 50);
+      const warmth = rnd() < 0.35 ? 8 : 0; // lite varm ton på vissa
+      ctx.fillStyle = `rgb(${grey + warmth}, ${grey + warmth * 0.6}, ${grey - 8})`;
+      // Rita som polygon med 6-8 hörn för naturlig kant
+      const verts = 6 + Math.floor(rnd() * 3);
+      ctx.beginPath();
+      for (let v = 0; v < verts; v++) {
+        const ang = (v / verts) * Math.PI * 2 + rnd() * 0.2;
+        const rrad = 1 - rnd() * 0.15;
+        ctx.lineTo(cx + Math.cos(ang) * rx * rrad, cy + Math.sin(ang) * ry * rrad);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // Highlight uppe-vänster
+      ctx.fillStyle = `rgba(255, 250, 235, 0.20)`;
+      ctx.beginPath();
+      ctx.ellipse(cx - rx * 0.35, cy - ry * 0.35, rx * 0.55, ry * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Skugga ner-höger
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+      ctx.beginPath();
+      ctx.ellipse(cx + rx * 0.25, cy + ry * 0.45, rx * 0.85, ry * 0.30, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Mossa-fläck på vissa stenar
+      if (rnd() < 0.20) {
+        ctx.fillStyle = `rgba(80, 120, 50, ${0.25 + rnd() * 0.20})`;
+        ctx.beginPath();
+        ctx.ellipse(cx + (rnd() - 0.5) * rx, cy + (rnd() - 0.5) * ry, rx * 0.35, ry * 0.25, rnd() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+
+  // 3) Gräs-tofsar — kring stig-kanten och spridda i gräset
+  for (let i = 0; i < 120; i++) {
+    const x = rnd() * W;
+    // Hälften nära stigkant, hälften ute i gräset
+    let y;
+    if (rnd() < 0.5) {
+      const side = rnd() < 0.5 ? -1 : 1;
+      y = pathCenterY + side * (pathHalfH + 2 + rnd() * 12);
+    } else {
+      y = rnd() < 0.5 ? rnd() * (pathCenterY - pathHalfH - 8) : (pathCenterY + pathHalfH + 8) + rnd() * (H - (pathCenterY + pathHalfH + 8));
+    }
+    if (y < 0 || y > H) continue;
+    const blades = 5 + Math.floor(rnd() * 6);
+    for (let b = 0; b < blades; b++) {
+      const bx = x + (rnd() - 0.5) * 7;
+      const by = y + (rnd() - 0.5) * 3;
+      const len = 4 + rnd() * 6;
+      const sway = (rnd() - 0.5) * 1.8;
+      const green = 110 + Math.floor(rnd() * 70);
+      ctx.strokeStyle = `rgb(${50 + Math.floor(rnd()*30)}, ${green}, ${40 + Math.floor(rnd()*25)})`;
+      ctx.lineWidth = 1 + rnd();
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + sway, by - len);
+      ctx.stroke();
+    }
+  }
+
+  // 4) Små vilda blommor (gula/vita prickar) — sparsamt
+  for (let i = 0; i < 35; i++) {
+    const x = rnd() * W;
+    const side = rnd() < 0.5 ? -1 : 1;
+    const y = pathCenterY + side * (pathHalfH + 5 + rnd() * (H * 0.25));
+    if (y < 0 || y > H) continue;
+    const color = rnd() < 0.6 ? 'rgba(245, 230, 110, 0.85)' : 'rgba(245, 245, 235, 0.85)';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5 + rnd() * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // Bas-camp golv — mörk packad jord matchande stig-färgen, med grus och slitage
 function makeCampGroundTexture(seed = 99) {
   let s = seed * 2654435761 >>> 0;
@@ -806,6 +966,7 @@ function makeElvenStoneTexture(seed = 33) {
 const TEXTURES = {
   groundGrass: () => makeNoiseTexture([42, 60, 32], 0.2, { repeatX: 14, repeatY: 7, streaks: true }),
   desertLane: (seed) => makeDesertLaneTexture(seed),
+  grassLane: (seed) => makeGrassLaneTexture(seed),
   campGround: (seed) => makeCampGroundTexture(seed),
   trailFade: (seed) => makeTrailFadeTexture(seed),
   elvenStone: (seed) => makeElvenStoneTexture(seed),
@@ -835,11 +996,11 @@ const TEXTURES = {
   makeBaseFloor(7.5, 11);
   makeBaseFloor(-7.5, 23);
 
-  // Lane: öken med trampad stig. Unik seed per lane så de skiljer sig något.
+  // Lane: MLBB-stil gräs med cobblestone-stig. Unik seed per lane så de skiljer sig något.
   function makeLane(cx, cz, length, width, seed) {
     const lane = new THREE.Mesh(
       new THREE.PlaneGeometry(length, width),
-      new THREE.MeshStandardMaterial({ map: TEXTURES.desertLane(seed), color: 0xffffff, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({ map: TEXTURES.grassLane(seed), color: 0xffffff, roughness: 0.95 })
     );
     lane.rotation.x = -Math.PI / 2; lane.position.set(cx, 0.02, cz);
     lane.receiveShadow = true;
