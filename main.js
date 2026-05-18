@@ -13656,7 +13656,14 @@ function tickClientLegolusInvis(side, dt) {
 
 // Bygger en realistisk cigarett-mesh — vitt papper, gulbrun filter, glödande
 // ember vid spets, krullad rök från cherry-änden. +Z = framåt (cherry-änden).
-function makeKostefoJointMesh(scale = 1) {
+// Decision 045: `withLight` är default false så Q/F-cast aldrig adderar nya
+// PointLights till scenen. Att lägga till PointLights triggar Three.js
+// shader-recompile för ALLA MeshStandardMaterial — det är källan till
+// "lag vid Kostefo-cast". Companion-mesh (en gång per match) får
+// `withLight: true` för bevarad cherry-glöd; per-cast meshes kör emissive-only.
+function makeKostefoJointMesh(scale = 1, opts) {
+  const withLight = !!(opts && opts.withLight);
+  const withSmoke = !(opts && opts.noSmoke);
   const grp = new THREE.Group();
   // Papper-shaft (krämvit cylinder, tjockare och längre för synlighet)
   const paperMat = new THREE.MeshStandardMaterial({
@@ -13686,10 +13693,11 @@ function makeKostefoJointMesh(scale = 1) {
   ash.rotation.x = Math.PI / 2;
   ash.position.z = 0.42;
   grp.add(ash);
-  // Cherry — glödande orange ember vid framänden
+  // Cherry — glödande orange ember vid framänden (emissiveIntensity 3.2 utan
+  // light — bumpad från 2.4 för att kompensera bortaget cherry-PointLight).
   const cherry = new THREE.Mesh(
     new THREE.SphereGeometry(0.082, 14, 10),
-    new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3300, emissiveIntensity: 2.4, roughness: 0.4 })
+    new THREE.MeshStandardMaterial({ color: 0xff5522, emissive: 0xff3300, emissiveIntensity: withLight ? 2.4 : 3.2, roughness: 0.4 })
   );
   cherry.position.z = 0.50;
   grp.add(cherry);
@@ -13700,17 +13708,24 @@ function makeKostefoJointMesh(scale = 1) {
   );
   ember.position.z = 0.50;
   grp.add(ember);
-  // Liten point-light från cherry (skapar dynamisk glöd på närliggande meshes)
-  const cherryLight = new THREE.PointLight(0xff5522, 0.6, 1.5);
-  cherryLight.position.z = 0.50;
-  grp.add(cherryLight);
-  // Smoke-trail bakåt från cherry (3 mjuka spheres bakom)
-  const smokeMat = new THREE.MeshBasicMaterial({ color: 0xeeeeee, transparent: true, opacity: 0.55, depthWrite: false });
-  for (let i = 0; i < 4; i++) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.10 + i * 0.04, 10, 8), smokeMat.clone());
-    s.material.opacity = 0.55 - i * 0.10;
-    s.position.set(0, 0.10 + i * 0.06, 0.20 - i * 0.18);
-    grp.add(s);
+  // PointLight: BARA för companion (en gång per match). Per-cast meshes
+  // hoppar över denna så vi inte triggar shader-recompile vid cast.
+  let cherryLight = null;
+  if (withLight) {
+    cherryLight = new THREE.PointLight(0xff5522, 0.6, 1.5);
+    cherryLight.position.z = 0.50;
+    grp.add(cherryLight);
+  }
+  // Smoke-trail: skippa om noSmoke (Q/F per-cast = 48 färre alloc per Q-cast).
+  if (withSmoke) {
+    // Shared material (ingen .clone() per puff) — opacity-variation via material-instans
+    // skulle annars allokera 4 nya materials per joint × 12 joints = 48 allocs/cast.
+    const smokeMat = new THREE.MeshBasicMaterial({ color: 0xeeeeee, transparent: true, opacity: 0.45, depthWrite: false });
+    for (let i = 0; i < 4; i++) {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.10 + i * 0.04, 10, 8), smokeMat);
+      s.position.set(0, 0.10 + i * 0.06, 0.20 - i * 0.18);
+      grp.add(s);
+    }
   }
   grp.userData.kostefoJoint = true;
   grp.userData.cherry = cherry;
@@ -13721,7 +13736,8 @@ function makeKostefoJointMesh(scale = 1) {
 
 function makeKostefoSliderMesh() {
   // Stor flygande joint — DUBBEL storlek per user-spec (3.6 = 1.8 × 2).
-  const grp = makeKostefoJointMesh(3.6);
+  // Decision 045: lightless + noSmoke per cast = ingen shader-recompile-stall.
+  const grp = makeKostefoJointMesh(3.6, { withLight: false, noSmoke: true });
   grp.position.y = 1.4;
   grp.userData.orientToMotion = true;
   return grp;
@@ -13822,9 +13838,11 @@ function makeKostefoGooseWaveMesh(e) {
   // joint riktar sig framåt (+Z lokalt; group-rotation styr hela wave-riktningen).
   const joints = [];
   const rows = 3, cols = 4;
+  // Decision 045: lightless + noSmoke per joint = ingen shader-recompile-spike
+  // när 12 joints adderas till scenen samtidigt vid Q-cast.
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const j = makeKostefoJointMesh(0.85);
+      const j = makeKostefoJointMesh(0.85, { withLight: false, noSmoke: true });
       const localX = (c - (cols - 1) / 2) * (w / cols);
       const localZ = (r - (rows - 1) / 2) * (l / rows);
       j.position.set(localX, 0.5, localZ);
@@ -13911,20 +13929,22 @@ function makeKostefoCloudMesh() {
   center.position.y = 1.4;
   grp.add(center);
   layers.push(center);
-  // PointLight för subtil dim-glow inom molnet
-  const light = new THREE.PointLight(0xffffff, 1.2, 7.0);
-  light.position.y = 1.8;
-  grp.add(light);
+  // Decision 045: PointLight borttagen — molnet är vit/transparent och syns
+  // tydligt utan dynamiskt ljus. Att lägga till PointLight vid varje E-cast
+  // triggade shader-recompile-stall.
   grp.userData.cloudLayers = layers;
   grp.userData.kostefoCloud = true;
   return grp;
 }
 
 // Companion-mesh: STOR svävande cigarett som följer Kostefo (scale 2.5 så den
-// syns tydligt över hero-mesh-höjden). Joint lyft till y=2.0.
+// syns tydligt över hero-mesh-höjden). Joint lyft till y=2.0. Decision 045:
+// withLight:true för att behålla cherry-glöd — Companion adderas EN GÅNG per
+// match (vid hero-spawn), inte vid skill-cast → shader-recompile är acceptabel
+// engångskostnad.
 function makeKostefoCompanionMesh() {
   const grp = new THREE.Group();
-  const joint = makeKostefoJointMesh(2.5);
+  const joint = makeKostefoJointMesh(2.5, { withLight: true });
   joint.position.y = 2.0;
   joint.rotation.z = -0.25;
   grp.add(joint);
