@@ -120,6 +120,17 @@ const ENVIRONMENT_ASSETS = {
   village_barrel:  'environment/quaternius/medieval-village/Props/glTF/Barrel.glb',
   village_crate:   'environment/quaternius/medieval-village/Props/glTF/Crate.glb',
   village_hay:     'environment/quaternius/medieval-village/Props/glTF/Hay.glb',
+  // Arena-maps (decision 043): nya tematiska arenor.
+  village_house_3:     'environment/quaternius/medieval-village/Buildings/glTF/House_3.glb',
+  village_bonfire_lit: 'environment/quaternius/medieval-village/Props/glTF/Bonfire_Lit.glb',
+  village_path_square: 'environment/quaternius/medieval-village/Props/glTF/Path_Square.glb',
+  nature_birch_1:      'environment/quaternius/nature/glTF/BirchTree_1.gltf',
+  nature_maple_1:      'environment/quaternius/nature/glTF/MapleTree_1.gltf',
+  nature_dead_1:       'environment/quaternius/nature/glTF/DeadTree_1.gltf',
+  nature_dead_5:       'environment/quaternius/nature/glTF/DeadTree_5.gltf',
+  nature_bush:         'environment/quaternius/nature/glTF/Bush.gltf',
+  nature_bush_flowers: 'environment/quaternius/nature/glTF/Bush_Flowers.gltf',
+  nature_flowers_1:    'environment/quaternius/nature/glTF/Flower_1_Clump.gltf',
 };
 
 const loadedCharacters = new Map();   // name → { scene, animations }
@@ -4000,97 +4011,135 @@ const ARENA_CFG = {
   floorTint: 0x5a4a36,    // bas-färg (kan override:as per map)
 };
 
-// === ARENA MAPS — 3 olika layouts med olika hinder och teman ===
+// === ARENA MAPS — 3 tematiska kartor (decision 043) ===
+// Bounds: x ∈ [-44, 44], z ∈ [-28, 28]. Spawns ±32, orb (0,0).
+// Undvik bombning av spawn-corridors (±32 ±3) och orb-zon (±3 runt origin).
 const ARENA_MAPS = [
+  // ----- MAP 1: VERDANT PLAZA -----
+  // Fin, intakt by-stil — inga skador, byggnader hela, träd i blom.
   {
-    name: 'Desert Ruins',
-    desc: 'Classic desert arena: rocks, walls, wagons, fallen towers',
-    floorTint: 0x5a4a36,
+    name: 'Verdant Plaza',
+    desc: 'A peaceful village square — intact buildings, flowering bushes, neat paths',
+    floorTint: 0x4a6a32,    // ljus gräs-grön
     props: [
-      // Stenar — små punkt-cover spridda över banan
-      { type: 'rock', x: -14, z:  -9, rot: 0.3, collision: { shape: 'circle', radius: 1.1 } },
-      { type: 'rock', x: -12, z: -11, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
-      { type: 'rock', x:  14, z:   9, rot: -0.7, collision: { shape: 'circle', radius: 1.1 } },
-      { type: 'rock', x:  12, z:  11, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
-      { type: 'rock', x:  -4, z:  22, rot: 0.2, collision: { shape: 'circle', radius: 1.1 } },
-      { type: 'rock', x:   5, z: -23, rot: 0.9, collision: { shape: 'circle', radius: 1.1 } },
-      { type: 'rock', x:  18, z: -20, rot: 1.4, collision: { shape: 'circle', radius: 1.0 } },
-      { type: 'rock', x: -19, z:  19, rot: 0.6, collision: { shape: 'circle', radius: 1.0 } },
-      // Trasiga stenmurar
-      { type: 'wall', x: -18, z:  15, rot: 0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-      { type: 'wall', x:  18, z: -15, rot: -0.10, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-      { type: 'wall', x: -26, z:  -3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
-      { type: 'wall', x:  26, z:   3, rot: 1.5, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
-      { type: 'wall', x:   2, z: -16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-      { type: 'wall', x:  -2, z:  16, rot: 0.0, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
-      // Brutna pelare
-      { type: 'pillar', x: -20, z: -16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  20, z:  16, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x: -10, z:  22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  10, z: -22, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x: -34, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  34, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      // Trasiga hästvagnar
-      { type: 'wagon', x: -22, z:   8, rot: 0.7, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      { type: 'wagon', x:  22, z:  -8, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      { type: 'wagon', x:  -8, z: -24, rot: 1.8, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      // Fallna torn
-      { type: 'fallenTower', x:  -5, z:  -3, rot: 0.25, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-      { type: 'fallenTower', x:   5, z:   3, rot: 2.85, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-      { type: 'fallenTower', x:   8, z:  24, rot: 1.6, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
+      // 3 intakta hus i hörn-zoner (utanför spawn-corridor)
+      { type: 'house1', x: -28, z: -19, rot: 0.4, collision: { shape: 'box', halfX: 2.0, halfZ: 1.6 } },
+      { type: 'house2', x:  28, z:  19, rot: -2.6, collision: { shape: 'box', halfX: 2.0, halfZ: 1.6 } },
+      { type: 'house3', x: -28, z:  19, rot: 0.9, collision: { shape: 'box', halfX: 2.0, halfZ: 1.6 } },
+      // Väderkvarn som landmark — bak-norra centralt
+      { type: 'mill', x: 0, z: -23, rot: 0, collision: { shape: 'circle', radius: 2.0 } },
+      // Träd-ring som ramar in arenan (utanför direkta spawn-vägen)
+      { type: 'tree_maple', x: -16, z: -10, rot: 0.4, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x:  16, z:  10, rot: -0.6, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_birch', x:  -8, z:  18, rot: 0.0, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_birch', x:   8, z: -18, rot: 0.0, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_maple', x: -22, z:   8, rot: 1.2, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x:  22, z:  -8, rot: -1.2, collision: { shape: 'circle', radius: 0.7 } },
+      // Bushar med blommor — visuella prydnader, ingen collision
+      { type: 'bush_flowers', x: -18, z:  20, rot: 0.3 },
+      { type: 'bush_flowers', x:  18, z: -20, rot: -0.3 },
+      { type: 'bush_flowers', x:  -6, z:  10, rot: 0.0 },
+      { type: 'bush_flowers', x:   6, z: -10, rot: 0.0 },
+      { type: 'bush', x: -12, z:  -3, rot: 0.4 },
+      { type: 'bush', x:  12, z:   3, rot: -0.4 },
+      // Blom-tussar för färg
+      { type: 'flowers', x:  -4, z:  -8, rot: 0.0 },
+      { type: 'flowers', x:   4, z:   8, rot: 0.0 },
+      { type: 'flowers', x: -14, z:  14, rot: 0.0 },
+      { type: 'flowers', x:  14, z: -14, rot: 0.0 },
+      // Stenstig-kakel pekande mot mitten
+      { type: 'pathTile', x: -12, z:   0, rot: 0 },
+      { type: 'pathTile', x:  12, z:   0, rot: 0 },
+      { type: 'pathTile', x:   0, z:  10, rot: 0 },
+      { type: 'pathTile', x:   0, z: -10, rot: 0 },
     ],
   },
+  // ----- MAP 2: ASHLANDS -----
+  // Krigshärjat — lava, eld, brända hus, vält torn.
   {
-    name: 'Stone Maze',
-    desc: 'Maze with narrow corridors of tall walls — tight cover angles',
-    floorTint: 0x4a4234,
+    name: 'Ashlands',
+    desc: 'Scorched earth — lava pools crack the ground, fires burn, a tower lies fallen',
+    floorTint: 0x3a1f12,    // mörk brun-röd
     props: [
-      // Centralt zigzag-maze: 6 långa murar i mönster
-      { type: 'wall', x: -10, z:  -2, rot: 0, collision: { shape: 'box', halfX: 3.5, halfZ: 0.5 } },
-      { type: 'wall', x:  10, z:   2, rot: 0, collision: { shape: 'box', halfX: 3.5, halfZ: 0.5 } },
-      { type: 'wall', x: -20, z:   6, rot: 0, collision: { shape: 'box', halfX: 3.0, halfZ: 0.5 } },
-      { type: 'wall', x:  20, z:  -6, rot: 0, collision: { shape: 'box', halfX: 3.0, halfZ: 0.5 } },
-      { type: 'wall', x:  -3, z:  14, rot: 0, collision: { shape: 'box', halfX: 4.0, halfZ: 0.5 } },
-      { type: 'wall', x:   3, z: -14, rot: 0, collision: { shape: 'box', halfX: 4.0, halfZ: 0.5 } },
-      // Vertikala stop-murar
-      { type: 'wall', x: -15, z:  -8, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
-      { type: 'wall', x:  15, z:   8, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
-      { type: 'wall', x: -30, z:   0, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 3.5 } },
-      { type: 'wall', x:  30, z:   0, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 3.5 } },
-      { type: 'wall', x: -16, z:  22, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
-      { type: 'wall', x:  16, z: -22, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 2.5 } },
-      // Hörn-pelare som blockerar diagonala line-of-sight
-      { type: 'pillar', x: -25, z: -10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  25, z:  10, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x: -25, z:  18, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  25, z: -18, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:  -8, z:  -8, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      { type: 'pillar', x:   8, z:   8, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
-      // Få stenar för variation
-      { type: 'rock', x:  -2, z:  24, rot: 0.4, collision: { shape: 'circle', radius: 1.0 } },
-      { type: 'rock', x:   2, z: -24, rot: 1.1, collision: { shape: 'circle', radius: 1.0 } },
+      // Brända hus
+      { type: 'burnedHouse', x: -27, z: -18, rot: 0.5, collision: { shape: 'box', halfX: 2.0, halfZ: 1.6 } },
+      { type: 'burnedHouse', x:  27, z:  18, rot: -2.6, collision: { shape: 'box', halfX: 2.0, halfZ: 1.6 } },
+      // Vält torn — flera, lite slumpat
+      { type: 'fallenTower', x: -10, z:  10, rot: 0.6, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:  12, z: -12, rot: 2.4, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
+      { type: 'fallenTower', x:   0, z:  22, rot: 1.5708, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
+      // Lava-pooler — sprider sig över marken
+      // Lava är visual-only (decoration) — ingen damage-on-enter implementerad,
+      // collision skulle bara göra dem till osynliga väggar.
+      { type: 'lavaPool', x: -16, z:  -6, rot: 0 },
+      { type: 'lavaPool', x:  18, z:   6, rot: 0 },
+      { type: 'lavaPool', x:  -4, z: -16, rot: 0 },
+      { type: 'lavaPool', x:  20, z: -20, rot: 0 },
+      // Eldpatchar — visuell-only (decoration)
+      { type: 'firePatch', x: -22, z:   2, rot: 0 },
+      { type: 'firePatch', x:  22, z:  -2, rot: 0 },
+      { type: 'firePatch', x:  -6, z:  20, rot: 0 },
+      { type: 'firePatch', x:   8, z:   4, rot: 0 },
+      // Döda träd
+      { type: 'tree_dead',  x: -18, z:  16, rot: 0.4, collision: { shape: 'circle', radius: 0.6 } },
+      { type: 'tree_dead2', x:  18, z: -16, rot: -0.4, collision: { shape: 'circle', radius: 0.6 } },
+      { type: 'tree_dead',  x: -28, z:   2, rot: 1.2, collision: { shape: 'circle', radius: 0.6 } },
+      { type: 'tree_dead2', x:  28, z:  -2, rot: -1.2, collision: { shape: 'circle', radius: 0.6 } },
+      { type: 'tree_dead',  x:   6, z: -24, rot: 0.0, collision: { shape: 'circle', radius: 0.6 } },
+      // Trasiga murar (ruin-rester)
+      { type: 'wall', x: -22, z: -22, rot: 0.3, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall', x:  22, z:  22, rot: -0.3, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      // Charred stenar
+      { type: 'rock', x: -10, z: -22, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x:  10, z:  22, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
     ],
   },
+  // ----- MAP 3: WILDWOOD -----
+  // Tät skog med vattendrag och stigar.
   {
-    name: 'Open Battlefield',
-    desc: 'Open battlefield — few large cover spots, movement-focused',
-    floorTint: 0x4a3a2a,
+    name: 'Wildwood',
+    desc: 'Dense forest — trees, a winding river, and stone paths that lead nowhere in particular',
+    floorTint: 0x2a4a1c,    // mörk skogsgrön
     props: [
-      // 4 stora fallna torn som "kapsuler" för cover
-      { type: 'fallenTower', x: -12, z:   0, rot: 0, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-      { type: 'fallenTower', x:  12, z:   0, rot: Math.PI, collision: { shape: 'box', halfX: 3.2, halfZ: 1.0 } },
-      { type: 'fallenTower', x:   0, z:  15, rot: 1.5708, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
-      { type: 'fallenTower', x:   0, z: -15, rot: 1.5708, collision: { shape: 'box', halfX: 1.0, halfZ: 3.2 } },
-      // 4 vagnar i mellanavstånd
-      { type: 'wagon', x: -25, z:  12, rot: 0.5, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      { type: 'wagon', x:  25, z: -12, rot: -0.5, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      { type: 'wagon', x: -25, z: -12, rot: 1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      { type: 'wagon', x:  25, z:  12, rot: -1.0, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
-      // Enstaka stenar för line-of-sight breakage
-      { type: 'rock', x: -18, z:  22, rot: 0.7, collision: { shape: 'circle', radius: 1.2 } },
-      { type: 'rock', x:  18, z: -22, rot: 1.4, collision: { shape: 'circle', radius: 1.2 } },
-      { type: 'rock', x:   0, z:  25, rot: 0.0, collision: { shape: 'circle', radius: 1.2 } },
-      { type: 'rock', x:   0, z: -25, rot: 0.0, collision: { shape: 'circle', radius: 1.2 } },
+      // Träd-koloni i alla hörn
+      { type: 'tree_maple', x: -28, z: -22, rot: 0.0, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x: -22, z:  24, rot: 0.6, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x:  28, z:  22, rot: 1.0, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x:  22, z: -24, rot: 1.5, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_birch', x: -16, z: -14, rot: 0.3, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_birch', x:  16, z:  14, rot: -0.3, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_birch', x: -12, z:  20, rot: 0.8, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_birch', x:  12, z: -20, rot: 1.4, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_maple', x: -22, z:   6, rot: 0.4, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_maple', x:  22, z:  -6, rot: -0.4, collision: { shape: 'circle', radius: 0.7 } },
+      { type: 'tree_birch', x:  -6, z:  -8, rot: 0.6, collision: { shape: 'circle', radius: 0.5 } },
+      { type: 'tree_birch', x:   6, z:   8, rot: 1.2, collision: { shape: 'circle', radius: 0.5 } },
+      // Bushar (undervegetation)
+      { type: 'bush',         x: -10, z:   2, rot: 0.3 },
+      { type: 'bush_flowers', x:  10, z:  -2, rot: -0.3 },
+      { type: 'bush',         x:  -4, z:  14, rot: 0.0 },
+      { type: 'bush_flowers', x:   4, z: -14, rot: 0.0 },
+      { type: 'bush',         x: -18, z: -20, rot: 0.5 },
+      { type: 'bush_flowers', x:  18, z:  20, rot: -0.5 },
+      // Flod-segment som löper diagonalt från NW till SE (visuell-only)
+      { type: 'riverSegment', x: -20, z:   2, rot:  0.35 },
+      { type: 'riverSegment', x: -10, z:  -1, rot:  0.25 },
+      { type: 'riverSegment', x:   0, z:  -3, rot:  0.10 },
+      { type: 'riverSegment', x:  10, z:  -5, rot: -0.10 },
+      { type: 'riverSegment', x:  20, z:  -7, rot: -0.25 },
+      // Stigar — kakel-paths som leder lite slumpvis
+      { type: 'pathTile', x: -16, z:  10, rot: 0 },
+      { type: 'pathTile', x:  -8, z:  12, rot: 0 },
+      { type: 'pathTile', x:   2, z:  14, rot: 0 },
+      { type: 'pathTile', x:  12, z:  16, rot: 0 },
+      { type: 'pathTile', x:  -8, z: -16, rot: 0 },
+      { type: 'pathTile', x:   2, z: -18, rot: 0 },
+      // Blommor som markörer
+      { type: 'flowers', x: -14, z:  22, rot: 0 },
+      { type: 'flowers', x:  14, z: -22, rot: 0 },
+      // Stenar för att bryta sikten
+      { type: 'rock', x: -26, z:  18, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
+      { type: 'rock', x:  26, z: -18, rot: -0.5, collision: { shape: 'circle', radius: 1.0 } },
     ],
   },
 ];
@@ -5134,6 +5183,177 @@ function makeArenaProp(type) {
       r.castShadow = true;
       g.add(r);
     }
+  } else if (type === 'house1' || type === 'house2' || type === 'house3' || type === 'mill') {
+    // GLB-baserade byggnader (decision 043)
+    const mapKey = { house1: 'village_house_1', house2: 'village_house_2', house3: 'village_house_3', mill: 'village_mill' }[type];
+    const scn = loadedEnvironment.get(mapKey);
+    if (scn) {
+      const m = scn.clone(true);
+      m.scale.set(1.0, 1.0, 1.0);
+      m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      g.add(m);
+    } else {
+      // Procedurell fallback: enkel stuga
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.8, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0xa88860, roughness: 0.9 }));
+      wall.position.y = 0.9; wall.castShadow = true; g.add(wall);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(2.0, 1.4, 4),
+        new THREE.MeshStandardMaterial({ color: 0x6a3a20, roughness: 0.85 }));
+      roof.position.y = 2.5; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    }
+  } else if (type === 'burnedHouse') {
+    // House_1 med charred mörk + emissive ember-glöd (decision 043, map 2)
+    const scn = loadedEnvironment.get('village_house_1');
+    if (scn) {
+      const m = scn.clone(true);
+      m.traverse(o => {
+        if (o.isMesh) {
+          o.castShadow = true; o.receiveShadow = true;
+          if (o.material) {
+            const cm = o.material.clone();
+            if (cm.color) cm.color.setRGB(0.18, 0.12, 0.08);
+            cm.emissive = new THREE.Color(0x331100);
+            cm.emissiveIntensity = 0.20;
+            o.material = cm;
+          }
+        }
+      });
+      g.add(m);
+    } else {
+      // Procedurell fallback: mörk box + sotig kon-tak
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.5, 2.4),
+        new THREE.MeshStandardMaterial({ color: 0x2a1a10, emissive: 0x331100, emissiveIntensity: 0.2, roughness: 0.95 }));
+      wall.position.y = 0.75; wall.castShadow = true; g.add(wall);
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(1.9, 1.0, 4),
+        new THREE.MeshStandardMaterial({ color: 0x1a0e08, roughness: 0.95 }));
+      roof.position.y = 2.0; roof.rotation.y = Math.PI / 4; g.add(roof);
+    }
+    // Ember-glöd-ljus (oavsett fallback eller GLB)
+    const emberLight = new THREE.PointLight(0xff5522, 0.6, 4, 2);
+    emberLight.position.y = 1.0;
+    g.add(emberLight);
+  } else if (type === 'tree_birch' || type === 'tree_maple' || type === 'tree_dead' || type === 'tree_dead2') {
+    const mapKey = { tree_birch: 'nature_birch_1', tree_maple: 'nature_maple_1', tree_dead: 'nature_dead_1', tree_dead2: 'nature_dead_5' }[type];
+    const scn = loadedEnvironment.get(mapKey);
+    if (scn) {
+      const m = scn.clone(true);
+      const s = 0.9 + Math.random() * 0.4;
+      m.scale.set(s, s, s);
+      m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+      g.add(m);
+    } else {
+      // Fallback: grön kon
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 1.2, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5a3a18 }));
+      trunk.position.y = 0.6; trunk.castShadow = true; g.add(trunk);
+      const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.8, 8),
+        new THREE.MeshStandardMaterial({ color: 0x3a6020 }));
+      leaves.position.y = 1.9; leaves.castShadow = true; g.add(leaves);
+    }
+  } else if (type === 'bush' || type === 'bush_flowers') {
+    const mapKey = (type === 'bush_flowers') ? 'nature_bush_flowers' : 'nature_bush';
+    const scn = loadedEnvironment.get(mapKey);
+    if (scn) {
+      const m = scn.clone(true);
+      m.traverse(o => { if (o.isMesh) { o.castShadow = true; } });
+      g.add(m);
+    } else {
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0x3a6020 }));
+      b.position.y = 0.4; b.scale.y = 0.7; g.add(b);
+    }
+  } else if (type === 'flowers') {
+    const scn = loadedEnvironment.get('nature_flowers_1');
+    if (scn) {
+      const m = scn.clone(true);
+      g.add(m);
+    } else {
+      // Fallback: liten gul prickig sfär
+      const f = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 4),
+        new THREE.MeshStandardMaterial({ color: 0xf0e060, emissive: 0x6a5510, emissiveIntensity: 0.3 }));
+      f.position.y = 0.15;
+      g.add(f);
+    }
+  } else if (type === 'pathTile') {
+    const scn = loadedEnvironment.get('village_path_square');
+    if (scn) {
+      const m = scn.clone(true);
+      m.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.castShadow = false; } });
+      g.add(m);
+    } else {
+      const t = new THREE.Mesh(new THREE.PlaneGeometry(2, 2),
+        new THREE.MeshStandardMaterial({ color: 0x8a7a60, roughness: 0.9 }));
+      t.rotation.x = -Math.PI / 2; t.position.y = 0.03; g.add(t);
+    }
+  } else if (type === 'firePatch') {
+    const scn = loadedEnvironment.get('village_bonfire_lit');
+    if (scn) {
+      const m = scn.clone(true);
+      m.scale.set(1.1, 1.1, 1.1);
+      m.traverse(o => { if (o.isMesh) { o.castShadow = true; } });
+      g.add(m);
+    } else {
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.2, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffaa33, transparent: true, opacity: 0.85 }));
+      flame.position.y = 0.6; g.add(flame);
+    }
+    // Ambient eld-ljus (alltid)
+    const lt = new THREE.PointLight(0xff7733, 1.2, 5.5, 2);
+    lt.position.y = 1.0;
+    g.add(lt);
+  } else if (type === 'lavaPool') {
+    // Procedurell flat lava-disc med emissive + glödande kärna + lågt orange ljus
+    const r = 1.8;
+    const disk = new THREE.Mesh(
+      new THREE.CircleGeometry(r, 28),
+      new THREE.MeshStandardMaterial({
+        color: 0x4a1500, emissive: 0xff5500, emissiveIntensity: 1.0,
+        roughness: 0.7, transparent: true, opacity: 0.95,
+      })
+    );
+    disk.rotation.x = -Math.PI / 2;
+    disk.position.y = 0.04;
+    g.add(disk);
+    // Ljusare central kärna
+    const core = new THREE.Mesh(
+      new THREE.CircleGeometry(r * 0.55, 18),
+      new THREE.MeshBasicMaterial({ color: 0xffbb44, transparent: true, opacity: 0.80 })
+    );
+    core.rotation.x = -Math.PI / 2;
+    core.position.y = 0.06;
+    g.add(core);
+    // Mörk sten-kant (lava sprickor)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(r * 0.95, r * 1.15, 28),
+      new THREE.MeshStandardMaterial({ color: 0x1a0805, roughness: 0.95 })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.05;
+    g.add(ring);
+    const lt = new THREE.PointLight(0xff5500, 0.9, 6, 2);
+    lt.position.y = 0.4;
+    g.add(lt);
+  } else if (type === 'riverSegment') {
+    // Procedurell vattendel — bred plan-flat med svag emissive blue + ljus highlight
+    const w = 4.5, l = 3.0;
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, l),
+      new THREE.MeshStandardMaterial({
+        color: 0x2e6ab0, emissive: 0x1a3a60, emissiveIntensity: 0.35,
+        roughness: 0.20, metalness: 0.25, transparent: true, opacity: 0.88,
+      })
+    );
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.y = 0.05;
+    g.add(plane);
+    // Tunn ljusare ström i mitten
+    const stream = new THREE.Mesh(
+      new THREE.PlaneGeometry(w * 0.55, l * 0.4),
+      new THREE.MeshBasicMaterial({ color: 0x88c0ee, transparent: true, opacity: 0.45 })
+    );
+    stream.rotation.x = -Math.PI / 2;
+    stream.position.y = 0.07;
+    g.add(stream);
   }
   return g;
 }
@@ -18632,18 +18852,45 @@ function drawArenaMapPreview(canvas, map) {
   ctx.lineWidth = 0.6;
   ctx.stroke();
 
-  // Props (top-down, rotation appliceras på box-shapes för visuell match)
+  // Props (top-down, rotation appliceras på box-shapes för visuell match).
+  // Decision 043: nya prop-typer + default visual-shape för no-collision props.
   const PROP_STYLE = {
-    rock:        { fill: '#7a6a4c', stroke: '#2c2316' },
-    wall:        { fill: '#9a917b', stroke: '#3a3528' },
-    pillar:      { fill: '#b0a890', stroke: '#3a3528' },
-    wagon:       { fill: '#6b4628', stroke: '#241608' },
-    fallenTower: { fill: '#aaa090', stroke: '#352f24' },
+    // Klassiska
+    rock:        { fill: '#7a6a4c', stroke: '#2c2316', dShape: 'circle', dR: 1.0 },
+    wall:        { fill: '#9a917b', stroke: '#3a3528', dShape: 'box', dHX: 1.3, dHZ: 0.5 },
+    pillar:      { fill: '#b0a890', stroke: '#3a3528', dShape: 'circle', dR: 0.8 },
+    wagon:       { fill: '#6b4628', stroke: '#241608', dShape: 'box', dHX: 1.9, dHZ: 1.0 },
+    fallenTower: { fill: '#aaa090', stroke: '#352f24', dShape: 'box', dHX: 3.2, dHZ: 1.0 },
+    // Byggnader (decision 043)
+    house1:      { fill: '#c08858', stroke: '#3a200e', dShape: 'box', dHX: 2.0, dHZ: 1.6 },
+    house2:      { fill: '#b87a4a', stroke: '#3a200e', dShape: 'box', dHX: 2.0, dHZ: 1.6 },
+    house3:      { fill: '#a86838', stroke: '#3a200e', dShape: 'box', dHX: 2.0, dHZ: 1.6 },
+    mill:        { fill: '#c8a070', stroke: '#3a200e', dShape: 'circle', dR: 2.0 },
+    burnedHouse: { fill: '#3a2418', stroke: '#1a0c08', dShape: 'box', dHX: 2.0, dHZ: 1.6 },
+    // Natur
+    tree_birch:  { fill: '#8fc15c', stroke: '#2a4018', dShape: 'circle', dR: 0.55 },
+    tree_maple:  { fill: '#5a9038', stroke: '#1a3010', dShape: 'circle', dR: 0.7 },
+    tree_dead:   { fill: '#5a443a', stroke: '#1a1208', dShape: 'circle', dR: 0.6 },
+    tree_dead2:  { fill: '#4a3a30', stroke: '#1a1208', dShape: 'circle', dR: 0.6 },
+    bush:         { fill: '#3e6a28', stroke: '#1a3010', dShape: 'circle', dR: 0.5 },
+    bush_flowers: { fill: '#7ab86a', stroke: '#1a3010', dShape: 'circle', dR: 0.55 },
+    flowers:      { fill: '#f0e060', stroke: '#806620', dShape: 'circle', dR: 0.4 },
+    // Stigar/vatten/eld
+    pathTile:    { fill: '#a89070', stroke: '#5a4828', dShape: 'box', dHX: 1.0, dHZ: 1.0 },
+    riverSegment:{ fill: '#3a78c0', stroke: '#1a3a60', dShape: 'box', dHX: 2.2, dHZ: 1.5 },
+    firePatch:   { fill: '#ff8833', stroke: '#a02a08', dShape: 'circle', dR: 0.6 },
+    lavaPool:    { fill: '#ff5a18', stroke: '#601a05', dShape: 'circle', dR: 1.6 },
   };
-  for (const p of (map.props || [])) {
-    const st = PROP_STYLE[p.type] || { fill: '#888', stroke: '#222' };
-    const c = p.collision;
-    if (!c) continue;
+  // Sortera så ground-decor (path, river, lava-pool) ritas FÖRST (under)
+  // och solida cover-props (hus, träd, vägg) ritas SIST (över).
+  const LAYER_ORDER = { pathTile: 0, riverSegment: 0, lavaPool: 1, flowers: 1, firePatch: 2 };
+  const sorted = (map.props || []).slice().sort((a, b) => {
+    const la = LAYER_ORDER[a.type]; const lb = LAYER_ORDER[b.type];
+    return (la == null ? 5 : la) - (lb == null ? 5 : lb);
+  });
+  for (const p of sorted) {
+    const st = PROP_STYLE[p.type] || { fill: '#888', stroke: '#222', dShape: 'circle', dR: 0.7 };
+    const c = p.collision || { shape: st.dShape, radius: st.dR, halfX: st.dHX, halfZ: st.dHZ };
     const cx = x2(p.x), cy = z2(p.z);
     ctx.fillStyle = st.fill;
     ctx.strokeStyle = st.stroke;
