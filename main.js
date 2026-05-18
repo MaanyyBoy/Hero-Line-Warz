@@ -1158,8 +1158,11 @@ const TEXTURES = {
   makeWall(28.15, 0, 0.3, 30.6);    // Östra bakvägg
   makeWall(-28.15, 0, 0.3, 30.6);   // Västra bakvägg
   makeWall(0, 0, 56.6, 0.3);        // MITTVÄGG (separerar arenor)
-  makeWall(-8.5, 8, 39, 0.3);       // Skiljevägg sida 1
-  makeWall(-8.5, -8, 39, 0.3);      // Skiljevägg sida 2
+  // Skiljeväggar mellan lanes — chunkiga (depth 1.5, height 1.6) så de tydligt
+  // separerar lanes visuellt. Path-collision-checken i dash-skills hindrar
+  // teleport över muren.
+  makeWall(-8.5, 8, 39, 1.5, 1.6);     // Skiljevägg sida 1 (mellan z=12 och z=4)
+  makeWall(-8.5, -8, 39, 1.5, 1.6);    // Skiljevägg sida 2 (mellan z=-4 och z=-12)
 
   // Sten-textur för dekor (lägereld, portaler) — varmare sten-look
   const towerStoneTex = TEXTURES.stoneTower();
@@ -2259,6 +2262,22 @@ function isHeroWalkable(idx, x, z) {
   if (dx * dx + dz * dz < (TOWER_R + HERO_R) * (TOWER_R + HERO_R)) return false;
   return inSideBase(idx, x, z) || inSideLanes(idx, x, z);
 }
+// Path-walkability för dash/leap/teleport — samplar punkter mellan start och slut
+// och returnerar false om någon mellanpunkt är non-walkable. Används för att hindra
+// hjältar från att teleportera över skiljemuren mellan två lanes.
+// Sätt sampleCount ~ ceil(distance/0.5) för 0.5m-upplösning, min 6.
+function isHeroPathClear(idx, x0, z0, x1, z1) {
+  const dx = x1 - x0, dz = z1 - z0;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.01) return true;
+  const samples = Math.max(6, Math.ceil(dist / 0.5));
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples;
+    if (!isHeroWalkable(idx, x0 + dx * t, z0 + dz * t)) return false;
+  }
+  return true;
+}
+
 // Creeps får röra sig i den arena där de befinner sig (sin egen eller motståndarens).
 // En enkel check: tillåt bas + alla 4 lanes (men inte mittvägg).
 function isCreepPos(x, z) {
@@ -9232,7 +9251,8 @@ function hostCastLegolusDash(side, ev) {
   while (dist >= 0.5) {
     nx = side.hero.x + dx * dist;
     nz = side.hero.z + dz * dist;
-    if (isHeroWalkable(side.idx, nx, nz)) break;
+    // Endpoint walkable OCH hela vägen dit walkable (blockerar dash över skiljemur)
+    if (isHeroWalkable(side.idx, nx, nz) && isHeroPathClear(side.idx, side.hero.x, side.hero.z, nx, nz)) break;
     dist -= 0.5;
   }
   if (dist < 0.5) return;
@@ -9458,6 +9478,8 @@ function hostCastGimluHammer(side, dirX, dirZ) {
         if (!found) { tx = sx; tz = sz; }
       }
     }
+    // Path-collision: bail om sträckan hero→tx korsar wall/gap (lane-separation).
+    if (!isHeroPathClear(side.idx, side.hero.x, side.hero.z, tx, tz)) return;
     side.hero.x = tx;
     side.hero.z = tz;
     side.mesh.position.x = tx;
@@ -14568,6 +14590,11 @@ function hostCastAragurnLeap(side, ev) {
       if (!found) { tx = sx; tz = sz; }   // fallback: stå still
     }
   }
+  // Path-collision: om sträckan korsar skiljemur/gap, fall tillbaka till stå still
+  // (CD är redan satt på rad ovan — leap är "spent" enligt etablerat mönster).
+  if (!isHeroPathClear(side.idx, side.hero.x, side.hero.z, tx, tz)) {
+    tx = side.hero.x; tz = side.hero.z;
+  }
   side.aragurnLeap = {
     remaining: LEAP_TRAVEL_TIME,
     startX: side.hero.x, startZ: side.hero.z,
@@ -15964,7 +15991,10 @@ function spawnClientLocalDash(side, worldDx, worldDz) {
   while (dist >= 0.5) {
     const tx = side.hero.x + dx * dist;
     const tz = side.hero.z + dz * dist;
-    if (isHeroWalkable(side.idx, tx, tz)) { nx = tx; nz = tz; break; }
+    // Spegla server-checken: endpoint walkable + hela vägen dit walkable
+    if (isHeroWalkable(side.idx, tx, tz) && isHeroPathClear(side.idx, side.hero.x, side.hero.z, tx, tz)) {
+      nx = tx; nz = tz; break;
+    }
     dist -= 0.5;
   }
   if (dist < 0.5) return;
