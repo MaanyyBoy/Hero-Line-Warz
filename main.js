@@ -92,6 +92,13 @@ const CHARACTER_ASSETS = {
   ranger:    'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Ranger.glb',
   barbarian: 'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Barbarian.glb',
   rogue:     'heroes/KayKit_Adventurers_2.0_FREE/KayKit_Adventurers_2.0_FREE/Characters/gltf/Rogue.glb',
+  // Mixamo-bossar (decision 047) — T-pose only, animationer delas runtime
+  // via loadedAnimationClips.mixamo_boss (fylld från Gandulfs animationer).
+  parasite_boss:    'enemies/mixamo_bosses/parasite.glb',
+  gun_zombie_boss:  'enemies/mixamo_bosses/gun_zombie.glb',
+  alien_boss:       'enemies/mixamo_bosses/alien.glb',
+  elk_head_boss:    'enemies/mixamo_bosses/elk_head.glb',
+  undead_boss:      'enemies/mixamo_bosses/undead_assassin.glb',
   // Skeletons (wave-monster + minions)
   skel_warrior: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Warrior.glb',
   skel_mage:    'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Mage.glb',
@@ -143,6 +150,11 @@ const loadedEnvironment = new Map();  // name → scene
 const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
   hero: [],
   skel: [],
+  // Decision 047: Mixamo-bossar laddas utan embedded animationer (T-pose only).
+  // Vid asset-load fylls denna pool med animationer från en existerande
+  // Mixamo-hjälte (Gandulf) — Mixamo-rigs delar bone-naming så animations
+  // är portabla. Bossar drar Idle/Walking/Death/Hit_Reaction/Attack härifrån.
+  mixamo_boss: [],
 };
 let assetsReady = false;
 
@@ -255,6 +267,18 @@ async function preloadAllAssets() {
   );
   await Promise.all([...charPromises, ...animPromises, ...envPromises]);
   clearTimeout(safetyTimer);
+  // Decision 047: fyll mixamo_boss-anim-poolen från Gandulfs animationer.
+  // Mixamo-rigs delar bone-naming så samma clips fungerar för alla 5 bossar
+  // — vi slipper ladda + bädda in 5×11 animation-FBX:er.
+  const gandulfEntry = loadedCharacters.get('gandulf_mx');
+  if (gandulfEntry && gandulfEntry.animations) {
+    for (const clip of gandulfEntry.animations) {
+      loadedAnimationClips.mixamo_boss.push(clip);
+    }
+    console.log(`[asset] mixamo_boss pool: ${loadedAnimationClips.mixamo_boss.length} clips`);
+  } else {
+    console.warn('[asset] gandulf_mx saknar animationer — bossar får ingen anim-pool');
+  }
   assetsReady = true;
   if (statusEl) statusEl.textContent = `${total} / ${total} · done`;
   console.log('[asset] preloadAllAssets DONE');
@@ -3599,17 +3623,41 @@ function tintGltfInner(inner, tintColor, tintIntensity = 0.25) {
   });
 }
 
-function makeMonsterMesh() {
-  // Wave-monster använder Skeleton_Warrior som default. Range-monster
-  // tintas grönaktigt utifrån redan i hostSpawnMonsterFromDef (se nedan).
+// BOSS_GLTF_MAP: wave-nummer → Mixamo-boss-asset-key. Bossar spawnar på
+// wave 10/20/30/40/50 enligt decision 029. Decision 047 ersätter de
+// KayKit-skeleton-meshes (lego-aktiga) med riktigt skrämmande Mixamo-modeller.
+const BOSS_GLTF_MAP = {
+  10: 'parasite_boss',
+  20: 'gun_zombie_boss',
+  30: 'alien_boss',
+  40: 'elk_head_boss',
+  50: 'undead_boss',
+};
+// Per-boss scale-tweak (Mixamo-bossar har varierande höjd ut-of-the-box).
+// Justeras visuellt om någon ser för stor/liten.
+const BOSS_SCALE = {
+  parasite_boss:   1.20,
+  gun_zombie_boss: 1.05,
+  alien_boss:      1.30,
+  elk_head_boss:   1.15,
+  undead_boss:     1.10,
+};
+
+function makeMonsterMesh(bossAssetKey) {
+  // Wave-monster använder Skeleton_Warrior som default. För wave 10/20/30/40/50
+  // skickar caller in en BOSS_GLTF_MAP-key → använd Mixamo-boss-mesh istället.
   const grp = new THREE.Group();
-  const inner = instantiateCharacter('skel_warrior', 'skel');
+  const charName = bossAssetKey || 'skel_warrior';
+  const animGroup = bossAssetKey ? 'mixamo_boss' : 'skel';
+  const inner = instantiateCharacter(charName, animGroup);
   if (inner) {
-    inner.scale.setScalar(0.85);
+    const scaleVal = bossAssetKey ? (BOSS_SCALE[bossAssetKey] || 1.15) : 0.85;
+    inner.scale.setScalar(scaleVal);
     grp.add(inner);
     grp.userData.inner = inner;
     grp.userData.mixer = inner.userData.mixer;
     grp.userData.actions = inner.userData.actions;
+    grp.userData.isMixamoBoss = !!bossAssetKey;
     activeMixers.add(inner.userData.mixer);
     startDefaultIdle(grp);
   } else {
@@ -6731,15 +6779,23 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
   const isRange = attackType === 'range';
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
   const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
-  const mesh = makeMonsterMesh();
-  // Boss-mesh: använd BOSS_DEFS för scale + tint + aura
+  // Decision 047: bossar i solo använder Mixamo-mesh per wave-nummer.
+  // Mixamo-bossar har PBR-textures → skippa tint/aura. KayKit-skeletons-fallback
+  // får full bossDef.tint + aura (gamla beteendet).
+  const bossKey = def.isBoss ? BOSS_GLTF_MAP[def.number] : null;
+  const mesh = makeMonsterMesh(bossKey);
   let bossDef = null;
   if (def.isBoss) {
     bossDef = BOSS_DEFS[def.number] || BOSS_DEFS[10];
-    const scale = bossDef.scale;
-    mesh.scale.set(scale, scale, scale);
-    applyMonsterTint(mesh, bossDef.bodyTint, 0.85);
-    attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+    if (!bossKey) {
+      // KayKit-fallback: applicera tint + aura som förut.
+      const scale = bossDef.scale;
+      mesh.scale.set(scale, scale, scale);
+      applyMonsterTint(mesh, bossDef.bodyTint, 0.85);
+      attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+    }
+    // Mixamo-boss: scale satt redan i makeMonsterMesh via BOSS_SCALE,
+    // ingen tint/aura så texturerna ser ut som intended.
   } else if (isRange) {
     applyMonsterTint(mesh, 0x5a7a4a, 0.85);
   }
@@ -11682,13 +11738,18 @@ function applyRemoteState(state) {
     side.wave.name = sData.w.n || '';
     side.wave.isBoss = !!sData.w.b;
     side.wave.bannerPulse = sData.w.p || 0;
-    // Entiteter
+    // Entiteter — bossar (e.boss=true) får Mixamo-mesh per wave-nummer
+    // (decision 047). Mini-bossar och vanliga monster är KayKit-skeletons.
     clientReconcileEntities(idx, 'monsters', sData.M || [], (e) => {
-      const m = makeMonsterMesh();
-      if (e && e.boss) m.scale.set(1.6, 1.7, 1.6);
+      const bossKey = (e && e.boss) ? BOSS_GLTF_MAP[side.wave.current] : null;
+      const m = makeMonsterMesh(bossKey);
+      // Skala-multiplier endast för KayKit-bossar; Mixamo-bossar har sin
+      // egen scale via BOSS_SCALE redan applicerad i makeMonsterMesh.
+      if (e && e.boss && !bossKey) m.scale.set(1.6, 1.7, 1.6);
       else if (e && e.mb) m.scale.set(1.25, 1.3, 1.25);   // miniboss = mellan minion (1.0) och boss (1.6)
-      if (e && e.r) {
-        // Range-monster grön-tintat
+      if (e && e.r && !bossKey) {
+        // Range-monster grön-tintat (decision 047: skippa för Mixamo-bossar
+        // — deras textures är PBR-painted och green-tint förstör look:en).
         m.traverse(o => {
           if (o.material && o.material.color && o.isMesh) {
             o.material = o.material.clone();
