@@ -299,9 +299,9 @@ function swapTowersToMedieval() {
     grp.position.copy(pos);
     // Deep-clone GLB-scenen så båda sidor får egna instanser.
     const tower = towerScene.clone(true);
-    // Mätning: LargeTower är ~3m hög i Quaternius-skala. Vi vill ha ~4m för
-    // synlig "fästning-feel" på arenan (matchar gamla fountain-höjden).
-    tower.scale.set(1.6, 1.6, 1.6);
+    // Skala 0.8 (uniform) — halverar tornets höjd jämfört med första iterationen
+    // (var 1.6). Mer kompakt fästning som inte dominerar arenan.
+    tower.scale.set(0.8, 0.8, 0.8);
     tower.traverse(o => {
       if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
     });
@@ -309,7 +309,7 @@ function swapTowersToMedieval() {
 
     // Pointlight = sida-färgens glöd (matchar gamla fountain)
     const light = new THREE.PointLight(color, 1.0, 7, 2);
-    light.position.set(0, 3.0, 0);
+    light.position.set(0, 1.5, 0);
     grp.add(light);
 
     // Aura-ring = gameplay-radius för fountain-aura (heal/buff-zon)
@@ -571,28 +571,28 @@ function makeGrassLaneTexture(seed = 1) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
 
-  // 1) Gräs-bas — varm grön gradient + tonvariation
+  // 1) Gräs-bas — MÖRK grön gradient + tonvariation
   const grassGrad = ctx.createLinearGradient(0, 0, 0, H);
-  grassGrad.addColorStop(0, '#3f6b2c');
-  grassGrad.addColorStop(0.5, '#4d7d36');
-  grassGrad.addColorStop(1, '#3f6b2c');
+  grassGrad.addColorStop(0, '#1f3d18');
+  grassGrad.addColorStop(0.5, '#284d20');
+  grassGrad.addColorStop(1, '#1f3d18');
   ctx.fillStyle = grassGrad;
   ctx.fillRect(0, 0, W, H);
-  // Stora fläckar i avvikande gröna toner
+  // Stora fläckar i avvikande gröna toner (alla mörka)
   for (let i = 0; i < 80; i++) {
     const x = rnd() * W, y = rnd() * H;
     const r = 20 + rnd() * 55;
     const lighter = rnd() < 0.5;
     ctx.fillStyle = lighter
-      ? `rgba(120, 165, 70, ${0.10 + rnd() * 0.12})`
-      : `rgba(40, 70, 25, ${0.12 + rnd() * 0.14})`;
+      ? `rgba(70, 110, 45, ${0.10 + rnd() * 0.12})`
+      : `rgba(20, 40, 12, ${0.14 + rnd() * 0.16})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
   // Gräs-noise (många små prickar för textur)
   for (let i = 0; i < 8000; i++) {
     const x = rnd() * W, y = rnd() * H;
     const a = 0.05 + rnd() * 0.12;
-    const tone = rnd() < 0.55 ? '90, 130, 50' : '40, 70, 25';
+    const tone = rnd() < 0.55 ? '55, 90, 35' : '18, 35, 10';
     ctx.fillStyle = `rgba(${tone}, ${a})`;
     ctx.fillRect(x, y, 1 + rnd() * 1.4, 1 + rnd() * 1.4);
   }
@@ -713,6 +713,37 @@ function makeGrassLaneTexture(seed = 1) {
     ctx.fill();
   }
 
+  // 5) Alpha-fade på alla 4 kanter — radiera ut alpha så lane mjukt smälter
+  // in i underliggande groundGrass. Top/bottom 14% + left/right 6%.
+  // destination-out raderar enligt gradient-alpha.
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  // Topp-fade
+  const fadeTop = ctx.createLinearGradient(0, 0, 0, H * 0.14);
+  fadeTop.addColorStop(0, 'rgba(0,0,0,1)');
+  fadeTop.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fadeTop;
+  ctx.fillRect(0, 0, W, H * 0.14);
+  // Botten-fade
+  const fadeBot = ctx.createLinearGradient(0, H, 0, H * 0.86);
+  fadeBot.addColorStop(0, 'rgba(0,0,0,1)');
+  fadeBot.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fadeBot;
+  ctx.fillRect(0, H * 0.86, W, H * 0.14);
+  // Vänster-fade
+  const fadeL = ctx.createLinearGradient(0, 0, W * 0.06, 0);
+  fadeL.addColorStop(0, 'rgba(0,0,0,1)');
+  fadeL.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fadeL;
+  ctx.fillRect(0, 0, W * 0.06, H);
+  // Höger-fade
+  const fadeR = ctx.createLinearGradient(W, 0, W * 0.94, 0);
+  fadeR.addColorStop(0, 'rgba(0,0,0,1)');
+  fadeR.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fadeR;
+  ctx.fillRect(W * 0.94, 0, W * 0.06, H);
+  ctx.restore();
+
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.magFilter = THREE.LinearFilter;
@@ -767,6 +798,91 @@ function makeCampGroundTexture(seed = 99) {
     ctx.fillStyle = `rgba(${rnd() < 0.5 ? '255, 230, 180' : '30, 18, 8'}, ${0.04 + rnd() * 0.08})`;
     ctx.fillRect(x, y, 1.2, 1.2);
   }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipMapLinearFilter;
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// MLBB-stil grönt bas-golv med radial alpha-fade (matchar grass-lane-paletten)
+function makeGrassBaseFloorTexture(seed = 11) {
+  let s = seed * 2654435761 >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s >>> 0) / 0xFFFFFFFF; };
+  const W = 1024, H = 768;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Mörk grön bas (samma palett som lanen)
+  const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * 0.55);
+  grad.addColorStop(0, '#284d20');
+  grad.addColorStop(0.6, '#1f3d18');
+  grad.addColorStop(1, '#1a3414');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Större fläckar i avvikande gröna toner
+  for (let i = 0; i < 70; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const r = 25 + rnd() * 60;
+    const lighter = rnd() < 0.5;
+    ctx.fillStyle = lighter
+      ? `rgba(70, 110, 45, ${0.10 + rnd() * 0.12})`
+      : `rgba(20, 40, 12, ${0.12 + rnd() * 0.16})`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Gräs-noise
+  for (let i = 0; i < 6000; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const a = 0.04 + rnd() * 0.10;
+    const tone = rnd() < 0.55 ? '55, 90, 35' : '18, 35, 10';
+    ctx.fillStyle = `rgba(${tone}, ${a})`;
+    ctx.fillRect(x, y, 1 + rnd() * 1.4, 1 + rnd() * 1.4);
+  }
+
+  // Gräs-tofsar utspridda
+  for (let i = 0; i < 90; i++) {
+    const cx = rnd() * W, cy = rnd() * H;
+    const blades = 4 + Math.floor(rnd() * 5);
+    for (let b = 0; b < blades; b++) {
+      const bx = cx + (rnd() - 0.5) * 7;
+      const by = cy + (rnd() - 0.5) * 3;
+      const len = 3 + rnd() * 5;
+      const sway = (rnd() - 0.5) * 1.6;
+      const green = 100 + Math.floor(rnd() * 70);
+      ctx.strokeStyle = `rgb(${45 + Math.floor(rnd()*30)}, ${green}, ${35 + Math.floor(rnd()*20)})`;
+      ctx.lineWidth = 1 + rnd();
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + sway, by - len);
+      ctx.stroke();
+    }
+  }
+
+  // Vilda blommor
+  for (let i = 0; i < 25; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const color = rnd() < 0.6 ? 'rgba(245, 230, 110, 0.85)' : 'rgba(245, 245, 235, 0.85)';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5 + rnd() * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Radial alpha-fade ut mot kanterna — bas-golvet smälter in i groundGrass
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  const fadeRad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.30, W / 2, H / 2, Math.min(W, H) * 0.55);
+  fadeRad.addColorStop(0, 'rgba(0,0,0,0)');
+  fadeRad.addColorStop(1, 'rgba(0,0,0,1)');
+  ctx.fillStyle = fadeRad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
 
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -968,6 +1084,7 @@ const TEXTURES = {
   desertLane: (seed) => makeDesertLaneTexture(seed),
   grassLane: (seed) => makeGrassLaneTexture(seed),
   campGround: (seed) => makeCampGroundTexture(seed),
+  grassBaseFloor: (seed) => makeGrassBaseFloorTexture(seed),
   trailFade: (seed) => makeTrailFadeTexture(seed),
   elvenStone: (seed) => makeElvenStoneTexture(seed),
   stoneWall: () => makeNoiseTexture([90, 84, 75], 0.18, { repeatX: 8, repeatY: 1.2, speckColor: [50, 45, 40] }),
@@ -983,27 +1100,40 @@ const TEXTURES = {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Bas-camp: packad sandig jord runt fontänen
+  // Bas-zon: grönt gräs som matchar lanen, med radial alpha-fade så den
+  // smälter mjukt in i groundGrass-undergolvet.
   function makeBaseFloor(cz, seed) {
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(18, 14),
-      new THREE.MeshStandardMaterial({ map: TEXTURES.campGround(seed), color: 0xffffff, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({
+        map: TEXTURES.grassBaseFloor(seed), color: 0xffffff, roughness: 0.95,
+        transparent: true, depthWrite: false,
+      })
     );
     mesh.rotation.x = -Math.PI / 2; mesh.position.set(19, 0.02, cz);
     mesh.receiveShadow = true;
+    // renderOrder negativt → ritas före auror/HP-bars (default 0) som ligger nära y=0
+    mesh.renderOrder = -1;
     scene.add(mesh);
   }
   makeBaseFloor(7.5, 11);
   makeBaseFloor(-7.5, 23);
 
   // Lane: MLBB-stil gräs med cobblestone-stig. Unik seed per lane så de skiljer sig något.
+  // Material är transparent + depthWrite:false så lanens edge-alpha-fade smälter
+  // mjukt in i underliggande groundGrass.
   function makeLane(cx, cz, length, width, seed) {
     const lane = new THREE.Mesh(
       new THREE.PlaneGeometry(length, width),
-      new THREE.MeshStandardMaterial({ map: TEXTURES.grassLane(seed), color: 0xffffff, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({
+        map: TEXTURES.grassLane(seed), color: 0xffffff, roughness: 0.95,
+        transparent: true, depthWrite: false,
+      })
     );
     lane.rotation.x = -Math.PI / 2; lane.position.set(cx, 0.02, cz);
     lane.receiveShadow = true;
+    // renderOrder negativt → ritas före auror/HP-bars (default 0) som ligger nära y=0
+    lane.renderOrder = -1;
     scene.add(lane);
   }
   // Lane-mesh slutar exakt vid bas-golvets västkant (x=10) — undviker z-fight i overlappet
@@ -1250,12 +1380,12 @@ const TEXTURES = {
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
-  // Stigar in i sida 1:s bas vid z=12 och z=4 (lane-mittpunkterna)
-  makeTrailExtension(12.5, 12, 5, 2.4, 11);
-  makeTrailExtension(12.5,  4, 5, 2.4, 12);
-  // Sida 2 mirror
-  makeTrailExtension(12.5, -4, 5, 2.4, 13);
-  makeTrailExtension(12.5, -12, 5, 2.4, 14);
+  // Trail-extensions avstängda (decision 039): brun dirt-stig matchar inte
+  // det nya gröna gräset i basen. Funktionen lämnas kvar för framtida bruk.
+  // makeTrailExtension(12.5, 12, 5, 2.4, 11);
+  // makeTrailExtension(12.5,  4, 5, 2.4, 12);
+  // makeTrailExtension(12.5, -4, 5, 2.4, 13);
+  // makeTrailExtension(12.5, -12, 5, 2.4, 14);
 
   // Lägereld — stenring + loggar + flame-cones + varm punktljus
   function makeCampfire(x, z) {
