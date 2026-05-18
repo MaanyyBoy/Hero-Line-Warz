@@ -104,16 +104,25 @@ function scheduleNextTick(room) {
   room.tickHandle = setTimeout(() => gameLoopTick(room), delay);
 }
 
+// Tick-spike-tröskel: logga om en enskild tick (sim + serialize + send) tar
+// > 50ms. På 30 Hz ska vi vara klara på <33ms per tick; >50ms = vi missar
+// nästa deadline = potential snap-lag mot klienterna. Diagnostik för Render
+// free-tier-spikes (delad CPU kan ge sporadiska pauser).
+const TICK_SPIKE_WARN_MS = 50;
+
 function gameLoopTick(room) {
   if (!room.game) { room.tickHandle = null; return; }
   const now = Date.now();
   const dt = Math.min(0.1, Math.max(0.001, (now - room.lastTickMs) / 1000));
   room.lastTickMs = now;
+  // Mät simuleringskostnad separat från serialize för bättre spike-diagnostik.
+  const _simStart = Date.now();
   try {
     engine.tickGame(room.game, dt);
   } catch (e) {
     console.error(`[${room.code}] tickGame error:`, e && e.stack || e);
   }
+  const _simMs = Date.now() - _simStart;
   if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
     room.lastStateMs = now;
     try {
@@ -136,6 +145,11 @@ function gameLoopTick(room) {
     } catch (e) {
       console.error(`[${room.code}] serialize/send error:`, e && e.stack || e);
     }
+  }
+  // Diagnostik: spike-log för långa ticks. Decision 044.
+  const _totalMs = Date.now() - now;
+  if (_totalMs >= TICK_SPIKE_WARN_MS) {
+    console.warn(`[${room.code}] tick-spike ${_totalMs}ms (sim ${_simMs}ms)`);
   }
   // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
   // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
@@ -421,14 +435,17 @@ setInterval(() => {
   }
 }, 5000);
 
-// Heartbeat så zombi-anslutningar inte hänger kvar (server-pingar var 30s)
+// Heartbeat så zombi-anslutningar inte hänger kvar. Decision 044: 30s → 15s
+// så död socket detekteras snabbare (worst-case detection ~15s istället för
+// ~30s). Snabbare detection = host slipper pumpa state till en stockad/död
+// peer-socket vars bufferedAmount sakta växer → catch-up-spiral.
 setInterval(() => {
   for (const ws of wss.clients) {
     if (!ws.isAlive) { try { ws.terminate(); } catch (_) {} continue; }
     ws.isAlive = false;
     try { ws.ping(); } catch (_) {}
   }
-}, 30000);
+}, 15000);
 
 server.listen(PORT, () => {
   console.log(`Spel server listening on :${PORT}`);

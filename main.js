@@ -10963,6 +10963,8 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
   const map = clientMeshes[key].get(sideIdx);
   const seen = new Set();
   const interpolate = INTERPOLATED_KEYS.has(key);
+  // Sec-precision now för velocity-tracking. En läsning per anrop räcker.
+  const _nowSec = interpolate ? (performance.now() / 1000) : 0;
   for (const e of list) {
     seen.add(e.id);
     let mesh = map.get(e.id);
@@ -10978,8 +10980,33 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
       if (e.ry !== undefined) mesh.rotation.y = e.ry;
     }
     if (interpolate) {
-      mesh._target = { x: e.x, z: e.z };
-      if (e.ry !== undefined) mesh._target.ry = e.ry;
+      // Decision 044: mutera _target istället för realloc (0 GC per snap).
+      // Track även _targetTime + _vx/_vz för velocity-extrapolation under
+      // packet-jitter — smoothMeshToTarget kan extrapolera framåt om nästa
+      // snap är försenad så meshen inte stannar och rycker.
+      if (!mesh._target) {
+        mesh._target = { x: e.x, z: e.z, ry: (e.ry !== undefined) ? e.ry : undefined };
+        mesh._targetTime = _nowSec;
+        mesh._vx = 0; mesh._vz = 0;
+      } else {
+        const dt = _nowSec - mesh._targetTime;
+        if (dt > 0.001 && dt < 0.2) {
+          const dx = e.x - mesh._target.x;
+          const dz = e.z - mesh._target.z;
+          // Avstånd < 3 cm = entity står stilla → nolla velocity så
+          // extrapolation inte drar i den under långa packet-gaps.
+          if (dx * dx + dz * dz < 0.0009) {
+            mesh._vx = 0; mesh._vz = 0;
+          } else {
+            mesh._vx = dx / dt;
+            mesh._vz = dz / dt;
+          }
+        }
+        mesh._target.x = e.x;
+        mesh._target.z = e.z;
+        if (e.ry !== undefined) mesh._target.ry = e.ry;
+        mesh._targetTime = _nowSec;
+      }
     } else {
       // Snap (projektiler/effekter)
       const oldX = mesh.position.x, oldZ = mesh.position.z;
@@ -11018,18 +11045,24 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 // Halflife 55ms — med 30 Hz broadcast (33ms mellan snaps) ger detta ~80%
 // konvergens på 2 snap-intervaller = snappare visuell respons än 80ms utan att
 // synligt jittra. Tidigare 80ms upplevdes som "drift" mellan snaps.
+// Decision 044: velocity-extrapolation läggs ovanpå — om en snap är "gammal"
+// (network jitter, spike, dropped frame) extrapoleras targeten med senast
+// kända velocity istället för att meshen stannar och rycker när nästa snap
+// äntligen anländer. Cap:ar vid 100ms för att undvika runaway-extrapolation
+// vid längre dropouts.
 function smoothEntityMeshes(dt) {
   const k = 1 - Math.pow(0.5, dt / 0.055);
+  const nowSec = performance.now() / 1000;
   // Hero-meshes — alla 3 sidor (boss-wars MP har sides[3]).
   for (const sideIdx of [1, 2, 3]) {
     const side = sides[sideIdx];
     if (!side || !side.mesh._target) continue;
-    smoothMeshToTarget(side.mesh, k);
+    smoothMeshToTarget(side.mesh, k, nowSec);
   }
   // Boss-wars boss-mesh (ligger i sides[1].monsters)
   if (APP.gameMode === 'bosswars' && sides[1] && sides[1].monsters) {
     for (const m of sides[1].monsters) {
-      if (m && m.mesh && m.mesh._target) smoothMeshToTarget(m.mesh, k);
+      if (m && m.mesh && m.mesh._target) smoothMeshToTarget(m.mesh, k, nowSec);
     }
   }
   // Karaktär-meshes (monsters + creeps) i classic MP via clientMeshes
@@ -11037,16 +11070,29 @@ function smoothEntityMeshes(dt) {
     const tier = clientMeshes[key];
     if (!tier) continue;
     for (const map of tier.values()) {
-      for (const mesh of map.values()) smoothMeshToTarget(mesh, k);
+      for (const mesh of map.values()) smoothMeshToTarget(mesh, k, nowSec);
     }
   }
 }
 
-function smoothMeshToTarget(mesh, k) {
+// Velocity-extrapolation: targetX/Z framåt-projiceras med _vx/_vz om snap
+// är 10-100ms gammal (network-jitter-fönster). Vid stillastående entity är
+// velocity = 0 (satt i clientReconcileEntities / applyHeroSnap) så ingen
+// drift sker när inget förändras. Cap vid 100ms = undvik runaway-rörelse
+// vid riktig packet-loss.
+function smoothMeshToTarget(mesh, k, nowSec) {
   const t = mesh._target;
   if (!t) return;
-  mesh.position.x += (t.x - mesh.position.x) * k;
-  mesh.position.z += (t.z - mesh.position.z) * k;
+  let tx = t.x, tz = t.z;
+  if (nowSec !== undefined && mesh._targetTime !== undefined) {
+    const age = nowSec - mesh._targetTime;
+    if (age > 0.01 && age < 0.10) {
+      tx += (mesh._vx || 0) * age;
+      tz += (mesh._vz || 0) * age;
+    }
+  }
+  mesh.position.x += (tx - mesh.position.x) * k;
+  mesh.position.z += (tz - mesh.position.z) * k;
   if (t.ry !== undefined) {
     let d = t.ry - mesh.rotation.y;
     if (d > Math.PI) d -= 2 * Math.PI;
@@ -11417,12 +11463,35 @@ function applyRemoteState(state) {
       // smoothEntityMeshes inte krockar med prediction (annars dubbel-update).
       side.mesh._target = null;
     } else {
+      // Decision 044: mutera _target + spåra _targetTime/_vx/_vz för
+      // velocity-extrapolation (smoothMeshToTarget). Tidigare reallokerades
+      // _target här utan metadata → extrapolation hoppades över för
+      // opponent-hero i classic MP.
+      const _nowSec = performance.now() / 1000;
       if (!side.mesh._target) {
         side.mesh.position.x = sData.h.x;
         side.mesh.position.z = sData.h.z;
         side.mesh.rotation.y = heroRy;
+        side.mesh._target = { x: sData.h.x, z: sData.h.z, ry: heroRy };
+        side.mesh._targetTime = _nowSec;
+        side.mesh._vx = 0; side.mesh._vz = 0;
+      } else {
+        const dt = _nowSec - (side.mesh._targetTime || _nowSec);
+        if (dt > 0.001 && dt < 0.2) {
+          const dx = sData.h.x - side.mesh._target.x;
+          const dz = sData.h.z - side.mesh._target.z;
+          if (dx * dx + dz * dz < 0.0009) {
+            side.mesh._vx = 0; side.mesh._vz = 0;
+          } else {
+            side.mesh._vx = dx / dt;
+            side.mesh._vz = dz / dt;
+          }
+        }
+        side.mesh._target.x = sData.h.x;
+        side.mesh._target.z = sData.h.z;
+        side.mesh._target.ry = heroRy;
+        side.mesh._targetTime = _nowSec;
       }
-      side.mesh._target = { x: sData.h.x, z: sData.h.z, ry: heroRy };
     }
     side.mesh.visible = !sData.h.d;
     // Resurser
@@ -16506,14 +16575,29 @@ function applyBossWarsState(msg) {
     if (boss && boss.mesh) {
       // Smooth-interpolation: sätt _target istället för direkt position.
       // smoothEntityMeshes lerpar mesh.position mot _target varje frame.
-      // Mutera befintligt _target-objekt om det finns (mindre GC).
+      // Decision 044: velocity-tracking för extrapolation under packet-jitter.
+      const _nowSec = performance.now() / 1000;
       if (!boss.mesh._target) {
         boss.mesh.position.x = msg.b.x;
         boss.mesh.position.z = msg.b.z;
         boss.mesh._target = { x: msg.b.x, z: msg.b.z };
+        boss.mesh._targetTime = _nowSec;
+        boss.mesh._vx = 0; boss.mesh._vz = 0;
       } else {
+        const dt = _nowSec - (boss.mesh._targetTime || _nowSec);
+        if (dt > 0.001 && dt < 0.2) {
+          const dx = msg.b.x - boss.mesh._target.x;
+          const dz = msg.b.z - boss.mesh._target.z;
+          if (dx * dx + dz * dz < 0.0009) {
+            boss.mesh._vx = 0; boss.mesh._vz = 0;
+          } else {
+            boss.mesh._vx = dx / dt;
+            boss.mesh._vz = dz / dt;
+          }
+        }
         boss.mesh._target.x = msg.b.x;
         boss.mesh._target.z = msg.b.z;
+        boss.mesh._targetTime = _nowSec;
       }
       // Delta-detection för visual events (host kör auth-sim; klient triggar
       // bara lokala visuals baserat på state-förändringar):
@@ -16900,17 +16984,34 @@ function applyHeroSnap(side, snap) {
   if (side.mesh) {
     if (!isLocalMpClient) {
       // Non-local: _target-baserad interpolation (smoothEntityMeshes lerpar
-      // mesh.position mot _target vid 60 fps med 80 ms halflife).
+      // mesh.position mot _target vid 60 fps med 55 ms halflife).
+      // Decision 044: spåra _targetTime + _vx/_vz för velocity-extrapolation
+      // under packet-jitter.
       const heroRy = (snap.fx || snap.fz) ? Math.atan2(snap.fx, snap.fz) : (side.mesh._target?.ry ?? side.mesh.rotation.y);
+      const _nowSec = performance.now() / 1000;
       if (!side.mesh._target) {
         side.mesh.position.x = snap.x;
         side.mesh.position.z = snap.z;
         side.mesh.rotation.y = heroRy;
         side.mesh._target = { x: snap.x, z: snap.z, ry: heroRy };
+        side.mesh._targetTime = _nowSec;
+        side.mesh._vx = 0; side.mesh._vz = 0;
       } else {
+        const dt = _nowSec - (side.mesh._targetTime || _nowSec);
+        if (dt > 0.001 && dt < 0.2) {
+          const dx = snap.x - side.mesh._target.x;
+          const dz = snap.z - side.mesh._target.z;
+          if (dx * dx + dz * dz < 0.0009) {
+            side.mesh._vx = 0; side.mesh._vz = 0;
+          } else {
+            side.mesh._vx = dx / dt;
+            side.mesh._vz = dz / dt;
+          }
+        }
         side.mesh._target.x = snap.x;
         side.mesh._target.z = snap.z;
         side.mesh._target.ry = heroRy;
+        side.mesh._targetTime = _nowSec;
       }
     }
     if (side.heroId !== snap.hid) {
