@@ -16956,6 +16956,104 @@ function stopHeroPreviewLoop() {
   }
 }
 
+// ============================================================
+// HERO PORTRAIT GENERATOR — off-screen WebGL-renderer som renderar varje
+// Mixamo-hjälte EN gång till en PNG-dataURL, cachar resultatet, och används
+// som <img> i hero-browser-korten. Separat från live preview-renderern så
+// portrait-rendering inte stör en aktiv 3D-preview.
+// ============================================================
+const portraitGenState = {
+  initialized: false,
+  failed: false,
+  renderer: null,
+  scene: null,
+  camera: null,
+};
+const heroPortraitCache = new Map();   // heroId → dataURL
+
+function initPortraitGen() {
+  if (portraitGenState.initialized) return true;
+  if (portraitGenState.failed) return false;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  let renderer;
+  try {
+    // preserveDrawingBuffer: true så toDataURL() funkar (annars rensas buffern
+    // efter render-call). antialias: true för skarpa kanter på portrait.
+    renderer = new THREE.WebGLRenderer({
+      canvas, alpha: true, antialias: true,
+      preserveDrawingBuffer: true, powerPreference: 'low-power',
+    });
+  } catch (e) {
+    console.warn('[portrait-gen] WebGL init fail', e);
+    portraitGenState.failed = true;
+    return false;
+  }
+  renderer.setPixelRatio(1);
+  renderer.setSize(256, 256, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.85));
+  const key = new THREE.DirectionalLight(0xffe9c2, 1.4);
+  key.position.set(2, 4, 3);
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xaaccff, 0.5);
+  fill.position.set(-2, 2, 2);
+  scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.55);
+  rim.position.set(0, 3, -3);
+  scene.add(rim);
+
+  // Portrait-shot: kameran närmare + uppåt (mot ansikte/övre kropp)
+  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
+  camera.position.set(0, 1.55, 2.3);
+  camera.lookAt(0, 1.45, 0);
+
+  portraitGenState.renderer = renderer;
+  portraitGenState.scene = scene;
+  portraitGenState.camera = camera;
+  portraitGenState.initialized = true;
+  return true;
+}
+
+function getHeroPortraitImage(heroId) {
+  if (heroPortraitCache.has(heroId)) return heroPortraitCache.get(heroId);
+  if (!assetsReady) return null;
+  if (!initPortraitGen()) return null;
+  const charName = HERO_GLTF_MAP[heroId];
+  if (!charName) return null;
+  const mesh = instantiateCharacter(charName, 'mixamo_hero');
+  if (!mesh) return null;
+  const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
+  mesh.scale.set(sc.x, sc.y, sc.z);
+  mesh.position.set(0, 0, 0);
+  // Tick mixern en gång till idle-pose så hjälten inte står i T-pose
+  const actions = mesh.userData.actions;
+  if (actions) {
+    const idleName = findClipName(actions, 'Idle');
+    if (idleName && actions[idleName]) {
+      actions[idleName].play();
+      if (mesh.userData.mixer) mesh.userData.mixer.update(0.5);
+    }
+  }
+  portraitGenState.scene.add(mesh);
+  try {
+    portraitGenState.renderer.render(portraitGenState.scene, portraitGenState.camera);
+    const dataURL = portraitGenState.renderer.domElement.toDataURL('image/png');
+    heroPortraitCache.set(heroId, dataURL);
+    portraitGenState.scene.remove(mesh);
+    return dataURL;
+  } catch (e) {
+    console.warn('[portrait-gen] render fail for', heroId, e);
+    portraitGenState.scene.remove(mesh);
+    return null;
+  }
+}
+
 function renderHeroesBrowser() {
   if (!heroesBrowserContent) return;
   heroesBrowserContent.innerHTML = '';
@@ -16964,8 +17062,16 @@ function renderHeroesBrowser() {
   for (const h of HEROES) {
     const card = document.createElement('div');
     card.className = 'browser-card' + (h.available ? '' : ' locked');
-    const portrait = heroPortraitSVG(h.id);
-    const portraitHtml = portrait ? portrait : h.initial;
+    // Prioritera: Mixamo-rendered PNG (matchar 3D-modellen spelaren ser i match)
+    // → SVG-fallback för låsta/placeholder-heroes utan Mixamo-asset → initial.
+    let portraitHtml;
+    const imgUrl = h.available ? getHeroPortraitImage(h.id) : null;
+    if (imgUrl) {
+      portraitHtml = `<img class="hero-portrait-img" src="${imgUrl}" alt="${h.name}">`;
+    } else {
+      const svg = heroPortraitSVG(h.id);
+      portraitHtml = svg ? svg : h.initial;
+    }
     card.innerHTML = `<div class="card-icon">${portraitHtml}</div><div class="card-name">${h.name}</div><div class="card-role">${h.role}</div>`;
     if (h.available) card.addEventListener('click', () => openHeroDetailModal(h.id));
     grid.appendChild(card);
