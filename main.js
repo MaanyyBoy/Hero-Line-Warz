@@ -131,6 +131,11 @@ const ENVIRONMENT_ASSETS = {
   nature_bush:         'environment/quaternius/nature/glTF/Bush.gltf',
   nature_bush_flowers: 'environment/quaternius/nature/glTF/Bush_Flowers.gltf',
   nature_flowers_1:    'environment/quaternius/nature/glTF/Flower_1_Clump.gltf',
+  // Decision 046: extra cover-prop-assets för arena-väggar/skydd.
+  village_fence:        'environment/quaternius/medieval-village/Props/glTF/Fence.glb',
+  village_cart:         'environment/quaternius/medieval-village/Props/glTF/Cart.glb',
+  village_marketstand:  'environment/quaternius/medieval-village/Props/glTF/MarketStand_1.glb',
+  village_bench:        'environment/quaternius/medieval-village/Props/glTF/Bench_1.glb',
 };
 
 const loadedCharacters = new Map();   // name → { scene, animations }
@@ -326,8 +331,10 @@ function swapTowersToMedieval() {
     });
     grp.add(tower);
 
-    // Pointlight = sida-färgens glöd (matchar gamla fountain)
-    const light = new THREE.PointLight(color, 1.0, 7, 2);
+    // Pointlight = sida-färgens glöd (matchar gamla fountain).
+    // Decision 046: intensity 1.0→1.6, distance 7→11 → bas-mörker lyfts
+    // tydligt utan att tillsätta nya lights (= ingen shader-recompile).
+    const light = new THREE.PointLight(color, 1.6, 11, 2);
     light.position.set(0, 1.5, 0);
     grp.add(light);
 
@@ -1654,8 +1661,10 @@ const TEXTURES = {
     scene.add(rune);
   })();
 
-  // Hemisphere: himmel ovanifrån + jord-bounce nedifrån
-  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x3a2b1a, 0.45);
+  // Hemisphere: himmel ovanifrån + jord-bounce nedifrån. Decision 046:
+  // intensity 0.45→0.65 + varmare jordbounce 0x3a2b1a→0x4a3a25 så bas-zoner
+  // (där sun-shadows från tornen + ytterväggar gör marken mörkare) lyfts.
+  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a3a25, 0.65);
   hemi.position.set(0, 50, 0);
   scene.add(hemi);
 
@@ -1683,8 +1692,9 @@ const TEXTURES = {
   rim.position.set(-12, 16, -22);
   scene.add(rim);
 
-  // Fyll-ljus från motsatt sida (mjukar upp skugg-skuggorna utan att kasta nya)
-  const fill = new THREE.DirectionalLight(0xffd9a8, 0.35);
+  // Fyll-ljus från motsatt sida (mjukar upp skugg-skuggorna utan att kasta nya).
+  // Decision 046: 0.35→0.50 — extra fill för base-zoner.
+  const fill = new THREE.DirectionalLight(0xffd9a8, 0.50);
   fill.position.set(-18, 14, 10);
   scene.add(fill);
 
@@ -4052,6 +4062,17 @@ const ARENA_MAPS = [
       { type: 'pathTile', x:  12, z:   0, rot: 0 },
       { type: 'pathTile', x:   0, z:  10, rot: 0 },
       { type: 'pathTile', x:   0, z: -10, rot: 0 },
+      // Decision 046: extra cover för skydd. Saker att gömma sig bakom.
+      { type: 'marketStand', x: -12, z:   8, rot: 0.2, collision: { shape: 'box', halfX: 1.5, halfZ: 1.2 } },
+      { type: 'marketStand', x:  12, z:  -8, rot: 2.9, collision: { shape: 'box', halfX: 1.5, halfZ: 1.2 } },
+      { type: 'fence', x: -22, z:   2, rot: 0,        collision: { shape: 'box', halfX: 1.5, halfZ: 0.18 } },
+      { type: 'fence', x:  22, z:  -2, rot: 0,        collision: { shape: 'box', halfX: 1.5, halfZ: 0.18 } },
+      { type: 'fence', x:  -3, z:  22, rot: 1.5708,   collision: { shape: 'box', halfX: 0.18, halfZ: 1.5 } },
+      { type: 'fence', x:   3, z: -22, rot: 1.5708,   collision: { shape: 'box', halfX: 0.18, halfZ: 1.5 } },
+      { type: 'cart',  x: -18, z:  16, rot: 0.5,      collision: { shape: 'box', halfX: 1.5, halfZ: 0.9 } },
+      { type: 'cart',  x:  18, z: -16, rot: -0.5,     collision: { shape: 'box', halfX: 1.5, halfZ: 0.9 } },
+      { type: 'bench', x: -26, z:  14, rot: 0,        collision: { shape: 'box', halfX: 1.0, halfZ: 0.3 } },
+      { type: 'bench', x:  26, z: -14, rot: 0,        collision: { shape: 'box', halfX: 1.0, halfZ: 0.3 } },
     ],
   },
   // ----- MAP 2: ASHLANDS -----
@@ -4092,6 +4113,17 @@ const ARENA_MAPS = [
       // Charred stenar
       { type: 'rock', x: -10, z: -22, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
       { type: 'rock', x:  10, z:  22, rot: 1.2, collision: { shape: 'circle', radius: 1.0 } },
+      // Decision 046: ruin-cover för skydd mot skills + AA.
+      { type: 'wagon', x: -22, z:  -8, rot:  0.4, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wagon', x:  22, z:   8, rot: -0.4, collision: { shape: 'box', halfX: 1.9, halfZ: 1.0 } },
+      { type: 'wall',  x: -15, z:  20, rot: 0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall',  x:  15, z: -20, rot: -0.05, collision: { shape: 'box', halfX: 1.3, halfZ: 0.5 } },
+      { type: 'wall',  x: -26, z:   6, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+      { type: 'wall',  x:  26, z:  -6, rot: 1.5708, collision: { shape: 'box', halfX: 0.5, halfZ: 1.3 } },
+      { type: 'pillar', x: -10, z:  -4, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'pillar', x:  10, z:   4, rot: 0, collision: { shape: 'circle', radius: 0.8 } },
+      { type: 'bigBoulder', x: -18, z:  24, rot: 0.5, collision: { shape: 'circle', radius: 1.6 } },
+      { type: 'bigBoulder', x:  18, z: -24, rot: 1.2, collision: { shape: 'circle', radius: 1.6 } },
     ],
   },
   // ----- MAP 3: WILDWOOD -----
@@ -4140,6 +4172,16 @@ const ARENA_MAPS = [
       // Stenar för att bryta sikten
       { type: 'rock', x: -26, z:  18, rot: 0.5, collision: { shape: 'circle', radius: 1.0 } },
       { type: 'rock', x:  26, z: -18, rot: -0.5, collision: { shape: 'circle', radius: 1.0 } },
+      // Decision 046: chunky skogs-cover (boulders + fallna stockar) + extra träd.
+      { type: 'bigBoulder', x: -14, z:  -6, rot: 0.2, collision: { shape: 'circle', radius: 1.6 } },
+      { type: 'bigBoulder', x:  14, z:   6, rot: 1.0, collision: { shape: 'circle', radius: 1.6 } },
+      { type: 'bigBoulder', x:  -4, z: -22, rot: 0.5, collision: { shape: 'circle', radius: 1.6 } },
+      { type: 'bigBoulder', x:   4, z:  22, rot: 1.4, collision: { shape: 'circle', radius: 1.6 } },
+      { type: 'log',        x: -18, z:   8, rot: 0,      collision: { shape: 'box', halfX: 1.7, halfZ: 0.4 } },
+      { type: 'log',        x:  18, z:  -8, rot: 0,      collision: { shape: 'box', halfX: 1.7, halfZ: 0.4 } },
+      { type: 'log',        x:   0, z:  18, rot: 1.5708, collision: { shape: 'box', halfX: 0.4, halfZ: 1.7 } },
+      { type: 'tree_maple', x:  -8, z:  -4, rot: 0.5,    collision: { shape: 'circle', radius: 0.9 } },
+      { type: 'tree_maple', x:   8, z:   4, rot: -0.5,   collision: { shape: 'circle', radius: 0.9 } },
     ],
   },
 ];
@@ -5354,6 +5396,74 @@ function makeArenaProp(type) {
     stream.rotation.x = -Math.PI / 2;
     stream.position.y = 0.07;
     g.add(stream);
+  } else if (type === 'fence' || type === 'cart' || type === 'marketStand' || type === 'bench') {
+    // Decision 046: cover-props för arena-väggar. GLB-baserade med proc fallback.
+    const mapKey = { fence: 'village_fence', cart: 'village_cart', marketStand: 'village_marketstand', bench: 'village_bench' }[type];
+    const scn = loadedEnvironment.get(mapKey);
+    if (scn) {
+      const m = scn.clone(true);
+      m.scale.set(1.0, 1.0, 1.0);
+      m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      g.add(m);
+    } else {
+      // Procedurell fallback per typ
+      if (type === 'fence') {
+        const wood = new THREE.MeshStandardMaterial({ color: 0x7a5530, roughness: 0.85 });
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.15, 0.10), wood);
+        rail.position.y = 0.8; g.add(rail);
+        for (let i = -1; i <= 1; i++) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.1, 0.15), wood);
+          post.position.set(i * 1.4, 0.55, 0); g.add(post);
+        }
+      } else if (type === 'cart' || type === 'marketStand') {
+        const wood = new THREE.MeshStandardMaterial({ color: 0x6a4022, roughness: 0.88 });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.0, 1.8), wood);
+        body.position.y = 0.7; g.add(body);
+      } else { // bench
+        const wood = new THREE.MeshStandardMaterial({ color: 0x6a4628, roughness: 0.85 });
+        const seat = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.10, 0.5), wood);
+        seat.position.y = 0.5; g.add(seat);
+        for (const dx of [-0.7, 0.7]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.5, 0.40), wood);
+          leg.position.set(dx, 0.25, 0); g.add(leg);
+        }
+      }
+    }
+  } else if (type === 'bigBoulder') {
+    // Procedurell stor sten — chunky cover för arena.
+    const r = 1.4 + Math.random() * 0.3;
+    const rock = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(r, 0),
+      new THREE.MeshStandardMaterial({ color: 0x6a5e54, roughness: 0.95 })
+    );
+    rock.position.y = r * 0.7;
+    rock.scale.y = 0.75 + Math.random() * 0.2;
+    rock.castShadow = true; rock.receiveShadow = true;
+    g.add(rock);
+    // Mindre sten bredvid för naturlig look
+    const rock2 = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(r * 0.6, 0),
+      new THREE.MeshStandardMaterial({ color: 0x5e544a, roughness: 0.95 })
+    );
+    rock2.position.set(r * 0.9, r * 0.4, r * 0.5);
+    rock2.castShadow = true;
+    g.add(rock2);
+  } else if (type === 'log') {
+    // Fallen log — brun cylinder liggande på sidan. Cover för skogsmiljö.
+    const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.9 });
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.40, 3.5, 12), wood);
+    trunk.rotation.z = Math.PI / 2;
+    trunk.position.y = 0.35;
+    trunk.castShadow = true; trunk.receiveShadow = true;
+    g.add(trunk);
+    // Mossa ovanpå
+    const moss = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.36, 0.36, 2.8, 12, 1, true, -Math.PI / 4, Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0x4a7028, roughness: 0.9, side: THREE.DoubleSide })
+    );
+    moss.rotation.z = Math.PI / 2;
+    moss.position.y = 0.40;
+    g.add(moss);
   }
   return g;
 }
@@ -19001,10 +19111,17 @@ function drawArenaMapPreview(canvas, map) {
     riverSegment:{ fill: '#3a78c0', stroke: '#1a3a60', dShape: 'box', dHX: 2.2, dHZ: 1.5 },
     firePatch:   { fill: '#ff8833', stroke: '#a02a08', dShape: 'circle', dR: 0.6 },
     lavaPool:    { fill: '#ff5a18', stroke: '#601a05', dShape: 'circle', dR: 1.6 },
+    // Decision 046: nya cover-typer
+    fence:        { fill: '#8a6038', stroke: '#3a2418', dShape: 'box', dHX: 1.5, dHZ: 0.18 },
+    cart:         { fill: '#7a4a28', stroke: '#2a1808', dShape: 'box', dHX: 1.5, dHZ: 0.9 },
+    marketStand:  { fill: '#9a6a3a', stroke: '#3a2410', dShape: 'box', dHX: 1.5, dHZ: 1.2 },
+    bench:        { fill: '#8a5a30', stroke: '#3a2410', dShape: 'box', dHX: 1.0, dHZ: 0.3 },
+    bigBoulder:   { fill: '#7a6e64', stroke: '#3a342c', dShape: 'circle', dR: 1.6 },
+    log:          { fill: '#5a3a20', stroke: '#1a1008', dShape: 'box', dHX: 1.7, dHZ: 0.4 },
   };
   // Sortera så ground-decor (path, river, lava-pool) ritas FÖRST (under)
   // och solida cover-props (hus, träd, vägg) ritas SIST (över).
-  const LAYER_ORDER = { pathTile: 0, riverSegment: 0, lavaPool: 1, flowers: 1, firePatch: 2 };
+  const LAYER_ORDER = { pathTile: 0, riverSegment: 0, lavaPool: 1, flowers: 1, firePatch: 2, log: 3, bench: 3 };
   const sorted = (map.props || []).slice().sort((a, b) => {
     const la = LAYER_ORDER[a.type]; const lb = LAYER_ORDER[b.type];
     return (la == null ? 5 : la) - (lb == null ? 5 : lb);
