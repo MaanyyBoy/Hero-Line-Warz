@@ -113,6 +113,13 @@ const ANIMATION_ASSETS = {
 // som ersätter Rivendell-fontänen.
 const ENVIRONMENT_ASSETS = {
   medieval_tower: 'environment/quaternius/medieval-castle/glTF/LargeTower.glb',
+  // Bas-zon-props (decision 042)
+  village_house_1: 'environment/quaternius/medieval-village/Buildings/glTF/House_1.glb',
+  village_house_2: 'environment/quaternius/medieval-village/Buildings/glTF/House_2.glb',
+  village_mill:    'environment/quaternius/medieval-village/Buildings/glTF/Mill.glb',
+  village_barrel:  'environment/quaternius/medieval-village/Props/glTF/Barrel.glb',
+  village_crate:   'environment/quaternius/medieval-village/Props/glTF/Crate.glb',
+  village_hay:     'environment/quaternius/medieval-village/Props/glTF/Hay.glb',
 };
 
 const loadedCharacters = new Map();   // name → { scene, animations }
@@ -239,6 +246,7 @@ async function preloadAllAssets() {
   // är laddad. Static-scene bygdes synkront vid script-load med proceduell
   // fallback (Rivendell-fontän); detta byter ut dem in-place.
   swapTowersToMedieval();
+  placeBaseProps();
   setTimeout(() => {
     const al = document.getElementById('asset-loading');
     if (al) al.classList.add('hidden');
@@ -323,6 +331,40 @@ function swapTowersToMedieval() {
 
     scene.add(grp);
     towerMeshes[idx] = { group: grp, water: null, topWater: null, light, auraRing, crystal: null };
+  }
+}
+
+// Decision 042: Bas-zon-props (Quaternius medieval-village). Hus + mill +
+// små props per sida. Side 2 är spegelvänd i z. Positioner valda för att
+// undvika gameplay-element (tower, hero-spawn, portal, campfire, tent).
+function placeBaseProps() {
+  // Layout per sida (sida 1, sida 2 mirroras genom att negera z och rotera π):
+  // House_1 i SW-hörnet, Mill i NW-hörnet, mindre props strösslade runt.
+  const PROPS = [
+    { asset: 'village_house_1', x: 13,   z: 4.5,  rotY: 0,           scale: 1.0 },
+    { asset: 'village_mill',    x: 13.5, z: 14.5, rotY: 0,           scale: 1.0 },
+    { asset: 'village_house_2', x: 17,   z: 13,   rotY: -Math.PI/2,  scale: 0.9 },
+    { asset: 'village_barrel',  x: 17.5, z: 2.5,  rotY: 0.4,         scale: 1.0 },
+    { asset: 'village_barrel',  x: 18.3, z: 2.0,  rotY: -0.2,        scale: 1.0 },
+    { asset: 'village_crate',   x: 16.5, z: 3.2,  rotY: 0.6,         scale: 1.0 },
+    { asset: 'village_hay',     x: 20,   z: 11.5, rotY: 0,           scale: 1.0 },
+    { asset: 'village_hay',     x: 11.5, z: 9.6,  rotY: 0.4,         scale: 1.0 },
+  ];
+  for (const idx of [1, 2]) {
+    const zSign = (idx === 1) ? 1 : -1;
+    const yawAdd = (idx === 1) ? 0 : Math.PI;   // sida 2 vänds 180°
+    for (const p of PROPS) {
+      const scn = loadedEnvironment.get(p.asset);
+      if (!scn) continue;
+      const grp = scn.clone(true);
+      grp.scale.set(p.scale, p.scale, p.scale);
+      grp.position.set(p.x, 0, p.z * zSign);
+      grp.rotation.y = (p.rotY || 0) + yawAdd;
+      grp.traverse(o => {
+        if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+      });
+      scene.add(grp);
+    }
   }
 }
 
