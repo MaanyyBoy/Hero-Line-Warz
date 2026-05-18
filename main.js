@@ -1362,8 +1362,8 @@ const TEXTURES = {
     scene.add(grp);
     return { group: grp, ring, disk, halo, light, ground };
   }
-  portalMeshes[1] = makePortal(26, 13, 0x66ccff);     // sida 1 portal i hörnet bakom torn
-  portalMeshes[2] = makePortal(26, -13, 0xff6688);    // sida 2 portal
+  portalMeshes[1] = makePortal(22, 13, 0x66ccff);     // sida 1 portal — flyttad in från x=26 så den inte krockar med campfire (26.7)
+  portalMeshes[2] = makePortal(22, -13, 0xff6688);    // sida 2 portal — speglad
 
   // === TRAIL-FADE — stigar som fortsätter in i basen ===
   function makeTrailExtension(cx, cz, len = 5, w = 2.4, seed = 1) {
