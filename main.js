@@ -99,6 +99,20 @@ const CHARACTER_ASSETS = {
   alien_boss:       'enemies/mixamo_bosses/alien.glb',
   elk_head_boss:    'enemies/mixamo_bosses/elk_head.glb',
   undead_boss:      'enemies/mixamo_bosses/undead_assassin.glb',
+  // Wave-monster per tier (decision 048) — Quaternius Ultimate Monsters
+  // ersätter KayKit Skeleton för wave 1-49 minions. Embedded animationer
+  // (Idle, Walk, Attack, Death). 5 monster för 5 tiers.
+  wave_t1: 'enemies/quaternius_monsters/Orc.gltf',         // Soldiers
+  wave_t2: 'enemies/quaternius_monsters/Ninja.gltf',       // Knights
+  wave_t3: 'enemies/quaternius_monsters/Tribal.gltf',      // Berserkers
+  wave_t4: 'enemies/quaternius_monsters/BlueDemon.gltf',   // Demons
+  wave_t5: 'enemies/quaternius_monsters/Dino.gltf',        // Drakätt
+  // Boss-Wars-bossar (decision 048) — Mixamo, T-pose only, anim:er från shared pool.
+  bosswars_1: 'enemies/Boss wars/bosswars_1.glb',    // Goblin Archer
+  bosswars_2: 'enemies/Boss wars/bosswars_2.glb',    // Warlock Female
+  bosswars_3: 'enemies/Boss wars/bosswars_3.glb',    // No-Face Alien
+  bosswars_4: 'enemies/Boss wars/bosswars_4.glb',    // Big Alien
+  bosswars_5: 'enemies/Boss wars/bosswars_5.glb',    // Alien Soldier
   // Skeletons (wave-monster + minions)
   skel_warrior: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Warrior.glb',
   skel_mage:    'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Mage.glb',
@@ -3634,30 +3648,66 @@ const BOSS_GLTF_MAP = {
   50: 'undead_boss',
 };
 // Per-boss scale-tweak (Mixamo-bossar har varierande höjd ut-of-the-box).
-// Justeras visuellt om någon ser för stor/liten.
 const BOSS_SCALE = {
   parasite_boss:   1.20,
   gun_zombie_boss: 1.05,
   alien_boss:      1.30,
   elk_head_boss:   1.15,
   undead_boss:     1.10,
+  // Boss-Wars-tiers (decision 048) — större scale eftersom boss-wars
+  // är raid-mode med massiva bossar i arena.
+  bosswars_1: 1.8,
+  bosswars_2: 1.9,
+  bosswars_3: 2.0,
+  bosswars_4: 2.2,
+  bosswars_5: 2.3,
 };
 
-function makeMonsterMesh(bossAssetKey) {
-  // Wave-monster använder Skeleton_Warrior som default. För wave 10/20/30/40/50
-  // skickar caller in en BOSS_GLTF_MAP-key → använd Mixamo-boss-mesh istället.
+// Decision 048: Quaternius wave-monster per tier ersätter KayKit-skeleton.
+// Tier-namn matchar decision 029 (Soldiers/Knights/Berserkers/Demons/Drakätt).
+// waveNumberToTierKey: wave 1-9 → t1, 11-19 → t2, etc. (bossar 10/20/30/40/50 hanteras separat)
+function waveNumberToTierKey(waveNum) {
+  if (!waveNum) return 'wave_t1';
+  if (waveNum <= 9)  return 'wave_t1';
+  if (waveNum <= 19) return 'wave_t2';
+  if (waveNum <= 29) return 'wave_t3';
+  if (waveNum <= 39) return 'wave_t4';
+  return 'wave_t5';
+}
+// Per-monster scale så de inte är för små/stora vs hero-mesh.
+const WAVE_MONSTER_SCALE = {
+  wave_t1: 0.95, wave_t2: 0.95, wave_t3: 1.00, wave_t4: 1.05, wave_t5: 1.10,
+};
+
+function makeMonsterMesh(bossAssetKey, tierAssetKey) {
+  // 3-vägs-dispatch: (1) bossKey → Mixamo-boss (wave 10/20/30/40/50)
+  // (2) tierKey → Quaternius wave-monster per tier
+  // (3) fallback → KayKit Skeleton_Warrior (gamla beteendet, för mini-boss
+  //                eller okänd tier)
   const grp = new THREE.Group();
-  const charName = bossAssetKey || 'skel_warrior';
-  const animGroup = bossAssetKey ? 'mixamo_boss' : 'skel';
+  let charName, animGroup, scaleVal;
+  if (bossAssetKey) {
+    charName = bossAssetKey;
+    animGroup = 'mixamo_boss';
+    scaleVal = BOSS_SCALE[bossAssetKey] || 1.15;
+  } else if (tierAssetKey) {
+    charName = tierAssetKey;
+    animGroup = 'quaternius_monster';
+    scaleVal = WAVE_MONSTER_SCALE[tierAssetKey] || 1.0;
+  } else {
+    charName = 'skel_warrior';
+    animGroup = 'skel';
+    scaleVal = 0.85;
+  }
   const inner = instantiateCharacter(charName, animGroup);
   if (inner) {
-    const scaleVal = bossAssetKey ? (BOSS_SCALE[bossAssetKey] || 1.15) : 0.85;
     inner.scale.setScalar(scaleVal);
     grp.add(inner);
     grp.userData.inner = inner;
     grp.userData.mixer = inner.userData.mixer;
     grp.userData.actions = inner.userData.actions;
     grp.userData.isMixamoBoss = !!bossAssetKey;
+    grp.userData.isQuaterniusMonster = !!tierAssetKey;
     activeMixers.add(inner.userData.mixer);
     startDefaultIdle(grp);
   } else {
@@ -4840,15 +4890,24 @@ function spawnBossWarsBoss(side, tier) {
   if (!bossInfo) return;
   const bossDef = BOSS_DEFS[bossInfo.wave];
   if (!bossDef) return;
-  const mesh = makeMonsterMesh();
-  // Boss 15% mindre — minska scale med 0.85x (per user request).
+  // Decision 048: Mixamo-mesh per boss-wars-tier. Tier 1-5 mappar till
+  // 'bosswars_1'..'bosswars_5' (user-numrerade FBX:er → konverterade GLB:er).
+  const bossWarsKey = 'bosswars_' + tier;
+  const hasMixamoMesh = !!CHARACTER_ASSETS[bossWarsKey];
+  const mesh = hasMixamoMesh
+    ? makeMonsterMesh(bossWarsKey)  // skickar in via bossAssetKey-grenen (Mixamo + shared anim-pool)
+    : makeMonsterMesh();
+  // Boss-scale: Mixamo-mesh har sin egen BOSS_SCALE via makeMonsterMesh.
+  // KayKit-fallback: applicera bossDef.scale × 0.85 + tint/aura/accessories.
   const scale = bossDef.scale * 0.85;
-  mesh.scale.set(scale, scale, scale);
-  // Tier-specifik tint (override:ar bossDef.bodyTint för werewolf/dracula/etc)
-  const tierTints = { 1: 0x6a85a8, 2: 0x6a4a30, 3: 0xeeeae0, 4: 0xc8b8c8, 5: 0x3a2018 };
-  applyMonsterTint(mesh, tierTints[tier] || bossDef.bodyTint, 0.85);
-  attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
-  attachBossWarsAccessories(mesh, tier, scale);
+  if (!hasMixamoMesh) {
+    mesh.scale.set(scale, scale, scale);
+    const tierTints = { 1: 0x6a85a8, 2: 0x6a4a30, 3: 0xeeeae0, 4: 0xc8b8c8, 5: 0x3a2018 };
+    applyMonsterTint(mesh, tierTints[tier] || bossDef.bodyTint, 0.85);
+    attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, false);
+    attachBossWarsAccessories(mesh, tier, scale);
+  }
+  // Mixamo-bossar: skippa tint/aura/accessories (PBR-textures), bara HP-bar.
   attachHpBar(mesh, scale * 1.0);
   // Boss-HP-bar är alltid synlig (raid-känsla — användaren ska kunna tracka HP
   // även när bossen inte just blivit träffad).
@@ -6744,11 +6803,21 @@ function hostSpawnMiniBoss(side, waveDef, bossDef, skill) {
   const lane = ((waveDef.number / 2) % 2 === 0) ? 1 : 2;  // alternerar lane per mini-boss-spawn
   const x = cfg.spawnX + 1.0;
   const z = cfg.laneZ[lane];
-  const mesh = makeMonsterMesh();
-  const scale = 1.55;   // lagom större än vanlig minion (men inte boss-stor)
+  // Decision 048: mini-bossar använder Quaternius tier-mesh per wave-batch.
+  // Skala-bump 1.55× på toppen av WAVE_MONSTER_SCALE så de syns som "mer
+  // hotfull tier-monster" än vanliga minions, men inte stora som riktiga bossar.
+  const tierKey = waveDef.number ? waveNumberToTierKey(waveDef.number) : null;
+  const mesh = makeMonsterMesh(null, tierKey);
+  const scale = 1.55;
   mesh.scale.set(scale, scale, scale);
-  applyMonsterTint(mesh, bossDef.bodyTint, 0.7);
-  attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, true);
+  if (!tierKey) {
+    // KayKit-fallback: gamla tint + aura.
+    applyMonsterTint(mesh, bossDef.bodyTint, 0.7);
+    attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, true);
+  } else {
+    // Quaternius-mesh: bara aura (ingen tint, PBR-color-atlas bevaras).
+    attachBossAura(mesh, bossDef.auraColor, bossDef.eyeColor, scale, true);
+  }
   attachHpBar(mesh, 1.9);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
@@ -6779,11 +6848,12 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
   const isRange = attackType === 'range';
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
   const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
-  // Decision 047: bossar i solo använder Mixamo-mesh per wave-nummer.
-  // Mixamo-bossar har PBR-textures → skippa tint/aura. KayKit-skeletons-fallback
-  // får full bossDef.tint + aura (gamla beteendet).
+  // Decision 047/048: bossar → Mixamo-mesh per wave. Wave-minions → Quaternius
+  // tier-mesh per wave-batch (1-9/11-19/21-29/31-39/41-49). Mini-bossar
+  // (ej def.isBoss men i en wave-tier) använder samma tier-mesh.
   const bossKey = def.isBoss ? BOSS_GLTF_MAP[def.number] : null;
-  const mesh = makeMonsterMesh(bossKey);
+  const tierKey = (!def.isBoss && def.number) ? waveNumberToTierKey(def.number) : null;
+  const mesh = makeMonsterMesh(bossKey, tierKey);
   let bossDef = null;
   if (def.isBoss) {
     bossDef = BOSS_DEFS[def.number] || BOSS_DEFS[10];
@@ -11738,18 +11808,22 @@ function applyRemoteState(state) {
     side.wave.name = sData.w.n || '';
     side.wave.isBoss = !!sData.w.b;
     side.wave.bannerPulse = sData.w.p || 0;
-    // Entiteter — bossar (e.boss=true) får Mixamo-mesh per wave-nummer
-    // (decision 047). Mini-bossar och vanliga monster är KayKit-skeletons.
+    // Entiteter — bossar (e.boss=true) får Mixamo-mesh per wave (decision 047).
+    // Vanliga wave-monster får Quaternius tier-mesh per wave-batch (decision 048).
+    // Mini-bossar använder samma tier-mesh som vanliga wave-monster.
     clientReconcileEntities(idx, 'monsters', sData.M || [], (e) => {
-      const bossKey = (e && e.boss) ? BOSS_GLTF_MAP[side.wave.current] : null;
-      const m = makeMonsterMesh(bossKey);
-      // Skala-multiplier endast för KayKit-bossar; Mixamo-bossar har sin
-      // egen scale via BOSS_SCALE redan applicerad i makeMonsterMesh.
-      if (e && e.boss && !bossKey) m.scale.set(1.6, 1.7, 1.6);
+      const isBossEntity = !!(e && e.boss);
+      const bossKey = isBossEntity ? BOSS_GLTF_MAP[side.wave.current] : null;
+      const tierKey = !isBossEntity ? waveNumberToTierKey(side.wave.current) : null;
+      const m = makeMonsterMesh(bossKey, tierKey);
+      // Scale-multiplier: KayKit-boss (fallback) får extra-stor scale.
+      // Mixamo-boss + Quaternius-monster har egna scale via maps.
+      if (isBossEntity && !bossKey) m.scale.set(1.6, 1.7, 1.6);
       else if (e && e.mb) m.scale.set(1.25, 1.3, 1.25);   // miniboss = mellan minion (1.0) och boss (1.6)
-      if (e && e.r && !bossKey) {
-        // Range-monster grön-tintat (decision 047: skippa för Mixamo-bossar
-        // — deras textures är PBR-painted och green-tint förstör look:en).
+      if (e && e.r && !bossKey && !tierKey) {
+        // Range-monster grön-tintat. Decision 047: skippa för Mixamo-bossar.
+        // Decision 048: skippa för Quaternius-monster (color-atlas-textur
+        // — tint förstör palette-look:en).
         m.traverse(o => {
           if (o.material && o.material.color && o.isMesh) {
             o.material = o.material.clone();
