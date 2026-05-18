@@ -2691,11 +2691,12 @@ const HERO_GLTF_MAP = {
 // Per-hero scale: {x,y,z}. Mixamo-modeller är vanligen i meter-skala efter
 // Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
 const HERO_GLTF_SCALE = {
-  magiker: { x: 1.0, y: 1.0, z: 1.0 },
-  legolas: { x: 1.0, y: 1.0, z: 1.0 },
-  gimlu:   { x: 1.1, y: 1.1, z: 1.1 },     // tank-känsla
-  aragurn: { x: 1.05, y: 1.05, z: 1.05 },  // soldat-bygge
-  kostefo: { x: 1.0, y: 1.0, z: 1.0 },
+  // Decision 042: Gandulf/Legolus/Aragurn/Kostefos +20% storlek (Gimlu oförändrad).
+  magiker: { x: 1.2, y: 1.2, z: 1.2 },
+  legolas: { x: 1.2, y: 1.2, z: 1.2 },
+  gimlu:   { x: 1.1, y: 1.1, z: 1.1 },     // tank-känsla (oförändrad)
+  aragurn: { x: 1.26, y: 1.26, z: 1.26 },  // 1.05 × 1.2
+  kostefo: { x: 1.2, y: 1.2, z: 1.2 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
 // Mappar fight-stilen till rätt Mixamo-clip vi exporterat i hero-GLB:n.
