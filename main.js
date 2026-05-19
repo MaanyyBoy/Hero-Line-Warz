@@ -11901,10 +11901,9 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 // äntligen anländer. Cap:ar vid 100ms för att undvika runaway-extrapolation
 // vid längre dropouts.
 function smoothEntityMeshes(dt) {
-  // Halflife 80 ms (var 55 ms). Justerad upp för att matcha 20 Hz broadcast-rate
-  // (50 ms snap-intervall) — halflife 1.0-1.5× snap-intervall ger smooth lerp
-  // utan att vara klar innan nästa snap (skulle ge stutter på låg rate).
-  const k = 1 - Math.pow(0.5, dt / 0.080);
+  // Halflife 55 ms — matchar 30 Hz broadcast-rate (33 ms snap-intervall).
+  // Längre halflife = mer "tail-drag" på rörelse, märks tydligt i duel-combat.
+  const k = 1 - Math.pow(0.5, dt / 0.055);
   const nowSec = performance.now() / 1000;
   // Hero-meshes — alla 3 sidor (boss-wars MP har sides[3]).
   for (const sideIdx of [1, 2, 3]) {
@@ -17626,22 +17625,17 @@ let lastSentJoy = { x: 0, z: 0 };
 // skippa input-frames istället för att stacka upp. Input är aldrig kritisk — server
 // använder senast mottagna joystick som "håll riktningen" tills nästa kommer.
 const WS_INPUT_BACKPRESSURE_LIMIT = 32 * 1024;
-// Network rates: med klient-interpolation (smoothEntityMeshes lerpar mesh.position
-// mot _target varje frame vid 60 fps, 80 ms halflife) ger 20 Hz broadcasts samma
-// visuella smoothness som 30 Hz men halverar server CPU + bandwidth — kritiskt
-// på Render's free-tier shared-CPU + EU↔US-RTT. Velocity-extrapolation upp till
-// 150 ms slätar ut 50 ms-gapen mellan snaps utan stutter.
-const INPUT_SEND_INTERVAL = 1 / 30;        // 30 Hz input (var 60 Hz). Matchar
-                                            // server-tick (30 Hz) — fler skickade
-                                            // input-frames bufferas bara av server
-                                            // och ger ingen extra responsivitet,
-                                            // bara mer trafik som konkurrerar med
-                                            // state-broadcasten. Backpressure-skip
-                                            // sköter mobil-nätverk-glitchar.
-// Arena/Boss Wars state 20 Hz (var 30 Hz). Matchar classic line-wars rate.
-// 50ms snap-intervall + halflife 80ms + extrapolation 150ms = visuellt smooth
-// utan att server-host:en flaskar på broadcast-CPU. Bandbredd dropp ~33%.
-const ARENA_STATE_SEND_INTERVAL = 1 / 20;
+// Network rates: 30 Hz broadcasts + 55ms halflife + 150ms extrapolation-cap.
+// Decision 052 testade 20 Hz för CPU-spar men user rapporterade choppy duel
+// (combat-tempo behöver tätare snaps). Defensive fixarna från 052 (extrap
+// 100→150ms + backpressure 64/96→40/48 KB) behålls — hjälper utan kostnad.
+const INPUT_SEND_INTERVAL = 1 / 60;        // 60 Hz input — minimal input-buffer-
+                                            // delay för combat (duel + arena-fight
+                                            // där 1-2 frames input-lag märks).
+                                            // Server bufferar tills nästa tick;
+                                            // extra trafik är ~50 byte/frame.
+// Arena/Boss Wars state 30 Hz (matchar classic).
+const ARENA_STATE_SEND_INTERVAL = 1 / 30;
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
@@ -17704,7 +17698,7 @@ function maybeSendClientInput(now) {
 // ============================================================
 // Boss Wars MP: in-match state sync (host-auktoritativ)
 // ============================================================
-// Host kör hela simuleringen, broadcastar state ~20 Hz. Klienterna
+// Host kör hela simuleringen, broadcastar state ~30 Hz. Klienterna
 // renderar mottagen state och skickar input. Match-end avgörs av host.
 
 // Bygger en snapshot för ett MP-boss-wars-state-meddelande
@@ -17761,7 +17755,7 @@ function broadcastBossWarsState() {
   // Backpressure-skip: 3-peer co-op = 2 mottagare per state. Om server-side
   // relay-bufferten stockas, skippa frame istället för att amplifiera stockningen.
   // Sänkt 96 KB → 48 KB (matchar server-relay) = aggressivare drop = mindre
-  // kö-djup. Vid 20 Hz är nästa snap bara 50ms bort så drop är säkert.
+  // kö-djup. Vid 30 Hz är nästa snap bara 33ms bort så drop är säkert.
   if (APP.ws.bufferedAmount > 48 * 1024) return;
   const snap = buildBossWarsSnap();
   sendGameMsg({
@@ -18277,7 +18271,7 @@ function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
   // Backpressure-skip: om WS-bufferten redan har > 48 KB obesvarade frames,
   // skippa state istället för att stacka upp. State är redundant (nästa snap
-  // 50ms senare @ 20 Hz är färskare). Förhindrar exponentiell latens-spiral
+  // 33ms senare @ 30 Hz är färskare). Förhindrar exponentiell latens-spiral
   // när mobil-nätverket har en spik. 48KB > 32KB input-tröskeln så input
   // prioriteras (input-frames är ~50 byte vs ~10-15 KB för state).
   if (APP.ws.bufferedAmount > 48 * 1024) return;
@@ -22341,12 +22335,11 @@ function tick() {
       broadcastArenaState();
     }
   }
-  // Boss Wars MP host broadcastar state till klienterna 20 Hz (sänkt från 30 Hz).
-  // Matchar classic line-wars-rate + arena-rate. 3-spelar-broadcast x 30 Hz var
-  // för dyrt på free-tier host-CPU; 20 Hz med halflife 80ms ger samma upplevda
-  // smoothness. Payload-skipping + compression håller bandbredd lågt.
+  // Boss Wars MP host broadcastar state till klienterna 30 Hz (matchar classic).
+  // 33ms snap-intervall + halflife 55ms + 150ms extrap-cap = smooth combat-feel.
+  // Payload-skipping + compression håller bandbredd lågt.
   if (isBossMpHost && wsOpen()) {
-    if (now - bossMpState.lastStateSent > (1 / 20)) {
+    if (now - bossMpState.lastStateSent > (1 / 30)) {
       bossMpState.lastStateSent = now;
       broadcastBossWarsState();
     }
