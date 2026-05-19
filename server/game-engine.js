@@ -360,6 +360,26 @@ function xpForLevel(level) { return 50 * level; } // XP behövs för att gå fr�
 const MONSTER_XP_REWARD = 10;
 const CREEP_XP_RATIO = 0.6;
 
+// Skill-point-system (decision-pending). Hero börjar med 1 point på lvl 1, får
+// +1 per level-up → totalt 30 points över hela matchen. Q/F/E unlockas + uppgraderas
+// via points (max 5 per skill). R unlockas gratis vid hero-level 10 (ingen point-kostnad).
+// Resterande points (upp till 15) spenderas på 5 stats (max 5 per stat).
+const POINTS_PER_LEVEL = 1;
+const STARTING_POINTS = 1;
+const SKILL_LEVEL_MAX = 5;
+const STAT_LEVEL_MAX = 5;
+const ULT_UNLOCK_LEVEL = 10;
+const SKILL_LEVEL_DMG_PER_PT = 0.25;   // +25% skada per skill-level (lvl 5 = +100% vs lvl 1)
+// Stat-point-bonusar per point (additivt till motsvarande pct i recomputeSideStats)
+const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
+const STAT_PER_POINT = {
+  as: 0.05,    // +5% attackSpeedPct
+  ms: 0.03,    // +3% moveSpeedPct
+  hp: 0.05,    // +5% maxHpPct
+  sd: 0.05,    // +5% skillDmgPct
+  dr: 0.03,    // +3% dmgReductionPct
+};
+
 // Hero pick-fas
 const PICK_PHASE_DURATION = 60; // sek
 
@@ -606,15 +626,20 @@ function gainXp(side, amount) {
   if (side.level >= MAX_LEVEL) return;
   side.xp += amount;
   let leveled = false;
+  let levelsGained = 0;
   while (side.level < MAX_LEVEL && side.xp >= side.xpToNext) {
     side.xp -= side.xpToNext;
     side.level += 1;
     side.xpToNext = xpForLevel(side.level);
     leveled = true;
+    levelsGained++;
   }
   if (side.level >= MAX_LEVEL) {
     side.xp = 0;
     side.xpToNext = 0;
+  }
+  if (levelsGained > 0) {
+    side.unspentPoints = (side.unspentPoints || 0) + POINTS_PER_LEVEL * levelsGained;
   }
   if (leveled) recomputeSideStats(side);
 }
@@ -650,6 +675,21 @@ function recomputeSideStats(side) {
       addStats(def.activeAtMax.stats);
     }
   }
+  // Stat-points: applicera additivt på motsvarande pct-stats
+  if (side.statPts) {
+    attackSpeedPct += (side.statPts.as || 0) * STAT_PER_POINT.as;
+    moveSpeedPct += (side.statPts.ms || 0) * STAT_PER_POINT.ms;
+    maxHpPct += (side.statPts.hp || 0) * STAT_PER_POINT.hp;
+    skillDmgPct += (side.statPts.sd || 0) * STAT_PER_POINT.sd;
+    dmgReductionPct += (side.statPts.dr || 0) * STAT_PER_POINT.dr;
+  }
+  // Per-skill level-mult (för tick-skills som kan läsa skillLvlMul[key] live)
+  side.skillLvlMul = {
+    q: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.q) || 1) - 1),
+    f: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.f) || 1) - 1),
+    e: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.e) || 1) - 1),
+    r: 1,
+  };
   // Level-skalning ovanpå items: +4% dmg/HP/skill-dmg, +1% movespeed per level (utöver lvl 1)
   const lvl = (side.level || 1) - 1;
   const levelDmgMul = 1 + LEVEL_DMG_PCT * lvl;
@@ -911,6 +951,10 @@ function createSide(idx) {
       f: { cd: 0, max: SKILL_BASE_CD.f },
       e: { cd: 0, max: SKILL_BASE_CD.e },
     },
+    // Skill-points-system: Q/F/E unlock + upgrade 0-5, stat-points 0-5 per stat
+    skillLvl: { q: 0, f: 0, e: 0 },
+    statPts: { as: 0, ms: 0, hp: 0, sd: 0, dr: 0 },
+    unspentPoints: STARTING_POINTS,
     tower: { hp: TOWER_MAX_HP, maxHp: TOWER_MAX_HP },
     monsters: [],
     playerCreeps: [],
@@ -3811,6 +3855,8 @@ function applyEvent(state, sideIdx, ev) {
     // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,
     // och 5s lockout startar så ult-gain pausas.
     if (ev.key === 'r') {
+      // ULT-unlock-gate: kräver hero-level >= 10
+      if ((side.level || 1) < ULT_UNLOCK_LEVEL) return;
       // Säkerställ att ult-träffar (t.ex. Soul Drain-tick) räknas som 'r' i
       // Gandulf Soul Mark-tracking istället för stale Q/F/E från förra cast.
       side._currentSkillKey = 'r';
@@ -3836,6 +3882,11 @@ function applyEvent(state, sideIdx, ev) {
       }
       return;
     }
+    // Q/F/E skill-lock-gate: kräver skillLvl[key] > 0 (unlocked via skill-point)
+    if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
+      const skLvl = (side.skillLvl && side.skillLvl[ev.key]) || 0;
+      if (skLvl <= 0) return;
+    }
     // Q/F/E skill-cast: reset per-cast ult-gain-budget så AoE-hits inte
     // proportionellt fyller ult (leap som träffar 20 mobs gav 100% direkt).
     side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
@@ -3857,30 +3908,68 @@ function applyEvent(state, sideIdx, ev) {
     const isGimlu = side.heroId === 'gimlu';
     const isAragurn = side.heroId === 'aragurn';
     const isKostefo = side.heroId === 'kostefo';
-    if (ev.key === 'q') {
-      if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
-      else if (isGimlu) castGimluTaunt(state, sideIdx);
-      else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
-      else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
-      else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
-    } else if (ev.key === 'f') {
-      if (isLegolus) castLegolusBuff(state, sideIdx);
-      else if (isGimlu) castGimluIronWill(state, sideIdx);
-      else if (isAragurn) castAragurnShout(state, sideIdx, dx, dz);
-      else if (isKostefo) castKostefoJointSlider(state, sideIdx, dx, dz);
-      else castFrostnova(state, sideIdx, ev);
-    } else if (ev.key === 'e') {
-      if (isLegolus) castLegolusDash(state, sideIdx, ev);
-      else if (isGimlu) castGimluHammer(state, sideIdx, dx, dz);
-      else if (isAragurn) castAragurnLeap(state, sideIdx, ev);
-      else if (isKostefo) castKostefoCannabisCloud(state, sideIdx);
-      else castBlink(state, sideIdx, ev);
+    // Wrap-around-cast: bumpa side.skillDmgMul med per-skill-level-mult under
+    // cast-tid. Bake-at-cast skills (projektiler, fireballs, dotPerSec etc) får
+    // automatiskt rätt skalning. Tick-skills som läser side.skillDmgMul live ska
+    // alternativt läsa side.skillLvlMul[key] (sätts i recomputeSideStats).
+    const _prevSkillDmgMul = side.skillDmgMul;
+    const _skLvl = (side.skillLvl && side.skillLvl[ev.key]) || 1;
+    const _lvlMul = 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, _skLvl - 1);
+    side.skillDmgMul = _prevSkillDmgMul * _lvlMul;
+    try {
+      if (ev.key === 'q') {
+        if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
+        else if (isGimlu) castGimluTaunt(state, sideIdx);
+        else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
+        else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
+        else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
+      } else if (ev.key === 'f') {
+        if (isLegolus) castLegolusBuff(state, sideIdx);
+        else if (isGimlu) castGimluIronWill(state, sideIdx);
+        else if (isAragurn) castAragurnShout(state, sideIdx, dx, dz);
+        else if (isKostefo) castKostefoJointSlider(state, sideIdx, dx, dz);
+        else castFrostnova(state, sideIdx, ev);
+      } else if (ev.key === 'e') {
+        if (isLegolus) castLegolusDash(state, sideIdx, ev);
+        else if (isGimlu) castGimluHammer(state, sideIdx, dx, dz);
+        else if (isAragurn) castAragurnLeap(state, sideIdx, ev);
+        else if (isKostefo) castKostefoCannabisCloud(state, sideIdx);
+        else castBlink(state, sideIdx, ev);
+      }
+    } finally {
+      side.skillDmgMul = _prevSkillDmgMul;
     }
     return;
   }
   if (ev.type === 'activate') {
     if (side.hero.dead) return;
     activateInventoryItem(side, ev.slot);
+    return;
+  }
+  // Spendera 1 skill-point på Q/F/E (R kan inte uppgraderas via points)
+  if (ev.type === 'spsk') {
+    const key = ev.key;
+    if (key !== 'q' && key !== 'f' && key !== 'e') return;
+    if ((side.unspentPoints || 0) <= 0) return;
+    if (!side.skillLvl) side.skillLvl = { q: 0, f: 0, e: 0 };
+    const cur = side.skillLvl[key] || 0;
+    if (cur >= SKILL_LEVEL_MAX) return;
+    side.skillLvl[key] = cur + 1;
+    side.unspentPoints -= 1;
+    recomputeSideStats(side);
+    return;
+  }
+  // Spendera 1 stat-point på en av de 5 stats
+  if (ev.type === 'spst') {
+    const stat = ev.stat;
+    if (!STAT_PER_POINT[stat]) return;
+    if ((side.unspentPoints || 0) <= 0) return;
+    if (!side.statPts) side.statPts = { as: 0, ms: 0, hp: 0, sd: 0, dr: 0 };
+    const cur = side.statPts[stat] || 0;
+    if (cur >= STAT_LEVEL_MAX) return;
+    side.statPts[stat] = cur + 1;
+    side.unspentPoints -= 1;
+    recomputeSideStats(side);
     return;
   }
   if (ev.type !== 'shop') return;
@@ -4484,6 +4573,10 @@ function serializeSide(side) {
     hid: side.heroId || 'magiker',
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
+    // Skill-point-system: skill-levels + stat-points + unspent
+    skLv: { q: (side.skillLvl && side.skillLvl.q) || 0, f: (side.skillLvl && side.skillLvl.f) || 0, e: (side.skillLvl && side.skillLvl.e) || 0 },
+    stp: { as: (side.statPts && side.statPts.as) || 0, ms: (side.statPts && side.statPts.ms) || 0, hp: (side.statPts && side.statPts.hp) || 0, sd: (side.statPts && side.statPts.sd) || 0, dr: (side.statPts && side.statPts.dr) || 0 },
+    up: side.unspentPoints || 0,
     ue: +(side.ultEnergy || 0).toFixed(1),   // ult-energy 0-100 för klientens R-knapp + meter
     // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc.
     // Skippas helt när inaktivt (undefined → JSON-skip).

@@ -2248,6 +2248,23 @@ const LEVEL_HP_PCT = 0.04;
 const LEVEL_MS_PCT = 0.01;
 function xpForLevel(level) { return 50 * level; }
 
+// Skill-point-system (mirror av server-engine). 1 point från start, +1 per level-up.
+// Q/F/E: 0-5 levels via points. R: gratis vid hero-level 10. 5 stats max 5 vardera.
+const POINTS_PER_LEVEL = 1;
+const STARTING_POINTS = 1;
+const SKILL_LEVEL_MAX = 5;
+const STAT_LEVEL_MAX = 5;
+const ULT_UNLOCK_LEVEL = 10;
+const SKILL_LEVEL_DMG_PER_PT = 0.25;
+const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
+const STAT_PER_POINT = {
+  as: 0.05,
+  ms: 0.03,
+  hp: 0.05,
+  sd: 0.05,
+  dr: 0.03,
+};
+
 // Boss Wars: skala %-max-HP-skador 10× ner mot själva bossen.
 // Anledning: bossens HP är så hög att en 5%-skill annars knockar 5% i en cast,
 // vilket bryter balansen för en raid. AA + flat-damage förblir oförändrad.
@@ -6885,6 +6902,11 @@ function createSide(idx) {
       f: { cd: 0, max: SKILL_BASE_CD.f },
       e: { cd: 0, max: SKILL_BASE_CD.e },
     },
+    // Skill-points-system: Q/F/E levels 0-5, 5 stat-points 0-5 vardera
+    skillLvl: { q: 0, f: 0, e: 0 },
+    statPts: { as: 0, ms: 0, hp: 0, sd: 0, dr: 0 },
+    unspentPoints: STARTING_POINTS,
+    skillLvlMul: { q: 1, f: 1, e: 1, r: 1 },
     // Torn
     tower: { hp: TOWER_MAX_HP, maxHp: TOWER_MAX_HP },
     // Mobile entities
@@ -8394,15 +8416,20 @@ function gainXp(side, amount) {
   if (side.level >= MAX_LEVEL) return;
   side.xp += amount;
   let leveled = false;
+  let levelsGained = 0;
   while (side.level < MAX_LEVEL && side.xp >= side.xpToNext) {
     side.xp -= side.xpToNext;
     side.level += 1;
     side.xpToNext = xpForLevel(side.level);
     leveled = true;
+    levelsGained++;
   }
   if (side.level >= MAX_LEVEL) {
     side.xp = 0;
     side.xpToNext = 0;
+  }
+  if (levelsGained > 0) {
+    side.unspentPoints = (side.unspentPoints || 0) + POINTS_PER_LEVEL * levelsGained;
   }
   if (leveled) recomputeSideStats(side);
 }
@@ -10661,6 +10688,21 @@ function recomputeSideStats(side) {
     attackDmgPct += LING_AA_DMG_BONUS;
     aaRangePct += LING_AA_RANGE_BONUS;
   }
+  // Stat-points (mirror av server-engine)
+  if (side.statPts) {
+    attackSpeedPct += (side.statPts.as || 0) * STAT_PER_POINT.as;
+    moveSpeedPct += (side.statPts.ms || 0) * STAT_PER_POINT.ms;
+    maxHpPct += (side.statPts.hp || 0) * STAT_PER_POINT.hp;
+    skillDmgPct += (side.statPts.sd || 0) * STAT_PER_POINT.sd;
+    dmgReductionPct += (side.statPts.dr || 0) * STAT_PER_POINT.dr;
+  }
+  // Per-skill level-mult (Q/F/E)
+  side.skillLvlMul = {
+    q: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.q) || 1) - 1),
+    f: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.f) || 1) - 1),
+    e: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.e) || 1) - 1),
+    r: 1,
+  };
 
   // Level-skalning ovanpå items (matchar server-engine)
   const lvl = (side.level || 1) - 1;
@@ -11260,6 +11302,12 @@ function applyEvent(side, ev) {
     if (side.hero.dead || channelLocked || feared || frozen || laserLocked || taunted) return;
     if (whirlLocked && ev.key !== 'q') return;   // bara den pågående Q tickar; ny cast skippas via cd
     if (leapLocked && ev.key !== 'r') return;
+    // Skill-point-lock-gate: Q/F/E kräver skillLvl > 0, R kräver hero-level >= 10
+    if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
+      const skLvl = (side.skillLvl && side.skillLvl[ev.key]) || 0;
+      if (skLvl <= 0) return;
+    }
+    if (ev.key === 'r' && (side.level || 1) < ULT_UNLOCK_LEVEL) return;
     let dx = ev.dx, dz = ev.dz;
     if (ev.tap === true && side.targetId) {
       const opp = sides[3 - side.idx];
@@ -11286,31 +11334,69 @@ function applyEvent(side, ev) {
       // från förra cast skulle göra ult-tickar bidra som "samma skill")
       side._currentSkillKey = 'r';
     }
-    // Kostefo: i Arena/Solo körs klient-side hostCastKostefo*-funktioner.
-    // I classic-MP är server auktoritativ — events skickas till server och
-    // simulering körs där. Detect classic-MP via isClassicMpForKostefo nedan.
-    if (ev.key === 'r') {
-      if (isKostefo) hostCastKostefoJointAvengers(side);
-      else hostCastUlt(side, dx, dz);
-    } else if (ev.key === 'q') {
-      if (isLegolus) hostCastLegolusVineTrap(side, ev);
-      else if (isGimlu) hostCastGimluTaunt(side);
-      else if (isAragurn) hostCastAragurnWhirlwind(side);
-      else if (isKostefo) hostCastKostefoJointAttack(side, ev);
-      else hostCastWindPuff(side, ev);   // Magiker Q = Wind Puff (matchar server)
-    } else if (ev.key === 'f') {
-      if (isLegolus) hostCastLegolusBuff(side);
-      else if (isGimlu) hostCastGimluIronWill(side);
-      else if (isAragurn) hostCastAragurnShout(side, dx, dz);
-      else if (isKostefo) hostCastKostefoJointSlider(side, ev);
-      else hostCastFrostnova(side, ev);
-    } else if (ev.key === 'e') {
-      if (isLegolus) hostCastLegolusDash(side, ev);
-      else if (isGimlu) hostCastGimluHammer(side, dx, dz);
-      else if (isAragurn) hostCastAragurnLeap(side, ev);
-      else if (isKostefo) hostCastKostefoCannabisCloud(side);
-      else hostCastBlink(side, ev);
+    // Wrap-around-cast: per-skill-level dmg-mult under cast-tid (Q/F/E).
+    // Mirror av server-engine. Bake-at-cast skills får rätt skala automatiskt.
+    const _prevSkillDmgMul = side.skillDmgMul;
+    if (ev.key === 'q' || ev.key === 'f' || ev.key === 'e') {
+      const _skLvl = (side.skillLvl && side.skillLvl[ev.key]) || 1;
+      const _lvlMul = 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, _skLvl - 1);
+      side.skillDmgMul = _prevSkillDmgMul * _lvlMul;
     }
+    try {
+      // Kostefo: i Arena/Solo körs klient-side hostCastKostefo*-funktioner.
+      // I classic-MP är server auktoritativ — events skickas till server och
+      // simulering körs där. Detect classic-MP via isClassicMpForKostefo nedan.
+      if (ev.key === 'r') {
+        if (isKostefo) hostCastKostefoJointAvengers(side);
+        else hostCastUlt(side, dx, dz);
+      } else if (ev.key === 'q') {
+        if (isLegolus) hostCastLegolusVineTrap(side, ev);
+        else if (isGimlu) hostCastGimluTaunt(side);
+        else if (isAragurn) hostCastAragurnWhirlwind(side);
+        else if (isKostefo) hostCastKostefoJointAttack(side, ev);
+        else hostCastWindPuff(side, ev);   // Magiker Q = Wind Puff (matchar server)
+      } else if (ev.key === 'f') {
+        if (isLegolus) hostCastLegolusBuff(side);
+        else if (isGimlu) hostCastGimluIronWill(side);
+        else if (isAragurn) hostCastAragurnShout(side, dx, dz);
+        else if (isKostefo) hostCastKostefoJointSlider(side, ev);
+        else hostCastFrostnova(side, ev);
+      } else if (ev.key === 'e') {
+        if (isLegolus) hostCastLegolusDash(side, ev);
+        else if (isGimlu) hostCastGimluHammer(side, dx, dz);
+        else if (isAragurn) hostCastAragurnLeap(side, ev);
+        else if (isKostefo) hostCastKostefoCannabisCloud(side);
+        else hostCastBlink(side, ev);
+      }
+    } finally {
+      side.skillDmgMul = _prevSkillDmgMul;
+    }
+    return;
+  }
+  // Spendera 1 skill-point på Q/F/E
+  if (ev.type === 'spsk') {
+    const key = ev.key;
+    if (key !== 'q' && key !== 'f' && key !== 'e') return;
+    if ((side.unspentPoints || 0) <= 0) return;
+    if (!side.skillLvl) side.skillLvl = { q: 0, f: 0, e: 0 };
+    const cur = side.skillLvl[key] || 0;
+    if (cur >= SKILL_LEVEL_MAX) return;
+    side.skillLvl[key] = cur + 1;
+    side.unspentPoints -= 1;
+    recomputeSideStats(side);
+    return;
+  }
+  // Spendera 1 stat-point på en av de 5 stats
+  if (ev.type === 'spst') {
+    const stat = ev.stat;
+    if (!STAT_PER_POINT[stat]) return;
+    if ((side.unspentPoints || 0) <= 0) return;
+    if (!side.statPts) side.statPts = { as: 0, ms: 0, hp: 0, sd: 0, dr: 0 };
+    const cur = side.statPts[stat] || 0;
+    if (cur >= STAT_LEVEL_MAX) return;
+    side.statPts[stat] = cur + 1;
+    side.unspentPoints -= 1;
+    recomputeSideStats(side);
     return;
   }
   if (ev.type === 'activate') {
@@ -12062,6 +12148,18 @@ function applyRemoteState(state) {
     side.skills.q.cd = sData.sk.q;
     side.skills.f.cd = sData.sk.f;
     side.skills.e.cd = sData.sk.e;
+    // Skill-point-system. Skippa full recomputeSideStats — server skickar
+    // redan auktoritativ ms/ad/maxHp. Vi uppdaterar bara skillLvlMul lokalt
+    // för tick-skills som kan läsa den (client-side prediction i arena/solo).
+    if (sData.skLv) side.skillLvl = { q: sData.skLv.q || 0, f: sData.skLv.f || 0, e: sData.skLv.e || 0 };
+    if (sData.stp) side.statPts = { as: sData.stp.as || 0, ms: sData.stp.ms || 0, hp: sData.stp.hp || 0, sd: sData.stp.sd || 0, dr: sData.stp.dr || 0 };
+    if (typeof sData.up === 'number') side.unspentPoints = sData.up;
+    side.skillLvlMul = {
+      q: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.q) || 1) - 1),
+      f: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.f) || 1) - 1),
+      e: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.e) || 1) - 1),
+      r: 1,
+    };
     // Wave (för HUD)
     side.wave.current = sData.w.c;
     side.wave.active = !!sData.w.a;
@@ -13126,6 +13224,56 @@ const skillEls = {
 };
 const ultFillEl = skillEls.r ? skillEls.r.querySelector('.ult-fill') : null;
 const ultPctEl = skillEls.r ? skillEls.r.querySelector('.ult-pct') : null;
+
+// Skill-point UI
+const statsToggleEl = document.getElementById('stats-toggle');
+const statsPanelEl = document.getElementById('stats-panel');
+
+if (statsToggleEl) {
+  statsToggleEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!statsPanelEl) return;
+    statsPanelEl.classList.toggle('visible');
+    // Force-update när panel öppnas så raderna fylls direkt
+    if (statsPanelEl.classList.contains('visible')) {
+      const side = sides[APP.localSide];
+      updateStatsToggleAndPanel(side, side ? (side.unspentPoints || 0) : 0);
+    }
+  });
+}
+if (statsPanelEl) {
+  // Close-knapp
+  const closeBtn = statsPanelEl.querySelector('[data-sp-close]');
+  if (closeBtn) closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    statsPanelEl.classList.remove('visible');
+  });
+  // Stat-plus-knappar
+  for (const btn of statsPanelEl.querySelectorAll('.sp-plus')) {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const stat = btn.getAttribute('data-spst');
+      if (!stat) return;
+      sendOrApplyEvent({ type: 'spst', stat });
+    });
+  }
+}
+
+// Skill-plus-knappar (på Q/F/E). Bara pointerdown — annars dubbel-fire på mobil
+// (pointerdown + click) som skulle spendera 2 points på 1 tryck.
+for (const key of ['q', 'f', 'e']) {
+  const el = skillEls[key];
+  if (!el) continue;
+  const plusBtn = el.querySelector('.sk-plus');
+  if (!plusBtn) continue;
+  plusBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sendOrApplyEvent({ type: 'spsk', key });
+  });
+}
 
 // SVG-ikoner per hero × skill — bild på vad skillen gör. Sätts via
 // updateSkillIcons() vid match-start och hero-swap.
@@ -15687,6 +15835,9 @@ function endJoystick() {
 function skillKeyFromTarget(target) {
   let el = target;
   while (el && el !== document.body) {
+    // Skill-plus-knappen ovanpå Q/F/E — eget handler för "spend skill point";
+    // returnera null så vi inte också castar skillen som ligger under.
+    if (el.classList && el.classList.contains('sk-plus')) return null;
     if (el.dataset && el.dataset.key) return el.dataset.key;
     el = el.parentElement;
   }
@@ -16626,10 +16777,25 @@ window.addEventListener('keydown', (e) => {
 
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
+  const unspent = side ? (side.unspentPoints || 0) : 0;
   for (const key of ['q', 'f', 'e']) {
     const el = skillEls[key];
+    if (!el) continue;
     const cd = side ? side.skills[key].cd : 0;
-    if (cd > 0) {
+    const skLvl = (side && side.skillLvl) ? (side.skillLvl[key] || 0) : 0;
+    const locked = skLvl <= 0;
+    // Lock-overlay
+    el.classList.toggle('skill-locked', locked);
+    const lockTextEl = el.querySelector('.sk-lock-text');
+    if (lockTextEl) lockTextEl.textContent = locked ? 'LOCKED' : '';
+    // Level-badge "X/5" — visa endast om unlocked
+    const lvlEl = el.querySelector('.sk-level');
+    if (lvlEl) lvlEl.textContent = locked ? '' : `${skLvl}/${SKILL_LEVEL_MAX}`;
+    // Plus-button: visa om unspent > 0 och skill kan uppgraderas
+    const plusEl = el.querySelector('.sk-plus');
+    if (plusEl) plusEl.classList.toggle('visible', unspent > 0 && skLvl < SKILL_LEVEL_MAX);
+    // Cooldown — visa endast på unlocked
+    if (!locked && cd > 0) {
       el.classList.add('cooling');
       el.querySelector('.cd').textContent = cd.toFixed(1);
     } else {
@@ -16641,13 +16807,45 @@ function updateSkillButtonStyles() {
     const hasTarget = !!(side && side.aaActive && side.targetId);
     aaBtnEl.classList.toggle('has-target', hasTarget);
   }
-  // ULT-knappens fill + percentage + ready-glow
+  // ULT-knappens fill + percentage + ready-glow + level-10-lock
   if (skillEls.r) {
+    const lvl = side ? (side.level || 1) : 1;
+    const ultLocked = lvl < ULT_UNLOCK_LEVEL;
+    skillEls.r.classList.toggle('skill-locked', ultLocked);
+    const lockEl = skillEls.r.querySelector('.sk-lock-text');
+    if (lockEl) lockEl.textContent = ultLocked ? `Lv ${ULT_UNLOCK_LEVEL}` : '';
     const energy = side ? (side.ultEnergy || 0) : 0;
     const pct = Math.min(100, Math.max(0, Math.round(energy)));
-    if (ultFillEl) ultFillEl.style.height = pct + '%';
-    if (ultPctEl) ultPctEl.textContent = pct + '%';
-    skillEls.r.classList.toggle('ready', pct >= 100);
+    if (ultFillEl) ultFillEl.style.height = ultLocked ? '0%' : pct + '%';
+    if (ultPctEl) ultPctEl.textContent = ultLocked ? '' : pct + '%';
+    skillEls.r.classList.toggle('ready', !ultLocked && pct >= 100);
+  }
+  updateStatsToggleAndPanel(side, unspent);
+}
+
+// Stats-toggle FAB + stats-panel state.
+function updateStatsToggleAndPanel(side, unspent) {
+  if (!statsToggleEl) return;
+  // Vissa lägen (lobby, hero-pick) ska inte visa point-UI — kolla via APP-state
+  const showUi = side && APP.gameMode && (APP.gameMode === 'classic' || APP.gameMode === 'arena1v1' || APP.gameMode === 'bosswars');
+  statsToggleEl.classList.toggle('hidden', !showUi);
+  const ptsEl = statsToggleEl.querySelector('.pts');
+  if (ptsEl) ptsEl.textContent = String(unspent);
+  statsToggleEl.classList.toggle('has-points', unspent > 0);
+  // Panel-rader
+  if (!statsPanelEl) return;
+  if (!statsPanelEl.classList.contains('visible')) return;   // skip om stängd
+  const unspentEl = document.getElementById('sp-unspent');
+  if (unspentEl) unspentEl.textContent = String(unspent);
+  for (const k of STAT_KEYS) {
+    const v = (side && side.statPts && side.statPts[k]) || 0;
+    const valEl = document.getElementById('sp-val-' + k);
+    if (valEl) valEl.textContent = `${v}/${STAT_LEVEL_MAX}`;
+    const row = statsPanelEl.querySelector(`.sp-row[data-stat="${k}"]`);
+    if (row) {
+      const btn = row.querySelector('.sp-plus');
+      if (btn) btn.disabled = !(unspent > 0 && v < STAT_LEVEL_MAX);
+    }
   }
 }
 
@@ -16668,6 +16866,12 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
   const isArenaMpClient = (APP.mode === 'client' && isArenaMp());
+  // Skill-point-lock-gate: Q/F/E kräver skillLvl > 0. R kräver hero-level >= 10.
+  if (key === 'q' || key === 'f' || key === 'e') {
+    const skLvl = (side.skillLvl && side.skillLvl[key]) || 0;
+    if (skLvl <= 0) return;
+  }
+  if (key === 'r' && (side.level || 1) < ULT_UNLOCK_LEVEL) return;
   // ULT (r): ingen CD, blockas av energy-check i hostCastUlt
   if (key === 'r') {
     if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
