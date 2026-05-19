@@ -8,10 +8,15 @@ const engine = require('./game-engine.js');
 
 const PORT = process.env.PORT || 3000;
 const TICK_RATE = 30;                       // simuleringssteg per sekund
-// State-broadcast nu matchad till tick-rate (30 Hz) — varje simuleringssteg
-// resulterar i ett snapshot. Tidigare 20 Hz hade ~50ms intern-buffer-delay för
-// position-uppdateringar; 30 Hz minskar uppfattad lagg + klient-snapshot-jitter.
-const STATE_RATE = 30;
+// State-broadcast 20 Hz (var STATE_RATE 30 Hz, decision 044). Sänkt tillbaka
+// pga lag-rapporter från free-tier Render: 30 Hz × ~10-15 KB payload × 2 peers
+// + JSON.stringify + zlib deflate = ~25-40ms/s CPU bara på broadcast — på en
+// shared-CPU-instans räcker det för att tick-spikar > 50ms ska bli vanliga.
+// 20 Hz halverar broadcast-kostnad + bandwidth utan visuell skillnad eftersom
+// klientens interpolation (halflife 80ms + velocity-extrapolation upp till
+// 150ms) jämnar ut 50ms-gapen. Tick-rate kvar 30 Hz så simuleringen behåller
+// sin precision; bara hur ofta snap skickas ut sänks.
+const STATE_RATE = 20;
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
 // Grace-period när host disconnect:ar utan client. Rummet behålls så
@@ -131,11 +136,12 @@ function gameLoopTick(room) {
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
       const payload = JSON.stringify({ t: 'msg', d: stateMsg });
-      // Backpressure-skip: om peer-socket har > 64 KB buffrad (TCP-stockning,
-      // långsam klient, mobil-nätverk-spik), skippa frame istället för att stacka
-      // upp. State är redundant — nästa snap (33ms senare) är redan färskare.
-      // Att skicka mer på en stockad socket ger bara exponentiell latens-spiral.
-      const BACKPRESSURE_LIMIT = 64 * 1024;
+      // Backpressure-skip: om peer-socket har > 40 KB buffrad (sänkt från 64 KB)
+      // skippa frame. Aggressivare drop = mindre kö-djup = snabbare återhämtning
+      // när socket flushas. State är redundant — nästa snap (50ms senare vid
+      // 20 Hz) är redan färskare. Att skicka mer på en stockad socket ger bara
+      // exponentiell latens-spiral.
+      const BACKPRESSURE_LIMIT = 40 * 1024;
       if (room.host && room.host.readyState === 1 && room.host.bufferedAmount < BACKPRESSURE_LIMIT) {
         try { room.host.send(payload); } catch (_) {}
       }
@@ -184,8 +190,9 @@ function handleGameInput(room, ws, payload) {
 // Backpressure-tröskel: om mottagar-socketens skicka-buffert är fylld (TCP-stockning,
 // långsam mobil), skippa redundanta state-frames istället för att stacka upp.
 // Input/pick/ready är kritiska och skickas alltid. State är redundant —
-// nästa snap kommer 33-50ms senare och är färskare.
-const RELAY_STATE_BACKPRESSURE_LIMIT = 96 * 1024;
+// nästa snap kommer 50ms senare (20 Hz) och är färskare. Sänkt från 96 KB →
+// 48 KB för aggressivare drop = snabbare återhämtning under spikar.
+const RELAY_STATE_BACKPRESSURE_LIMIT = 48 * 1024;
 
 function isStateMsgType(t) {
   // Frames som är säkra att skippa under backpressure (redundant snapshot-data).
