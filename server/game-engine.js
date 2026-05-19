@@ -378,6 +378,11 @@ const GANDULF_LVL5_WP_MS_MUL = 1.30;       // +30% movement speed
 const GANDULF_LVL5_FN_AS_DURATION = 3.0;   // Frost Nova lvl5: enemies AS-slow varaktighet
 const GANDULF_LVL5_FN_AS_MUL = 0.50;       // -50% attack speed (halverar AA-frekvens)
 const GANDULF_LVL5_BH_STUN_DURATION = 1.0; // Black Hole lvl5: stun varaktighet vid explosion
+// Legolas
+const LEGOLAS_LVL5_VT_MARK_DURATION = 3.0; // Vine Trap lvl5: mark-varaktighet på rootade enemies
+const LEGOLAS_LVL5_VT_MARK_DMG_MUL = 1.20; // +20% dmg från Legolas på marked targets
+const LEGOLAS_LVL5_HF_AA_CDR = 0.3;        // Hunter's Focus lvl5: -0.3s dash-CD per AA under buff
+// Dash lvl5: 2 stacks (separate CDs) — implementerat via side.legolasDashStackCd vid sidan av side.skills.e.cd
 // Stat-point-bonusar per point (additivt till motsvarande pct i recomputeSideStats)
 const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
 const STAT_PER_POINT = {
@@ -946,6 +951,7 @@ function createSide(idx) {
     gandulfBuffRemaining: 0,
     // Lvl-5 max-skill bonus-buffar (per skill)
     windPuffMsRem: 0,          // Gandulf Q lvl5 — +30% MS
+    legolasDashStackCd: 0,     // Legolas E lvl5 — andra stackens CD (oanvänd vid lvl<5)
     shield: 0,
     // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
     portalUsesLeft: PORTAL_MAX_USES,
@@ -1078,6 +1084,10 @@ function updateSkillCooldowns(side, dt) {
   side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
   side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
   side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
+  // Legolas Dash lvl5 — andra stackens CD
+  if ((side.legolasDashStackCd || 0) > 0) {
+    side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - eff);
+  }
 }
 
 function updateWaves(state, side, dt) {
@@ -1256,6 +1266,8 @@ function updateMonsters(state, side, opp, dt) {
       m.aSlowTime -= dt;
       if (m.aSlowTime <= 0) m.aSlowMul = 1;
     }
+    // Lvl-5 Legolas mark tick
+    if ((m.legolasMarked || 0) > 0) m.legolasMarked = Math.max(0, m.legolasMarked - dt);
     const atkRange = m.attackRange || 1.2;
     const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroVisible && distHero < atkRange && m.atkCd <= 0) {
@@ -1635,6 +1647,8 @@ function updatePlayerCreeps(state, side, opp, dt) {
       c.aSlowTime -= dt;
       if (c.aSlowTime <= 0) c.aSlowMul = 1;
     }
+    // Lvl-5 Legolas mark tick
+    if ((c.legolasMarked || 0) > 0) c.legolasMarked = Math.max(0, c.legolasMarked - dt);
     // Find-nearest med sqr-dist (sparar sqrt per creep × targets per tick)
     let target = null, targetType = null, bestDistSq = c.range * c.range;
     if (tauntActive && opp && !opp.hero.dead) {
@@ -2077,6 +2091,13 @@ function updateHeroAttack(state, side, opp, dt) {
     if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) {
       side.legolusSplitPending = true;
     }
+    // Hunter's Focus lvl5: -0.3s dash-CD per successful AA medan F-buff aktiv
+    if ((side.legolusBuffRemaining || 0) > 0 && (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX)) {
+      side.skills.e.cd = Math.max(0, side.skills.e.cd - LEGOLAS_LVL5_HF_AA_CDR);
+      if ((side.legolasDashStackCd || 0) > 0) {
+        side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - LEGOLAS_LVL5_HF_AA_CDR);
+      }
+    }
   }
   // Legolas Hunter's Focus (F-buff): +30% attack speed under buff-duration
   const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
@@ -2123,20 +2144,23 @@ function updateProjectiles(state, side, opp, dt) {
         }
       }
       let aaDmgDealt = 0;   // För Aragurn-passive lifesteal — räkna utdelad AA-skada
+      // Lvl-5 Legolas Vine Trap mark: +20% dmg på marked targets (bara primär hit)
+      const _primaryTarget = p.targetIsHero ? (state.sides[p.targetSideIdx] ? state.sides[p.targetSideIdx].hero : null) : (p.targetIsDuelOrb ? null : p.target);
+      const _primaryDmg = p.damage * legolasMarkMul(side, _primaryTarget);
       if (p.targetIsHero) {
         const ts = state.sides[p.targetSideIdx];
-        if (ts) aaDmgDealt = Math.min(ts.hero.hp, p.damage);
-        damageHero(state.sides[p.targetSideIdx], p.damage);
+        if (ts) aaDmgDealt = Math.min(ts.hero.hp, _primaryDmg);
+        damageHero(state.sides[p.targetSideIdx], _primaryDmg);
         if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
       } else if (p.targetIsDuelOrb) {
         const orb = state.duelBigOrb;
         if (orb && orb.alive) {
-          damageDuelBigOrb(state, p.damage, p.ownerSideIdx || side.idx);
+          damageDuelBigOrb(state, _primaryDmg, p.ownerSideIdx || side.idx);
           if (!orb.alive) killedTarget = true;
         }
       } else {
-        aaDmgDealt = Math.min(p.target.hp, p.damage);
-        p.target.hp -= p.damage;
+        aaDmgDealt = Math.min(p.target.hp, _primaryDmg);
+        p.target.hp -= _primaryDmg;
         if (p.target.hp <= 0) {
           killedTarget = true;
           if (p.targetIsMonster) {
@@ -2560,6 +2584,11 @@ function castLegolusVineTrap(state, sideIdx, ev) {
     life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
     dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1),
     radius: VINE_TRAP_RADIUS,
+    // Lvl 5: spara mark-flagga + Set över träffade entiteter (för mark vid trap-slut)
+    lvl5Mark: !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX),
+    hitMonsterIds: new Set(),
+    hitCreepIds: new Set(),
+    hitOppHero: false,
   });
 }
 
@@ -2576,6 +2605,7 @@ function updateVineTraps(state, side, opp, dt) {
       if (dx * dx + dz * dz < r2) {
         m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         m.hp -= vt.dotPerSec * dt;
+        if (vt.lvl5Mark) vt.hitMonsterIds.add(m.id);
         if (m.hp <= 0) killMonster(side, j, side);
       }
     }
@@ -2585,6 +2615,7 @@ function updateVineTraps(state, side, opp, dt) {
       if (dx * dx + dz * dz < r2) {
         c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         c.hp -= vt.dotPerSec * dt;
+        if (vt.lvl5Mark) vt.hitCreepIds.add(c.id);
         if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
@@ -2594,10 +2625,31 @@ function updateVineTraps(state, side, opp, dt) {
       if (dx * dx + dz * dz < r2) {
         opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         damageHero(opp, vt.dotPerSec * dt);
+        if (vt.lvl5Mark) vt.hitOppHero = true;
       }
     }
-    if (vt.life <= 0) side.vineTraps.splice(i, 1);
+    if (vt.life <= 0) {
+      // Lvl 5: applicera mark på alla entiteter som rootats under trap-livet
+      if (vt.lvl5Mark) {
+        for (const m of side.monsters) {
+          if (vt.hitMonsterIds.has(m.id)) m.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+        }
+        if (opp) for (const c of opp.playerCreeps) {
+          if (vt.hitCreepIds.has(c.id)) c.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+        }
+        if (vt.hitOppHero && opp && !opp.hero.dead) {
+          opp.hero.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+        }
+      }
+      side.vineTraps.splice(i, 1);
+    }
   }
+}
+
+// Helper: returnera dmg-mult för Legolas-hits mot marked targets
+function legolasMarkMul(side, target) {
+  if (side.heroId !== 'legolas' || !target) return 1;
+  return (target.legolasMarked || 0) > 0 ? LEGOLAS_LVL5_VT_MARK_DMG_MUL : 1;
 }
 
 // F: Self-buff i 5s — +10% dmg, +10% crit, +30% crit-dmg
@@ -2609,9 +2661,15 @@ function castLegolusBuff(state, sideIdx) {
 }
 
 // E: Kort dash + flagga: nästa AA = 100% crit + 20% lifesteal. Reset cd om buffed AA dödar.
+// Lvl 5: 2 stacks med separata CDs (side.skills.e.cd + side.legolasDashStackCd).
 function castLegolusDash(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
-  if (side.hero.dead || side.skills.e.cd > 0) return;
+  if (side.hero.dead) return;
+  const isLvl5 = (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
+  // CD-gate: vid lvl5 krävs att MINST en stack är klar
+  const stack1Ready = (side.skills.e.cd || 0) <= 0;
+  const stack2Ready = isLvl5 && (side.legolasDashStackCd || 0) <= 0;
+  if (!stack1Ready && !stack2Ready) return;
   let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
@@ -2624,7 +2682,9 @@ function castLegolusDash(state, sideIdx, ev) {
     dist -= 0.5;
   }
   if (dist < 0.5) return;
-  side.skills.e.cd = side.skills.e.max;
+  // Konsumera prioriterat stack 1 (huvud-CD), sen stack 2
+  if (stack1Ready) side.skills.e.cd = side.skills.e.max;
+  else side.legolasDashStackCd = side.skills.e.max;
   side.hero.x = nx; side.hero.z = nz;
   side.legolusDashBuffPending = true;
 }
@@ -4490,6 +4550,8 @@ function tickGame(state, dt) {
       }
       // Tick freeze på hero (om frusen, hjälten kan inte använda skills/AA — för enkelhet bara dekrementera)
       if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime -= dt;
+      // Lvl-5 Legolas mark tick på hero (för duel/arena PvP)
+      if ((side.hero.legolasMarked || 0) > 0) side.hero.legolasMarked = Math.max(0, side.hero.legolasMarked - dt);
       // Wind Puff debuff på hero
       if (side.hero.dmgTakenDebuffTime > 0) {
         side.hero.dmgTakenDebuffTime -= dt;
@@ -4590,6 +4652,7 @@ function serializeSide(side) {
       dot: nzr2(side.hero.dotRemaining),
       tnt: nzr2(side.hero.tauntedTime),
       poi: nzr2(side.hero.poisonRemaining),
+      lMk: nzr2(side.hero.legolasMarked),
     },
     g: side.gold,
     inc: side.income,
@@ -4682,6 +4745,7 @@ function serializeSide(side) {
     VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
     lbuf: nzr2(side.legolusBuffRemaining),
     ldash: flag(side.legolusDashBuffPending),
+    lds2: nzr2(side.legolasDashStackCd),
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
     lInv: nzr2(side.legolusInvisRemaining),
     lAa: flag(side.legolusUltAaPending),

@@ -6870,6 +6870,7 @@ function createSide(idx) {
     gandulfBuffRemaining: 0,
     // Lvl-5 max-skill bonus-buffs
     windPuffMsRem: 0,
+    legolasDashStackCd: 0,
     shield: 0,
     // Ult-energy + per-ult timers (sätts av hostCast*Ult)
     ultEnergy: 0,
@@ -8115,6 +8116,8 @@ function updateMonsters(side, dt) {
       m.aSlowTime -= dt;
       if (m.aSlowTime <= 0) m.aSlowMul = 1;
     }
+    // Lvl-5 Legolas mark tick
+    if ((m.legolasMarked || 0) > 0) m.legolasMarked = Math.max(0, m.legolasMarked - dt);
     const mAtkRange = m.attackRange || 1.2;
     const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroVisible && distHero < mAtkRange && m.atkCd <= 0) {
@@ -8259,6 +8262,8 @@ function updatePlayerCreeps(side, dt) {
       c.aSlowTime -= dt;
       if (c.aSlowTime <= 0) c.aSlowMul = 1;
     }
+    // Lvl-5 Legolas mark tick
+    if ((c.legolasMarked || 0) > 0) c.legolasMarked = Math.max(0, c.legolasMarked - dt);
 
     // Hitta närmaste fiende inom c.range — prio: hjälten om i räckvidd, annars närmsta monster
     let target = null;
@@ -8819,6 +8824,13 @@ function updateHeroAttack(side, dt) {
   if (isLegolusHero) {
     side.legolusAaCounter = (side.legolusAaCounter || 0) + 1;
     if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) side.legolusSplitPending = true;
+    // Hunter's Focus lvl5: -0.3s dash-CD per successful AA medan F-buff aktiv
+    if ((side.legolusBuffRemaining || 0) > 0 && (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX)) {
+      side.skills.e.cd = Math.max(0, side.skills.e.cd - LEGOLAS_LVL5_HF_AA_CDR);
+      if ((side.legolasDashStackCd || 0) > 0) {
+        side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - LEGOLAS_LVL5_HF_AA_CDR);
+      }
+    }
   }
   // Legolas ult-buff: +30% AS efter teleport-träff
   const ultAsMul = (side.legolusUltBuff || 0) > 0 ? (1 + LEGOLUS_ULT_AS_BONUS) : 1;
@@ -8875,12 +8887,14 @@ function updateProjectiles(side, dt) {
       }
       if (isArenaHeroT) {
         const targetSide = sides[p.target.sideIdx];
+        // Lvl 5 Vine Trap mark: +20% AA-dmg om opp.hero är marked
+        const heroDmg = p.damage * (targetSide ? legolasMarkMul(side, targetSide.hero) : 1);
         if (targetSide) {
           // damageHero spawnar redan popup baserat på faktisk skada efter shields/DR
-          damageHero(targetSide, p.damage, p.isCrit);
+          damageHero(targetSide, heroDmg, p.isCrit);
         }
         if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
-          const healAmt = p.damage * p.lifestealRatio;
+          const healAmt = heroDmg * p.lifestealRatio;
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
           spawnHeroHealText(side, healAmt);
         }
@@ -8897,8 +8911,10 @@ function updateProjectiles(side, dt) {
         p.target.poisonStacks = (p.target.poisonStacks || 0) + 1;
         p.target.poisonRemaining = POISON_DURATION;
       }
-      const _dmgApplied = Math.min(p.damage, p.target.hp);
-      p.target.hp -= p.damage;
+      // Lvl 5 Legolas Vine Trap mark: +20% AA-dmg på marked targets (primär hit)
+      const _primaryDmg = p.damage * legolasMarkMul(side, p.target);
+      const _dmgApplied = Math.min(_primaryDmg, p.target.hp);
+      p.target.hp -= _primaryDmg;
       spawnDamageText(p.target.mesh, _dmgApplied, p.isCrit);
       let killedTarget = false;
       if (p.target.hp <= 0) {
@@ -9180,6 +9196,9 @@ const GANDULF_LVL5_WP_MS_MUL = 1.30;
 const GANDULF_LVL5_FN_AS_DURATION = 3.0;
 const GANDULF_LVL5_FN_AS_MUL = 0.50;
 const GANDULF_LVL5_BH_STUN_DURATION = 1.0;
+const LEGOLAS_LVL5_VT_MARK_DURATION = 3.0;
+const LEGOLAS_LVL5_VT_MARK_DMG_MUL = 1.20;
+const LEGOLAS_LVL5_HF_AA_CDR = 0.3;
 
 function hostCastWindPuff(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
@@ -10075,7 +10094,18 @@ function hostCastLegolusVineTrap(side, ev) {
     life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
     dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1) * dotMul,
     radius: VINE_TRAP_RADIUS,
+    // Lvl 5: mark alla rootade enemies vid trap-slut
+    lvl5Mark: !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX),
+    hitMonsterIds: new Set(),
+    hitCreepIds: new Set(),
+    hitOppHero: false,
   });
+}
+
+// Lvl-5 Vine Trap mark-dmg-helper (klient mirror av server-engine)
+function legolasMarkMul(side, target) {
+  if (!side || side.heroId !== 'legolas' || !target) return 1;
+  return (target.legolasMarked || 0) > 0 ? LEGOLAS_LVL5_VT_MARK_DMG_MUL : 1;
 }
 
 function hostCastLegolusBuff(side) {
@@ -10089,7 +10119,11 @@ function hostCastLegolusBuff(side) {
 }
 
 function hostCastLegolusDash(side, ev) {
-  if (side.hero.dead || side.skills.e.cd > 0) return;
+  if (side.hero.dead) return;
+  const isLvl5 = (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
+  const stack1Ready = (side.skills.e.cd || 0) <= 0;
+  const stack2Ready = isLvl5 && (side.legolasDashStackCd || 0) <= 0;
+  if (!stack1Ready && !stack2Ready) return;
   let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
   const len = Math.hypot(dx, dz);
   if (len < 0.01) { dx = side.hero.facingX; dz = side.hero.facingZ; }
@@ -10103,7 +10137,8 @@ function hostCastLegolusDash(side, ev) {
     dist -= 0.5;
   }
   if (dist < 0.5) return;
-  side.skills.e.cd = side.skills.e.max;
+  if (stack1Ready) side.skills.e.cd = side.skills.e.max;
+  else side.legolasDashStackCd = side.skills.e.max;
   // Visuella spår — start och slut
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ff88, 0.7);
   side.hero.x = nx; side.hero.z = nz;
@@ -10153,6 +10188,7 @@ function updateVineTrapsSolo(side, dt) {
       if (dx * dx + dz * dz < r2) {
         m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         m.hp -= vt.dotPerSec * dt;
+        if (vt.lvl5Mark && vt.hitMonsterIds) vt.hitMonsterIds.add(m.id);
         if (m.hp <= 0) { hostKillMonster(side, j, side); }
       }
     }
@@ -10162,6 +10198,7 @@ function updateVineTrapsSolo(side, dt) {
       if (dx * dx + dz * dz < r2) {
         c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         c.hp -= vt.dotPerSec * dt;
+        if (vt.lvl5Mark && vt.hitCreepIds) vt.hitCreepIds.add(c.id);
         if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
@@ -10172,6 +10209,7 @@ function updateVineTrapsSolo(side, dt) {
         const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
         opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, VINE_TRAP_ROOT_REFRESH * ccMul);
         damageHero(opp, vt.dotPerSec * dt);
+        if (vt.lvl5Mark) vt.hitOppHero = true;
       }
     }
     // Arena: vine-trap DoT mot orb
@@ -10181,6 +10219,12 @@ function updateVineTrapsSolo(side, dt) {
     if (vt.ring && vt.ring.material) vt.ring.material.opacity = 0.65 * fadeMul;
     if (vt.glow && vt.glow.material) vt.glow.material.opacity = 0.20 * fadeMul;
     if (vt.life <= 0) {
+      // Lvl 5: applicera mark på alla rootade enemies
+      if (vt.lvl5Mark) {
+        for (const m of side.monsters) if (vt.hitMonsterIds.has(m.id)) m.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+        if (opp) for (const c of opp.playerCreeps) if (vt.hitCreepIds.has(c.id)) c.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+        if (vt.hitOppHero && opp && !opp.hero.dead) opp.hero.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+      }
       if (vt.ring) scene.remove(vt.ring);
       if (vt.glow) scene.remove(vt.glow);
       if (vt.spikes) for (const sp of vt.spikes) scene.remove(sp);
@@ -10448,6 +10492,10 @@ function updateSkillCooldowns(side, dt) {
   side.skills.q.cd = Math.max(0, side.skills.q.cd - eff);
   side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
   side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
+  // Legolas Dash lvl5 — andra stackens CD
+  if ((side.legolasDashStackCd || 0) > 0) {
+    side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - eff);
+  }
 }
 
 // ============================================================
@@ -12078,6 +12126,7 @@ function applyRemoteState(state) {
     side.hero.dotRemaining = sData.h.dot || 0;
     side.hero.tauntedTime = sData.h.tnt || 0;
     side.hero.poisonRemaining = sData.h.poi || 0;
+    side.hero.legolasMarked = sData.h.lMk || 0;
     // Aragurn-state (för visuella effekter på klient)
     side.whirlwindRemaining = sData.wwR || 0;
     if (sData.leapA) {
@@ -12191,8 +12240,9 @@ function applyRemoteState(state) {
     // Gandulf passive
     side.gandulfBuffRemaining = sData.gbuf || 0;
     side.gandulfBuffStacks = sData.gbStk || 0;
-    // Lvl-5 max-skill bonus-buffs (Wind Puff MS)
+    // Lvl-5 max-skill bonus-buffs (Wind Puff MS, Legolas dash stack 2 CD)
     side.windPuffMsRem = sData.wpMs || 0;
+    side.legolasDashStackCd = sData.lds2 || 0;
     side.shield = sData.shld || 0;
     // Duel speed-buff
     side.duelSpeedBuffRemaining = sData.dSp || 0;
@@ -16860,7 +16910,11 @@ function updateSkillButtonStyles() {
   for (const key of ['q', 'f', 'e']) {
     const el = skillEls[key];
     if (!el) continue;
-    const cd = side ? side.skills[key].cd : 0;
+    let cd = side ? side.skills[key].cd : 0;
+    // Legolas E lvl5: 2 stacks — visa MIN av stack-CDs (0 om någon redo)
+    if (side && key === 'e' && side.heroId === 'legolas' && side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
+      cd = Math.min(cd, side.legolasDashStackCd || 0);
+    }
     const skLvl = (side && side.skillLvl) ? (side.skillLvl[key] || 0) : 0;
     const locked = skLvl <= 0;
     // Lock-overlay
@@ -16974,7 +17028,11 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   }
   // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
-  if (!isGimluE && side.skills[key].cd > 0) return;
+  // Legolas E lvl 5: 2 stacks med separata CDs — tillåt cast om någon stack är klar
+  const isLegolasELvl5 = (side.heroId === 'legolas' && key === 'e'
+    && side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
+  const stackReady = isLegolasELvl5 && (side.legolasDashStackCd || 0) <= 0;
+  if (!isGimluE && !stackReady && side.skills[key].cd > 0) return;
   // Trigga visuell skill-effekt direkt på klient (instant feedback).
   // Gäller alla MP-lägen (classic line wars, arena, boss wars) eftersom servern
   // / hosten inte skickar dedikerade fx-events — klienten måste själv spawna
@@ -17006,6 +17064,9 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   if (!isGimluE && side.skills[key].cd === 0) {
     side.skills[key].cd = side.skills[key].max || 1;
     side.skills[key]._localCastAt = performance.now();
+  } else if (isLegolasELvl5 && (side.legolasDashStackCd || 0) === 0) {
+    // Stack 2 användes — optimistic sätt stack 2-CD så HUD inte hoppar i ~150ms
+    side.legolasDashStackCd = side.skills.e.max || 1;
   }
 }
 
