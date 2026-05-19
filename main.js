@@ -4717,10 +4717,420 @@ const BOSSWARS_MAPS = {
     ],
   },
 };
+// Boss-wars platformens ovansida ligger på y=0.42 (bas-cylinder centrerad vid
+// 0.2 + halv-höjd 0.2 = 0.4, plus top-plane på 0.42). Hero + boss-mesher MÅSTE
+// spawnas vid denna y-pos annars sjunker fötterna ner i platformen (~42cm).
+const BOSSWARS_FLOOR_Y = 0.42;
+
 const bossWarsSceneGroup = new THREE.Group();
 bossWarsSceneGroup.visible = false;
 bossWarsSceneGroup.userData.isBossWars = true;
 scene.add(bossWarsSceneGroup);
+
+// ============================================================
+// Per-tier floor-drawing — varje boss-arena får en unik canvas-textur med
+// theme-specifika detaljer istället för bara en färg-tonad radial-gradient.
+// Anropas från buildBossWarsScene. Ritar in i 1024×1024 canvas-context.
+// ============================================================
+function drawBossArenaFloor(ctx, size, tier, map) {
+  // Bas-färg
+  const baseHex = '#' + map.color.toString(16).padStart(6, '0');
+  ctx.fillStyle = baseHex;
+  ctx.fillRect(0, 0, size, size);
+  // Subtil bas-brus via 60 stora radial-gradients (mjuk variation)
+  const lightVar = (hex, amt) => {
+    const r = Math.max(0, Math.min(255, ((hex >> 16) & 0xff) + amt * 255));
+    const g = Math.max(0, Math.min(255, ((hex >> 8) & 0xff) + amt * 255));
+    const b = Math.max(0, Math.min(255, (hex & 0xff) + amt * 255));
+    return `rgba(${r|0},${g|0},${b|0},0.20)`;
+  };
+  for (let i = 0; i < 30; i++) {
+    const gx = Math.random() * size, gy = Math.random() * size;
+    const gr = 80 + Math.random() * 200;
+    const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+    g.addColorStop(0, lightVar(map.color, Math.random() < 0.5 ? 0.08 : -0.10));
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // Theme-specifika detaljer
+  if (tier === 1) drawForestFloor(ctx, size, map);
+  else if (tier === 2) drawArcaneFloor(ctx, size, map);
+  else if (tier === 3) drawBioLabFloor(ctx, size, map);
+  else if (tier === 4) drawHiveFloor(ctx, size, map);
+  else if (tier === 5) drawVolcanoFloor(ctx, size, map);
+}
+
+// T1 Forest Hollow — mossa, fallna löv, rötter, fukt-pölar
+function drawForestFloor(ctx, size, map) {
+  // Mossa-patches (mörkare grön transparent)
+  for (let i = 0; i < 18; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 50 + Math.random() * 90;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(40,90,30,0.55)');
+    g.addColorStop(0.6, 'rgba(28,60,22,0.30)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * (0.9 + Math.random() * 0.3), r * (0.7 + Math.random() * 0.4),
+      Math.random() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Rötter-tendriler (svängande bezier-banor i mörk brun)
+  ctx.strokeStyle = 'rgba(50,30,18,0.55)';
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 14; i++) {
+    ctx.lineWidth = 2 + Math.random() * 5;
+    let x = Math.random() * size, y = Math.random() * size;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const segs = 4 + (Math.random() * 4 | 0);
+    for (let s = 0; s < segs; s++) {
+      const cx = x + (Math.random() - 0.5) * 120;
+      const cy = y + (Math.random() - 0.5) * 120;
+      x = cx + (Math.random() - 0.5) * 100;
+      y = cy + (Math.random() - 0.5) * 100;
+      ctx.quadraticCurveTo(cx, cy, x, y);
+    }
+    ctx.stroke();
+  }
+  // Löv (små färgade ovaler, gul/orange/brun)
+  const leafColors = ['#d4a020', '#c87010', '#8a5018', '#6a4814', '#a89020'];
+  for (let i = 0; i < 80; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const w = 6 + Math.random() * 10, h = 3 + Math.random() * 5;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.random() * Math.PI);
+    ctx.fillStyle = leafColors[i % leafColors.length];
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  // Små svamp/blomma-prickar (vita + röda)
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    ctx.fillStyle = i % 3 === 0 ? 'rgba(220,80,80,0.7)' : 'rgba(220,220,200,0.7)';
+    ctx.beginPath();
+    ctx.arc(x, y, 2 + Math.random() * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// T2 Witch's Sanctum — pentagram, arcane runes, etched circles, glow-prickar
+function drawArcaneFloor(ctx, size, map) {
+  const cx = size / 2, cy = size / 2;
+  // Mega-cirkel i centrum (pentagram circle)
+  ctx.strokeStyle = 'rgba(170,100,255,0.55)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.28, 0, Math.PI * 2);
+  ctx.stroke();
+  // Pentagram (5-stjärnig linje inom inre cirkel)
+  ctx.strokeStyle = 'rgba(200,140,255,0.7)';
+  ctx.lineWidth = 3;
+  const pentaR = size * 0.27;
+  const points = [];
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + (i / 5) * Math.PI * 2;
+    points.push({ x: cx + Math.cos(a) * pentaR, y: cy + Math.sin(a) * pentaR });
+  }
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const p = points[(i * 2) % 5];   // skip-2 ger pentagram
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  // Rune-cirklar runt perimetern
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const rx = cx + Math.cos(a) * size * 0.42;
+    const ry = cy + Math.sin(a) * size * 0.42;
+    ctx.strokeStyle = 'rgba(180,120,255,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(rx, ry, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    // Rune-glyph (slumpvis triangulär/kvadrat-form inuti)
+    ctx.strokeStyle = 'rgba(220,170,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const seed = i * 7;
+    for (let k = 0; k < 4; k++) {
+      const aa = seed + k * 90 * Math.PI / 180;
+      const px = rx + Math.cos(aa) * 10, py = ry + Math.sin(aa) * 10;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  // Glow-prickar i pentagram-knutar
+  for (const p of points) {
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 20);
+    g.addColorStop(0, 'rgba(220,170,255,1)');
+    g.addColorStop(1, 'rgba(120,60,200,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(p.x - 25, p.y - 25, 50, 50);
+  }
+  // Slumpade etched-streck mellan rune-cirklar
+  ctx.strokeStyle = 'rgba(140,90,200,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 60; i++) {
+    const a1 = Math.random() * Math.PI * 2;
+    const a2 = a1 + (Math.random() - 0.5) * 0.6;
+    const r1 = size * 0.34, r2 = size * 0.46;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1);
+    ctx.lineTo(cx + Math.cos(a2) * r2, cy + Math.sin(a2) * r2);
+    ctx.stroke();
+  }
+}
+
+// T3 Bio Lab — hexagonal grid, glowing seams, tech panels
+function drawBioLabFloor(ctx, size, map) {
+  // Hex-grid
+  const hexR = 28;
+  const hexW = hexR * 2, hexH = hexR * Math.sqrt(3);
+  ctx.strokeStyle = 'rgba(80,255,200,0.45)';
+  ctx.lineWidth = 1.5;
+  for (let row = 0; row * hexH * 0.75 < size + hexH; row++) {
+    for (let col = 0; col * hexW * 1.5 < size + hexW; col++) {
+      const cx = col * hexW * 1.5 + (row % 2 === 0 ? 0 : hexW * 0.75);
+      const cy = row * hexH * 0.75;
+      // Skip cells utanför canvas + slumpvis 15% saknade celler
+      if (cx > size + hexW || cy > size + hexH) continue;
+      if (Math.random() < 0.15) continue;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const x = cx + Math.cos(a) * hexR;
+        const y = cy + Math.sin(a) * hexR;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+  // Glowing seam-lines (kraftiga cyan-strålar i diagonalt kors)
+  ctx.strokeStyle = 'rgba(100,255,220,0.7)';
+  ctx.lineWidth = 4;
+  for (let i = 0; i < 5; i++) {
+    const x1 = Math.random() * size, y1 = Math.random() * size;
+    const ang = Math.random() * Math.PI * 2;
+    const len = 200 + Math.random() * 300;
+    const x2 = x1 + Math.cos(ang) * len, y2 = y1 + Math.sin(ang) * len;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  // Tech-paneler (kvadratiska bleck med inre detaljer)
+  for (let i = 0; i < 12; i++) {
+    const x = Math.random() * (size - 70), y = Math.random() * (size - 70);
+    const w = 30 + Math.random() * 40;
+    ctx.fillStyle = 'rgba(20,50,55,0.55)';
+    ctx.fillRect(x, y, w, w);
+    ctx.strokeStyle = 'rgba(120,255,220,0.8)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, w - 1);
+    // Inre LED-dots
+    ctx.fillStyle = 'rgba(150,255,220,0.9)';
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath();
+      ctx.arc(x + 6 + k * 8, y + w - 6, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Circuit-board traces (tunna glow-linjer i 90°-böjar)
+  ctx.strokeStyle = 'rgba(100,255,200,0.5)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 25; i++) {
+    let x = Math.random() * size, y = Math.random() * size;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const segs = 3 + (Math.random() * 4 | 0);
+    for (let s = 0; s < segs; s++) {
+      if (Math.random() < 0.5) x += (Math.random() - 0.5) * 80;
+      else y += (Math.random() - 0.5) * 80;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+// T4 Hive Chamber — organic veins, chitin patterns, alien growths
+function drawHiveFloor(ctx, size, map) {
+  // Glowing vein-nätverk (winding rosa-röda linjer som strålar ut från centra)
+  const veinCenters = [];
+  for (let i = 0; i < 6; i++) {
+    veinCenters.push({ x: Math.random() * size, y: Math.random() * size });
+  }
+  for (const c of veinCenters) {
+    const branches = 5 + (Math.random() * 4 | 0);
+    for (let b = 0; b < branches; b++) {
+      ctx.strokeStyle = `rgba(255,${60 + Math.random() * 60 | 0},${100 + Math.random() * 50 | 0},${0.55 + Math.random() * 0.25})`;
+      ctx.lineWidth = 2 + Math.random() * 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y);
+      let x = c.x, y = c.y;
+      const segs = 5 + (Math.random() * 5 | 0);
+      const dir = Math.random() * Math.PI * 2;
+      for (let s = 0; s < segs; s++) {
+        const stepLen = 20 + Math.random() * 40;
+        const da = (Math.random() - 0.5) * 1.2;
+        x += Math.cos(dir + da * s) * stepLen;
+        y += Math.sin(dir + da * s) * stepLen;
+        const cpx = x + (Math.random() - 0.5) * 30;
+        const cpy = y + (Math.random() - 0.5) * 30;
+        ctx.quadraticCurveTo(cpx, cpy, x, y);
+      }
+      ctx.stroke();
+    }
+  }
+  // Chitinous honeycomb-celler (mörk rosa-röd kant)
+  ctx.strokeStyle = 'rgba(120,30,55,0.6)';
+  ctx.lineWidth = 2;
+  const cellR = 50;
+  for (let i = 0; i < 18; i++) {
+    const cx = Math.random() * size, cy = Math.random() * size;
+    ctx.beginPath();
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      const x = cx + Math.cos(a) * cellR;
+      const y = cy + Math.sin(a) * cellR;
+      if (k === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+  // Alien-growths (irreguljära blob-former, mörkare lila/röd kant + ljus mitt)
+  for (let i = 0; i < 22; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 14 + Math.random() * 20;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,120,160,0.7)');
+    g.addColorStop(0.5, 'rgba(180,40,80,0.5)');
+    g.addColorStop(1, 'rgba(60,10,20,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Bright emissive-prickar (glödande organisk eldflugor)
+  for (let i = 0; i < 50; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 1.5 + Math.random() * 2.5;
+    const gd = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
+    gd.addColorStop(0, 'rgba(255,180,210,1)');
+    gd.addColorStop(1, 'rgba(255,80,140,0)');
+    ctx.fillStyle = gd;
+    ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+  }
+}
+
+// T5 Volcano Crater — magma cracks, ash patches, ember spots
+function drawVolcanoFloor(ctx, size, map) {
+  // Stora ash-patches (extra mörka områden för kontrast)
+  for (let i = 0; i < 14; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 60 + Math.random() * 100;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(15,8,5,0.7)');
+    g.addColorStop(0.6, 'rgba(30,15,10,0.45)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // Magma-cracks (förgrenande glödande sprickor — orange-gula linjer)
+  const drawMagmaCrack = (sx, sy, ex, ey, depth) => {
+    if (depth <= 0) return;
+    const mx = (sx + ex) / 2 + (Math.random() - 0.5) * 40;
+    const my = (sy + ey) / 2 + (Math.random() - 0.5) * 40;
+    const lineW = 4 + depth * 1.5;
+    // Glow-halo (bredare, mer transparent)
+    ctx.strokeStyle = 'rgba(255,140,40,0.4)';
+    ctx.lineWidth = lineW + 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Bright core (smalare, mer opacy)
+    ctx.strokeStyle = 'rgba(255,220,100,0.95)';
+    ctx.lineWidth = Math.max(1, lineW - 2);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Rekursiva förgreningar
+    if (depth > 1 && Math.random() < 0.6) {
+      const bx = mx + (Math.random() - 0.5) * 80;
+      const by = my + (Math.random() - 0.5) * 80;
+      drawMagmaCrack(mx, my, bx, by, depth - 1);
+    }
+  };
+  // 5 stora magma-floder från slumpvisa start-punkter
+  for (let i = 0; i < 5; i++) {
+    const x1 = Math.random() * size, y1 = Math.random() * size;
+    const ang = Math.random() * Math.PI * 2;
+    const len = 200 + Math.random() * 250;
+    const x2 = x1 + Math.cos(ang) * len;
+    const y2 = y1 + Math.sin(ang) * len;
+    drawMagmaCrack(x1, y1, x2, y2, 4);
+  }
+  // Mindre crackelmönster
+  ctx.strokeStyle = 'rgba(40,20,12,0.6)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 40; i++) {
+    let x = Math.random() * size, y = Math.random() * size;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const segs = 2 + (Math.random() * 3 | 0);
+    for (let s = 0; s < segs; s++) {
+      x += (Math.random() - 0.5) * 60;
+      y += (Math.random() - 0.5) * 60;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // Ember-prickar (små bright gula/orange glow-prickar)
+  for (let i = 0; i < 70; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 1 + Math.random() * 2.5;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+    g.addColorStop(0, Math.random() < 0.5 ? 'rgba(255,200,100,1)' : 'rgba(255,255,180,1)');
+    g.addColorStop(1, 'rgba(255,100,30,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
+  }
+  // Stora rocks (mörka silhouetter)
+  for (let i = 0; i < 8; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    ctx.fillStyle = 'rgba(20,10,5,0.85)';
+    ctx.beginPath();
+    const verts = 5 + (Math.random() * 3 | 0);
+    for (let k = 0; k < verts; k++) {
+      const a = (k / verts) * Math.PI * 2;
+      const r = 10 + Math.random() * 20;
+      const vx = x + Math.cos(a) * r, vy = y + Math.sin(a) * r;
+      if (k === 0) ctx.moveTo(vx, vy);
+      else ctx.lineTo(vx, vy);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+}
 
 function clearBossWarsScene() {
   while (bossWarsSceneGroup.children.length) {
@@ -4729,8 +5139,16 @@ function clearBossWarsScene() {
       if (o.isMesh) {
         if (o.geometry) o.geometry.dispose();
         if (o.material) {
-          if (Array.isArray(o.material)) o.material.forEach(m => m.dispose());
-          else o.material.dispose();
+          const disposeMat = (m) => {
+            // Dispose textures (Three.js disposear inte map automatiskt) — annars
+            // läcker 1024×1024 CanvasTexture (~4 MB GPU) per tier-byte.
+            if (m.map) m.map.dispose();
+            if (m.normalMap) m.normalMap.dispose();
+            if (m.emissiveMap) m.emissiveMap.dispose();
+            m.dispose();
+          };
+          if (Array.isArray(o.material)) o.material.forEach(disposeMat);
+          else disposeMat(o.material);
         }
       }
     });
@@ -4781,34 +5199,16 @@ function buildBossWarsScene() {
   bossWarsSceneGroup.userData.builtForTier = tier;
   const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
   const r = BOSSWARS_RADIUS;
-  // Slät procedurell stentextur (LINEAR-filter mot pixel-look)
+  // Detaljerad theme-specifik canvas-textur (1024×1024 för rik detalj).
+  // drawBossArenaFloor ritar bas + tier-unika mönster (mossa+rötter,
+  // pentagram+runes, hex-grid+seams, organic veins, magma cracks).
   const floorCanvas = document.createElement('canvas');
-  floorCanvas.width = floorCanvas.height = 512;
+  const TEX_SIZE = 1024;
+  floorCanvas.width = floorCanvas.height = TEX_SIZE;
   const fctx = floorCanvas.getContext('2d');
-  const baseHex = '#' + map.color.toString(16).padStart(6, '0');
-  fctx.fillStyle = baseHex;
-  fctx.fillRect(0, 0, 512, 512);
-  // Slätare golv: färre + större + mjukare radial gradients, INGA sprickor
-  // (sprickorna gav synliga linjer som upplevdes "skrovligt").
-  const lightenHex = (hex, amt) => {
-    const r2 = Math.max(0, Math.min(255, ((hex >> 16) & 0xff) + amt * 255));
-    const g2 = Math.max(0, Math.min(255, ((hex >> 8) & 0xff) + amt * 255));
-    const b2 = Math.max(0, Math.min(255, (hex & 0xff) + amt * 255));
-    return `rgba(${r2|0},${g2|0},${b2|0},0.22)`;   // lägre alpha = mjukare
-  };
-  for (let i = 0; i < 10; i++) {
-    const gx = Math.random() * 512, gy = Math.random() * 512;
-    const gr = 140 + Math.random() * 200;          // större blobs
-    const g = fctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
-    const tone = Math.random() < 0.5 ? 0.08 : -0.08;   // mindre kontrast
-    g.addColorStop(0, lightenHex(map.color, tone));
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    fctx.fillStyle = g;
-    fctx.fillRect(0, 0, 512, 512);
-  }
+  drawBossArenaFloor(fctx, TEX_SIZE, tier, map);
   const floorTex = new THREE.CanvasTexture(floorCanvas);
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  // Mindre repeat → större "klädd" yta per repeat = mindre synlig tiling
   floorTex.repeat.set(1, 1);
   floorTex.colorSpace = THREE.SRGBColorSpace;
   floorTex.magFilter = THREE.LinearFilter;
@@ -5255,7 +5655,9 @@ function spawnBossWarsBoss(side, tier) {
   // Boss-HP-bar är alltid synlig (raid-känsla — användaren ska kunna tracka HP
   // även när bossen inte just blivit träffad).
   if (mesh.userData) mesh.userData.hpBarHero = true;
-  mesh.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
+  // Y-fix: boss-platformens topp är på y=0.42 — boss-mesh måste lyftas så
+  // fötterna inte sjunker i platformen.
+  mesh.position.set(BOSSWARS_CX, BOSSWARS_FLOOR_Y, BOSSWARS_CZ);
   // Lag-fix: stora boss-meshes castar inga shadows i boss-wars (för dyrt shadow-pass)
   mesh.traverse(o => {
     if (o.isMesh) o.castShadow = false;
@@ -5443,7 +5845,7 @@ function triggerBossPhaseTransition(side, boss) {
     const nz = s.hero.z + (dz / d) * 6;
     s.hero.x = nx;
     s.hero.z = nz;
-    if (s.mesh) s.mesh.position.set(nx, 0, nz);
+    if (s.mesh) s.mesh.position.set(nx, (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0, nz);
     spawnSkillCastFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44aa, 4.0);
   }
   // Boss flyger upp + landar (~2.5s total). Under den tiden tar bossen ingen skada
@@ -8175,9 +8577,10 @@ function updateMonsters(side, dt) {
       // Animera y-position: bågformig flyg-upp + land
       const total = m.phaseTransitionTotal || 2.5;
       const u = 1 - m.phaseTransitionRemaining / total;   // 0 → 1
-      // Sinus-båge: y peaks vid u=0.5
+      // Sinus-båge: y peaks vid u=0.5. Boss-wars: börja från platform-y 0.42.
       const peakY = 7.0;
-      m.mesh.position.y = Math.sin(u * Math.PI) * peakY;
+      const groundY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
+      m.mesh.position.y = groundY + Math.sin(u * Math.PI) * peakY;
       // Spinn medan i luften
       m.mesh.rotation.y += dt * 4.5;
       // Vid landning: byt skill-set + reset
@@ -8185,7 +8588,8 @@ function updateMonsters(side, dt) {
         m._pendingPhase2 = false;
         m.bossSkills = m.phase2Skills;
         m.skillCds = m.phase2Skills.map(s => s.cd * 0.4);
-        m.mesh.position.y = 0;
+        // Y-fix: boss-mesh ska tillbaka till floor-y (0.42) inte 0
+        m.mesh.position.y = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
         m.mesh.rotation.y = 0;
         // Boost dmg lite för phase 2 (raid-känsla)
         m.damage = Math.round(m.damage * 1.25);
@@ -8638,7 +9042,9 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   side.hero.x = cfg.heroSpawn.x;
   side.hero.z = cfg.heroSpawn.z;
-  side.mesh.position.set(side.hero.x, 0, side.hero.z);
+  // Y-fix: boss-wars platform är på y=0.42, andra modes på y=0
+  const heroY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
+  side.mesh.position.set(side.hero.x, heroY, side.hero.z);
   side.mesh.visible = true;
   // Reset item-stacks vid respawn
   side.furyStacks = 0;
@@ -16465,7 +16871,7 @@ function tickAragurnLeap(side, dt) {
   if (lp.remaining <= 0) {
     // Landning!
     side.hero.x = lp.targetX; side.hero.z = lp.targetZ;
-    if (side.mesh) side.mesh.position.set(lp.targetX, 0, lp.targetZ);
+    if (side.mesh) side.mesh.position.set(lp.targetX, (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0, lp.targetZ);
     if (lp.indicator) { scene.remove(lp.indicator); lp.indicator.material.dispose(); lp.indicator.geometry.dispose(); }
     applyAragurnLeapImpact(side, lp.targetX, lp.targetZ);
     side.aragurnLeap = null;
@@ -21090,7 +21496,9 @@ function enterPlayPhase() {
       s.hero.dead = false;
       s.hero.respawnTimer = 0;
       if (s.mesh) {
-        s.mesh.position.set(s.hero.x, 0, s.hero.z);
+        // Y-fix: boss-platformens topp är på y=0.42 — utan denna offset sjunker
+        // fötterna ner i platformen (~42cm = hero ser ut att springa i golvet).
+        s.mesh.position.set(s.hero.x, BOSSWARS_FLOOR_Y, s.hero.z);
         s.mesh.rotation.y = Math.atan2(s.hero.facingX, s.hero.facingZ);
         // Hero +15% storlek i boss wars (raid-känsla, syns bättre vs stor boss).
         // Aragurn-svärdet är child av mesh:n så det skalas automatiskt.
@@ -22468,14 +22876,16 @@ function tickAragurnVisuals(dt) {
         spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffaa66);
       }
     } else {
+      // Y-fix: boss-wars platform är på y=0.42, andra modes på y=0
+      const groundY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
       if (s._leapActive) {
         // Just landed — spawn ground-impact vid current pos
         s._leapActive = false;
         spawnGroundImpact(s.mesh.position.x, s.mesh.position.z, LEAP_RADIUS, 0xff7733);
         triggerCameraShake(0.35, 0.4);
-        s.mesh.position.y = 0;
-      } else if (s.mesh.position.y !== 0) {
-        s.mesh.position.y = 0;
+        s.mesh.position.y = groundY;
+      } else if (s.mesh.position.y !== groundY) {
+        s.mesh.position.y = groundY;
       }
     }
   }
