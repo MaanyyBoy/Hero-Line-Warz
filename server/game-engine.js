@@ -357,8 +357,8 @@ const LEVEL_DMG_PCT = 0.04;   // +4% dmg + skill-dmg per level
 const LEVEL_HP_PCT = 0.04;    // +4% max HP per level
 const LEVEL_MS_PCT = 0.01;    // +1% move-speed per level
 function xpForLevel(level) { return 50 * level; } // XP behövs för att gå från `level` → `level+1`
-const MONSTER_XP_REWARD = 10;
-const CREEP_XP_RATIO = 0.6;
+const MONSTER_XP_REWARD = 7;       // -30% (var 10) — sänker level-fart i tidigt spel
+const CREEP_XP_RATIO = 0.42;       // -30% (var 0.6)
 
 // Skill-point-system (decision-pending). Hero börjar med 1 point på lvl 1, får
 // +1 per level-up → totalt 30 points över hela matchen. Q/F/E unlockas + uppgraderas

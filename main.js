@@ -2275,8 +2275,8 @@ function bossWarsPctScale(target) {
   if (APP.gameMode !== 'bosswars') return 1;
   return (target && target.isBossWarsBoss) ? BOSS_WARS_PCT_SCALE : 1;
 }
-const MONSTER_XP_REWARD = 10;
-const CREEP_XP_RATIO = 0.6;
+const MONSTER_XP_REWARD = 7;       // -30% (var 10) — sänker level-fart i tidigt spel
+const CREEP_XP_RATIO = 0.42;       // -30% (var 0.6)
 
 // Creep-projektil-hastigheter
 const ARROW_SPEED = 14;
