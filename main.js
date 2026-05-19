@@ -186,8 +186,8 @@ const KENNEY_FX_TEXTURES = [
   'slash_01', 'slash_03',
   // Glow circles (shield burst, aura)
   'circle_03', 'circle_05',
-  // Smoke (Cannabis Cloud, smoke trail)
-  'smoke_03', 'smoke_07',
+  // Smoke (Cannabis Cloud, smoke trail, leap-dust)
+  'smoke_03', 'smoke_05', 'smoke_07',
   // Flames (Fireball/Eldklot/firePatch)
   'flame_05', 'fire_01',
   // Twirl (Black Hole, Whirlwind)
@@ -198,6 +198,12 @@ const KENNEY_FX_TEXTURES = [
   'flare_01',
   // Light cookies (cone-flash, ground light)
   'light_01', 'light_03',
+  // Scorch (explosion crater, ground burn)
+  'scorch_02',
+  // Scratch (vine trap, claw)
+  'scratch_01',
+  // Dirt (leap-dust, ground-impact)
+  'dirt_01',
 ];
 const kenneyTex = new Map();  // name → THREE.Texture
 let assetsReady = false;
@@ -9931,6 +9937,30 @@ function hostCastFrostnova(side, ev) {
   frostLight.position.set(center.x, 1.2, center.z);
   scene.add(frostLight);
   side.novaEffects.push({ mesh: frostLight, life: 0.7, maxLife: 0.7, isLight: true });
+  // Kenney-FX-lager: expanderande blå glow + magic-rune på marken + 6 ice-stars
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'light_01', x: center.x, y: 0.5, z: center.z, color: 0x88ddff,
+      scale: NOVA_RADIUS * 1.2, scaleEnd: NOVA_RADIUS * 2.2,
+      life: 0.7, additive: true, opacity: 0.85,
+    });
+    spawnKenneyFx({
+      texName: 'magic_03', x: center.x, y: 0.1, z: center.z, color: 0xaaeeff,
+      scale: NOVA_RADIUS * 1.6, scaleEnd: NOVA_RADIUS * 1.8,
+      life: 0.9, rotateSpeed: -1.5,
+      ground: true, additive: true, opacity: 0.75,
+    });
+    // Glittrande star-burst per ice-shard
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const r = NOVA_RADIUS * (0.55 + Math.random() * 0.3);
+      spawnKenneyFx({
+        texName: 'star_04', x: center.x + Math.cos(a) * r, y: 0.6 + Math.random() * 0.5, z: center.z + Math.sin(a) * r,
+        color: 0xddf2ff, scale: 0.4, scaleEnd: 0.9,
+        life: 0.5 + Math.random() * 0.2, rotateSpeed: 6, additive: true,
+      });
+    }
+  }
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   // Talent: Frost Vampirism — heal 15% av total damage done
   let novaDmgDealt = 0;
@@ -10058,8 +10088,35 @@ function hostCastBlink(side, ev) {
   side.blackHoles = side.blackHoles || [];
   // Talent: Singularity — radie +30% (pull + explosion)
   const sizeMul = arenaHasTalent(side, 'm_bh_radius') ? 1.30 : 1.0;
+  // Kenney-FX: spinning twirl på marken (roterar hela duration) + flare i center
+  let twirlMesh = null, flareMesh = null;
+  if (kenneyTex.size > 0) {
+    const twirlTex = kenneyTex.get('twirl_02');
+    if (twirlTex) {
+      const twirlSize = BLACKHOLE_RADIUS * sizeMul * 2.0;
+      const twirlMat = new THREE.MeshBasicMaterial({
+        map: twirlTex, color: 0xaa66ff, transparent: true, opacity: 0.75,
+        depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      });
+      twirlMesh = new THREE.Mesh(new THREE.PlaneGeometry(twirlSize, twirlSize), twirlMat);
+      twirlMesh.rotation.x = -Math.PI / 2;
+      twirlMesh.position.set(center.x, 0.10, center.z);
+      scene.add(twirlMesh);
+    }
+    const flareTex = kenneyTex.get('flare_01');
+    if (flareTex) {
+      const flareMat = new THREE.SpriteMaterial({
+        map: flareTex, color: 0xcc88ff, transparent: true, opacity: 0.9,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      flareMesh = new THREE.Sprite(flareMat);
+      flareMesh.scale.set(2.4, 2.4, 2.4);
+      flareMesh.position.set(center.x, 0.8, center.z);
+      scene.add(flareMesh);
+    }
+  }
   side.blackHoles.push({
-    sphere, ring,
+    sphere, ring, twirlMesh, flareMesh,
     x: center.x, z: center.z,
     life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
     explosionDmg: BLACKHOLE_EXPLOSION_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
@@ -10114,9 +10171,15 @@ function updateBlackHolesSolo(side, dt) {
         if (opp.mesh) { opp.mesh.position.x = opp.hero.x; opp.mesh.position.z = opp.hero.z; }
       }
     }
-    // Snurra sfär
+    // Snurra sfär + Kenney twirl-disk + pulse flare
     bh.sphere.rotation.y += dt * 4;
     bh.ring.rotation.z += dt * 2;
+    if (bh.twirlMesh) bh.twirlMesh.rotation.z += dt * 3.5;
+    if (bh.flareMesh && bh.flareMesh.material) {
+      bh.flareMesh.material.rotation += dt * 2;
+      // Pulse-opacity som matchar suction-intensitet
+      bh.flareMesh.material.opacity = 0.7 + 0.2 * Math.sin(performance.now() * 0.008);
+    }
     // Pulse sphere scale based on life
     const t = 1 - bh.life / bh.maxLife;
     bh.sphere.scale.setScalar(1 + 0.3 * Math.sin(t * 20));
@@ -10191,8 +10254,30 @@ function updateBlackHolesSolo(side, dt) {
         }
       }
       if (APP.gameMode === 'arena1v1') triggerCameraShake(0.30, 0.35);
+      // Kenney-FX vid explosion: flare-burst + scorch på marken
+      if (kenneyTex.size > 0) {
+        spawnKenneyFx({
+          texName: 'flare_01', x: bh.x, y: 1.2, z: bh.z, color: 0xddaaff,
+          scale: 3.0, scaleEnd: 5.5,
+          life: 0.5, additive: true,
+        });
+        spawnKenneyFx({
+          texName: 'scorch_02', x: bh.x, y: 0.08, z: bh.z, color: 0x442266,
+          scale: expR * 1.8, scaleEnd: expR * 2.0,
+          life: 1.2, ground: true, opacity: 0.7,
+        });
+      }
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
+      if (bh.twirlMesh) {
+        scene.remove(bh.twirlMesh);
+        if (bh.twirlMesh.material) bh.twirlMesh.material.dispose();
+        if (bh.twirlMesh.geometry) bh.twirlMesh.geometry.dispose();
+      }
+      if (bh.flareMesh) {
+        scene.remove(bh.flareMesh);
+        if (bh.flareMesh.material) bh.flareMesh.material.dispose();
+      }
       side.blackHoles.splice(i, 1);
     }
   }
@@ -10206,6 +10291,23 @@ function hostCastLegolusVineTrap(side, ev) {
   // Cast-FX: grön burst vid hero + ground-impact vid target
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66cc44, 0.9);
   spawnShieldBurstFx(center.x, center.z, 0x88dd55);
+  // Kenney-FX: scratch-mark + sprutande sparks i grön nyans
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'scratch_01', x: center.x, y: 0.08, z: center.z, color: 0x4a8030,
+      scale: VINE_TRAP_RADIUS * 2.2, scaleEnd: VINE_TRAP_RADIUS * 2.4,
+      life: 0.9, rotateSpeed: 1.2,
+      ground: true, opacity: 0.65,
+    });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + Math.random() * 0.4;
+      spawnKenneyFx({
+        texName: 'spark_05', x: center.x + Math.cos(a) * 1.2, y: 0.5, z: center.z + Math.sin(a) * 1.2,
+        color: 0x88dd55, scale: 0.6, scaleEnd: 1.3,
+        life: 0.4, rotateSpeed: 4, vy: 1.0, additive: true,
+      });
+    }
+  }
   // Visuell brun rot-ring + spinkar + svag grön glow
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
@@ -15124,6 +15226,27 @@ function hostCastKostefoCannabisCloud(side) {
     }
   }
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xeeeeee, 2.0);
+  // Kenney smoke-puffs vid cloud-spawn: 8 stora smoke-sprites spridda i radie
+  if (kenneyTex.size > 0) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const r = cloudR * (0.3 + Math.random() * 0.6);
+      const tex = i % 2 === 0 ? 'smoke_03' : 'smoke_07';
+      spawnKenneyFx({
+        texName: tex,
+        x: side.hero.x + Math.cos(a) * r,
+        y: 1.0 + Math.random() * 1.5,
+        z: side.hero.z + Math.sin(a) * r,
+        color: 0xddffcc,
+        scale: 2.2 + Math.random() * 0.8,
+        scaleEnd: 4.0 + Math.random() * 1.0,
+        life: 1.6 + Math.random() * 0.4,
+        rotateSpeed: (Math.random() - 0.5) * 2,
+        vy: 0.4 + Math.random() * 0.3,
+        opacity: 0.7,
+      });
+    }
+  }
 }
 
 // Lvl-5: spawn Kostefo-decoy-klon. Visuell mesh som springer åt slumpmässig
@@ -15870,6 +15993,21 @@ function hostCastAragurnWhirlwind(side) {
   // frozen/feared/taunted. Whirlwind rensar resten (slow, etc) vid cast.
   side.whirlwindRemaining = WHIRLWIND_DURATION + (arenaHasTalent(side, 'a_spin_extend') ? 1.5 : 0);
   side.whirlwindTickAccum = 0;
+  // Kenney twirl på marken som snurrar under hela whirlwind-duration
+  if (kenneyTex.size > 0) {
+    const twirlTex = kenneyTex.get('twirl_03');
+    if (twirlTex) {
+      const twirlMat = new THREE.MeshBasicMaterial({
+        map: twirlTex, color: 0xffe399, transparent: true, opacity: 0.8,
+        depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      });
+      const twirl = new THREE.Mesh(new THREE.PlaneGeometry(WHIRLWIND_RADIUS * 2.4, WHIRLWIND_RADIUS * 2.4), twirlMat);
+      twirl.rotation.x = -Math.PI / 2;
+      twirl.position.set(side.hero.x, 0.08, side.hero.z);
+      scene.add(twirl);
+      side._whirlwindTwirlMesh = twirl;
+    }
+  }
   // Rensa befintlig slow / dot / taunt / fear / frozen (men stun ligger på frozen → kan inte casta)
   side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.hero.dotRemaining = 0; side.hero.dotPerSec = 0;
@@ -16203,6 +16341,31 @@ function tickAragurnBannersLvl5Client(side, dt) {
 function applyAragurnLeapImpact(side, x, z) {
   spawnGroundImpact(x, z, LEAP_RADIUS, 0xff7733);
   triggerCameraShake(0.40, 0.45);
+  // Kenney-FX: stor scorch-decal + central flare + dust-burst för dramatik
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'scorch_02', x, y: 0.06, z, color: 0x553322,
+      scale: LEAP_RADIUS * 2.4, scaleEnd: LEAP_RADIUS * 2.6,
+      life: 1.5, ground: true, opacity: 0.8,
+    });
+    spawnKenneyFx({
+      texName: 'flare_01', x, y: 0.8, z, color: 0xffaa44,
+      scale: LEAP_RADIUS * 1.8, scaleEnd: LEAP_RADIUS * 3.0,
+      life: 0.5, additive: true,
+    });
+    // 8 dirt-puffar runt om
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const r = LEAP_RADIUS * (0.6 + Math.random() * 0.3);
+      spawnKenneyFx({
+        texName: i % 2 === 0 ? 'dirt_01' : 'smoke_05',
+        x: x + Math.cos(a) * r, y: 0.4, z: z + Math.sin(a) * r,
+        color: 0xa88858, scale: 0.9, scaleEnd: 1.8,
+        life: 0.8, vy: 0.5 + Math.random() * 0.4,
+        rotateSpeed: (Math.random() - 0.5) * 3, opacity: 0.85,
+      });
+    }
+  }
   // Lvl 5: spawna banner-mesh på landing-pos (5s aura)
   if (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
     spawnAragurnBannerClient(side, x, z);
@@ -22008,8 +22171,21 @@ function tickAragurnVisuals(dt) {
         spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffd34a);
         triggerCameraShake(0.15, 0.18);
       }
+      // Snurra Kenney twirl-disk + sync pos med hero (whirlwind kan röra sig)
+      if (s._whirlwindTwirlMesh) {
+        s._whirlwindTwirlMesh.position.x = s.hero.x;
+        s._whirlwindTwirlMesh.position.z = s.hero.z;
+        s._whirlwindTwirlMesh.rotation.z += dt * 6;
+      }
     } else if (s._wwActive) {
       s._wwActive = false;
+      // Cleanup twirl-mesh när whirlwind slutar
+      if (s._whirlwindTwirlMesh) {
+        scene.remove(s._whirlwindTwirlMesh);
+        if (s._whirlwindTwirlMesh.material) s._whirlwindTwirlMesh.material.dispose();
+        if (s._whirlwindTwirlMesh.geometry) s._whirlwindTwirlMesh.geometry.dispose();
+        s._whirlwindTwirlMesh = null;
+      }
     }
     // Leap: y-arc. Server skickar leapU (0..1 progress). Peak vid u=0.5.
     if (s.aragurnLeap && s.aragurnLeap.active) {
