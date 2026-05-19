@@ -5263,26 +5263,6 @@ function makeArenaMonolith(stoneMat, ivyMat) {
   return grp;
 }
 
-// T1 Captain — sunbeam (gyllene translucent cone från ovan ned mot golvet).
-// Visual only — ger arkadens "solljus genom lövverk"-känsla.
-function makeArenaSunbeam(color) {
-  const cone = new THREE.Mesh(
-    // Top radie 0.4, bottom 2.5 (sprider sig ut), höjd 14m
-    new THREE.CylinderGeometry(0.4, 2.5, 14, 16, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: color || 0xffdd88,
-      transparent: true,
-      opacity: 0.18,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  cone.position.y = 7.0;   // mitten av kon = 7m upp så top är vid 14m, bottom vid 0
-  // Tvist för organisk look
-  return cone;
-}
-
 // Bygger hela arena-arkitekturen runt boss-platformen.
 // 8 kolonner + facklor + banderoller + theme-accents.
 function buildBossArenaArchitecture(tier, map) {
@@ -5342,26 +5322,8 @@ function buildBossArenaArchitecture(tier, map) {
       });
     }
   }
-  // T1: 6 gyllene sunbeams från ovan (4 utanför perimeter + 2 över arenan).
-  // Visual only — ger "solljus genom lövverk"-känsla. Lågkostnad: cylinder
-  // med additive blending, ingen ljuskälla.
-  if (isT1Forest) {
-    const sunbeamPos = [
-      { x: BOSSWARS_CX - 16, z: BOSSWARS_CZ - 8 },
-      { x: BOSSWARS_CX + 18, z: BOSSWARS_CZ + 10 },
-      { x: BOSSWARS_CX - 6, z: BOSSWARS_CZ + 18 },
-      { x: BOSSWARS_CX + 8, z: BOSSWARS_CZ - 16 },
-      { x: BOSSWARS_CX - 22, z: BOSSWARS_CZ + 22 },
-      { x: BOSSWARS_CX + 22, z: BOSSWARS_CZ - 22 },
-    ];
-    for (const sp of sunbeamPos) {
-      const beam = makeArenaSunbeam(0xffdd88);
-      beam.position.set(sp.x, 7.0, sp.z);
-      bossWarsSceneGroup.add(beam);
-    }
-  }
   // Banderoller mellan varannan kolonn (4 st) — skippas för T1 naturlund
-  // (passar inte temat; sunbeams + träd-lövverk ger atmospheric feel istället)
+  // (passar inte temat; träd-lövverk + monolit-ring ger atmospheric feel istället)
   if (!isT1Forest) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
@@ -5626,59 +5588,89 @@ function drawForestFloor(ctx, size, map) {
     ctx.arc(x, y, 1 + Math.random() * 1.8, 0, Math.PI * 2);
     ctx.fill();
   }
-  // === SAMMANFLÄTADE TRÄRÖTTER === (komplex bezier-nätverk, mörk brun)
-  // Stora rötter (kraftiga, tjocka)
-  const drawRoot = (sx, sy, ex, ey, thickness, depth) => {
-    if (depth <= 0) return;
-    const mx = (sx + ex) / 2 + (Math.random() - 0.5) * 60;
-    const my = (sy + ey) / 2 + (Math.random() - 0.5) * 60;
-    // Yttre mörk skugga
+  // === SAMMANFLÄTADE TRÄRÖTTER === Symmetriskt mandala-mönster:
+  // 12 radiella spokes från inner-ring till outer-ring, mellan runorna,
+  // + 2 koncentriska ringar som binder ihop dem. Alla offsets är
+  // deterministiska (sin/cos av spoke-index) så mönstret är spegelvänt
+  // i 12-fold rotation-symmetri.
+  const drawRootCurve = (sx, sy, cpx, cpy, ex, ey, thickness) => {
+    // 3-pass stroke: skugga + huvud + highlight
+    ctx.lineCap = 'round';
     ctx.strokeStyle = 'rgba(30,18,10,0.85)';
     ctx.lineWidth = thickness + 3;
-    ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.quadraticCurveTo(cpx, cpy, ex, ey);
     ctx.stroke();
-    // Inre brun
     ctx.strokeStyle = 'rgba(70,42,22,0.95)';
     ctx.lineWidth = thickness;
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.quadraticCurveTo(cpx, cpy, ex, ey);
     ctx.stroke();
-    // Highlight (ljusare brun-linje längs mitten)
     ctx.strokeStyle = 'rgba(120,80,40,0.6)';
     ctx.lineWidth = Math.max(1, thickness - 3);
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.quadraticCurveTo(cpx, cpy, ex, ey);
     ctx.stroke();
-    // Förgrening
-    if (depth > 1 && Math.random() < 0.7) {
-      const bx = mx + (Math.random() - 0.5) * 100;
-      const by = my + (Math.random() - 0.5) * 100;
-      drawRoot(mx, my, bx, by, Math.max(2, thickness - 2), depth - 1);
-    }
   };
-  // 8 huvud-rötter som korsar varandra
-  for (let i = 0; i < 8; i++) {
-    const a1 = Math.random() * Math.PI * 2;
-    const a2 = a1 + Math.PI + (Math.random() - 0.5) * Math.PI * 0.6;
-    const r1 = size * (0.10 + Math.random() * 0.25);
-    const r2 = size * (0.25 + Math.random() * 0.20);
-    drawRoot(
-      cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1,
-      cx + Math.cos(a2) * r2, cy + Math.sin(a2) * r2,
-      6 + Math.random() * 4, 4
-    );
+  const NUM_SPOKES = 12;
+  const innerR = size * 0.10;
+  const outerR = size * 0.44;
+  // Runor sitter på i*60° + 15° (i=0..5). Spokes på i*30° + 45° så två
+  // spokes flankerar varje runa utan att korsa den.
+  const SPOKE_OFFSET = Math.PI / 4;
+  for (let i = 0; i < NUM_SPOKES; i++) {
+    const a = (i / NUM_SPOKES) * Math.PI * 2 + SPOKE_OFFSET;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const x1 = cx + ca * innerR, y1 = cy + sa * innerR;
+    const x2 = cx + ca * outerR, y2 = cy + sa * outerR;
+    // Kontrollpunkt: mid-radius, böjt vinkelrätt mot spoke för organisk look
+    const midR = (innerR + outerR) * 0.5;
+    const perpX = -sa, perpY = ca;
+    // Alternerande sida (±) varannan spoke → deterministisk men ger flätat utseende
+    const side = (i % 2 === 0) ? 1 : -1;
+    const bend = size * 0.018 * side;
+    const cpx = cx + ca * midR + perpX * bend;
+    const cpy = cy + sa * midR + perpY * bend;
+    drawRootCurve(x1, y1, cpx, cpy, x2, y2, 6);
+    // 2 spegel-grenar från 58 % längs huvudspoken
+    const branchAtR = innerR + (outerR - innerR) * 0.58;
+    const bx = cx + ca * branchAtR, by = cy + sa * branchAtR;
+    for (const dir of [-1, 1]) {
+      const branchAng = a + dir * (Math.PI / 5);   // 36° split
+      const branchLen = (outerR - branchAtR) * 0.95;
+      const bca = Math.cos(branchAng), bsa = Math.sin(branchAng);
+      const bx2 = bx + bca * branchLen;
+      const by2 = by + bsa * branchLen;
+      // Liten böj utåt (vinkelrätt mot branch-axeln)
+      const bperpX = -bsa, bperpY = bca;
+      const bcpx = bx + bca * branchLen * 0.5 + bperpX * dir * 6;
+      const bcpy = by + bsa * branchLen * 0.5 + bperpY * dir * 6;
+      drawRootCurve(bx, by, bcpx, bcpy, bx2, by2, 4);
+    }
   }
-  // Mindre sekundära rötter
-  for (let i = 0; i < 20; i++) {
-    const sx = Math.random() * size, sy = Math.random() * size;
-    const ang = Math.random() * Math.PI * 2;
-    const len = 60 + Math.random() * 120;
-    drawRoot(sx, sy, sx + Math.cos(ang) * len, sy + Math.sin(ang) * len, 3, 3);
+  // 2 koncentriska ringar som binder spokes (innanför + utanför rune-zonen).
+  // Rune-zon: radie 0.225–0.375 × size, så ringar vid 0.18 och 0.42 hamnar
+  // precis utanför runorna.
+  for (const ringR of [size * 0.18, size * 0.42]) {
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(30,18,10,0.80)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(70,42,22,0.92)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(120,80,40,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
   }
   // === STORA STENPLATTOR === (synliga stenytor mellan rötterna)
   for (let i = 0; i < 8; i++) {
