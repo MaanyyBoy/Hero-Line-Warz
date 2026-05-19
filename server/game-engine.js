@@ -401,6 +401,14 @@ const ARAGURN_LVL5_BANNER_HEAL_PCT = 0.05;     // 5% max HP/s heal
 const ARAGURN_LVL5_BANNER_AS_BONUS = 0.10;     // +10% AS
 const ARAGURN_LVL5_BANNER_MS_BONUS = 0.10;     // +10% MS
 const ARAGURN_LVL5_BANNER_DR_BONUS = 0.20;     // -20% incoming dmg
+// Kostefo
+const KOSTEFO_LVL5_Q_SLOW_DURATION = 2.0;      // Joint Attack lvl5: slow på hit-targets
+const KOSTEFO_LVL5_Q_SLOW_MUL = 0.50;          // -50% MS
+const KOSTEFO_LVL5_Q_LIFESTEAL_PCT = 0.10;     // 10% lifesteal av skill-dmg
+const KOSTEFO_LVL5_SLIDER_TP_WINDOW = 3.0;     // Joint Slider lvl5: 3s re-cast-window för tp
+const KOSTEFO_LVL5_CLOUD_RADIUS_MUL = 1.20;    // Cannabis Cloud lvl5: +20% radie
+const KOSTEFO_LVL5_CLONE_LIFETIME = 5.0;       // klon lever 5s
+const KOSTEFO_LVL5_CLONE_SPEED = 4.0;          // base run speed
 // Stat-point-bonusar per point (additivt till motsvarande pct i recomputeSideStats)
 const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
 const STAT_PER_POINT = {
@@ -929,6 +937,10 @@ function respawnHero(side) {
   side.kostefoUltJoints = [];
   side.kostefoGooseWaves = [];
   side.kostefoSliders = [];
+  // Lvl-5 cleanup
+  side.kostefoSliderTpMarker = null;
+  if (side.kostefoClones) side.kostefoClones.length = 0;
+  side.kostefoCloudRadiusMul = 1;
 }
 
 function createSide(idx) {
@@ -998,6 +1010,9 @@ function createSide(idx) {
     ironWillReflectQueue: [],  // Gimlu F lvl5 — reflect-damage queue
     aragurnBanners: [],        // Aragurn E lvl5 — banner-entiteter på marken
     inAragurnBanner: false,    // Aragurn E lvl5 — flagga: hero inom banner-aura
+    kostefoSliderTpMarker: null, // Kostefo F lvl5 — { x, z, remaining } för re-cast-tp
+    kostefoClones: [],         // Kostefo E lvl5 — decoy-kloner som springer ut
+    kostefoCloudRadiusMul: 1,  // Kostefo E lvl5 — 1.20 vid lvl5, 1.0 default
     shield: 0,
     // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
     portalUsesLeft: PORTAL_MAX_USES,
@@ -1693,6 +1708,11 @@ function updatePlayerCreeps(state, side, opp, dt) {
       c.aSlowTime -= dt;
       if (c.aSlowTime <= 0) c.aSlowMul = 1;
     }
+    // MS-slow tick (Aragurn Shout, Kostefo Q lvl5, Gimlu Hammer lvl5 m.fl.)
+    if ((c.slowTime || 0) > 0) {
+      c.slowTime -= dt;
+      if (c.slowTime <= 0) c.slowMul = 1;
+    }
     // Lvl-5 Legolas mark tick
     if ((c.legolasMarked || 0) > 0) c.legolasMarked = Math.max(0, c.legolasMarked - dt);
     // Find-nearest med sqr-dist (sparar sqrt per creep × targets per tick)
@@ -1742,7 +1762,9 @@ function updatePlayerCreeps(state, side, opp, dt) {
     const d = Math.hypot(dx, dz);
     if (d < 0.3 && c.pathIndex < path.length - 1) { c.pathIndex++; continue; }
     const dirX = dx / d, dirZ = dz / d;
-    const step = c.speed * dt;
+    // Slow appliceras via slowMul (sätts av Kostefo Q lvl5 + andra slow-källor).
+    // Tick av slowTime/slowMul-reset hanteras tidigare i updatePlayerCreeps.
+    const step = c.speed * (c.slowMul || 1) * dt;
     const nx = c.x + dirX * step, nz = c.z + dirZ * step;
     if (isCreepPos(nx, nz)) { c.x = nx; c.z = nz; }
     else if (isCreepPos(nx, c.z)) c.x = nx;
@@ -3648,6 +3670,17 @@ function castKostefoJointAttack(state, sideIdx, dirX, dirZ) {
 function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
   const side = state.sides[sideIdx];
   if (!side || side.hero.dead) return;
+  // Lvl 5: om tp-marker aktiv → teleport till explosionspos istället för ny cast.
+  // CD från initial cast tickar fortsatt (ingen ny CD-set vid tp).
+  if (side.kostefoSliderTpMarker) {
+    const m = side.kostefoSliderTpMarker;
+    if (isHeroWalkable(side.idx, m.x, m.z)) {
+      side.hero.x = m.x;
+      side.hero.z = m.z;
+    }
+    side.kostefoSliderTpMarker = null;
+    return;
+  }
   if (side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max || KOSTEFO_SLIDER_CD;
   const len = Math.hypot(dirX, dirZ);
@@ -3662,6 +3695,7 @@ function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
     hitMon: [],          // monster-ids redan piercede
     hitCreep: [],        // creep-ids redan piercede
     hitOppHero: false,
+    lvl5Tp: !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX),
   });
 }
 
@@ -3679,12 +3713,29 @@ function castKostefoCannabisCloud(state, sideIdx) {
   side.kostefoCloudX = side.hero.x;
   side.kostefoCloudZ = side.hero.z;
   side.kostefoInCloud = true;          // hero startar inom radie (centered)
+  // Lvl 5: +20% radie (lagras per cloud-cast via kostefoCloudRadiusMul)
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
+  side.kostefoCloudRadiusMul = isLvl5 ? KOSTEFO_LVL5_CLOUD_RADIUS_MUL : 1;
+  // Lvl 5: spawna 1HP decoy-klon som springer åt slumpmässig riktning
+  if (isLvl5) {
+    const ang = Math.random() * Math.PI * 2;
+    side.kostefoClones = side.kostefoClones || [];
+    side.kostefoClones.push({
+      id: state.nextEntityId++,
+      x: side.hero.x, z: side.hero.z,
+      dx: Math.cos(ang), dz: Math.sin(ang),
+      ry: Math.atan2(Math.cos(ang), Math.sin(ang)),
+      hp: 1,
+      life: KOSTEFO_LVL5_CLONE_LIFETIME,
+    });
+  }
   // Initial heal: 25% maxHP direct
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * KOSTEFO_CLOUD_HEAL_PCT);
-  // Initial stun + dmg-tick på alla inom radie
+  // Initial stun + dmg-tick på alla inom radie (radien skalas vid lvl5)
   const opp = state.sides[3 - sideIdx];
   const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
-  const r2 = KOSTEFO_CLOUD_RADIUS * KOSTEFO_CLOUD_RADIUS;
+  const cloudR = KOSTEFO_CLOUD_RADIUS * (side.kostefoCloudRadiusMul || 1);
+  const r2 = cloudR * cloudR;
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     const ddx = m.x - cx, ddz = m.z - cz;
@@ -3711,12 +3762,17 @@ function castKostefoCannabisCloud(state, sideIdx) {
 function tickKostefoGooseWaves(state, side, opp, dt) {
   if (!side.kostefoGooseWaves || side.kostefoGooseWaves.length === 0) return;
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Lvl 5: skill-level + skill-key Q (lagras vid cast snarare än check här,
+  // men eftersom vi inte kan veta vilken skill-level som castade waven retroaktivt
+  // använder vi nuvarande side.skillLvl.q. Funkar i praktiken eftersom lvl bara går uppåt.)
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
   for (let i = side.kostefoGooseWaves.length - 1; i >= 0; i--) {
     const w = side.kostefoGooseWaves[i];
     w.remaining -= dt;
     w.tickAccum += dt;
     while (w.tickAccum >= KOSTEFO_GOOSEWAVE_TICK && w.remaining > -KOSTEFO_GOOSEWAVE_TICK) {
       w.tickAccum -= KOSTEFO_GOOSEWAVE_TICK;
+      let tickHealAccum = 0;   // lvl5 lifesteal: sum dealt damage
       const halfW = w.width / 2, halfL = w.length / 2;
       // Lokal-koord-test: project punkt på dx/dz-axel + perpendicular
       for (let k = side.monsters.length - 1; k >= 0; k--) {
@@ -3726,7 +3782,15 @@ function tickKostefoGooseWaves(state, side, opp, dt) {
         const side2 = rx * (-w.dz) + rz * w.dx;
         if (Math.abs(along) <= halfL && Math.abs(side2) <= halfW) {
           const dmg = (m.maxHp || m.hp) * KOSTEFO_GOOSEWAVE_DMG_PCT * skillMul;
+          const dealt = Math.min(m.hp, dmg);
           applySkillDamageToMonster(state, side, opp, k, dmg);
+          if (isLvl5) {
+            tickHealAccum += dealt;
+            if (side.monsters[k] === m && m.hp > 0) {
+              m.slowTime = Math.max(m.slowTime || 0, KOSTEFO_LVL5_Q_SLOW_DURATION);
+              m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, KOSTEFO_LVL5_Q_SLOW_MUL);
+            }
+          }
         }
       }
       if (opp) for (let k = opp.playerCreeps.length - 1; k >= 0; k--) {
@@ -3736,7 +3800,15 @@ function tickKostefoGooseWaves(state, side, opp, dt) {
         const side2 = rx * (-w.dz) + rz * w.dx;
         if (Math.abs(along) <= halfL && Math.abs(side2) <= halfW) {
           const dmg = (c.maxHp || c.hp) * KOSTEFO_GOOSEWAVE_DMG_PCT * skillMul;
+          const dealt = Math.min(c.hp, dmg);
           applySkillDamageToCreep(state, side, opp, c, dmg);
+          if (isLvl5) {
+            tickHealAccum += dealt;
+            if (c.hp > 0) {
+              c.slowTime = Math.max(c.slowTime || 0, KOSTEFO_LVL5_Q_SLOW_DURATION);
+              c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, KOSTEFO_LVL5_Q_SLOW_MUL);
+            }
+          }
         }
       }
       if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
@@ -3745,8 +3817,19 @@ function tickKostefoGooseWaves(state, side, opp, dt) {
         const side2 = rx * (-w.dz) + rz * w.dx;
         if (Math.abs(along) <= halfL && Math.abs(side2) <= halfW) {
           const dmg = opp.hero.maxHp * KOSTEFO_GOOSEWAVE_DMG_PCT * skillMul;
+          const dealt = Math.min(opp.hero.hp, dmg);
           applySkillDamageToOppHero(state, side, opp, dmg);
+          if (isLvl5) {
+            tickHealAccum += dealt;
+            const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+            opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, KOSTEFO_LVL5_Q_SLOW_DURATION * ccMul);
+            opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, KOSTEFO_LVL5_Q_SLOW_MUL);
+          }
         }
+      }
+      // Lvl 5: heal Kostefo 10% av dealt dmg per tick
+      if (isLvl5 && tickHealAccum > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + tickHealAccum * KOSTEFO_LVL5_Q_LIFESTEAL_PCT);
       }
     }
     if (w.remaining <= 0) side.kostefoGooseWaves.splice(i, 1);
@@ -3804,8 +3887,36 @@ function tickKostefoSliders(state, side, opp, dt) {
     if (s.traveled >= s.maxRange) {
       // Explosion vid slutet: AoE + slow + DoT på alla träffade
       applyKostefoSliderExplosion(state, side, opp, s.x, s.z, skillMul);
+      // Lvl 5: starta tp-marker — 3s re-cast-fönster för tp till explosionspos
+      if (s.lvl5Tp) {
+        side.kostefoSliderTpMarker = {
+          x: s.x, z: s.z,
+          remaining: KOSTEFO_LVL5_SLIDER_TP_WINDOW,
+        };
+      }
       side.kostefoSliders.splice(i, 1);
     }
+  }
+}
+
+// Lvl-5 Joint Slider: dekrementera tp-marker. När expirerar → clear.
+function tickKostefoSliderTpMarker(side, dt) {
+  if (!side.kostefoSliderTpMarker) return;
+  side.kostefoSliderTpMarker.remaining -= dt;
+  if (side.kostefoSliderTpMarker.remaining <= 0) {
+    side.kostefoSliderTpMarker = null;
+  }
+}
+
+// Lvl-5 Cannabis Cloud-klon — walk:ar åt slumpmässig riktning, despawn vid death/life-end.
+function tickKostefoClonesLvl5(side, dt) {
+  if (!side.kostefoClones || side.kostefoClones.length === 0) return;
+  for (let i = side.kostefoClones.length - 1; i >= 0; i--) {
+    const k = side.kostefoClones[i];
+    k.life -= dt;
+    k.x += k.dx * KOSTEFO_LVL5_CLONE_SPEED * dt;
+    k.z += k.dz * KOSTEFO_LVL5_CLONE_SPEED * dt;
+    if (k.life <= 0 || k.hp <= 0) side.kostefoClones.splice(i, 1);
   }
 }
 
@@ -3893,7 +4004,9 @@ function tickKostefoCloud(state, side, opp, dt) {
   side.kostefoCloudRemaining -= dt;
   side.kostefoCloudTickAccum += dt;
   const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
-  const r2 = KOSTEFO_CLOUD_RADIUS * KOSTEFO_CLOUD_RADIUS;
+  // Lvl 5 utökar cloud-radie via kostefoCloudRadiusMul (1.0 default, 1.20 vid lvl5)
+  const cloudR = KOSTEFO_CLOUD_RADIUS * (side.kostefoCloudRadiusMul || 1);
+  const r2 = cloudR * cloudR;
   // Recompute "hero inom moln" varje tick — buffs/invis baseras på detta.
   const hddx = side.hero.x - cx, hddz = side.hero.z - cz;
   side.kostefoInCloud = !side.hero.dead && (hddx * hddx + hddz * hddz < r2);
@@ -4047,6 +4160,9 @@ function tickKostefoSkills(state, side, opp, dt) {
   tickKostefoCloud(state, side, opp, dt);
   tickKostefoUltJoints(state, side, opp, dt);
   tickKostefoCompanion(state, side, opp, dt);
+  // Lvl 5 add-ons
+  tickKostefoSliderTpMarker(side, dt);
+  tickKostefoClonesLvl5(side, dt);
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
@@ -4989,6 +5105,9 @@ function serializeSide(side) {
     ghMs: nzr2(side.gimluHammerMsRem),
     inAbn: flag(side.inAragurnBanner),
     ABN: arrOpt(side.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
+    kSTp: side.kostefoSliderTpMarker ? { x: r2(side.kostefoSliderTpMarker.x), z: r2(side.kostefoSliderTpMarker.z), rem: r2(side.kostefoSliderTpMarker.remaining) } : undefined,
+    kCln: arrOpt(side.kostefoClones, c => ({ id: c.id, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: c.hp })),
+    kCrM: side.kostefoCloudRadiusMul && side.kostefoCloudRadiusMul !== 1 ? r3(side.kostefoCloudRadiusMul) : undefined,
     shld: nzr1(side.shield),
     dSp: nzr2(side.duelSpeedBuffRemaining),
     IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),

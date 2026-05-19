@@ -6878,6 +6878,9 @@ function createSide(idx) {
     ironWillReflectQueue: [],
     aragurnBanners: [],
     inAragurnBanner: false,
+    kostefoSliderTpMarker: null,
+    kostefoClones: [],
+    kostefoCloudRadiusMul: 1,
     shield: 0,
     // Ult-energy + per-ult timers (sätts av hostCast*Ult)
     ultEnergy: 0,
@@ -8557,6 +8560,13 @@ function respawnHero(side) {
     side.aragurnBanners.length = 0;
   }
   side.inAragurnBanner = false;
+  // Kostefo lvl5: rensa tp-marker + decoy-kloner
+  side.kostefoSliderTpMarker = null;
+  if (side.kostefoClones) {
+    for (const k of side.kostefoClones) if (k.mesh) scene.remove(k.mesh);
+    side.kostefoClones.length = 0;
+  }
+  side.kostefoCloudRadiusMul = 1;
 }
 
 // ============================================================
@@ -9240,6 +9250,13 @@ const ARAGURN_LVL5_BANNER_HEAL_PCT = 0.05;
 const ARAGURN_LVL5_BANNER_AS_BONUS = 0.10;
 const ARAGURN_LVL5_BANNER_MS_BONUS = 0.10;
 const ARAGURN_LVL5_BANNER_DR_BONUS = 0.20;
+const KOSTEFO_LVL5_Q_SLOW_DURATION = 2.0;
+const KOSTEFO_LVL5_Q_SLOW_MUL = 0.50;
+const KOSTEFO_LVL5_Q_LIFESTEAL_PCT = 0.10;
+const KOSTEFO_LVL5_SLIDER_TP_WINDOW = 3.0;
+const KOSTEFO_LVL5_CLOUD_RADIUS_MUL = 1.20;
+const KOSTEFO_LVL5_CLONE_LIFETIME = 5.0;
+const KOSTEFO_LVL5_CLONE_SPEED = 4.0;
 
 function hostCastWindPuff(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
@@ -12390,6 +12407,9 @@ function applyRemoteState(state) {
     side.gimluHammerMsRem = sData.ghMs || 0;
     side.inAragurnBanner = !!sData.inAbn;
     // Banner-entiteter reconcileras via separat path nedan (clientReconcileEntities)
+    // Kostefo lvl-5 state
+    side.kostefoSliderTpMarker = sData.kSTp ? { x: sData.kSTp.x, z: sData.kSTp.z, remaining: sData.kSTp.rem } : null;
+    side.kostefoCloudRadiusMul = sData.kCrM || 1;
     side.shield = sData.shld || 0;
     // Duel speed-buff
     side.duelSpeedBuffRemaining = sData.dSp || 0;
@@ -14947,7 +14967,19 @@ function hostCastKostefoJointAttack(side, ev) {
 // Spawnar slider-mesh + lagrar ref i entry för Arena/Solo (line-wars-snap-
 // reconcile körs inte här).
 function hostCastKostefoJointSlider(side, ev) {
-  if (side.hero.dead || side.skills.f.cd > 0) return;
+  if (side.hero.dead) return;
+  // Lvl 5: om tp-marker aktiv → tp till explosionspos, bail ny cast
+  if (side.kostefoSliderTpMarker) {
+    const m = side.kostefoSliderTpMarker;
+    if (isHeroWalkable(side.idx, m.x, m.z)) {
+      side.hero.x = m.x; side.hero.z = m.z;
+      side.mesh.position.x = m.x; side.mesh.position.z = m.z;
+    }
+    spawnSkillCastFx(m.x, m.z, 0xddaa44, 1.4);
+    side.kostefoSliderTpMarker = null;
+    return;
+  }
+  if (side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max || _K_SLIDER_CD;
   let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
   const len = Math.hypot(dx, dz);
@@ -14966,6 +14998,7 @@ function hostCastKostefoJointSlider(side, ev) {
     maxRange: _K_SLIDER_RANGE,
     hitMon: [], hitCreep: [], hitOppHero: false,
     mesh,                          // lokal mesh-ref
+    lvl5Tp: !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX),
   });
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddaa44, 1.2);
 }
@@ -14980,10 +15013,15 @@ function hostCastKostefoCannabisCloud(side) {
   side.kostefoCloudX = side.hero.x;
   side.kostefoCloudZ = side.hero.z;
   side.kostefoInCloud = true;
+  // Lvl 5: +20% radie + spawn 1HP decoy-klon
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
+  side.kostefoCloudRadiusMul = isLvl5 ? KOSTEFO_LVL5_CLOUD_RADIUS_MUL : 1;
+  if (isLvl5) spawnKostefoCloneClient(side);
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * _K_CLOUD_HEAL_PCT);
-  // Initial stun på fiender inom radie
+  // Initial stun på fiender inom radie (skalat)
   const opp = arenaPrimaryOpp(side);
-  const r2 = _K_CLOUD_RADIUS * _K_CLOUD_RADIUS;
+  const cloudR = _K_CLOUD_RADIUS * (side.kostefoCloudRadiusMul || 1);
+  const r2 = cloudR * cloudR;
   if (opp && !opp.hero.dead) {
     const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
     if (ddx * ddx + ddz * ddz < r2) {
@@ -14991,6 +15029,56 @@ function hostCastKostefoCannabisCloud(side) {
     }
   }
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xeeeeee, 2.0);
+}
+
+// Lvl-5: spawn Kostefo-decoy-klon. Visuell mesh som springer åt slumpmässig
+// riktning i 5s. Decoy-effekt — gör inget skadeinteragerat på klient.
+function spawnKostefoCloneClient(side) {
+  const ang = Math.random() * Math.PI * 2;
+  const dx = Math.cos(ang), dz = Math.sin(ang);
+  // Kopia av hero-meshen i miniature/simplified form — använder en basic cylinder
+  // (full skinning för decoy är för dyrt). Färg matchar Kostefo:s gröna palett.
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 0.42, 1.7, 10),
+    new THREE.MeshStandardMaterial({ color: 0x335522, emissive: 0x113311, emissiveIntensity: 0.3, roughness: 0.7, transparent: true, opacity: 0.85 }),
+  );
+  body.position.y = 0.85;
+  grp.add(body);
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0xddccaa, transparent: true, opacity: 0.85 }),
+  );
+  head.position.y = 1.85;
+  grp.add(head);
+  grp.position.set(side.hero.x, 0, side.hero.z);
+  grp.rotation.y = Math.atan2(dx, dz);
+  scene.add(grp);
+  side.kostefoClones = side.kostefoClones || [];
+  side.kostefoClones.push({
+    mesh: grp, x: side.hero.x, z: side.hero.z,
+    dx, dz, hp: 1,
+    life: KOSTEFO_LVL5_CLONE_LIFETIME,
+  });
+}
+
+// Tick decoy-klonerna. Walk:ar åt sin riktning; despawnar vid life-end.
+function tickKostefoClonesLvl5Client(side, dt) {
+  if (!side.kostefoClones || side.kostefoClones.length === 0) return;
+  for (let i = side.kostefoClones.length - 1; i >= 0; i--) {
+    const k = side.kostefoClones[i];
+    k.life -= dt;
+    k.x += k.dx * KOSTEFO_LVL5_CLONE_SPEED * dt;
+    k.z += k.dz * KOSTEFO_LVL5_CLONE_SPEED * dt;
+    if (k.mesh) {
+      k.mesh.position.x = k.x;
+      k.mesh.position.z = k.z;
+    }
+    if (k.life <= 0 || k.hp <= 0) {
+      if (k.mesh) scene.remove(k.mesh);
+      side.kostefoClones.splice(i, 1);
+    }
+  }
 }
 
 // R (Ult): Joint Avengers — 8 orbit-joints i 5s. AA-kopia mot Kostefos target.
@@ -15025,6 +15113,7 @@ function tickClientKostefoGooseWaves(side, dt) {
   if (!side.kostefoGooseWaves || side.kostefoGooseWaves.length === 0) return;
   const opp = arenaPrimaryOpp(side);
   const skillMul = side.skillDmgMul || 1;
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
   for (let i = side.kostefoGooseWaves.length - 1; i >= 0; i--) {
     const w = side.kostefoGooseWaves[i];
     w.remaining -= dt;
@@ -15038,7 +15127,17 @@ function tickClientKostefoGooseWaves(side, dt) {
         const along = rx * w.dx + rz * w.dz;
         const aside = rx * (-w.dz) + rz * w.dx;
         if (Math.abs(along) <= halfL && Math.abs(aside) <= halfW) {
-          _kostefoDamageOppHero(side, opp, opp.hero.maxHp * _K_GOOSEWAVE_DMG_PCT * skillMul);
+          const dmg = opp.hero.maxHp * _K_GOOSEWAVE_DMG_PCT * skillMul;
+          const dealt = _kostefoDamageOppHero(side, opp, dmg);
+          // Lvl 5: 50% MS slow + 10% lifesteal av dealt dmg
+          if (isLvl5) {
+            const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+            opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, KOSTEFO_LVL5_Q_SLOW_DURATION * ccMul);
+            opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, KOSTEFO_LVL5_Q_SLOW_MUL);
+            if (dealt > 0 && !side.hero.dead) {
+              side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * KOSTEFO_LVL5_Q_LIFESTEAL_PCT);
+            }
+          }
         }
       }
     }
@@ -15115,9 +15214,21 @@ function tickClientKostefoSliders(side, dt) {
         }
       }
       spawnKostefoSliderExplosionFx(s.x, s.z);
+      // Lvl 5: starta tp-marker (3s re-cast-fönster)
+      if (s.lvl5Tp) {
+        side.kostefoSliderTpMarker = {
+          x: s.x, z: s.z,
+          remaining: KOSTEFO_LVL5_SLIDER_TP_WINDOW,
+        };
+      }
       if (s.mesh) scene.remove(s.mesh);
       side.kostefoSliders.splice(i, 1);
     }
+  }
+  // Lvl 5 tp-marker tick
+  if (side.kostefoSliderTpMarker) {
+    side.kostefoSliderTpMarker.remaining -= dt;
+    if (side.kostefoSliderTpMarker.remaining <= 0) side.kostefoSliderTpMarker = null;
   }
 }
 
@@ -15127,7 +15238,9 @@ function tickClientKostefoCloud(side, dt) {
   side.kostefoCloudRemaining -= dt;
   side.kostefoCloudTickAccum = (side.kostefoCloudTickAccum || 0) + dt;
   const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
-  const r2 = _K_CLOUD_RADIUS * _K_CLOUD_RADIUS;
+  // Lvl 5 utökar radie via kostefoCloudRadiusMul (1.0 default, 1.20 vid lvl5)
+  const cloudR = _K_CLOUD_RADIUS * (side.kostefoCloudRadiusMul || 1);
+  const r2 = cloudR * cloudR;
   const hddx = side.hero.x - cx, hddz = side.hero.z - cz;
   side.kostefoInCloud = !side.hero.dead && (hddx * hddx + hddz * hddz < r2);
   if (side.kostefoCloudRemaining <= 0) side.kostefoInCloud = false;
@@ -15207,6 +15320,8 @@ function tickClientKostefoSkills(side, dt) {
   tickClientKostefoCloud(side, dt);
   tickClientKostefoUltJoints(side, dt);
   tickClientKostefoCompanion(side, dt);
+  // Lvl 5 add-ons
+  tickKostefoClonesLvl5Client(side, dt);
 }
 
 // Per-side tracking av Kostefo-meshes som följer hero-state (companion, cloud,
