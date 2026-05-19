@@ -2487,6 +2487,28 @@ function attachHpBar(meshGroup, yOffset, hero = false) {
   return bar;
 }
 
+// Disposear HP-bar-texturen för en entity-mesh INNAN scene.remove. CanvasTexture
+// släpps inte automatiskt av GC på iOS Safari — om vi inte explicit disposear
+// så ackumuleras GPU-texturer per död monster/creep → mobil-OOM efter ~wave 2-3.
+function disposeEntityHpBar(meshGroup) {
+  const bar = meshGroup && meshGroup.userData && meshGroup.userData.hpBar;
+  if (!bar) return;
+  if (bar.material) {
+    if (bar.material.map) bar.material.map.dispose();
+    bar.material.dispose();
+  }
+  if (bar.userData) bar.userData.canvas = null;
+  meshGroup.userData.hpBar = null;
+}
+
+// Wrapper kring scene.remove som först disposear ägd GPU-data (just nu HP-bar).
+// Använd för alla entity-meshes som dör/despawnas (monsters, creeps, boss-wars-bosses).
+function removeEntityMesh(meshGroup) {
+  if (!meshGroup) return;
+  disposeEntityHpBar(meshGroup);
+  scene.remove(meshGroup);
+}
+
 function updateEntityHpBar(mesh, hp, maxHp, now, shield = 0) {
   if (!mesh?.userData?.hpBar) return;
   const bar = mesh.userData.hpBar;
@@ -6883,9 +6905,9 @@ function createSide(idx) {
 
 function removeSide(side) {
   if (!side) return;
-  scene.remove(side.mesh);
-  for (const m of side.monsters) scene.remove(m.mesh);
-  for (const c of side.playerCreeps) scene.remove(c.mesh);
+  removeEntityMesh(side.mesh);
+  for (const m of side.monsters) removeEntityMesh(m.mesh);
+  for (const c of side.playerCreeps) removeEntityMesh(c.mesh);
   for (const p of side.projectiles) scene.remove(p.mesh);
   for (const f of side.fireballs) scene.remove(f.mesh);
   for (const n of side.novaEffects) scene.remove(n.mesh);
@@ -8041,7 +8063,7 @@ function updateMonsters(side, dt) {
     const dzT = towerPos.z - m.mesh.position.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       side.tower.hp = Math.max(0, side.tower.hp - 1);
-      scene.remove(m.mesh);
+      removeEntityMesh(m.mesh);
       side.monsters.splice(i, 1);
       continue;
     }
@@ -8093,7 +8115,7 @@ function updateMonsters(side, dt) {
           m.atkCd = CREEP_VS_CREEP_INTERVAL;
           if (nearest.hp <= 0) {
             const idx2 = opp.playerCreeps.indexOf(nearest);
-            if (idx2 >= 0) { scene.remove(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); gainXp(side, minionXp(nearest)); }
+            if (idx2 >= 0) { removeEntityMesh(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); gainXp(side, minionXp(nearest)); }
           }
         }
         const dx = nearest.mesh.position.x - m.mesh.position.x;
@@ -8154,7 +8176,7 @@ function updatePlayerCreeps(side, dt) {
     if ((c.dotRemaining || 0) > 0) {
       c.dotRemaining -= dt;
       c.hp -= (c.dotPerSec || 0) * dt;
-      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); side.playerCreeps.splice(i, 1); continue; }
     }
     // Poison-stack-tick
     if ((c.poisonRemaining || 0) > 0 && (c.poisonStacks || 0) > 0) {
@@ -8162,12 +8184,12 @@ function updatePlayerCreeps(side, dt) {
       const s = c.poisonStacks;
       c.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
       if (c.poisonRemaining <= 0) c.poisonStacks = 0;
-      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); side.playerCreeps.splice(i, 1); continue; }
     }
     // Gandulf Soul Mark DoT
     if (c.gandulfMarkRemaining > 0) {
       tickGandulfMarkClient(c, dt);
-      if (c.hp <= 0) { scene.remove(c.mesh); side.playerCreeps.splice(i, 1); continue; }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); side.playerCreeps.splice(i, 1); continue; }
     }
     // Frusen — hoppa över
     if ((c.frozenTime || 0) > 0) {
@@ -8192,7 +8214,7 @@ function updatePlayerCreeps(side, dt) {
     const dzT = oppCfg.tower.z - c.mesh.position.z;
     if (dxT * dxT + dzT * dzT < TOWER_REACH * TOWER_REACH) {
       if (opp) opp.tower.hp = Math.max(0, opp.tower.hp - 1);
-      scene.remove(c.mesh);
+      removeEntityMesh(c.mesh);
       side.playerCreeps.splice(i, 1);
       continue;
     }
@@ -8345,7 +8367,7 @@ function hostKillMonster(side, idx, byPlayerSide) {
     cleanupExecuteMesh(m.activeCast);
     m.activeCast = null;
   }
-  scene.remove(m.mesh);
+  removeEntityMesh(m.mesh);
   side.monsters.splice(idx, 1);
   // Boss-belöning: 5× guld + XP
   const goldReward = m.isBoss ? GOLD_PER_KILL * 5 : (m.isMiniBoss ? GOLD_PER_KILL * 2 : GOLD_PER_KILL);
@@ -8842,7 +8864,7 @@ function updateProjectiles(side, dt) {
           if (k >= 0) hostKillMonster(side, k, side);
         } else {
           const k = opp.playerCreeps.indexOf(p.target);
-          if (k >= 0) { scene.remove(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
+          if (k >= 0) { removeEntityMesh(p.target.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
         }
       }
       // Boss Wars AA-lifesteal (talent Bloodthirst / item Berserker Gauntlet)
@@ -8871,7 +8893,7 @@ function updateProjectiles(side, dt) {
           if (c === p.target) continue;
           if (Math.hypot(c.mesh.position.x - ix, c.mesh.position.z - iz) < PASSIVE_AOE_RADIUS) {
             c.hp -= p.damage;
-            if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+            if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
           }
         }
       }
@@ -8984,7 +9006,7 @@ function soloShatter(side, opp, x, z) {
     const c = opp.playerCreeps[i];
     if (Math.hypot(c.mesh.position.x - x, c.mesh.position.z - z) < SHATTER_RADIUS) {
       c.hp -= SHATTER_DAMAGE;
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
 }
@@ -9178,7 +9200,7 @@ function hostCastWindPuff(side, ev) {
     onGandulfSkillHit(side, c);
     c.hp -= dmg;
     if (c.hp <= 0) {
-      scene.remove(c.mesh);
+      removeEntityMesh(c.mesh);
       opp.playerCreeps.splice(j, 1);
       side.gold += minionBounty(c); gainXp(side, minionXp(c));
     } else {
@@ -9331,7 +9353,7 @@ function applySoulDrainTick(side, target, sd) {
     } else {
       const i = opp.playerCreeps.indexOf(target);
       if (i >= 0) {
-        scene.remove(target.mesh);
+        removeEntityMesh(target.mesh);
         opp.playerCreeps.splice(i, 1);
         side.gold += minionBounty(target);
         gainXp(side, minionXp(target));
@@ -9428,7 +9450,7 @@ function spawnSoulDrainExplosion(side, opp, x, z, damage) {
       onGandulfSkillHit(side, c);
       soloApplySkillDmgToCreep(side, opp, c, damage);
       if (c.hp <= 0) {
-        scene.remove(c.mesh);
+        removeEntityMesh(c.mesh);
         opp.playerCreeps.splice(j, 1);
         side.gold += minionBounty(c);
         gainXp(side, minionXp(c));
@@ -9629,7 +9651,7 @@ function updateFireballs(side, dt) {
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(c);
         c.hp -= f.damage;
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     if (f.traveled > ELDKLOT_RANGE) {
@@ -9708,7 +9730,7 @@ function hostCastFrostnova(side, ev) {
       soloApplySkillDmgToCreep(side, opp, c, novaDmg);
       if (frostHeal) novaDmgDealt += novaDmg;
       if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
-      else if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      else if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
   // Arena: orb-damage om i radius
@@ -9877,7 +9899,7 @@ function updateBlackHolesSolo(side, dt) {
         if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < bhRadius) {
           const dmg = (c.maxHp || c.hp) * 0.015 * tickDmgMul;
           soloApplySkillDmgToCreep(side, opp, c, dmg);
-          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+          if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
       // Arena: orb + opp hero DoT
@@ -9910,7 +9932,7 @@ function updateBlackHolesSolo(side, dt) {
         if (Math.hypot(c.mesh.position.x - bh.x, c.mesh.position.z - bh.z) < expR) {
           soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg * dmgMul);
           onGandulfSkillHit(side, c);
-          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+          if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
       // Arena: orb + opp hero-damage från black hole-explosion + shake
@@ -10061,7 +10083,7 @@ function updateVineTrapsSolo(side, dt) {
       if (dx * dx + dz * dz < r2) {
         c.frozenTime = Math.max(c.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
         c.hp -= vt.dotPerSec * dt;
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     // Arena: root + DoT mot opp.hero om i radien (PvP)
@@ -10178,7 +10200,7 @@ function updateIronWillSolo(side, dt) {
         const ddx = c.mesh.position.x - side.hero.x, ddz = c.mesh.position.z - side.hero.z;
         if (ddx * ddx + ddz * ddz < r2) {
           c.hp -= dmg;
-          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+          if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
       // Arena: Iron Will-explosion mot orb + opp hero + camera-shake för lokala
@@ -10310,7 +10332,7 @@ function updateHammersSolo(side, dt) {
         h.hit.add(c.id);
         c.hp -= dmg;
         if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+        if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     // Arena: hammer-hit på orb (use mesh-position som "center")
@@ -10741,7 +10763,7 @@ function lingShieldExplode(side) {
     const c = opp.playerCreeps[i];
     if (Math.hypot(c.mesh.position.x - side.hero.x, c.mesh.position.z - side.hero.z) < LING_AOE_RADIUS) {
       c.hp -= dmg;
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); }
     }
   }
   // Arena: orb + opp hero
@@ -11099,7 +11121,7 @@ function tickFearWave(side, dt) {
       if (c.fearTime <= 0 && prev > 0) {
         const dmg = c.hp * FEAR_HP_DMG_PCT;
         c.hp -= dmg;
-        if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+        if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); }
       }
     }
   }
@@ -13993,7 +14015,7 @@ function applyLaserBeamTick(side) {
       const dmg = (c.maxHp || c.hp) * LASER_TICK_DMG_PCT;
       c.hp -= dmg;
       spawnHitSparkFx(c.mesh.position.x, 1.2, c.mesh.position.z, 0xaaddff);
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); }
     }
   }
   // Arena orb
@@ -14106,7 +14128,7 @@ function tickClientThornPools(side, dt) {
         if (Math.hypot(c.mesh.position.x - p.x, c.mesh.position.z - p.z) < p.radius) {
           const dmg = (c.maxHp || c.hp) * p.dmgPct;
           c.hp -= dmg;
-          if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+          if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(k, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
         }
       }
       if (opp && !opp.hero.dead && Math.hypot(opp.hero.x - p.x, opp.hero.z - p.z) < p.radius) {
@@ -15158,7 +15180,7 @@ function applyRagePulse(side) {
       const dealt = Math.min(dmg, c.hp);
       c.hp -= dmg;
       applyRageLifesteal(side, dealt);
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); }
     }
   }
   if (APP.gameMode === 'arena1v1' && arenaState.orb.alive) {
@@ -15304,7 +15326,7 @@ function applyWhirlwindTick(side) {
     if (Math.hypot(c.mesh.position.x - ox, c.mesh.position.z - oz) < WHIRLWIND_RADIUS) {
       const dmg = (c.maxHp || c.hp) * WHIRLWIND_DMG_PCT * skillMul;
       soloApplySkillDmgToCreep(side, opp, c, dmg);
-      if (c.hp <= 0) { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
   // Arena: orb + opp hero
@@ -15373,7 +15395,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
       c.slowMul = Math.min(c.slowMul || 1, SHOUT_SLOW_MUL);
       c.slowTime = Math.max(c.slowTime || 0, SHOUT_SLOW_DURATION);
     } else {
-      scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c));
+      removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c));
     }
   }
   // Arena: opp hero i kon
@@ -15511,7 +15533,7 @@ function applyAragurnLeapImpact(side, x, z) {
       const dmg = (c.maxHp || c.hp) * LEAP_DMG_PCT * skillMul;
       soloApplySkillDmgToCreep(side, opp, c, dmg);
       if (c.hp > 0) c.frozenTime = Math.max(c.frozenTime || 0, LEAP_STUN_TIME);
-      else { scene.remove(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      else { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       hitCount++;
     }
   }
