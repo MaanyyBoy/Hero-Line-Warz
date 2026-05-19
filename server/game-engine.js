@@ -392,6 +392,15 @@ const GIMLU_LVL5_HAMMER_MS_DURATION = 1.0;     // Hammer lvl5: caster MS-buff va
 const GIMLU_LVL5_HAMMER_MS_MUL = 1.50;         // +50% MS
 const GIMLU_LVL5_HAMMER_SLOW_DURATION = 2.0;   // Hammer lvl5: slow på hit-targets
 const GIMLU_LVL5_HAMMER_SLOW_MUL = 0.80;       // -20% MS på hit
+// Aragurn
+const ARAGURN_LVL5_SHOUT_PULL_PCT = 0.5;       // War Shout lvl5: dra targets halvvägs mot Aragurn
+const ARAGURN_LVL5_SHOUT_STUN_DURATION = 1.0;  // 1s stun på hit
+const ARAGURN_LVL5_BANNER_DURATION = 5.0;      // Hero Leap lvl5: banner-livstid
+const ARAGURN_LVL5_BANNER_RADIUS = 4.5;        // banner-aura-radie
+const ARAGURN_LVL5_BANNER_HEAL_PCT = 0.05;     // 5% max HP/s heal
+const ARAGURN_LVL5_BANNER_AS_BONUS = 0.10;     // +10% AS
+const ARAGURN_LVL5_BANNER_MS_BONUS = 0.10;     // +10% MS
+const ARAGURN_LVL5_BANNER_DR_BONUS = 0.20;     // -20% incoming dmg
 // Stat-point-bonusar per point (additivt till motsvarande pct i recomputeSideStats)
 const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
 const STAT_PER_POINT = {
@@ -823,7 +832,9 @@ function damageHero(side, amount) {
   const aragurnMul = side.heroId === 'aragurn' ? (1 - aragurnPassiveDR(side)) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * aragurnMul;
+  // Aragurn banner-aura (Hero Leap lvl5): -20% incoming dmg
+  const bannerMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * aragurnMul * bannerMul;
   // Gandulf shield absorberar först
   if ((side.shield || 0) > 0 && final > 0) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
@@ -901,6 +912,9 @@ function respawnHero(side) {
   if (side.ironWillReflectQueue) side.ironWillReflectQueue.length = 0;
   side.ironWillRemaining = 0;
   side.ironWillStored = 0;
+  // Aragurn lvl5 — rensa banner-state vid respawn så aura inte hänger kvar
+  if (side.aragurnBanners) side.aragurnBanners.length = 0;
+  side.inAragurnBanner = false;
   // Rensa Shadow Volley-state om Legolus dog medan invis (annars stannar
   // invis-flagga med "0" rem men cleared aaPending — säkert att nolla allt).
   side.legolusInvisRemaining = 0;
@@ -982,6 +996,8 @@ function createSide(idx) {
     tauntLvl5: false,          // Gimlu Q lvl5 — flagga: är denna taunt en lvl5-cast
     gimluHammerMsRem: 0,       // Gimlu E lvl5 — caster MS-buff timer
     ironWillReflectQueue: [],  // Gimlu F lvl5 — reflect-damage queue
+    aragurnBanners: [],        // Aragurn E lvl5 — banner-entiteter på marken
+    inAragurnBanner: false,    // Aragurn E lvl5 — flagga: hero inom banner-aura
     shield: 0,
     // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
     portalUsesLeft: PORTAL_MAX_USES,
@@ -2133,8 +2149,10 @@ function updateHeroAttack(state, side, opp, dt) {
   const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
   // Kostefo Cannabis Cloud: +20% AS medan hero ÄR inom molnet
   const cloudAsMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_AS_BONUS) : 1;
+  // Aragurn banner-aura (Hero Leap lvl5): +10% AS
+  const bannerAsMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -3380,6 +3398,13 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
   const opp = state.sides[3 - sideIdx];
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Lvl 5: pull targets halvvägs mot Aragurn + 1s stun
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX);
+  const pullToward = (target) => {
+    if (!isLvl5) return;
+    target.x = side.hero.x + (target.x - side.hero.x) * (1 - ARAGURN_LVL5_SHOUT_PULL_PCT);
+    target.z = side.hero.z + (target.z - side.hero.z) * (1 - ARAGURN_LVL5_SHOUT_PULL_PCT);
+  };
   const inCone = (ex, ez) => {
     const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
     const d = Math.hypot(ddx, ddz);
@@ -3396,6 +3421,8 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
     if (side.monsters[i] === m && m.hp > 0) {
       m.slowMul = Math.min(m.slowMul || 1, SHOUT_SLOW_MUL);
       m.slowTime = Math.max(m.slowTime || 0, SHOUT_SLOW_DURATION);
+      pullToward(m);
+      if (isLvl5) m.frozenTime = Math.max(m.frozenTime || 0, ARAGURN_LVL5_SHOUT_STUN_DURATION);
     }
   }
   // Opp creeps
@@ -3407,6 +3434,8 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
     if (c.hp > 0) {
       c.slowMul = Math.min(c.slowMul || 1, SHOUT_SLOW_MUL);
       c.slowTime = Math.max(c.slowTime || 0, SHOUT_SLOW_DURATION);
+      pullToward(c);
+      if (isLvl5) c.frozenTime = Math.max(c.frozenTime || 0, ARAGURN_LVL5_SHOUT_STUN_DURATION);
     } else {
       opp.playerCreeps.splice(i, 1);
       side.gold += minionBounty(c);
@@ -3419,7 +3448,36 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
     applySkillDamageToOppHero(state, side, opp, dmg);
     opp.heroSlowMul = Math.min(opp.heroSlowMul || 1, SHOUT_SLOW_MUL);
     opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, SHOUT_SLOW_DURATION);
+    if (isLvl5) {
+      // Pull opp.hero halvvägs (med CC-mul-reduktion på stun-duration)
+      pullToward(opp.hero);
+      const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+      opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, ARAGURN_LVL5_SHOUT_STUN_DURATION * ccMul);
+    }
   }
+}
+
+// Lvl 5 Hero Leap banner — tick livstid, applicera heal + buff-flagga om hero inom radie
+function tickAragurnBannersLvl5(side, dt) {
+  if (!side.aragurnBanners || side.aragurnBanners.length === 0) {
+    side.inAragurnBanner = false;
+    return;
+  }
+  let inAura = false;
+  for (let i = side.aragurnBanners.length - 1; i >= 0; i--) {
+    const b = side.aragurnBanners[i];
+    b.life -= dt;
+    if (b.life <= 0) { side.aragurnBanners.splice(i, 1); continue; }
+    if (!side.hero.dead) {
+      const ddx = side.hero.x - b.x, ddz = side.hero.z - b.z;
+      if (ddx * ddx + ddz * ddz < ARAGURN_LVL5_BANNER_RADIUS * ARAGURN_LVL5_BANNER_RADIUS) {
+        inAura = true;
+        // Heal 5% maxHP per sek
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * ARAGURN_LVL5_BANNER_HEAL_PCT * dt);
+      }
+    }
+  }
+  side.inAragurnBanner = inAura;
 }
 
 function updateAragurnShoutHeal(side, dt) {
@@ -3504,6 +3562,16 @@ const LEAP_HEAL_LOST_PCT = 0.25;
 
 function applyAragurnLeapImpact(state, side, opp, x, z) {
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // Lvl 5: spawna banner på landings-pos
+  if (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
+    side.aragurnBanners = side.aragurnBanners || [];
+    side.aragurnBanners.push({
+      id: state.nextEntityId++,
+      x, z,
+      life: ARAGURN_LVL5_BANNER_DURATION,
+      maxLife: ARAGURN_LVL5_BANNER_DURATION,
+    });
+  }
   const r2 = LEAP_RADIUS * LEAP_RADIUS;
   let hitCount = 0;
   for (let i = side.monsters.length - 1; i >= 0; i--) {
@@ -3992,11 +4060,12 @@ function applyMovement(side, joyX, joyZ, dt) {
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
-  // Lvl-5 MS-buffs (Gandulf Wind Puff, Gimlu Hammer m.fl.)
+  // Lvl-5 MS-buffs (Gandulf Wind Puff, Gimlu Hammer, Aragurn banner m.fl.)
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
   const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * strength * dt;
+  const bannerMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_MS_BONUS) : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -4601,6 +4670,7 @@ function tickGame(state, dt) {
       if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
       if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
       flushIronWillReflectLvl5(state, side, opp);
+      tickAragurnBannersLvl5(side, dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
         side.ironWillExplosions[k].life -= dt;
         if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
@@ -4751,6 +4821,7 @@ function tickGame(state, dt) {
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
     flushIronWillReflectLvl5(state, side, opp);
+    tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
   }
   checkMatchEnd(state);
@@ -4916,6 +4987,8 @@ function serializeSide(side) {
     gbStk: nz(side.gandulfBuffStacks),
     wpMs: nzr2(side.windPuffMsRem),
     ghMs: nzr2(side.gimluHammerMsRem),
+    inAbn: flag(side.inAragurnBanner),
+    ABN: arrOpt(side.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
     shld: nzr1(side.shield),
     dSp: nzr2(side.duelSpeedBuffRemaining),
     IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
