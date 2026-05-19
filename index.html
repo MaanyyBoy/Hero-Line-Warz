@@ -567,7 +567,7 @@
       pointer-events: auto;
     }
 
-    /* Shop-paneler (höger sida) — rollup: header är alltid synlig, body expanderar vid klick */
+    /* Shop-knappar (höger sida) — klick öppnar fullskärm-modal med innehållet */
     #shop-container {
       position: fixed;
       top: max(16px, env(safe-area-inset-top));
@@ -577,47 +577,80 @@
       gap: 10px;
       align-items: flex-end;
       z-index: 50;
-      max-width: 60vw;
     }
     #shop-container.visible { display: flex; }
-    .shop-panel { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+    .shop-panel { display: flex; flex-direction: column; align-items: stretch; }
     .shop-header {
       background: rgba(20,30,55,0.92);
       color: #fff;
       border: 2px solid rgba(180,200,255,0.55);
       border-radius: 10px;
-      padding: 8px 14px;
-      font: 700 12px/1 system-ui, sans-serif;
-      letter-spacing: 1.3px;
+      padding: 10px 18px;
+      font: 700 13px/1 system-ui, sans-serif;
+      letter-spacing: 1.5px;
       cursor: pointer;
       touch-action: manipulation;
-      min-width: 140px;
+      min-width: 110px;
       display: flex;
-      justify-content: space-between;
+      justify-content: center;
       align-items: center;
-      gap: 10px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.45);
       backdrop-filter: blur(2px);
     }
-    .shop-header:active { transform: scale(0.97); }
-    .shop-header .chevron {
-      font-size: 11px;
-      opacity: 0.75;
-      transition: transform 0.18s ease-out;
-      display: inline-block;
+    .shop-header:active { transform: scale(0.96); }
+    /* Modal-backdrop — täcker hela skärmen när någon shop-panel är expanded */
+    #shop-modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 90;
+      display: none;
+      pointer-events: auto;
     }
-    .shop-panel.expanded .shop-header .chevron { transform: rotate(180deg); }
+    #shop-modal-backdrop.visible { display: block; }
+    /* Modal-body — centrerad popup med scrollbart innehåll */
     .shop-body {
       display: none;
       flex-direction: column;
-      gap: 5px;
-      background: rgba(15,25,40,0.94);
-      border: 2px solid rgba(180,200,255,0.55);
-      border-radius: 12px;
-      padding: 8px 10px;
-      backdrop-filter: blur(2px);
+      gap: 8px;
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(640px, 92vw);
+      max-height: min(86vh, 720px);
+      overflow-y: auto;
+      background: rgba(15,25,40,0.97);
+      border: 2px solid rgba(180,200,255,0.65);
+      border-radius: 14px;
+      padding: 18px 16px 14px;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      z-index: 95;
+      -webkit-overflow-scrolling: touch;
     }
     .shop-panel.expanded .shop-body { display: flex; }
+    .shop-modal-title {
+      font: 800 14px/1 system-ui, sans-serif;
+      color: #ffd34a;
+      letter-spacing: 2px;
+      text-align: center;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(180,200,255,0.25);
+      margin-bottom: 6px;
+    }
+    .shop-modal-close {
+      position: absolute; top: 8px; right: 10px;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: rgba(60,80,140,0.7);
+      border: 1px solid rgba(180,200,255,0.55);
+      color: #fff;
+      font: 800 18px/1 system-ui, sans-serif;
+      cursor: pointer;
+      touch-action: manipulation;
+      pointer-events: auto;
+      z-index: 100;
+    }
+    .shop-modal-close:active { transform: scale(0.94); }
     .shop-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-start; }
     .shop-section-label {
       color: #cfd8ec; font: 700 10px/1 system-ui, sans-serif;
@@ -3012,25 +3045,28 @@
     <div id="shop-hero" class="shop-panel">
       <button class="shop-header" data-shop="hero">
         <span>ITEMS</span>
-        <span class="chevron">▾</span>
       </button>
       <div class="shop-body">
+        <button class="shop-modal-close" data-modal-close aria-label="Close">×</button>
+        <div class="shop-modal-title">ITEMS</div>
         <div class="shop-row" id="shop-hero-row"></div>
       </div>
     </div>
 
     <div id="shop-minion" class="shop-panel">
       <button class="shop-header" data-shop="minion">
-        <span>MINIONS</span>
-        <span class="chevron">▾</span>
+        <span>SHOP</span>
       </button>
       <div class="shop-body">
+        <button class="shop-modal-close" data-modal-close aria-label="Close">×</button>
+        <div class="shop-modal-title">SHOP</div>
         <div class="shop-row" id="shop-lane-row"></div>
         <div class="shop-row" id="shop-tier-row"></div>
         <div class="shop-row" id="shop-minion-grid"></div>
       </div>
     </div>
   </div>
+  <div id="shop-modal-backdrop"></div>
 
   <div id="inventory">
     <div class="inventory-slot empty" data-slot="0"></div>

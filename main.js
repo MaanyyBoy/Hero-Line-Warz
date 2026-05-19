@@ -15958,19 +15958,46 @@ const shopHeroEl = document.getElementById('shop-hero');
 const shopMinionEl = document.getElementById('shop-minion');
 const shopState = { selectedTier: 1, selectedLane: 1 };
 
-// Rollup-knapparna: klick på header togglar expanded på sin panel.
-// Klick på själva body/innehåll bubblar inte upp (header är syskon till body),
-// så köp/tier-klick stänger inte panelen.
+// Shop-knappar: klick på header öppnar modal. Bara EN panel kan vara öppen
+// samtidigt (toggla av andra först). Backdrop synlig medan någon panel är öppen.
+const shopBackdropEl = document.getElementById('shop-modal-backdrop');
 document.querySelectorAll('.shop-header').forEach((h) => {
   h.addEventListener('click', () => {
     const panel = h.closest('.shop-panel');
-    if (panel) panel.classList.toggle('expanded');
+    if (!panel) return;
+    const wasOpen = panel.classList.contains('expanded');
+    collapseShopPanels();
+    if (!wasOpen) panel.classList.add('expanded');
+    updateShopBackdrop();
   });
 });
+// Close-knapparna (× i hörnet) stänger sin panel.
+document.querySelectorAll('[data-modal-close]').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    collapseShopPanels();
+    updateShopBackdrop();
+  });
+});
+// Klick på backdrop stänger panelen.
+if (shopBackdropEl) {
+  shopBackdropEl.addEventListener('click', () => {
+    collapseShopPanels();
+    updateShopBackdrop();
+  });
+}
 
 function collapseShopPanels() {
   if (shopHeroEl) shopHeroEl.classList.remove('expanded');
   if (shopMinionEl) shopMinionEl.classList.remove('expanded');
+}
+
+function updateShopBackdrop() {
+  if (!shopBackdropEl) return;
+  const anyOpen = (shopHeroEl && shopHeroEl.classList.contains('expanded'))
+               || (shopMinionEl && shopMinionEl.classList.contains('expanded'));
+  shopBackdropEl.classList.toggle('visible', anyOpen);
 }
 const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
 
@@ -16205,7 +16232,7 @@ function refreshShopUI() {
   const isBossWars = APP.gameMode === 'bosswars';
   const showShop = !isBossWars && (isArenaPrep || (inBase && APP.gameMode !== 'arena1v1'));
   if (shopContainerEl) shopContainerEl.classList.toggle('visible', showShop);
-  if (!showShop) collapseShopPanels();
+  if (!showShop) { collapseShopPanels(); updateShopBackdrop(); }
 }
 
 populateShop();
