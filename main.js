@@ -2793,11 +2793,12 @@ const HERO_GLTF_MAP = {
 // Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
 const HERO_GLTF_SCALE = {
   // Decision 042: Gandulf/Legolus/Aragurn/Kostefos +20% storlek (Gimlu oförändrad).
-  magiker: { x: 1.2, y: 1.2, z: 1.2 },
-  legolas: { x: 1.2, y: 1.2, z: 1.2 },
-  gimlu:   { x: 1.1, y: 1.1, z: 1.1 },     // tank-känsla (oförändrad)
-  aragurn: { x: 1.26, y: 1.26, z: 1.26 },  // 1.05 × 1.2
-  kostefo: { x: 1.2, y: 1.2, z: 1.2 },
+  // Senare: ytterligare +20% på alla 5 (× 1.2).
+  magiker: { x: 1.44, y: 1.44, z: 1.44 },
+  legolas: { x: 1.44, y: 1.44, z: 1.44 },
+  gimlu:   { x: 1.32, y: 1.32, z: 1.32 },     // tank-känsla, 1.1 × 1.2
+  aragurn: { x: 1.512, y: 1.512, z: 1.512 },  // 1.26 × 1.2
+  kostefo: { x: 1.44, y: 1.44, z: 1.44 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
 // Mappar fight-stilen till rätt Mixamo-clip vi exporterat i hero-GLB:n.
@@ -20413,6 +20414,15 @@ if (btnBossJoin) btnBossJoin.addEventListener('click', () => {
   bossMpState.joinMsgEl && (bossMpState.joinMsgEl.textContent = '');
   if (bossMpState.codeInputEl) { bossMpState.codeInputEl.value = ''; setTimeout(() => bossMpState.codeInputEl.focus(), 50); }
   showLobbyPanel('boss-join');
+});
+// TEMP (test-only): Singleplayer Boss Wars — skippar MP-relay, går direkt till
+// boss-pick. bossWarsStartFight() ser att bossMpState.active=false och kör solo.
+// Ta bort den här knappen (+ btn-boss-solo i index.html) när testfasen är klar.
+const btnBossSolo = document.getElementById('btn-boss-solo');
+if (btnBossSolo) btnBossSolo.addEventListener('click', () => {
+  bossMpState.active = false;
+  bossMpState.role = null;
+  bossWarsShowPick();
 });
 const btnBossInfo = document.getElementById('btn-boss-info');
 if (btnBossInfo) btnBossInfo.addEventListener('click', openBossInfoModal);
