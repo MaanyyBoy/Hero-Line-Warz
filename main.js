@@ -5122,6 +5122,167 @@ function makeArenaCrystal(theme) {
   return grp;
 }
 
+// T1 Captain — knotigt träd med stam, knotor, lövverk, murgröna-vines.
+// Reusable mat skickas in så alla träd delar shader-compile.
+function makeArenaTree(barkMat, leafMat, ivyMat) {
+  const grp = new THREE.Group();
+  // Stam (lutad cylinder med taper) — höjd ~6m
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.45, 0.75, 6.0, 10),
+    barkMat
+  );
+  trunk.position.y = 3.0;
+  // Knöl/krökning för organisk feel — tilt
+  trunk.rotation.z = (Math.random() - 0.5) * 0.15;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  grp.add(trunk);
+  // Knotor på stammen (3-4 spheres bumpar ut)
+  for (let i = 0; i < 4; i++) {
+    const knot = new THREE.Mesh(new THREE.SphereGeometry(0.35 + Math.random() * 0.15, 8, 6), barkMat);
+    const ang = Math.random() * Math.PI * 2;
+    const ky = 1.2 + Math.random() * 3.5;
+    knot.position.set(Math.cos(ang) * 0.55, ky, Math.sin(ang) * 0.55);
+    knot.scale.set(0.7, 1.0, 0.7);
+    knot.castShadow = true;
+    grp.add(knot);
+  }
+  // Lövverk (4-5 stora spheres som bushar topp + sida)
+  for (let i = 0; i < 5; i++) {
+    const leaf = new THREE.Mesh(new THREE.SphereGeometry(1.2 + Math.random() * 0.4, 8, 6), leafMat);
+    const ang = (i / 5) * Math.PI * 2;
+    const lr = 0.8 + Math.random() * 0.5;
+    leaf.position.set(Math.cos(ang) * lr, 5.5 + Math.random() * 0.8, Math.sin(ang) * lr);
+    leaf.scale.set(1.0, 0.85, 1.0);
+    leaf.castShadow = true;
+    grp.add(leaf);
+  }
+  // Topp-löv (en stor central sphere)
+  const topLeaf = new THREE.Mesh(new THREE.SphereGeometry(1.5, 10, 8), leafMat);
+  topLeaf.position.y = 6.5;
+  topLeaf.castShadow = true;
+  grp.add(topLeaf);
+  // Murgröna-vines — 3 svängande gröna remsor från lövverket ner mot stam
+  for (let i = 0; i < 3; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const startY = 5.2 + Math.random() * 0.8;
+    const len = 2.5 + Math.random() * 1.5;
+    const vine = new THREE.Mesh(
+      new THREE.BoxGeometry(0.10, len, 0.10),
+      ivyMat
+    );
+    vine.position.set(Math.cos(ang) * 0.9, startY - len / 2, Math.sin(ang) * 0.9);
+    vine.rotation.z = (Math.random() - 0.5) * 0.3;
+    grp.add(vine);
+    // Små löv-prickar längs vine
+    for (let k = 0; k < 4; k++) {
+      const leaf = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 6, 4),
+        ivyMat
+      );
+      leaf.position.set(vine.position.x + (Math.random() - 0.5) * 0.15, startY - (k + 0.5) * len / 4, vine.position.z + (Math.random() - 0.5) * 0.15);
+      leaf.scale.y = 0.5;
+      grp.add(leaf);
+    }
+  }
+  return grp;
+}
+
+// T1 Captain — stenmonolit (vertikalt stenblock med murgröna). Ca 6.5m hög.
+function makeArenaMonolith(stoneMat, ivyMat) {
+  const grp = new THREE.Group();
+  // Huvudblock — lätt avsmalnande topp för "ancient menhir"-känsla
+  const block = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 6.5, 0.9),
+    stoneMat
+  );
+  block.position.y = 3.25;
+  block.rotation.y = (Math.random() - 0.5) * 0.3;
+  block.castShadow = true;
+  block.receiveShadow = true;
+  grp.add(block);
+  // Topp-cap (smalare sten ovanpå)
+  const cap = new THREE.Mesh(
+    new THREE.BoxGeometry(1.3, 0.5, 0.7),
+    stoneMat
+  );
+  cap.position.y = 6.75;
+  cap.rotation.y = block.rotation.y;
+  cap.castShadow = true;
+  grp.add(cap);
+  // Krackelering: 2-3 mörka skåror via thin dark boxes
+  for (let i = 0; i < 3; i++) {
+    const crack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 1.8 + Math.random() * 1.5, 0.91),
+      new THREE.MeshStandardMaterial({ color: 0x101008, roughness: 0.9 })
+    );
+    crack.position.set((Math.random() - 0.5) * 1.3, 2.0 + Math.random() * 3.0, 0);
+    grp.add(crack);
+  }
+  // Murgröna-täcke (1-2 ivy-patches på sidan)
+  for (let i = 0; i < 2; i++) {
+    const ivyW = 1.0 + Math.random() * 0.3, ivyH = 2.0 + Math.random() * 1.5;
+    const ivy = new THREE.Mesh(
+      new THREE.PlaneGeometry(ivyW, ivyH),
+      ivyMat
+    );
+    ivy.position.set(
+      (Math.random() - 0.5) * 0.6,
+      1.5 + Math.random() * 3,
+      0.46 * (i === 0 ? 1 : -1)
+    );
+    ivy.rotation.y = i === 0 ? 0 : Math.PI;
+    grp.add(ivy);
+    // Små löv-prickar ovanpå
+    for (let k = 0; k < 6; k++) {
+      const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.13, 5, 4), ivyMat);
+      leaf.position.set(
+        ivy.position.x + (Math.random() - 0.5) * ivyW,
+        ivy.position.y + (Math.random() - 0.5) * ivyH,
+        ivy.position.z + (i === 0 ? 0.02 : -0.02)
+      );
+      leaf.scale.set(1, 0.6, 1);
+      grp.add(leaf);
+    }
+  }
+  // Glödande grön rune-mark på stenen (litet emissive-symbol)
+  const runeMat = new THREE.MeshBasicMaterial({
+    color: 0x88ff66, transparent: true, opacity: 0.85,
+  });
+  const rune = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.24, 16), runeMat);
+  rune.position.set(0, 4.0, 0.46);
+  rune.rotation.y = 0;
+  grp.add(rune);
+  // Centerpunkt (inre prick)
+  const runeDot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.06, 12),
+    new THREE.MeshBasicMaterial({ color: 0xaaffaa })
+  );
+  runeDot.position.set(0, 4.0, 0.47);
+  grp.add(runeDot);
+  return grp;
+}
+
+// T1 Captain — sunbeam (gyllene translucent cone från ovan ned mot golvet).
+// Visual only — ger arkadens "solljus genom lövverk"-känsla.
+function makeArenaSunbeam(color) {
+  const cone = new THREE.Mesh(
+    // Top radie 0.4, bottom 2.5 (sprider sig ut), höjd 14m
+    new THREE.CylinderGeometry(0.4, 2.5, 14, 16, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: color || 0xffdd88,
+      transparent: true,
+      opacity: 0.18,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  cone.position.y = 7.0;   // mitten av kon = 7m upp så top är vid 14m, bottom vid 0
+  // Tvist för organisk look
+  return cone;
+}
+
 // Bygger hela arena-arkitekturen runt boss-platformen.
 // 8 kolonner + facklor + banderoller + theme-accents.
 function buildBossArenaArchitecture(tier, map) {
@@ -5135,26 +5296,73 @@ function buildBossArenaArchitecture(tier, map) {
   });
   // Cache flame-sprites här så tickBossArenaFlames slipper traverse hela scenen
   _bossArenaFlameSprites.length = 0;
+  // T1 Captain — naturlund: alternerar knotigt träd / stenmonolit istället för
+  // klassiska stenkolonner. Delat material för bark/leaf/ivy så shader-compile
+  // sker en gång oavsett antal träd.
+  const isT1Forest = (tier === 1);
+  const t1BarkMat = isT1Forest ? new THREE.MeshStandardMaterial({
+    color: 0x3a2818, roughness: 0.95, metalness: 0.02,
+  }) : null;
+  const t1LeafMat = isT1Forest ? new THREE.MeshStandardMaterial({
+    color: 0x3a6028, roughness: 0.78,
+    emissive: 0x103018, emissiveIntensity: 0.18,
+  }) : null;
+  const t1IvyMat = isT1Forest ? new THREE.MeshStandardMaterial({
+    color: 0x4a8030, roughness: 0.85, transparent: true, opacity: 0.92,
+    side: THREE.DoubleSide,
+    emissive: 0x205018, emissiveIntensity: 0.25,
+  }) : null;
+  const t1MonolithMat = isT1Forest ? new THREE.MeshStandardMaterial({
+    color: 0x4a4438, roughness: 0.95, metalness: 0.05,
+  }) : null;
   for (let i = 0; i < pillarCount; i++) {
     const a = (i / pillarCount) * Math.PI * 2;
     const px = BOSSWARS_CX + Math.cos(a) * r;
     const pz = BOSSWARS_CZ + Math.sin(a) * r;
-    const pillar = makeArenaPillar(theme, stoneMat);
-    pillar.position.set(px, 0, pz);
-    pillar.rotation.y = a + Math.PI;          // face inåt mot arena-center
-    bossWarsSceneGroup.add(pillar);
-    pillars.push({ x: px, y: 7.0, z: pz });   // toppen av kolonnen
-    // Fackla ovanpå varje kolonn
-    const torch = makePillarTorch(theme);
-    torch.position.set(px, 7.0, pz);
-    bossWarsSceneGroup.add(torch);
-    // Hitta flame-sprite för cache (tickas senare)
-    torch.traverse(o => {
-      if (o.userData && o.userData.isPillarFlame) _bossArenaFlameSprites.push(o);
-    });
+    let obj;
+    if (isT1Forest) {
+      // Alternerar träd (i jämn) och monolit (i udda)
+      obj = (i % 2 === 0)
+        ? makeArenaTree(t1BarkMat, t1LeafMat, t1IvyMat)
+        : makeArenaMonolith(t1MonolithMat, t1IvyMat);
+    } else {
+      obj = makeArenaPillar(theme, stoneMat);
+    }
+    obj.position.set(px, 0, pz);
+    obj.rotation.y = a + Math.PI + (isT1Forest ? Math.random() * 0.5 - 0.25 : 0);
+    bossWarsSceneGroup.add(obj);
+    pillars.push({ x: px, y: 7.0, z: pz });
+    // Fackla bara på icke-T1 (träd har ingen kapitäl-topp att stå på)
+    if (!isT1Forest) {
+      const torch = makePillarTorch(theme);
+      torch.position.set(px, 7.0, pz);
+      bossWarsSceneGroup.add(torch);
+      torch.traverse(o => {
+        if (o.userData && o.userData.isPillarFlame) _bossArenaFlameSprites.push(o);
+      });
+    }
   }
-  // Banderoller mellan varannan kolonn (4 st)
-  for (let i = 0; i < pillarCount; i += 2) {
+  // T1: 6 gyllene sunbeams från ovan (4 utanför perimeter + 2 över arenan).
+  // Visual only — ger "solljus genom lövverk"-känsla. Lågkostnad: cylinder
+  // med additive blending, ingen ljuskälla.
+  if (isT1Forest) {
+    const sunbeamPos = [
+      { x: BOSSWARS_CX - 16, z: BOSSWARS_CZ - 8 },
+      { x: BOSSWARS_CX + 18, z: BOSSWARS_CZ + 10 },
+      { x: BOSSWARS_CX - 6, z: BOSSWARS_CZ + 18 },
+      { x: BOSSWARS_CX + 8, z: BOSSWARS_CZ - 16 },
+      { x: BOSSWARS_CX - 22, z: BOSSWARS_CZ + 22 },
+      { x: BOSSWARS_CX + 22, z: BOSSWARS_CZ - 22 },
+    ];
+    for (const sp of sunbeamPos) {
+      const beam = makeArenaSunbeam(0xffdd88);
+      beam.position.set(sp.x, 7.0, sp.z);
+      bossWarsSceneGroup.add(beam);
+    }
+  }
+  // Banderoller mellan varannan kolonn (4 st) — skippas för T1 naturlund
+  // (passar inte temat; sunbeams + träd-lövverk ger atmospheric feel istället)
+  if (!isT1Forest) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
     const banner = makeArenaBanner(theme);
@@ -5263,28 +5471,146 @@ function drawBossArenaFloor(ctx, size, tier, map) {
   else if (tier === 5) drawVolcanoFloor(ctx, size, map);
 }
 
-// T1 Captain / Forest Hollow — battlefield clearing med heraldisk emblem,
-// ritual stone-cirkel, taktiska markeringar, ljusinsläpp + fireflies.
+// Ritar runda runinskriptioner med GLYPHS på en separat emissive-canvas
+// (svart bakgrund, gröna runor) → används som emissiveMap på floor-material
+// så runorna LYSER svagt även utan dynamisk ljuskälla. Returnerar { runeCanvas,
+// runePositions } där positions kan användas av drawForestFloor för att rita
+// matchande visuell pattern på samma platser i färg-canvasen.
+// Ren positions-helper — ingen canvas, ingen DOM, billig att anropa
+// flera gånger. Används av både buildT1ForestRunes (emissive map) och
+// drawForestFloor (matchande etsade marker på color-canvasen).
+function getT1RunePositions(size) {
+  const cx = size / 2, cy = size / 2;
+  const positions = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 12;
+    const r = size * 0.30;
+    positions.push({
+      x: cx + Math.cos(a) * r,
+      y: cy + Math.sin(a) * r,
+      radius: size * 0.075,
+      glyphSeed: i,
+    });
+  }
+  return positions;
+}
+
+function buildT1ForestRunes(size) {
+  const runePositions = getT1RunePositions(size);
+  // Emissive canvas (svart bg, bara runorna ritas i grönt)
+  const emiCanvas = document.createElement('canvas');
+  emiCanvas.width = emiCanvas.height = size;
+  const ectx = emiCanvas.getContext('2d');
+  ectx.fillStyle = '#000000';
+  ectx.fillRect(0, 0, size, size);
+  for (const p of runePositions) {
+    drawT1RuneCircle(ectx, p, true);
+  }
+  return { emiCanvas, runePositions };
+}
+
+// Ritar en rune-cirkel (outer ring + inner ring + 4 glyph-streck + center-symbol).
+// emissive=true → grön glow för emissive-map. emissive=false → mörk etsad för color.
+function drawT1RuneCircle(ctx, p, emissive) {
+  const cx = p.x, cy = p.y, r = p.radius;
+  // Outer ring
+  ctx.strokeStyle = emissive ? 'rgba(100,255,140,0.95)' : 'rgba(60,90,40,0.7)';
+  ctx.lineWidth = emissive ? 4 : 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  // Inner ring
+  ctx.lineWidth = emissive ? 2 : 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.75, 0, Math.PI * 2);
+  ctx.stroke();
+  // 4 radiella tick-marks från outer-ring inåt
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r * 0.78, cy + Math.sin(a) * r * 0.78);
+    ctx.lineTo(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95);
+    ctx.stroke();
+  }
+  // Center glyph: varierande symbol baserat på glyphSeed
+  ctx.lineWidth = emissive ? 3 : 2;
+  ctx.lineCap = 'round';
+  const seed = p.glyphSeed || 0;
+  const gr = r * 0.45;
+  if (seed % 3 === 0) {
+    // Triangle-glyph (uppåtpekande)
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - gr);
+    ctx.lineTo(cx - gr * 0.866, cy + gr * 0.5);
+    ctx.lineTo(cx + gr * 0.866, cy + gr * 0.5);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - gr * 0.4);
+    ctx.lineTo(cx, cy + gr * 0.5);
+    ctx.stroke();
+  } else if (seed % 3 === 1) {
+    // Spiral-glyph (4 quarter-turns inåt)
+    ctx.beginPath();
+    ctx.arc(cx, cy, gr, 0, Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, gr * 0.6, Math.PI, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, gr * 0.3, 0, Math.PI);
+    ctx.stroke();
+  } else {
+    // Cross-glyph med små bumps (likt en celtic kors)
+    ctx.beginPath();
+    ctx.moveTo(cx - gr, cy);
+    ctx.lineTo(cx + gr, cy);
+    ctx.moveTo(cx, cy - gr);
+    ctx.lineTo(cx, cy + gr);
+    ctx.stroke();
+    // 4 små "bud" cirklar i kant-ändarna
+    const budR = r * 0.10;
+    [[cx - gr, cy], [cx + gr, cy], [cx, cy - gr], [cx, cy + gr]].forEach(([bx, by]) => {
+      ctx.beginPath();
+      ctx.arc(bx, by, budR, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+  }
+  ctx.lineCap = 'butt';
+}
+
+// T1 Captain — naturlund. Mossbeklädd sten + sammanflätade trärötter + 6
+// runinskriptioner som matchar emissive-runorna. Lämnar center öppen.
 function drawForestFloor(ctx, size, map) {
   const cx = size / 2, cy = size / 2;
-  // Dappled sunlight — stora ljusa fläckar (gyllene varma highlights)
-  for (let i = 0; i < 12; i++) {
+  // === BAS: MOSS-STEN ===
+  // Sten-bas (mörk grå-grön) ovanpå redan-ritad bas-färg
+  for (let i = 0; i < 14; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    const r = 70 + Math.random() * 130;
+    const r = 80 + Math.random() * 120;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(255,230,140,0.32)');
-    g.addColorStop(0.5, 'rgba(200,180,80,0.16)');
+    g.addColorStop(0, 'rgba(50,60,45,0.40)');
+    g.addColorStop(0.6, 'rgba(35,45,30,0.22)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
   }
-  // Mossa-patches (mörkare grön transparent)
-  for (let i = 0; i < 22; i++) {
+  // Sten-textur: små grå-bruna fläckar (stenpartiklar)
+  for (let i = 0; i < 600; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    const r = 50 + Math.random() * 90;
+    const r = 1 + Math.random() * 2.5;
+    ctx.fillStyle = `rgba(${60 + (Math.random() * 30) | 0},${55 + (Math.random() * 30) | 0},${45 + (Math.random() * 20) | 0},0.55)`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Mossa-patches (mörkare grön, transparent — täcker sten-basen)
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 40 + Math.random() * 100;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(40,100,32,0.55)');
-    g.addColorStop(0.6, 'rgba(28,60,22,0.32)');
+    g.addColorStop(0, 'rgba(45,100,32,0.65)');
+    g.addColorStop(0.6, 'rgba(30,70,22,0.40)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -5292,164 +5618,126 @@ function drawForestFloor(ctx, size, map) {
       Math.random() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
   }
-  // === CENTRAL HERALDIC EMBLEM === Captain's wappen i mitten
-  // Outer rope-circle (rep runt emblemet)
-  ctx.strokeStyle = 'rgba(140,90,40,0.85)';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.18, 0, Math.PI * 2);
-  ctx.stroke();
-  // Inner laurel-wreath (lager-krans, två halvor av små "leaves")
-  ctx.strokeStyle = 'rgba(180,200,80,0.7)';
-  ctx.lineWidth = 2.5;
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    const lr = size * 0.16;
-    const lx = cx + Math.cos(a) * lr, ly = cy + Math.sin(a) * lr;
-    ctx.save();
-    ctx.translate(lx, ly);
-    ctx.rotate(a + Math.PI / 2);
+  // Små mossa-fluff-prickar (ljusare grön highlights)
+  for (let i = 0; i < 500; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    ctx.fillStyle = `rgba(${60 + (Math.random() * 60) | 0},${130 + (Math.random() * 60) | 0},${50 + (Math.random() * 40) | 0},0.50)`;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 12, 4, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
+    ctx.arc(x, y, 1 + Math.random() * 1.8, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // Shield-form i centrum (heraldisk Captain-shield)
-  ctx.fillStyle = 'rgba(80,40,20,0.75)';
-  ctx.strokeStyle = 'rgba(200,160,80,0.95)';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(cx - size * 0.08, cy - size * 0.08);
-  ctx.lineTo(cx + size * 0.08, cy - size * 0.08);
-  ctx.lineTo(cx + size * 0.08, cy + size * 0.02);
-  ctx.quadraticCurveTo(cx + size * 0.08, cy + size * 0.10, cx, cy + size * 0.12);
-  ctx.quadraticCurveTo(cx - size * 0.08, cy + size * 0.10, cx - size * 0.08, cy + size * 0.02);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  // Korsade svärd över shielden
-  ctx.strokeStyle = 'rgba(220,200,160,0.9)';
-  ctx.lineWidth = 5;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(cx - size * 0.06, cy - size * 0.06);
-  ctx.lineTo(cx + size * 0.06, cy + size * 0.08);
-  ctx.moveTo(cx + size * 0.06, cy - size * 0.06);
-  ctx.lineTo(cx - size * 0.06, cy + size * 0.08);
-  ctx.stroke();
-  // Svärd-pommel-prickar
-  ctx.fillStyle = 'rgba(240,220,140,1)';
-  ctx.beginPath(); ctx.arc(cx - size * 0.06, cy - size * 0.06, 4, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + size * 0.06, cy - size * 0.06, 4, 0, Math.PI * 2); ctx.fill();
-  // === RITUAL STONE CIRCLE === (mini-Stonehenge) runt emblem
+  // === SAMMANFLÄTADE TRÄRÖTTER === (komplex bezier-nätverk, mörk brun)
+  // Stora rötter (kraftiga, tjocka)
+  const drawRoot = (sx, sy, ex, ey, thickness, depth) => {
+    if (depth <= 0) return;
+    const mx = (sx + ex) / 2 + (Math.random() - 0.5) * 60;
+    const my = (sy + ey) / 2 + (Math.random() - 0.5) * 60;
+    // Yttre mörk skugga
+    ctx.strokeStyle = 'rgba(30,18,10,0.85)';
+    ctx.lineWidth = thickness + 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Inre brun
+    ctx.strokeStyle = 'rgba(70,42,22,0.95)';
+    ctx.lineWidth = thickness;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Highlight (ljusare brun-linje längs mitten)
+    ctx.strokeStyle = 'rgba(120,80,40,0.6)';
+    ctx.lineWidth = Math.max(1, thickness - 3);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Förgrening
+    if (depth > 1 && Math.random() < 0.7) {
+      const bx = mx + (Math.random() - 0.5) * 100;
+      const by = my + (Math.random() - 0.5) * 100;
+      drawRoot(mx, my, bx, by, Math.max(2, thickness - 2), depth - 1);
+    }
+  };
+  // 8 huvud-rötter som korsar varandra
   for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    const sr = size * 0.32;
-    const sx = cx + Math.cos(a) * sr, sy = cy + Math.sin(a) * sr;
-    // Sten-skugga
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    const a1 = Math.random() * Math.PI * 2;
+    const a2 = a1 + Math.PI + (Math.random() - 0.5) * Math.PI * 0.6;
+    const r1 = size * (0.10 + Math.random() * 0.25);
+    const r2 = size * (0.25 + Math.random() * 0.20);
+    drawRoot(
+      cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1,
+      cx + Math.cos(a2) * r2, cy + Math.sin(a2) * r2,
+      6 + Math.random() * 4, 4
+    );
+  }
+  // Mindre sekundära rötter
+  for (let i = 0; i < 20; i++) {
+    const sx = Math.random() * size, sy = Math.random() * size;
+    const ang = Math.random() * Math.PI * 2;
+    const len = 60 + Math.random() * 120;
+    drawRoot(sx, sy, sx + Math.cos(ang) * len, sy + Math.sin(ang) * len, 3, 3);
+  }
+  // === STORA STENPLATTOR === (synliga stenytor mellan rötterna)
+  for (let i = 0; i < 8; i++) {
+    let x = Math.random() * size, y = Math.random() * size;
+    // Avoid centre (rune-zoner)
+    if (Math.hypot(x - cx, y - cy) < size * 0.20) continue;
+    const w = 35 + Math.random() * 50, h = 28 + Math.random() * 40;
+    // Sten-plate (mörk grå med kant)
+    ctx.fillStyle = 'rgba(70,75,65,0.65)';
     ctx.beginPath();
-    ctx.ellipse(sx + 4, sy + 4, 14, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y, w, h, Math.random() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
-    // Stenen själv (mörk grå-grön granit)
-    ctx.fillStyle = 'rgba(80,90,75,0.95)';
-    ctx.beginPath();
-    ctx.ellipse(sx, sy, 14, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(40,50,40,0.8)';
+    ctx.strokeStyle = 'rgba(35,40,30,0.85)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    // Mossa på sten-toppen
-    ctx.fillStyle = 'rgba(60,110,50,0.55)';
+    // Mossa-kant (ljus grön highlight)
+    ctx.strokeStyle = 'rgba(80,140,60,0.55)';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(sx - 2, sy - 1, 8, 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // === TAKTISKA CHALK-LINES === (faded battle-formation markings)
-  ctx.strokeStyle = 'rgba(220,210,180,0.25)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([8, 6]);
-  // 4 radiella linjer från center
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a) * size * 0.22, cy + Math.sin(a) * size * 0.22);
-    ctx.lineTo(cx + Math.cos(a) * size * 0.42, cy + Math.sin(a) * size * 0.42);
+    ctx.ellipse(x, y, w * 0.95, h * 0.95, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
-  ctx.setLineDash([]);
-  // === ROOT TENDRILS === (svängande bezier mörk brun)
-  ctx.strokeStyle = 'rgba(50,30,18,0.55)';
-  ctx.lineCap = 'round';
-  for (let i = 0; i < 12; i++) {
-    ctx.lineWidth = 2 + Math.random() * 5;
-    let x = Math.random() * size, y = Math.random() * size;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    const segs = 4 + (Math.random() * 4 | 0);
-    for (let s = 0; s < segs; s++) {
-      const cpx = x + (Math.random() - 0.5) * 120;
-      const cpy = y + (Math.random() - 0.5) * 120;
-      x = cpx + (Math.random() - 0.5) * 100;
-      y = cpy + (Math.random() - 0.5) * 100;
-      ctx.quadraticCurveTo(cpx, cpy, x, y);
-    }
-    ctx.stroke();
+  // === 6 RUNINSKRIPTIONER === (matchande emissive-map)
+  const runePositions = getT1RunePositions(size);
+  for (const p of runePositions) {
+    // Stenring under runan (mörkare bakgrund så runan står ut)
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 1.3);
+    g.addColorStop(0, 'rgba(30,38,28,0.85)');
+    g.addColorStop(0.7, 'rgba(20,28,18,0.5)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(p.x - p.radius * 1.5, p.y - p.radius * 1.5, p.radius * 3, p.radius * 3);
+    // Sjäva runan (mörk etsad version på color-canvas — emissive-map gör glöd)
+    drawT1RuneCircle(ctx, p, false);
   }
-  // === FALLEN LEAVES === (varierande löv-färger, slumpvis roterade)
-  const leafColors = ['#d4a020', '#c87010', '#8a5018', '#6a4814', '#a89020', '#7a4a10'];
-  for (let i = 0; i < 100; i++) {
+  // === GLÖDANDE FIREFLIES === (subtle ljus-prickar)
+  for (let i = 0; i < 60; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    // Skip leaves som hamnar på heraldic emblem
-    const dx = x - cx, dy = y - cy;
-    if (dx * dx + dy * dy < (size * 0.22) * (size * 0.22)) continue;
-    const w = 6 + Math.random() * 10, h = 3 + Math.random() * 5;
+    const r = 1.5 + Math.random() * 2;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 5);
+    g.addColorStop(0, i % 3 === 0 ? 'rgba(180,255,140,1)' : 'rgba(255,240,160,1)');
+    g.addColorStop(1, 'rgba(150,255,120,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r * 5, y - r * 5, r * 10, r * 10);
+  }
+  // === FALLNA LÖV === (få, ströstade, för att inte överdriva)
+  const leafColors = ['#a89020', '#7a4a18', '#8a5018'];
+  for (let i = 0; i < 35; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const w = 5 + Math.random() * 8, h = 3 + Math.random() * 4;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(Math.random() * Math.PI);
-    ctx.fillStyle = leafColors[i % leafColors.length];
-    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = leafColors[i % 3];
+    ctx.globalAlpha = 0.55;
     ctx.beginPath();
     ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Mid-rib (ådra på lövet)
-    ctx.strokeStyle = 'rgba(40,30,15,0.6)';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(-w * 0.8, 0);
-    ctx.lineTo(w * 0.8, 0);
-    ctx.stroke();
     ctx.restore();
-  }
-  // === MUSHROOM RINGS === (fairy-circles på 3 platser)
-  for (let r = 0; r < 3; r++) {
-    const rx = (0.2 + Math.random() * 0.6) * size, ry = (0.2 + Math.random() * 0.6) * size;
-    const ringR = 25 + Math.random() * 20;
-    const dx2 = rx - cx, dy2 = ry - cy;
-    if (dx2 * dx2 + dy2 * dy2 < (size * 0.22) * (size * 0.22)) continue;
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      const mx = rx + Math.cos(a) * ringR, my = ry + Math.sin(a) * ringR;
-      // Svamp-hatt (röd med vita prickar)
-      ctx.fillStyle = 'rgba(180,50,40,0.85)';
-      ctx.beginPath();
-      ctx.arc(mx, my, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(220,210,200,0.9)';
-      ctx.beginPath();
-      ctx.arc(mx + 1, my - 0.5, 0.7, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  // === GLÖDANDE FIREFLIES === (magisk grön/gul ljusspår-prickar)
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    const r = 2 + Math.random() * 2;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-    g.addColorStop(0, i % 3 === 0 ? 'rgba(200,255,150,1)' : 'rgba(255,240,150,1)');
-    g.addColorStop(1, 'rgba(180,255,140,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
   }
 }
 
@@ -5999,8 +6287,7 @@ function buildBossWarsScene() {
   const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
   const r = BOSSWARS_RADIUS;
   // Detaljerad theme-specifik canvas-textur (1024×1024 för rik detalj).
-  // drawBossArenaFloor ritar bas + tier-unika mönster (mossa+rötter,
-  // pentagram+runes, hex-grid+seams, organic veins, magma cracks).
+  // drawBossArenaFloor ritar bas + tier-unika mönster.
   const floorCanvas = document.createElement('canvas');
   const TEX_SIZE = 1024;
   floorCanvas.width = floorCanvas.height = TEX_SIZE;
@@ -6013,6 +6300,19 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
+  // T1 Captain — separate emissive-map för rune-glow (svart bg, gröna runor).
+  // Lägger en mjuk grön emissiveIntensity ovanpå floor-material så runorna
+  // lyser även utan dynamisk ljuskälla.
+  let floorEmissiveTex = null;
+  if (tier === 1) {
+    const { emiCanvas } = buildT1ForestRunes(TEX_SIZE);
+    floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveTex.wrapS = floorEmissiveTex.wrapT = THREE.RepeatWrapping;
+    floorEmissiveTex.colorSpace = THREE.NoColorSpace;   // emissiveMap är inte sRGB
+    floorEmissiveTex.magFilter = THREE.LinearFilter;
+    floorEmissiveTex.minFilter = THREE.LinearMipmapLinearFilter;
+    floorEmissiveTex.anisotropy = 16;
+  }
   // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut.
   // Alla tier använder samma cirkulära platform så walkability är konsistent
   // (tidigare shape-varianter skapade gaps vid korridor-ingången → hjältarna fastnade).
@@ -6023,28 +6323,39 @@ function buildBossWarsScene() {
   baseCyl.castShadow = false;
   bossWarsSceneGroup.add(baseCyl);
   // Topp-yta = cirkel oavsett map.shape (tier-distinktion via färg/accent)
-  const topMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.88, metalness: 0.08 });
+  const topMatProps = { map: floorTex, roughness: 0.88, metalness: 0.08 };
+  if (floorEmissiveTex) {
+    // T1: rune-glow via emissive map. Grön emissive med medium intensity.
+    topMatProps.emissiveMap = floorEmissiveTex;
+    topMatProps.emissive = new THREE.Color(0x66ff88);
+    topMatProps.emissiveIntensity = 0.85;
+  }
+  const topMat = new THREE.MeshStandardMaterial(topMatProps);
   const top = new THREE.Mesh(new THREE.CircleGeometry(r - 0.4, 64), topMat);
   top.rotation.x = -Math.PI / 2;
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
   top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
-  // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
-  const accentRing = new THREE.Mesh(
-    new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
-    new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
-  );
-  accentRing.rotation.x = -Math.PI / 2;
-  accentRing.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
-  bossWarsSceneGroup.add(accentRing);
-  // Inre cirkel
-  const innerDot = new THREE.Mesh(
-    new THREE.CircleGeometry(r * 0.18, 36),
-    new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
-  );
-  innerDot.rotation.x = -Math.PI / 2;
-  innerDot.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
-  bossWarsSceneGroup.add(innerDot);
+  // T1 Captain skippar center-emblem så mittpunkten är ren (user-spec:
+  // "håll arenans mitt öppen, lämna plats för en separat bakgrundsbild").
+  if (tier !== 1) {
+    // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
+    const accentRing = new THREE.Mesh(
+      new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
+      new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+    );
+    accentRing.rotation.x = -Math.PI / 2;
+    accentRing.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
+    bossWarsSceneGroup.add(accentRing);
+    // Inre cirkel
+    const innerDot = new THREE.Mesh(
+      new THREE.CircleGeometry(r * 0.18, 36),
+      new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+    );
+    innerDot.rotation.x = -Math.PI / 2;
+    innerDot.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
+    bossWarsSceneGroup.add(innerDot);
+  }
 
   // ===== SPAWN-RUM (västra) + KORRIDOR + GATE =====
   // Spawn-golvet — mörkare ton än boss-rummet så zonen visuellt skiljer sig.
