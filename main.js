@@ -3777,12 +3777,14 @@ const BOSS_SCALE = {
   elk_head_boss:   3.7,
   undead_boss:     3.5,
   // Boss-Wars-tiers (decision 048) — större scale eftersom boss-wars
-  // är raid-mode med massiva bossar i arena.
-  bosswars_1: 1.8,
-  bosswars_2: 1.9,
-  bosswars_3: 2.0,
-  bosswars_4: 2.2,
-  bosswars_5: 2.3,
+  // är raid-mode med massiva bossar i arena. User-bumpade per boss för
+  // dramatisk skala-progression: Captain x2.5, General x2, Warlord x3,
+  // Demon Prince x3, Dragon King x2 (jmf ursprungliga 1.8/1.9/2.0/2.2/2.3).
+  bosswars_1: 4.5,   // Captain — 1.8 × 2.5
+  bosswars_2: 3.8,   // General — 1.9 × 2
+  bosswars_3: 6.0,   // Warlord — 2.0 × 3
+  bosswars_4: 6.6,   // Demon Prince — 2.2 × 3
+  bosswars_5: 4.6,   // Dragon King — 2.3 × 2
 };
 
 // Decision 048: Quaternius wave-monster per tier ersätter KayKit-skeleton.
@@ -5946,7 +5948,12 @@ function spawnBossWarsBoss(side, tier) {
     attachBossWarsAccessories(mesh, tier, scale);
   }
   // Mixamo-bossar: skippa tint/aura/accessories (PBR-textures), bara HP-bar.
-  attachHpBar(mesh, scale * 1.0);
+  // HP-bar position är CHILD av mesh så local-y skalas med mesh.scale. För
+  // Mixamo är mesh.scale BOSS_SCALE (3.8-6.6) → local-y=2.0 ger bar ~9-13m
+  // ovanför fot = strax ovanför boss-huvud. För KayKit-fallback använder vi
+  // bossDef.scale (gamla beteendet) eftersom mesh.scale där sattes manuellt.
+  const hpBarY = hasMixamoMesh ? 2.0 : scale;
+  attachHpBar(mesh, hpBarY);
   // Boss-HP-bar är alltid synlig (raid-känsla — användaren ska kunna tracka HP
   // även när bossen inte just blivit träffad).
   if (mesh.userData) mesh.userData.hpBarHero = true;
