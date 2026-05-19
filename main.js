@@ -170,6 +170,36 @@ const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
   // är portabla. Bossar drar Idle/Walking/Death/Hit_Reaction/Attack härifrån.
   mixamo_boss: [],
 };
+
+// Kenney Particle Pack (CC0, kenney.nl/assets/particle-pack) — laddas vid
+// preloadAllAssets. Bara textures vi faktiskt använder i fx-helpers nedan
+// pre-laddas; resterande 60+ filer ligger i src/assets/kenney_particles/fx
+// men loadas inte (sparar VRAM på mobil).
+const KENNEY_FX_TEXTURES = [
+  // Magic/cast bursts
+  'magic_01', 'magic_03', 'magic_05',
+  // Star bursts (skill-cast feedback)
+  'star_04', 'star_07',
+  // Sparks (hit + crit feedback)
+  'spark_03', 'spark_05', 'spark_07',
+  // Slashes (AA-hit, sword swing)
+  'slash_01', 'slash_03',
+  // Glow circles (shield burst, aura)
+  'circle_03', 'circle_05',
+  // Smoke (Cannabis Cloud, smoke trail)
+  'smoke_03', 'smoke_07',
+  // Flames (Fireball/Eldklot/firePatch)
+  'flame_05', 'fire_01',
+  // Twirl (Black Hole, Whirlwind)
+  'twirl_02', 'twirl_03',
+  // Trace (projectile trails, dash)
+  'trace_03', 'trace_05',
+  // Flare (crit highlight, ult-charge)
+  'flare_01',
+  // Light cookies (cone-flash, ground light)
+  'light_01', 'light_03',
+];
+const kenneyTex = new Map();  // name → THREE.Texture
 let assetsReady = false;
 
 // Mobil-detect används för: batched asset-load (lägre peak-memory), och för
@@ -290,7 +320,34 @@ async function preloadAllAssets() {
       updateProgress(name + ' (FAILED)');
     })
   );
-  const allJobs = [...charJobs, ...animJobs, ...envJobs];
+  // Kenney VFX-textures — CC0-paket (kenney.nl/assets/particle-pack). 80 PNGs
+  // i src/assets/kenney_particles/fx, men bara KENNEY_FX_TEXTURES laddas (~20 st)
+  // för att hålla VRAM lågt på mobil. Använder THREE.TextureLoader istället för
+  // GLTFLoader. SRGBColorSpace + linear filter ger snygg blending på sprites.
+  const texLoader = new THREE.TextureLoader();
+  const kenneyJobs = KENNEY_FX_TEXTURES.map(name => () =>
+    new Promise(resolve => {
+      texLoader.load(
+        ASSET_BASE + 'kenney_particles/fx/' + name + '.png',
+        tex => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.minFilter = THREE.LinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          tex.generateMipmaps = false;
+          kenneyTex.set(name, tex);
+          updateProgress('fx ' + name);
+          resolve();
+        },
+        undefined,
+        err => {
+          console.warn(`[asset] Failed Kenney fx ${name}:`, err);
+          updateProgress('fx ' + name + ' (FAILED)');
+          resolve();
+        }
+      );
+    })
+  );
+  const allJobs = [...charJobs, ...animJobs, ...envJobs, ...kenneyJobs];
   for (let i = 0; i < allJobs.length; i += BATCH_SIZE) {
     const batch = allJobs.slice(i, i + BATCH_SIZE);
     await Promise.all(batch.map(fn => fn()));
@@ -21449,6 +21506,27 @@ function checkIncomeTickNotifications() {
 const combatFx = [];
 
 function spawnSlashFx(x, z, color = 0xffd060) {
+  // Kenney slash-textur ger arc-böjd "sword swing"-form istället för rak rektangel
+  if (kenneyTex.size > 0) {
+    const tex = kenneyTex.get(Math.random() < 0.5 ? 'slash_01' : 'slash_03');
+    if (tex) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex, color, transparent: true, opacity: 0.95,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+        rotation: Math.random() * Math.PI * 2,
+      });
+      const sp = new THREE.Sprite(mat);
+      sp.scale.set(1.4, 1.4, 1.4);
+      sp.position.set(x, 1.0, z);
+      scene.add(sp);
+      combatFx.push({
+        mesh: sp, life: 0.22, maxLife: 0.22, kind: 'kenneyFx',
+        scaleStart: 1.4, scaleEnd: 2.2, rotateSpeed: 0,
+        vy: 0, startOpacity: 0.95, isGround: false,
+      });
+      return;
+    }
+  }
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.18), mat);
   plane.position.set(x, 1.0, z);
@@ -21687,6 +21765,25 @@ function checkAllCcStates() {
 }
 
 function spawnHitSparkFx(x, y, z, color = 0xffaa44) {
+  // Kenney spark-textur ger mycket mer detaljerad träff-feedback än procedurell sphere
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'spark_07', x, y, z, color,
+      scale: 0.45, scaleEnd: 0.95,
+      life: 0.22, rotateSpeed: 8,
+      additive: true,
+    });
+    // Sekundär liten gnist-burst med variation
+    spawnKenneyFx({
+      texName: 'spark_03', x, y, z, color,
+      scale: 0.6, scaleEnd: 1.4,
+      life: 0.18, rotateSpeed: -5,
+      additive: true,
+      opacity: 0.7,
+    });
+    return;
+  }
+  // Fallback (om textures ej laddade än)
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
   const burst = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), mat);
   burst.position.set(x, y, z);
@@ -21707,12 +21804,22 @@ function spawnHealFx(x, z) {
 }
 
 function spawnShieldBurstFx(x, z, color = 0x66c8ff) {
+  // Behåll den befintliga ringen för silhouette
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.30, 0.45, 28), mat);
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(x, 0.08, z);
   scene.add(ring);
   combatFx.push({ mesh: ring, life: 0.55, maxLife: 0.55, kind: 'shieldBurst' });
+  // Lägg på Kenney glow-circle ovanpå för "wow"-effekt
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'circle_05', x, y: 0.1, z, color,
+      scale: 1.2, scaleEnd: 3.5,
+      life: 0.55, additive: true,
+      ground: true, opacity: 0.85,
+    });
+  }
 }
 
 // Klient-visual för MP: när host's broadcast indikerar att hjälte just AAt
@@ -21809,6 +21916,72 @@ function spawnSkillCastFx(x, z, color, radius = 0.6) {
   ring.position.set(x, 0.06, z);
   scene.add(ring);
   combatFx.push({ mesh: ring, life: 0.45, maxLife: 0.45, kind: 'castRing' });
+  // Lägg på Kenney magic-burst ovanpå för "häftig" effekt
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'star_07', x, y: 0.6, z, color,
+      scale: radius * 2.6, scaleEnd: radius * 4.2,
+      life: 0.45, rotateSpeed: 4,
+      additive: true,
+    });
+    spawnKenneyFx({
+      texName: 'magic_05', x, y: 0.3, z, color,
+      scale: radius * 1.6, scaleEnd: radius * 2.4,
+      life: 0.6, rotateSpeed: -2,
+      ground: true,
+      additive: true,
+    });
+  }
+}
+
+// Spawnar en Kenney-textur som tids-begränsad sprite med fade + scale.
+// Centralt FX-system: en helper, ingen duplicering per skill. Faller
+// tyst tillbaka om texturen inte är laddad (defensiv mot preload-race).
+// opts: { texName, x, y, z, color, scale, scaleEnd, life, rotateSpeed,
+//         vy, ground, additive, opacity }
+function spawnKenneyFx(opts) {
+  const tex = kenneyTex.get(opts.texName);
+  if (!tex) return null;
+  const color = opts.color != null ? opts.color : 0xffffff;
+  const opacity = opts.opacity != null ? opts.opacity : 1.0;
+  const blending = opts.additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+  // Sprite vs ground-plane: ground gör meshen till horisontell plan på marken.
+  // VIKTIGT: SpriteMaterial fungerar BARA på THREE.Sprite (separat shader).
+  // För ground-plane MÅSTE vi använda MeshBasicMaterial (annars osynlig render).
+  let mesh;
+  if (opts.ground) {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, color, transparent: true, opacity,
+      depthWrite: false, blending,
+      side: THREE.DoubleSide,
+    });
+    mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+  } else {
+    const mat = new THREE.SpriteMaterial({
+      map: tex, color, transparent: true, opacity,
+      depthWrite: false, blending,
+    });
+    mesh = new THREE.Sprite(mat);
+  }
+  const scale = opts.scale || 1.0;
+  mesh.scale.set(scale, scale, scale);
+  mesh.position.set(opts.x || 0, opts.y != null ? opts.y : 0.5, opts.z || 0);
+  scene.add(mesh);
+  combatFx.push({
+    mesh,
+    life: opts.life || 0.5,
+    maxLife: opts.life || 0.5,
+    kind: 'kenneyFx',
+    scaleStart: scale,
+    scaleEnd: opts.scaleEnd != null ? opts.scaleEnd : scale * 1.5,
+    rotateSpeed: opts.rotateSpeed || 0,
+    vy: opts.vy || 0,
+    startOpacity: opts.opacity != null ? opts.opacity : 1.0,
+    isGround: !!opts.ground,
+  });
+  return mesh;
 }
 
 // Visuella effekter för Aragurn-skills på klient (line wars MP).
@@ -21867,6 +22040,12 @@ function tickCombatFx(dt) {
     const e = combatFx[i];
     e.life -= dt;
     if (e.life <= 0) {
+      // Dispose Kenney-fx material + geometry (textur är shared så NOT disposad).
+      // Andra fx-typer har enkla shared-material — GC sköter det.
+      if (e.kind === 'kenneyFx' && e.mesh) {
+        if (e.mesh.material) e.mesh.material.dispose();
+        if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
+      }
       scene.remove(e.mesh);
       combatFx.splice(i, 1);
       continue;
@@ -21894,6 +22073,16 @@ function tickCombatFx(dt) {
       e.mesh.position.x += (e.vx || 0) * dt;
       e.mesh.position.z += (e.vz || 0) * dt;
       if (e.mesh.material) e.mesh.material.opacity = 0.95 * (1 - t);
+    } else if (e.kind === 'kenneyFx') {
+      // Kenney sprite-fx: lerp scale start→end + fade-out + rotate (Sprite endast)
+      const s = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
+      e.mesh.scale.set(s, s, s);
+      if (e.rotateSpeed) {
+        if (e.isGround) e.mesh.rotation.z += e.rotateSpeed * dt;
+        else e.mesh.material.rotation = (e.mesh.material.rotation || 0) + e.rotateSpeed * dt;
+      }
+      if (e.vy) e.mesh.position.y += e.vy * dt;
+      if (e.mesh.material) e.mesh.material.opacity = e.startOpacity * (1 - t);
     } else if (e.kind === 'kostefoSliderExplosion') {
       // Eld-explosion vid slider-slut: växer + fadar ut, light intensity dimmer.
       // Spara initial-opacity vid första tick så fade-out är linjär mot 0.
