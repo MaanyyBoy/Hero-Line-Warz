@@ -4595,6 +4595,57 @@ const SPAWN_ROOM_CZ = BOSSWARS_CZ;                          // 90
 // Gate-thickness — used for visual mesh + walkability "wall" when stängd
 const GATE_THICKNESS = 0.5;
 // Map-config per tier — tema, färg, fack-eld-färg, ambient-ljus, decoration-props.
+// Per-tier ATMOSPHERIC theme-config för boss-arenor. Styr stenkolonn-färg,
+// banderoll-färg, accent-typ (waterfall/chain/tech/crystal/lava), pillar-style.
+// Inspirerat av raid-arena concept-art (chunky stone columns + banners + torches).
+const BOSSWARS_ARCH_THEME = {
+  1: {  // Captain — Forest temple
+    pillarColor: 0x4a4030, pillarMossy: true,
+    bannerColor: 0xc0a050, bannerEdge: 0x6a4818,
+    bannerSymbol: '⚔',                        // svärd-symbol
+    flameColor: 0xffaa44, flameSize: 1.0,
+    accent: 'waterfall',                       // T1: vattenfall + vines
+    accentColor: 0x88ccdd,
+    capRingColor: 0x4a8030,                    // grön moss-cap
+  },
+  2: {  // General — Witch's Sanctum
+    pillarColor: 0x3a2848, pillarMossy: false,
+    bannerColor: 0x4a2068, bannerEdge: 0x220a30,
+    bannerSymbol: '✦',                         // pentagram-stjärna
+    flameColor: 0xaa44ff, flameSize: 1.1,
+    accent: 'chains',                          // T2: hängande kedjor
+    accentColor: 0x666660,
+    capRingColor: 0xaa66ff,                    // lila glow-cap
+  },
+  3: {  // Warlord — Bio Lab (tech bestämd kolonn-stil)
+    pillarColor: 0x2a3838, pillarMossy: false,
+    bannerColor: 0x2a5050, bannerEdge: 0x0a1820,
+    bannerSymbol: '▲',                         // triangulär tech-symbol
+    flameColor: 0x44ffcc, flameSize: 0.9,
+    accent: 'techPanels',                      // T3: glödande tech-paneler
+    accentColor: 0x66ffcc,
+    capRingColor: 0x44ffcc,                    // cyan glow-cap
+  },
+  4: {  // Demon Prince — Hive Chamber
+    pillarColor: 0x4a1828, pillarMossy: false,
+    bannerColor: 0x802040, bannerEdge: 0x300810,
+    bannerSymbol: '✷',                         // alien-stjärna
+    flameColor: 0xff44aa, flameSize: 1.0,
+    accent: 'crystals',                        // T4: organiska kristaller
+    accentColor: 0xff4488,
+    capRingColor: 0xff4488,                    // rosa-röd glow-cap
+  },
+  5: {  // Dragon King — Volcano Crater
+    pillarColor: 0x281814, pillarMossy: false,
+    bannerColor: 0x8a3010, bannerEdge: 0x300808,
+    bannerSymbol: '☼',                         // sol/eld-symbol
+    flameColor: 0xff5010, flameSize: 1.3,
+    accent: 'lavaTrough',                      // T5: lava-strömmar mellan kolonner
+    accentColor: 0xff5010,
+    capRingColor: 0xff5010,                    // orange glow-cap
+  },
+};
+
 // Props x/z är relativa BOSSWARS_CX/CZ. Walk-bounds är cirkel r=BOSSWARS_RADIUS
 // — props placeras > 24m från center så de inte krockar med boss-fight.
 const BOSSWARS_MAPS = {
@@ -4734,6 +4785,455 @@ scene.add(bossWarsSceneGroup);
 // theme-specifika detaljer istället för bara en färg-tonad radial-gradient.
 // Anropas från buildBossWarsScene. Ritar in i 1024×1024 canvas-context.
 // ============================================================
+// ============================================================
+// Atmospheric boss arena ARCHITECTURE — kolonner + facklor + banderoller
+// + theme-accents. Bygger en raid-arena-känsla likt concept-art-inspiration
+// (chunky stone perimeter + hanging banners + flickering torches).
+// ============================================================
+
+// 1 stenkolonn — bas-block + skaft + kapitäl + glow-ring. Tier-tinted.
+// stoneMat skickas in delat (1 material för alla 8 kolonner = 1 shader-compile
+// istället för 8). Skapas en gång i buildBossArenaArchitecture.
+function makeArenaPillar(theme, stoneMat) {
+  const grp = new THREE.Group();
+  // Bas-block (bredare kvadrat)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.6, 2.0), stoneMat);
+  base.position.y = 0.30;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  grp.add(base);
+  // Sekundär bas (mindre, ovanpå)
+  const base2 = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 1.6), stoneMat);
+  base2.position.y = 0.75;
+  base2.castShadow = true;
+  grp.add(base2);
+  // Skaft (cylinder)
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 5.5, 16), stoneMat);
+  shaft.position.y = 3.65;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  grp.add(shaft);
+  // Decorative bands (3 horisontella ringar på skaft)
+  for (let i = 0; i < 3; i++) {
+    const band = new THREE.Mesh(
+      new THREE.TorusGeometry(0.62, 0.05, 6, 24),
+      new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.8 })
+    );
+    band.position.y = 1.5 + i * 1.8;
+    band.rotation.x = Math.PI / 2;
+    grp.add(band);
+  }
+  // Kapitäl (block-stack på toppen)
+  const cap1 = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 1.6), stoneMat);
+  cap1.position.y = 6.55;
+  cap1.castShadow = true;
+  grp.add(cap1);
+  const cap2 = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.4, 1.9), stoneMat);
+  cap2.position.y = 6.90;
+  cap2.castShadow = true;
+  grp.add(cap2);
+  // Tier-färgad glow-ring under kapitäl (ger arenan distinkt nyans)
+  const glow = new THREE.Mesh(
+    new THREE.TorusGeometry(0.95, 0.10, 8, 24),
+    new THREE.MeshBasicMaterial({ color: theme.capRingColor, transparent: true, opacity: 0.85 })
+  );
+  glow.position.y = 6.55;
+  glow.rotation.x = Math.PI / 2;
+  grp.add(glow);
+  // Moss-patches på basen (för forest-theme)
+  if (theme.pillarMossy) {
+    for (let i = 0; i < 4; i++) {
+      const moss = new THREE.Mesh(
+        new THREE.SphereGeometry(0.25 + Math.random() * 0.15, 6, 4),
+        new THREE.MeshStandardMaterial({ color: 0x3a6028, roughness: 0.9 })
+      );
+      const a = Math.random() * Math.PI * 2;
+      moss.position.set(Math.cos(a) * 1.0, 0.65 + Math.random() * 0.2, Math.sin(a) * 1.0);
+      moss.scale.y = 0.4;
+      grp.add(moss);
+    }
+  }
+  return grp;
+}
+
+// Fackla med Kenney-flame ovanpå en kolonn. Animerad via tickBossArenaFlames.
+function makePillarTorch(theme) {
+  const grp = new THREE.Group();
+  // Skål för facklan
+  const bowl = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 0.25, 0.25, 12),
+    new THREE.MeshStandardMaterial({ color: 0x1a1008, roughness: 0.8, metalness: 0.4 })
+  );
+  bowl.position.y = 0.12;
+  grp.add(bowl);
+  // Flame sprite (Kenney flame_05) med additive blending för glow
+  const tex = kenneyTex.get('flame_05');
+  if (tex) {
+    const mat = new THREE.SpriteMaterial({
+      map: tex, color: theme.flameColor, transparent: true, opacity: 0.95,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const flame = new THREE.Sprite(mat);
+    const fs = theme.flameSize || 1.0;
+    flame.scale.set(1.2 * fs, 1.6 * fs, 1.2 * fs);
+    flame.position.y = 0.95 * fs;
+    flame.userData.isPillarFlame = true;
+    flame.userData.baseScale = fs;
+    flame.userData.baseY = 0.95 * fs;
+    grp.add(flame);
+    // Sekundär bright-glow sprite under (ger djup till elden)
+    const tex2 = kenneyTex.get('fire_01');
+    if (tex2) {
+      const mat2 = new THREE.SpriteMaterial({
+        map: tex2, color: theme.flameColor, transparent: true, opacity: 0.7,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const ember = new THREE.Sprite(mat2);
+      ember.scale.set(0.8 * fs, 0.6 * fs, 1);
+      ember.position.y = 0.25 * fs;
+      grp.add(ember);
+    }
+  }
+  return grp;
+}
+
+// Hängande banderoll mellan två punkter — visuellt drape med stoff-färg + symbol.
+function makeArenaBanner(theme) {
+  const grp = new THREE.Group();
+  // Stoffet (cloth-plane)
+  const cloth = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 2.2),
+    new THREE.MeshStandardMaterial({
+      color: theme.bannerColor, roughness: 0.85,
+      side: THREE.DoubleSide, emissive: theme.bannerColor, emissiveIntensity: 0.08,
+    })
+  );
+  cloth.position.y = -1.1;
+  grp.add(cloth);
+  // Mörk kant ovanpå (banner border)
+  const edge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.95, 0.15, 0.05),
+    new THREE.MeshStandardMaterial({ color: theme.bannerEdge, roughness: 0.7 })
+  );
+  edge.position.y = 0;
+  grp.add(edge);
+  // Symbol via canvas-texture (gyllene mitten)
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const cx = c.getContext('2d');
+  cx.fillStyle = 'rgba(0,0,0,0)';
+  cx.fillRect(0, 0, 128, 128);
+  cx.fillStyle = '#e4c870';
+  cx.strokeStyle = '#3a2810';
+  cx.lineWidth = 4;
+  cx.font = '700 80px serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText(theme.bannerSymbol || '✦', 64, 70);
+  cx.strokeText(theme.bannerSymbol || '✦', 64, 70);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const symbolMat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const symbol = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55), symbolMat);
+  symbol.position.set(0, -1.0, 0.01);
+  grp.add(symbol);
+  // Pole-rod ovanför banner (smal cylinder horisontellt)
+  const rod = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6),
+    new THREE.MeshStandardMaterial({ color: 0x2a1a0a, roughness: 0.7 })
+  );
+  rod.rotation.z = Math.PI / 2;
+  rod.position.y = 0.08;
+  grp.add(rod);
+  return grp;
+}
+
+// Hängande kedja mellan två punkter (för T2 Witch's Sanctum)
+function makeArenaChain(fromX, fromY, fromZ, toX, toY, toZ) {
+  const grp = new THREE.Group();
+  const segments = 8;
+  const linkMat = new THREE.MeshStandardMaterial({
+    color: 0x4a4a4a, metalness: 0.85, roughness: 0.45,
+  });
+  for (let i = 0; i < segments; i++) {
+    const t = (i + 0.5) / segments;
+    // Catenary curve (sag down) — y dips at midpoint
+    const dipY = Math.sin(t * Math.PI) * 0.8;
+    const x = fromX + (toX - fromX) * t;
+    const y = fromY + (toY - fromY) * t - dipY;
+    const z = fromZ + (toZ - fromZ) * t;
+    const link = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.025, 4, 8), linkMat);
+    link.position.set(x, y, z);
+    link.rotation.x = Math.atan2(toY - fromY, Math.hypot(toX - fromX, toZ - fromZ));
+    link.rotation.z = (i % 2) * Math.PI / 2;   // alternerande orientation = chain-link-feel
+    link.castShadow = true;
+    grp.add(link);
+  }
+  return grp;
+}
+
+// Vattenfall (för T1 Forest) — animerad textur-stripe från höjd ner till mark
+function makeArenaWaterfall(theme) {
+  const grp = new THREE.Group();
+  const tex = kenneyTex.get('trace_03');   // streckad textur som ser ut som ström-strå
+  const waterMat = new THREE.MeshBasicMaterial({
+    color: 0xaaddff, transparent: true, opacity: 0.55,
+    depthWrite: false, side: THREE.DoubleSide,
+    map: tex || null,
+  });
+  // 3 lager för djup
+  for (let i = 0; i < 3; i++) {
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(1.6 - i * 0.3, 5.5), waterMat.clone());
+    plane.material.opacity = 0.55 - i * 0.13;
+    plane.position.set((i - 1) * 0.15, 2.5, 0);
+    grp.add(plane);
+  }
+  // Spray-base (cirkel på marken där vattnet träffar)
+  const spray = new THREE.Mesh(
+    new THREE.CircleGeometry(1.2, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0xccffff, transparent: true, opacity: 0.55, depthWrite: false,
+    })
+  );
+  spray.rotation.x = -Math.PI / 2;
+  spray.position.y = 0.05;
+  grp.add(spray);
+  // Glow-particles (3 små bright dots ovanför spray-zonen)
+  for (let i = 0; i < 4; i++) {
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08, 6, 4),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 })
+    );
+    dot.position.set((Math.random() - 0.5) * 1.6, 0.3 + Math.random() * 0.4, (Math.random() - 0.5) * 1.6);
+    grp.add(dot);
+  }
+  return grp;
+}
+
+// Lava-trough mellan kolonner (för T5 Dragon King)
+function makeArenaLavaTrough(theme) {
+  const grp = new THREE.Group();
+  // Mörk sten-kanal (rectangular box)
+  const trough = new THREE.Mesh(
+    new THREE.BoxGeometry(4.5, 0.3, 0.7),
+    new THREE.MeshStandardMaterial({ color: 0x150805, roughness: 0.95 })
+  );
+  trough.position.y = 0.15;
+  trough.castShadow = false;
+  trough.receiveShadow = true;
+  grp.add(trough);
+  // Glödande lava inuti (emissive plane)
+  const lava = new THREE.Mesh(
+    new THREE.PlaneGeometry(4.0, 0.45),
+    new THREE.MeshStandardMaterial({
+      color: 0xff4010, emissive: 0xff5010, emissiveIntensity: 1.2,
+      roughness: 0.4, side: THREE.DoubleSide,
+    })
+  );
+  lava.rotation.x = -Math.PI / 2;
+  lava.position.y = 0.32;
+  grp.add(lava);
+  // Bright kärna i mitten
+  const core = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.6, 0.2),
+    new THREE.MeshBasicMaterial({
+      color: 0xffbb44, transparent: true, opacity: 0.85,
+    })
+  );
+  core.rotation.x = -Math.PI / 2;
+  core.position.y = 0.33;
+  grp.add(core);
+  return grp;
+}
+
+// Tech-panel (för T3 Bio Lab) — fäst på kolonn-sidan
+function makeArenaTechPanel(theme) {
+  const grp = new THREE.Group();
+  // Mörk panel
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.0, 1.8),
+    new THREE.MeshStandardMaterial({
+      color: 0x0a1820, roughness: 0.4, metalness: 0.6,
+    })
+  );
+  grp.add(panel);
+  // Glow-seam (cyan kant)
+  const seam = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.05, 1.85),
+    new THREE.MeshBasicMaterial({
+      color: theme.accentColor, transparent: true, opacity: 0.45, depthWrite: false,
+    })
+  );
+  seam.position.z = -0.005;
+  grp.add(seam);
+  // LED-prickar (4 små glödande dots)
+  for (let i = 0; i < 4; i++) {
+    const led = new THREE.Mesh(
+      new THREE.CircleGeometry(0.04, 8),
+      new THREE.MeshBasicMaterial({ color: theme.accentColor })
+    );
+    led.position.set(-0.35 + i * 0.25, -0.7, 0.01);
+    grp.add(led);
+  }
+  // Bright glow line genom mitten
+  const line = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.85, 0.04),
+    new THREE.MeshBasicMaterial({ color: theme.accentColor })
+  );
+  line.position.set(0, 0.2, 0.01);
+  grp.add(line);
+  return grp;
+}
+
+// Kristall-spike (för T4 Hive Chamber) — pekande uppåt vid kolonn-bas
+function makeArenaCrystal(theme) {
+  const grp = new THREE.Group();
+  // Stor center-kristall (octahedron)
+  const big = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.6, 0),
+    new THREE.MeshStandardMaterial({
+      color: theme.accentColor, emissive: theme.accentColor, emissiveIntensity: 0.85,
+      roughness: 0.15, metalness: 0.3, transparent: true, opacity: 0.85,
+    })
+  );
+  big.position.y = 0.7;
+  big.scale.y = 2.2;
+  // Skip shadow-cast på transparenta crystal-meshes (inkluderas i shadow-pass
+  // utan synlig skugga = onödig render-cost för 32 meshes per arena vid T4).
+  big.castShadow = false;
+  grp.add(big);
+  // 3 mindre kristaller runt
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const small = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.25, 0),
+      new THREE.MeshStandardMaterial({
+        color: theme.accentColor, emissive: theme.accentColor, emissiveIntensity: 0.95,
+        roughness: 0.15, metalness: 0.3, transparent: true, opacity: 0.85,
+      })
+    );
+    small.position.set(Math.cos(a) * 0.5, 0.35, Math.sin(a) * 0.5);
+    small.scale.y = 1.8;
+    small.rotation.z = (Math.random() - 0.5) * 0.4;
+    grp.add(small);
+  }
+  return grp;
+}
+
+// Bygger hela arena-arkitekturen runt boss-platformen.
+// 8 kolonner + facklor + banderoller + theme-accents.
+function buildBossArenaArchitecture(tier, map) {
+  const theme = BOSSWARS_ARCH_THEME[tier] || BOSSWARS_ARCH_THEME[1];
+  const r = BOSSWARS_RADIUS + 2.5;            // strax utanför platform-edge
+  const pillarCount = 8;
+  const pillars = [];
+  // Delat material för alla pillars = 1 shader-compile istället för 8
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: theme.pillarColor, roughness: 0.92, metalness: 0.06,
+  });
+  // Cache flame-sprites här så tickBossArenaFlames slipper traverse hela scenen
+  _bossArenaFlameSprites.length = 0;
+  for (let i = 0; i < pillarCount; i++) {
+    const a = (i / pillarCount) * Math.PI * 2;
+    const px = BOSSWARS_CX + Math.cos(a) * r;
+    const pz = BOSSWARS_CZ + Math.sin(a) * r;
+    const pillar = makeArenaPillar(theme, stoneMat);
+    pillar.position.set(px, 0, pz);
+    pillar.rotation.y = a + Math.PI;          // face inåt mot arena-center
+    bossWarsSceneGroup.add(pillar);
+    pillars.push({ x: px, y: 7.0, z: pz });   // toppen av kolonnen
+    // Fackla ovanpå varje kolonn
+    const torch = makePillarTorch(theme);
+    torch.position.set(px, 7.0, pz);
+    bossWarsSceneGroup.add(torch);
+    // Hitta flame-sprite för cache (tickas senare)
+    torch.traverse(o => {
+      if (o.userData && o.userData.isPillarFlame) _bossArenaFlameSprites.push(o);
+    });
+  }
+  // Banderoller mellan varannan kolonn (4 st)
+  for (let i = 0; i < pillarCount; i += 2) {
+    const next = (i + 1) % pillarCount;
+    const p1 = pillars[i], p2 = pillars[next];
+    const banner = makeArenaBanner(theme);
+    // Mittpunkt mellan kolonnerna, hängande
+    banner.position.set((p1.x + p2.x) / 2, 5.5, (p1.z + p2.z) / 2);
+    // Rotera så banner är "facing" mot center
+    banner.rotation.y = Math.atan2(BOSSWARS_CX - banner.position.x, BOSSWARS_CZ - banner.position.z);
+    bossWarsSceneGroup.add(banner);
+  }
+  // Theme-specifika accents per tier
+  if (theme.accent === 'chains') {
+    // Kedjor mellan alla 8 kolonn-toppar (octagonal chain-net)
+    for (let i = 0; i < pillarCount; i++) {
+      const p1 = pillars[i], p2 = pillars[(i + 1) % pillarCount];
+      const chain = makeArenaChain(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      bossWarsSceneGroup.add(chain);
+    }
+  } else if (theme.accent === 'waterfall') {
+    // 2 vattenfall (NW + SE) lite utanför kolonn-radien
+    for (const ang of [Math.PI * 0.75, Math.PI * 1.75]) {
+      const wfx = BOSSWARS_CX + Math.cos(ang) * (r + 4);
+      const wfz = BOSSWARS_CZ + Math.sin(ang) * (r + 4);
+      const wf = makeArenaWaterfall(theme);
+      wf.position.set(wfx, 0, wfz);
+      wf.rotation.y = ang + Math.PI;
+      bossWarsSceneGroup.add(wf);
+    }
+  } else if (theme.accent === 'techPanels') {
+    // Tech-paneler på varannan kolonn (sidan-facing inåt)
+    for (let i = 0; i < pillarCount; i += 2) {
+      const a = (i / pillarCount) * Math.PI * 2;
+      const px = BOSSWARS_CX + Math.cos(a) * (r - 0.7);   // strax innanför kolonn
+      const pz = BOSSWARS_CZ + Math.sin(a) * (r - 0.7);
+      const panel = makeArenaTechPanel(theme);
+      panel.position.set(px, 3.5, pz);
+      panel.rotation.y = a + Math.PI;
+      bossWarsSceneGroup.add(panel);
+    }
+  } else if (theme.accent === 'crystals') {
+    // Kristall-cluster vid varje kolonn-bas
+    for (let i = 0; i < pillarCount; i++) {
+      const a = (i / pillarCount) * Math.PI * 2 + Math.PI / pillarCount;
+      const cx = BOSSWARS_CX + Math.cos(a) * (r - 1.5);
+      const cz = BOSSWARS_CZ + Math.sin(a) * (r - 1.5);
+      const crystal = makeArenaCrystal(theme);
+      crystal.position.set(cx, 0, cz);
+      crystal.rotation.y = Math.random() * Math.PI * 2;
+      bossWarsSceneGroup.add(crystal);
+    }
+  } else if (theme.accent === 'lavaTrough') {
+    // Lava-tråg mellan varannan kolonn-par (4 totalt)
+    for (let i = 0; i < pillarCount; i += 2) {
+      const next = (i + 1) % pillarCount;
+      const p1 = pillars[i], p2 = pillars[next];
+      const mx = (p1.x + p2.x) / 2, mz = (p1.z + p2.z) / 2;
+      const trough = makeArenaLavaTrough(theme);
+      trough.position.set(mx, 0, mz);
+      trough.rotation.y = Math.atan2(p2.x - p1.x, p2.z - p1.z);
+      bossWarsSceneGroup.add(trough);
+    }
+  }
+}
+
+// Cache av flame-sprites för snabb tick (fylls i buildBossArenaArchitecture,
+// rensas i clearBossWarsScene). Undviker traverse av 200+ noder per frame.
+const _bossArenaFlameSprites = [];
+
+// Tick: animera fackla-flames med flicker (skala + opacity).
+function tickBossArenaFlames(dt) {
+  if (!bossWarsSceneGroup.visible || _bossArenaFlameSprites.length === 0) return;
+  const t = performance.now() / 1000;
+  for (const o of _bossArenaFlameSprites) {
+    const baseScale = o.userData.baseScale || 1.0;
+    const flicker = 0.9 + 0.15 * Math.sin(t * 8 + o.position.x);
+    o.scale.set(1.2 * baseScale * flicker, 1.6 * baseScale * flicker, 1);
+    if (o.material) o.material.opacity = 0.85 + 0.10 * Math.sin(t * 12 + o.position.z);
+  }
+}
+
 function drawBossArenaFloor(ctx, size, tier, map) {
   // Bas-färg
   const baseHex = '#' + map.color.toString(16).padStart(6, '0');
@@ -5455,6 +5955,8 @@ function clearBossWarsScene() {
   // Rensa gate-referenser så de inte pekar på disposed meshes vid rebuild
   bossWarsSceneGroup.userData.gate = null;
   bossWarsSceneGroup.userData.gateGlow = null;
+  // Rensa flame-sprite-cache (fylls igen vid nästa buildBossArenaArchitecture)
+  if (_bossArenaFlameSprites) _bossArenaFlameSprites.length = 0;
 }
 
 // Bygger en shape-yta baserat på map.shape
@@ -5631,6 +6133,9 @@ function buildBossWarsScene() {
   buildBossCorridorTorches(map);
   buildBossArenaProps(map);
   buildBossArenaAmbient(map);
+  // Atmospheric arena-arkitektur: 8 stenkolonner runt arena med facklor +
+  // banderoller + theme-specifika accents (waterfall/chain/tech/crystal/lava).
+  buildBossArenaArchitecture(tier, map);
 }
 
 // Decision 049: tier-färgad fackla (sten-bracket + flame-cone, emissive-only).
@@ -23745,6 +24250,7 @@ function tick() {
   tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
   tickAragurnVisuals(dt);
+  tickBossArenaFlames(dt);
   // Kostefo state-meshes (companion + cloud + ult-joints) — körs i alla lägen
   // (även Line Wars MP där simulateAll inte körs). Synkas mot side-state från snap.
   updateKostefoMeshes(dt);
