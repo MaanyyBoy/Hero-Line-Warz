@@ -6082,10 +6082,18 @@ function buildArenaScene() {
     arenaSceneGroup.add(w);
   }
   // Cover-props (slumpsådd från ARENA_CFG.props)
+  // Strippa inre PointLights från props (firePatch/lavaPool/burnedHouse har var
+  // sin PointLight). Ashlands-mappen har 10 sådana lights → 14 totalt med
+  // braziers → iOS Safari WebGL shader-recompile-storm → tab crash ("a problem
+  // repeatedly occurred"). Samma fix som boss-arenor (decision 049). Emissive
+  // material på mesh ger fortfarande visuell glöd; bara dynamic light tas bort.
   for (const p of ARENA_CFG.props) {
     const m = makeArenaProp(p.type);
     m.position.set(p.x, 0, ARENA_Z_OFFSET + p.z);
     m.rotation.y = p.rot;
+    const _strip = [];
+    m.traverse(o => { if (o.isPointLight) _strip.push(o); });
+    for (const l of _strip) if (l.parent) l.parent.remove(l);
     arenaSceneGroup.add(m);
   }
   // Orb
