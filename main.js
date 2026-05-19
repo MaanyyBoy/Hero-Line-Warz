@@ -6868,6 +6868,8 @@ function createSide(idx) {
     gimluDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
+    // Lvl-5 max-skill bonus-buffs
+    windPuffMsRem: 0,
     shield: 0,
     // Ult-energy + per-ult timers (sätts av hostCast*Ult)
     ultEnergy: 0,
@@ -8108,11 +8110,16 @@ function updateMonsters(side, dt) {
     if (m.isBossWarsBoss && heroVisible) m.chasing = true;
 
     m.atkCd = Math.max(0, m.atkCd - dt);
+    // Lvl-5 attack-speed-slow tick (Gandulf Frost Nova lvl5)
+    if ((m.aSlowTime || 0) > 0) {
+      m.aSlowTime -= dt;
+      if (m.aSlowTime <= 0) m.aSlowMul = 1;
+    }
     const mAtkRange = m.attackRange || 1.2;
     const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroVisible && distHero < mAtkRange && m.atkCd <= 0) {
       damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
-      m.atkCd = mAtkInterval;
+      m.atkCd = mAtkInterval / (m.aSlowMul || 1);
       spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
       // Trigga attack-animation på boss-mesh
       if (m.mesh) m.mesh.userData.attackTrigger = true;
@@ -8139,7 +8146,7 @@ function updateMonsters(side, dt) {
       if (nearest) {
         if (m.atkCd <= 0) {
           nearest.hp -= CREEP_VS_CREEP_DAMAGE;
-          m.atkCd = CREEP_VS_CREEP_INTERVAL;
+          m.atkCd = CREEP_VS_CREEP_INTERVAL / (m.aSlowMul || 1);
           if (nearest.hp <= 0) {
             const idx2 = opp.playerCreeps.indexOf(nearest);
             if (idx2 >= 0) { removeEntityMesh(nearest.mesh); opp.playerCreeps.splice(idx2, 1); side.gold += minionBounty(nearest); gainXp(side, minionXp(nearest)); }
@@ -8247,6 +8254,11 @@ function updatePlayerCreeps(side, dt) {
     }
 
     c.atkCd = Math.max(0, c.atkCd - dt);
+    // Lvl-5 attack-speed-slow tick (Gandulf Frost Nova lvl5)
+    if ((c.aSlowTime || 0) > 0) {
+      c.aSlowTime -= dt;
+      if (c.aSlowTime <= 0) c.aSlowMul = 1;
+    }
 
     // Hitta närmaste fiende inom c.range — prio: hjälten om i räckvidd, annars närmsta monster
     let target = null;
@@ -8289,7 +8301,7 @@ function updatePlayerCreeps(side, dt) {
           // arrow / magic — spawna projektil
           hostSpawnCreepProjectile(side, c, target, targetType);
         }
-        c.atkCd = c.interval;
+        c.atkCd = c.interval / (c.aSlowMul || 1);
       }
       continue;  // stå still och slåss
     }
@@ -9162,9 +9174,20 @@ const WIND_PUFF_PUSH_DIST = 3;
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;
 
+// Lvl 5 max-skill bonus-effekter (mirror av server-engine)
+const GANDULF_LVL5_WP_MS_DURATION = 1.5;
+const GANDULF_LVL5_WP_MS_MUL = 1.30;
+const GANDULF_LVL5_FN_AS_DURATION = 3.0;
+const GANDULF_LVL5_FN_AS_MUL = 0.50;
+const GANDULF_LVL5_BH_STUN_DURATION = 1.0;
+
 function hostCastWindPuff(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
+  // Lvl 5 bonus: caster +30% MS i 1.5s (mirror av server)
+  if (side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX) {
+    side.windPuffMsRem = GANDULF_LVL5_WP_MS_DURATION;
+  }
   // Drag-aim eller facing-fallback
   let dirX = (ev && ev.dx) || 0, dirZ = (ev && ev.dz) || 0;
   const len = Math.hypot(dirX, dirZ);
@@ -9743,6 +9766,13 @@ function hostCastFrostnova(side, ev) {
   // Talent: Frost Vampirism — heal 15% av total damage done
   let novaDmgDealt = 0;
   const frostHeal = arenaHasTalent(side, 'm_frost_heal');
+  // Lvl 5 bonus: applicera attack-speed-slow på hit-targets
+  const isLvl5Fn = (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX);
+  const applyLvl5AsSlow = (entity) => {
+    if (!isLvl5Fn) return;
+    entity.aSlowTime = Math.max(entity.aSlowTime || 0, GANDULF_LVL5_FN_AS_DURATION);
+    entity.aSlowMul = Math.min(entity.aSlowMul == null ? 1 : entity.aSlowMul, GANDULF_LVL5_FN_AS_MUL);
+  };
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.mesh.position.x - center.x, m.mesh.position.z - center.z) < NOVA_RADIUS) {
@@ -9751,7 +9781,10 @@ function hostCastFrostnova(side, ev) {
       soloApplySkillDmgToMonster(side, opp, j, novaDmg);
       if (frostHeal) novaDmgDealt += novaDmg;
       const stillExists = side.monsters[j] === m;
-      if (stillExists && m.hp > 0 && !wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
+      if (stillExists && m.hp > 0) {
+        if (!wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
+        applyLvl5AsSlow(m);
+      }
     }
   }
   if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
@@ -9761,8 +9794,10 @@ function hostCastFrostnova(side, ev) {
       onGandulfSkillHit(side, c);
       soloApplySkillDmgToCreep(side, opp, c, novaDmg);
       if (frostHeal) novaDmgDealt += novaDmg;
-      if (c.hp > 0 && !wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
-      else if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      if (c.hp > 0) {
+        if (!wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
+        applyLvl5AsSlow(c);
+      } else if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
   // Arena: orb-damage om i radius
@@ -9862,6 +9897,8 @@ function hostCastBlink(side, ev) {
     radius: BLACKHOLE_RADIUS * sizeMul,
     explosionRadius: BLACKHOLE_EXPLOSION_RADIUS * sizeMul,
     dotTickAccum: 0,  // ticka 3% maxHP per sek på allt i radien
+    // Lvl 5 bonus: stun:a alla hit-targets vid explosion
+    lvl5Stun: !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX),
   });
 }
 
@@ -9952,11 +9989,16 @@ function updateBlackHolesSolo(side, dt) {
       // Explosion
       const dmgMul = gandulfSkillDmgMul(side);
       const expR = bh.explosionRadius || BLACKHOLE_EXPLOSION_RADIUS;
+      // Lvl 5: stun:a alla hit-targets vid explosion (1s)
+      const stunDur = bh.lvl5Stun ? GANDULF_LVL5_BH_STUN_DURATION : 0;
       for (let j = side.monsters.length - 1; j >= 0; j--) {
         const m = side.monsters[j];
         if (Math.hypot(m.mesh.position.x - bh.x, m.mesh.position.z - bh.z) < expR) {
           soloApplySkillDmgToMonster(side, opp, j, bh.explosionDmg * dmgMul);
           onGandulfSkillHit(side, m);
+          if (stunDur > 0 && side.monsters[j] === m && m.hp > 0) {
+            m.frozenTime = Math.max(m.frozenTime || 0, stunDur);
+          }
         }
       }
       if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
@@ -9965,6 +10007,7 @@ function updateBlackHolesSolo(side, dt) {
           soloApplySkillDmgToCreep(side, opp, c, bh.explosionDmg * dmgMul);
           onGandulfSkillHit(side, c);
           if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+          else if (stunDur > 0) c.frozenTime = Math.max(c.frozenTime || 0, stunDur);
         }
       }
       // Arena: orb + opp hero-damage från black hole-explosion + shake
@@ -9972,6 +10015,10 @@ function updateBlackHolesSolo(side, dt) {
       if (APP.gameMode === 'arena1v1' && opp && !opp.hero.dead) {
         if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < expR) {
           damageHero(opp, bh.explosionDmg * dmgMul);
+          if (stunDur > 0 && !opp.hero.dead) {
+            const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
+            opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, stunDur * ccMul);
+          }
         }
       }
       if (APP.gameMode === 'arena1v1') triggerCameraShake(0.30, 0.35);
@@ -11233,7 +11280,10 @@ function applyMovement(side, joyX, joyZ, dt) {
   const invisMs = (side.legolusInvisRemaining || 0) > 0 ? LEGOLUS_INVIS_SPEED_BONUS : 0;
   // Arena power-up speed-buff: +30% MS i 8s efter pickup
   const arenaSpeedMs = (side.arenaSpeedBuff || 0) > 0 ? ARENA_POWERUP_SPEED_BOOST : 0;
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * slowMul;
+  // Lvl-5 MS-buffs (Gandulf Wind Puff lvl5 m.fl.) — multipliceras separat
+  // (matchar serverns multiplicative MS-chain så positioner inte divergerar)
+  const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * wpMul * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -12141,6 +12191,8 @@ function applyRemoteState(state) {
     // Gandulf passive
     side.gandulfBuffRemaining = sData.gbuf || 0;
     side.gandulfBuffStacks = sData.gbStk || 0;
+    // Lvl-5 max-skill bonus-buffs (Wind Puff MS)
+    side.windPuffMsRem = sData.wpMs || 0;
     side.shield = sData.shld || 0;
     // Duel speed-buff
     side.duelSpeedBuffRemaining = sData.dSp || 0;
@@ -20857,6 +20909,8 @@ function simulateAll(dt) {
       if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
     }
     if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+    // Lvl-5 max-skill bonus-buffs (Gandulf Wind Puff MS m.fl.)
+    if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     // Tick hero-CC (taunted/frusen/rotad av motspelaren)
     if ((side.hero.tauntedTime || 0) > 0) {
       side.hero.tauntedTime = Math.max(0, side.hero.tauntedTime - dt);
