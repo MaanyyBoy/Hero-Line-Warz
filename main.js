@@ -3648,12 +3648,14 @@ const BOSS_GLTF_MAP = {
   50: 'undead_boss',
 };
 // Per-boss scale-tweak (Mixamo-bossar har varierande höjd ut-of-the-box).
+// Wave-bossarna skalade ~3.2× hero-mesh så de känns som riktiga raid-bossar
+// (hero ~1.2, så boss ~3.6-4.2 = minst 3× hero).
 const BOSS_SCALE = {
-  parasite_boss:   1.20,
-  gun_zombie_boss: 1.05,
-  alien_boss:      1.30,
-  elk_head_boss:   1.15,
-  undead_boss:     1.10,
+  parasite_boss:   3.8,
+  gun_zombie_boss: 3.4,
+  alien_boss:      4.2,
+  elk_head_boss:   3.7,
+  undead_boss:     3.5,
   // Boss-Wars-tiers (decision 048) — större scale eftersom boss-wars
   // är raid-mode med massiva bossar i arena.
   bosswars_1: 1.8,
