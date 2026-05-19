@@ -4761,15 +4761,28 @@ function drawBossArenaFloor(ctx, size, tier, map) {
   else if (tier === 5) drawVolcanoFloor(ctx, size, map);
 }
 
-// T1 Forest Hollow — mossa, fallna löv, rötter, fukt-pölar
+// T1 Captain / Forest Hollow — battlefield clearing med heraldisk emblem,
+// ritual stone-cirkel, taktiska markeringar, ljusinsläpp + fireflies.
 function drawForestFloor(ctx, size, map) {
+  const cx = size / 2, cy = size / 2;
+  // Dappled sunlight — stora ljusa fläckar (gyllene varma highlights)
+  for (let i = 0; i < 12; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 70 + Math.random() * 130;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,230,140,0.32)');
+    g.addColorStop(0.5, 'rgba(200,180,80,0.16)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
   // Mossa-patches (mörkare grön transparent)
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < 22; i++) {
     const x = Math.random() * size, y = Math.random() * size;
     const r = 50 + Math.random() * 90;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(40,90,30,0.55)');
-    g.addColorStop(0.6, 'rgba(28,60,22,0.30)');
+    g.addColorStop(0, 'rgba(40,100,32,0.55)');
+    g.addColorStop(0.6, 'rgba(28,60,22,0.32)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -4777,28 +4790,117 @@ function drawForestFloor(ctx, size, map) {
       Math.random() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Rötter-tendriler (svängande bezier-banor i mörk brun)
+  // === CENTRAL HERALDIC EMBLEM === Captain's wappen i mitten
+  // Outer rope-circle (rep runt emblemet)
+  ctx.strokeStyle = 'rgba(140,90,40,0.85)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.18, 0, Math.PI * 2);
+  ctx.stroke();
+  // Inner laurel-wreath (lager-krans, två halvor av små "leaves")
+  ctx.strokeStyle = 'rgba(180,200,80,0.7)';
+  ctx.lineWidth = 2.5;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    const lr = size * 0.16;
+    const lx = cx + Math.cos(a) * lr, ly = cy + Math.sin(a) * lr;
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(a + Math.PI / 2);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 12, 4, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // Shield-form i centrum (heraldisk Captain-shield)
+  ctx.fillStyle = 'rgba(80,40,20,0.75)';
+  ctx.strokeStyle = 'rgba(200,160,80,0.95)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.08, cy - size * 0.08);
+  ctx.lineTo(cx + size * 0.08, cy - size * 0.08);
+  ctx.lineTo(cx + size * 0.08, cy + size * 0.02);
+  ctx.quadraticCurveTo(cx + size * 0.08, cy + size * 0.10, cx, cy + size * 0.12);
+  ctx.quadraticCurveTo(cx - size * 0.08, cy + size * 0.10, cx - size * 0.08, cy + size * 0.02);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Korsade svärd över shielden
+  ctx.strokeStyle = 'rgba(220,200,160,0.9)';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - size * 0.06, cy - size * 0.06);
+  ctx.lineTo(cx + size * 0.06, cy + size * 0.08);
+  ctx.moveTo(cx + size * 0.06, cy - size * 0.06);
+  ctx.lineTo(cx - size * 0.06, cy + size * 0.08);
+  ctx.stroke();
+  // Svärd-pommel-prickar
+  ctx.fillStyle = 'rgba(240,220,140,1)';
+  ctx.beginPath(); ctx.arc(cx - size * 0.06, cy - size * 0.06, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + size * 0.06, cy - size * 0.06, 4, 0, Math.PI * 2); ctx.fill();
+  // === RITUAL STONE CIRCLE === (mini-Stonehenge) runt emblem
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    const sr = size * 0.32;
+    const sx = cx + Math.cos(a) * sr, sy = cy + Math.sin(a) * sr;
+    // Sten-skugga
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(sx + 4, sy + 4, 14, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Stenen själv (mörk grå-grön granit)
+    ctx.fillStyle = 'rgba(80,90,75,0.95)';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 14, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40,50,40,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Mossa på sten-toppen
+    ctx.fillStyle = 'rgba(60,110,50,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(sx - 2, sy - 1, 8, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // === TAKTISKA CHALK-LINES === (faded battle-formation markings)
+  ctx.strokeStyle = 'rgba(220,210,180,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([8, 6]);
+  // 4 radiella linjer från center
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * size * 0.22, cy + Math.sin(a) * size * 0.22);
+    ctx.lineTo(cx + Math.cos(a) * size * 0.42, cy + Math.sin(a) * size * 0.42);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // === ROOT TENDRILS === (svängande bezier mörk brun)
   ctx.strokeStyle = 'rgba(50,30,18,0.55)';
   ctx.lineCap = 'round';
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < 12; i++) {
     ctx.lineWidth = 2 + Math.random() * 5;
     let x = Math.random() * size, y = Math.random() * size;
     ctx.beginPath();
     ctx.moveTo(x, y);
     const segs = 4 + (Math.random() * 4 | 0);
     for (let s = 0; s < segs; s++) {
-      const cx = x + (Math.random() - 0.5) * 120;
-      const cy = y + (Math.random() - 0.5) * 120;
-      x = cx + (Math.random() - 0.5) * 100;
-      y = cy + (Math.random() - 0.5) * 100;
-      ctx.quadraticCurveTo(cx, cy, x, y);
+      const cpx = x + (Math.random() - 0.5) * 120;
+      const cpy = y + (Math.random() - 0.5) * 120;
+      x = cpx + (Math.random() - 0.5) * 100;
+      y = cpy + (Math.random() - 0.5) * 100;
+      ctx.quadraticCurveTo(cpx, cpy, x, y);
     }
     ctx.stroke();
   }
-  // Löv (små färgade ovaler, gul/orange/brun)
-  const leafColors = ['#d4a020', '#c87010', '#8a5018', '#6a4814', '#a89020'];
-  for (let i = 0; i < 80; i++) {
+  // === FALLEN LEAVES === (varierande löv-färger, slumpvis roterade)
+  const leafColors = ['#d4a020', '#c87010', '#8a5018', '#6a4814', '#a89020', '#7a4a10'];
+  for (let i = 0; i < 100; i++) {
     const x = Math.random() * size, y = Math.random() * size;
+    // Skip leaves som hamnar på heraldic emblem
+    const dx = x - cx, dy = y - cy;
+    if (dx * dx + dy * dy < (size * 0.22) * (size * 0.22)) continue;
     const w = 6 + Math.random() * 10, h = 3 + Math.random() * 5;
     ctx.save();
     ctx.translate(x, y);
@@ -4808,15 +4910,44 @@ function drawForestFloor(ctx, size, map) {
     ctx.beginPath();
     ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2);
     ctx.fill();
+    // Mid-rib (ådra på lövet)
+    ctx.strokeStyle = 'rgba(40,30,15,0.6)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.8, 0);
+    ctx.lineTo(w * 0.8, 0);
+    ctx.stroke();
     ctx.restore();
   }
-  // Små svamp/blomma-prickar (vita + röda)
-  for (let i = 0; i < 30; i++) {
+  // === MUSHROOM RINGS === (fairy-circles på 3 platser)
+  for (let r = 0; r < 3; r++) {
+    const rx = (0.2 + Math.random() * 0.6) * size, ry = (0.2 + Math.random() * 0.6) * size;
+    const ringR = 25 + Math.random() * 20;
+    const dx2 = rx - cx, dy2 = ry - cy;
+    if (dx2 * dx2 + dy2 * dy2 < (size * 0.22) * (size * 0.22)) continue;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const mx = rx + Math.cos(a) * ringR, my = ry + Math.sin(a) * ringR;
+      // Svamp-hatt (röd med vita prickar)
+      ctx.fillStyle = 'rgba(180,50,40,0.85)';
+      ctx.beginPath();
+      ctx.arc(mx, my, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(220,210,200,0.9)';
+      ctx.beginPath();
+      ctx.arc(mx + 1, my - 0.5, 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // === GLÖDANDE FIREFLIES === (magisk grön/gul ljusspår-prickar)
+  for (let i = 0; i < 40; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    ctx.fillStyle = i % 3 === 0 ? 'rgba(220,80,80,0.7)' : 'rgba(220,220,200,0.7)';
-    ctx.beginPath();
-    ctx.arc(x, y, 2 + Math.random() * 2, 0, Math.PI * 2);
-    ctx.fill();
+    const r = 2 + Math.random() * 2;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+    g.addColorStop(0, i % 3 === 0 ? 'rgba(200,255,150,1)' : 'rgba(255,240,150,1)');
+    g.addColorStop(1, 'rgba(180,255,140,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
   }
 }
 
@@ -5039,49 +5170,96 @@ function drawHiveFloor(ctx, size, map) {
   }
 }
 
-// T5 Volcano Crater — magma cracks, ash patches, ember spots
+// T5 Dragon King / Volcano Crater — central dragon-eye emblem,
+// dragon-scale-mönster, bones, dramatic lava channels.
 function drawVolcanoFloor(ctx, size, map) {
-  // Stora ash-patches (extra mörka områden för kontrast)
-  for (let i = 0; i < 14; i++) {
+  const cx = size / 2, cy = size / 2;
+  // === CENTRAL MAGMA CRATER GLOW === (huge bright orange center)
+  const craterGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.35);
+  craterGlow.addColorStop(0, 'rgba(255,180,60,0.55)');
+  craterGlow.addColorStop(0.4, 'rgba(220,80,20,0.35)');
+  craterGlow.addColorStop(1, 'rgba(40,15,5,0)');
+  ctx.fillStyle = craterGlow;
+  ctx.fillRect(0, 0, size, size);
+  // === DRAGON SCALE PATTERN === (concentric arc of scales runt center)
+  for (let ring = 1; ring <= 5; ring++) {
+    const ringR = size * (0.08 + ring * 0.06);
+    const scaleCount = 8 + ring * 4;
+    for (let i = 0; i < scaleCount; i++) {
+      const a = (i / scaleCount) * Math.PI * 2 + (ring % 2 === 0 ? Math.PI / scaleCount : 0);
+      const sx = cx + Math.cos(a) * ringR;
+      const sy = cy + Math.sin(a) * ringR;
+      // Scale = mörk halv-ellips med glödande inner edge
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(a + Math.PI / 2);
+      // Mörk bas
+      ctx.fillStyle = 'rgba(25,8,3,0.7)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 16, 10, 0, 0, Math.PI);
+      ctx.fill();
+      // Glödande inner edge
+      ctx.strokeStyle = `rgba(255,${130 + ring * 15},${30 + ring * 8},${0.45 - ring * 0.04})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+  // === STORA ASH-PATCHES === (extra mörka områden för kontrast i ytterkanten)
+  for (let i = 0; i < 12; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    const r = 60 + Math.random() * 100;
+    // Skip om för nära center (vi vill se scale-mönstret där)
+    if (Math.hypot(x - cx, y - cy) < size * 0.35) continue;
+    const r = 60 + Math.random() * 110;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(15,8,5,0.7)');
-    g.addColorStop(0.6, 'rgba(30,15,10,0.45)');
+    g.addColorStop(0, 'rgba(10,5,2,0.78)');
+    g.addColorStop(0.6, 'rgba(25,12,8,0.45)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
   }
-  // Magma-cracks (förgrenande glödande sprickor — orange-gula linjer)
+  // === MAGMA-CRACKS === (förgrenande glödande sprickor, kraftigare än innan)
   const drawMagmaCrack = (sx, sy, ex, ey, depth) => {
     if (depth <= 0) return;
     const mx = (sx + ex) / 2 + (Math.random() - 0.5) * 40;
     const my = (sy + ey) / 2 + (Math.random() - 0.5) * 40;
-    const lineW = 4 + depth * 1.5;
-    // Glow-halo (bredare, mer transparent)
-    ctx.strokeStyle = 'rgba(255,140,40,0.4)';
-    ctx.lineWidth = lineW + 6;
+    const lineW = 5 + depth * 2;
+    // Outer halo (bred mörk-orange)
+    ctx.strokeStyle = 'rgba(255,90,20,0.45)';
+    ctx.lineWidth = lineW + 10;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     ctx.quadraticCurveTo(mx, my, ex, ey);
     ctx.stroke();
-    // Bright core (smalare, mer opacy)
-    ctx.strokeStyle = 'rgba(255,220,100,0.95)';
-    ctx.lineWidth = Math.max(1, lineW - 2);
+    // Mid orange
+    ctx.strokeStyle = 'rgba(255,160,40,0.7)';
+    ctx.lineWidth = lineW + 3;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.stroke();
+    // Bright core (gul-vit)
+    ctx.strokeStyle = 'rgba(255,240,180,1)';
+    ctx.lineWidth = Math.max(1.5, lineW - 2);
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     ctx.quadraticCurveTo(mx, my, ex, ey);
     ctx.stroke();
     // Rekursiva förgreningar
-    if (depth > 1 && Math.random() < 0.6) {
-      const bx = mx + (Math.random() - 0.5) * 80;
-      const by = my + (Math.random() - 0.5) * 80;
+    if (depth > 1 && Math.random() < 0.65) {
+      const bx = mx + (Math.random() - 0.5) * 90;
+      const by = my + (Math.random() - 0.5) * 90;
       drawMagmaCrack(mx, my, bx, by, depth - 1);
     }
   };
-  // 5 stora magma-floder från slumpvisa start-punkter
-  for (let i = 0; i < 5; i++) {
+  // 5 stora magma-floder + 1 specialfall: dragon-shape diagonal från
+  // upper-left till lower-right (Dragon King's territory-mark)
+  drawMagmaCrack(size * 0.15, size * 0.20, size * 0.85, size * 0.80, 5);
+  drawMagmaCrack(size * 0.80, size * 0.15, size * 0.20, size * 0.85, 5);
+  for (let i = 0; i < 4; i++) {
     const x1 = Math.random() * size, y1 = Math.random() * size;
     const ang = Math.random() * Math.PI * 2;
     const len = 200 + Math.random() * 250;
@@ -5089,10 +5267,99 @@ function drawVolcanoFloor(ctx, size, map) {
     const y2 = y1 + Math.sin(ang) * len;
     drawMagmaCrack(x1, y1, x2, y2, 4);
   }
-  // Mindre crackelmönster
-  ctx.strokeStyle = 'rgba(40,20,12,0.6)';
+  // === CENTRAL DRAGON-EYE EMBLEM === (HUGE focal point i mitten)
+  const eyeR = size * 0.065;
+  // Eye glow halo
+  const eyeHalo = ctx.createRadialGradient(cx, cy, 0, cx, cy, eyeR * 2.4);
+  eyeHalo.addColorStop(0, 'rgba(255,200,80,0.85)');
+  eyeHalo.addColorStop(0.6, 'rgba(255,120,30,0.35)');
+  eyeHalo.addColorStop(1, 'rgba(255,80,20,0)');
+  ctx.fillStyle = eyeHalo;
+  ctx.fillRect(cx - eyeR * 2.4, cy - eyeR * 2.4, eyeR * 4.8, eyeR * 4.8);
+  // Iris (gyllene-orange)
+  const iris = ctx.createRadialGradient(cx, cy, 0, cx, cy, eyeR);
+  iris.addColorStop(0, 'rgba(255,240,150,1)');
+  iris.addColorStop(0.5, 'rgba(255,180,40,1)');
+  iris.addColorStop(1, 'rgba(180,60,10,0.95)');
+  ctx.fillStyle = iris;
+  ctx.beginPath();
+  ctx.arc(cx, cy, eyeR, 0, Math.PI * 2);
+  ctx.fill();
+  // Slit pupil (vertikal smal mörk slit som en drak-pupill)
+  ctx.fillStyle = 'rgba(8,3,1,1)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, eyeR * 0.15, eyeR * 0.85, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Highlight på pupillen (top-right)
+  ctx.fillStyle = 'rgba(255,255,220,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(cx + eyeR * 0.05, cy - eyeR * 0.30, eyeR * 0.06, eyeR * 0.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eye-outline (mörk ring runt iris)
+  ctx.strokeStyle = 'rgba(20,8,3,0.9)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(cx, cy, eyeR, 0, Math.PI * 2);
+  ctx.stroke();
+  // === BONES/SKULL SILHUETTER === (scattered runt arenan)
+  // Skull-form (förenklad cirkel + 2 ögonhålor + käke)
+  const drawSkull = (sx, sy, scl) => {
+    ctx.fillStyle = 'rgba(180,170,150,0.7)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 10 * scl, 0, Math.PI * 2);
+    ctx.fill();
+    // Käke (mindre cirkel under)
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 8 * scl, 7 * scl, 5 * scl, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Ögonhåla x2 (mörka prickar)
+    ctx.fillStyle = 'rgba(15,8,5,0.95)';
+    ctx.beginPath(); ctx.arc(sx - 4 * scl, sy - 2 * scl, 2.5 * scl, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 4 * scl, sy - 2 * scl, 2.5 * scl, 0, Math.PI * 2); ctx.fill();
+    // Näshåla
+    ctx.beginPath();
+    ctx.moveTo(sx, sy + 2 * scl);
+    ctx.lineTo(sx - 2 * scl, sy + 5 * scl);
+    ctx.lineTo(sx + 2 * scl, sy + 5 * scl);
+    ctx.closePath();
+    ctx.fill();
+  };
+  // Bone (lång stav med knottror i ändarna)
+  const drawBone = (sx, sy, ang, scl) => {
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(ang);
+    ctx.fillStyle = 'rgba(190,180,160,0.6)';
+    // Shaft
+    ctx.fillRect(-14 * scl, -2 * scl, 28 * scl, 4 * scl);
+    // Knobs
+    ctx.beginPath();
+    ctx.arc(-14 * scl, -3 * scl, 4 * scl, 0, Math.PI * 2);
+    ctx.arc(-14 * scl, 3 * scl, 4 * scl, 0, Math.PI * 2);
+    ctx.arc(14 * scl, -3 * scl, 4 * scl, 0, Math.PI * 2);
+    ctx.arc(14 * scl, 3 * scl, 4 * scl, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+  // Scatter 3 skulls + 5 bones runt arenan (skip för nära center)
+  for (let i = 0; i < 3; i++) {
+    let x, y;
+    do {
+      x = Math.random() * size; y = Math.random() * size;
+    } while (Math.hypot(x - cx, y - cy) < size * 0.25);
+    drawSkull(x, y, 0.9 + Math.random() * 0.5);
+  }
+  for (let i = 0; i < 5; i++) {
+    let x, y;
+    do {
+      x = Math.random() * size; y = Math.random() * size;
+    } while (Math.hypot(x - cx, y - cy) < size * 0.22);
+    drawBone(x, y, Math.random() * Math.PI, 0.8 + Math.random() * 0.4);
+  }
+  // === SMÅ CRACKELMÖNSTER === (sekundär detalj på mörka områden)
+  ctx.strokeStyle = 'rgba(40,20,12,0.55)';
   ctx.lineWidth = 1;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 50; i++) {
     let x = Math.random() * size, y = Math.random() * size;
     ctx.beginPath();
     ctx.moveTo(x, y);
@@ -5104,19 +5371,47 @@ function drawVolcanoFloor(ctx, size, map) {
     }
     ctx.stroke();
   }
-  // Ember-prickar (små bright gula/orange glow-prickar)
-  for (let i = 0; i < 70; i++) {
+  // === EMBER-PRICKAR === (bright gula/orange glow-prickar)
+  for (let i = 0; i < 90; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    const r = 1 + Math.random() * 2.5;
+    const r = 1 + Math.random() * 2.8;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-    g.addColorStop(0, Math.random() < 0.5 ? 'rgba(255,200,100,1)' : 'rgba(255,255,180,1)');
+    g.addColorStop(0, Math.random() < 0.4 ? 'rgba(255,200,100,1)' : 'rgba(255,255,180,1)');
     g.addColorStop(1, 'rgba(255,100,30,0)');
     ctx.fillStyle = g;
     ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
   }
-  // Stora rocks (mörka silhouetter)
+  // === OBSIDIAN GLASS-PATCHES === (mörka reflekterande shards)
+  for (let i = 0; i < 12; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    if (Math.hypot(x - cx, y - cy) < size * 0.18) continue;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.random() * Math.PI);
+    // Dark obsidian shard
+    ctx.fillStyle = 'rgba(15,8,18,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(0, 12);
+    ctx.lineTo(-7, 2);
+    ctx.closePath();
+    ctx.fill();
+    // Highlight strake
+    ctx.fillStyle = 'rgba(100,80,120,0.4)';
+    ctx.beginPath();
+    ctx.moveTo(-3, -6);
+    ctx.lineTo(2, 8);
+    ctx.lineTo(-1, 9);
+    ctx.lineTo(-5, -5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  // === DARK ROCKS === (kraftiga silhuetter)
   for (let i = 0; i < 8; i++) {
     const x = Math.random() * size, y = Math.random() * size;
+    if (Math.hypot(x - cx, y - cy) < size * 0.20) continue;
     ctx.fillStyle = 'rgba(20,10,5,0.85)';
     ctx.beginPath();
     const verts = 5 + (Math.random() * 3 | 0);
