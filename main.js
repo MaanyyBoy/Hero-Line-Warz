@@ -196,7 +196,13 @@ async function preloadAllAssets() {
     if (al) al.classList.add('hidden');
   }, 45000);
 
-  const charPromises = charEntries.map(([name, path]) => {
+  // Mobil-OOM-fix: ladda i batches istället för alla ~40 GLB:er parallellt.
+  // Peak memory under parse+texture-decode måste hållas nere på iOS/Android
+  // (Safari heap ~250-500 MB). 2 parallella på mobil, 6 på desktop.
+  const IS_MOBILE_LOAD = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent);
+  const BATCH_SIZE = IS_MOBILE_LOAD ? 2 : 6;
+
+  const charJobs = charEntries.map(([name, path]) => () => {
     const isMixamoHero = path.indexOf('heroes/mixamo/') >= 0;
     return loader.loadAsync(ASSET_BASE + path).then(gltf => {
       loadedCharacters.set(name, { scene: gltf.scene, animations: gltf.animations || [] });
@@ -250,7 +256,7 @@ async function preloadAllAssets() {
       updateProgress(name + ' (FAILED)');
     });
   });
-  const animPromises = animEntries.map(([name, path]) =>
+  const animJobs = animEntries.map(([name, path]) => () =>
     loader.loadAsync(ASSET_BASE + path).then(gltf => {
       const group = name.startsWith('hero_') ? 'hero' : 'skel';
       for (const clip of (gltf.animations || [])) {
@@ -264,7 +270,7 @@ async function preloadAllAssets() {
   );
   // Static environment-assets (Quaternius). Sparas i loadedEnvironment som
   // gltf.scene direkt — kallaren använder .clone(true) för att skapa instanser.
-  const envPromises = envEntries.map(([name, path]) =>
+  const envJobs = envEntries.map(([name, path]) => () =>
     loader.loadAsync(ASSET_BASE + path).then(gltf => {
       gltf.scene.traverse(o => {
         if (o.isMesh) {
@@ -279,7 +285,11 @@ async function preloadAllAssets() {
       updateProgress(name + ' (FAILED)');
     })
   );
-  await Promise.all([...charPromises, ...animPromises, ...envPromises]);
+  const allJobs = [...charJobs, ...animJobs, ...envJobs];
+  for (let i = 0; i < allJobs.length; i += BATCH_SIZE) {
+    const batch = allJobs.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(fn => fn()));
+  }
   clearTimeout(safetyTimer);
   // Decision 047: fyll mixamo_boss-anim-poolen från Gandulfs animationer.
   // Mixamo-rigs delar bone-naming så samma clips fungerar för alla 5 bossar
