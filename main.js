@@ -7040,6 +7040,11 @@ function hostSpawnCreepProjectile(ownerSide, creep, target, targetType) {
 // SIDE-SIMULERING (host/solo)
 // ============================================================
 
+// Mirror av server: stagger wave-spawn så ingen enskild tick får 20 nya
+// monster (vilket gav synlig "hackighet" vid wave-start pga 20 mesh-clones
+// + material-uploads i en frame). 4 spawns/tick = ~5-6 ticks per wave.
+const WAVE_SPAWNS_PER_TICK = 4;
+
 function updateWaves(side, dt) {
   const w = side.wave;
   if (w.current >= MAX_WAVES && !w.active) return;
@@ -7052,11 +7057,25 @@ function updateWaves(side, dt) {
       w.isBoss = def.isBoss;
       w.active = true;
       w.bannerPulse = (w.bannerPulse || 0) + 1;
-      hostSpawnWaveAtOnce(side, def);
+      hostEnqueueWaveSpawn(side, def);
     }
-    return;
   }
-  if (side.monsters.length === 0) {
+  // Process pending spawn-tasks (mirror av server)
+  if (w.spawnQueue && w.spawnQueue.length > 0) {
+    let spawned = 0;
+    while (w.spawnQueue.length > 0 && spawned < WAVE_SPAWNS_PER_TICK) {
+      const task = w.spawnQueue.shift();
+      if (task.kind === 'monster') {
+        hostSpawnMonsterFromDef(side, task.lane, task.def, task.pos, task.atkType);
+      } else if (task.kind === 'miniboss') {
+        hostSpawnMiniBoss(side, task.waveDef, task.bossDef, task.skill);
+      } else if (task.kind === 'boss') {
+        hostSpawnMonsterFromDef(side, 1, task.def, null, 'melee');
+      }
+      spawned++;
+    }
+  }
+  if (w.active && side.monsters.length === 0 && (!w.spawnQueue || w.spawnQueue.length === 0)) {
     w.active = false;
     w.betweenTimer = WAVE_GAP_TIME;
   }
@@ -7076,28 +7095,36 @@ function clumpPositions(spawnX, laneZ, count) {
   return out;
 }
 
-function hostSpawnWaveAtOnce(side, def) {
+// Bygger spawn-queue för wave istället för att spawna allt direkt.
+// updateWaves processar 4 spawns/tick → wave fyrar av över ~170ms.
+function hostEnqueueWaveSpawn(side, def) {
+  const w = side.wave;
+  w.spawnQueue = w.spawnQueue || [];
   if (def.isBoss) {
-    hostSpawnMonsterFromDef(side, 1, def, null, 'melee');
+    w.spawnQueue.push({ kind: 'boss', def });
     return;
   }
   const cfg = SIDE_CFG[side.idx];
+  const laneQueues = { 1: [], 2: [] };
   for (const lane of [1, 2]) {
     const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
     let melee, range;
     if (def.waveType === 'range') { melee = 0; range = WAVE_COUNT_PER_LANE; }
     else if (def.waveType === 'mix') { melee = Math.ceil(WAVE_COUNT_PER_LANE / 2); range = WAVE_COUNT_PER_LANE - melee; }
     else { melee = WAVE_COUNT_PER_LANE; range = 0; }
-    let i = 0;
-    for (; i < melee; i++) hostSpawnMonsterFromDef(side, lane, def, positions[i], 'melee');
-    for (let j = 0; j < range; j++) hostSpawnMonsterFromDef(side, lane, def, positions[melee + j], 'range');
+    for (let i = 0; i < melee; i++) laneQueues[lane].push({ kind: 'monster', lane, def, pos: positions[i], atkType: 'melee' });
+    for (let j = 0; j < range; j++) laneQueues[lane].push({ kind: 'monster', lane, def, pos: positions[melee + j], atkType: 'range' });
   }
-  // Mini-boss på jämna waves: använder 1 av kommande bossens 3 skills som hint
+  // Interleave så båda lanes börjar fyllas direkt
+  while (laneQueues[1].length || laneQueues[2].length) {
+    if (laneQueues[1].length) w.spawnQueue.push(laneQueues[1].shift());
+    if (laneQueues[2].length) w.spawnQueue.push(laneQueues[2].shift());
+  }
   if (shouldSpawnMiniBoss(def.number)) {
     const nextBoss = getNextBossDef(def.number);
     if (nextBoss) {
       const miniSkill = nextBoss.skills[getMiniBossSkillIdx(def.number)];
-      hostSpawnMiniBoss(side, def, nextBoss, miniSkill);
+      w.spawnQueue.push({ kind: 'miniboss', waveDef: def, bossDef: nextBoss, skill: miniSkill });
     }
   }
 }

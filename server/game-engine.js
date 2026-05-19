@@ -1151,6 +1151,13 @@ function updateSkillCooldowns(side, dt) {
   }
 }
 
+// Stagger wave-spawn över flera ticks så ingen enskild tick får 20 nya monster
+// (vilket gav tick-spikar > 100ms + klient-side mesh-clone-storm = synlig
+// "hackighet" vid varje wave-start). Med 4 spawns/tick × ~30 Hz = 5-6 ticks
+// (~170-200ms) för en hel wave — för spelaren känns det fortfarande som en
+// "wave-burst" men CPU-spiken är spridd över ~6 frames istället för 1.
+const WAVE_SPAWNS_PER_TICK = 4;
+
 function updateWaves(state, side, dt) {
   const w = side.wave;
   // Slut: efter wave 50 + alla döda, inga fler waves
@@ -1164,12 +1171,26 @@ function updateWaves(state, side, dt) {
       w.isBoss = def.isBoss;
       w.active = true;
       w.bannerPulse = (w.bannerPulse || 0) + 1;
-      spawnWaveAtOnce(state, side, def);
+      enqueueWaveSpawn(state, side, def);
     }
-    return;
   }
-  // Wave aktiv tills alla monsters borta
-  if (side.monsters.length === 0) {
+  // Process pending spawn-tasks (max N per tick = stagger CPU + mesh-creation)
+  if (w.spawnQueue && w.spawnQueue.length > 0) {
+    let spawned = 0;
+    while (w.spawnQueue.length > 0 && spawned < WAVE_SPAWNS_PER_TICK) {
+      const task = w.spawnQueue.shift();
+      if (task.kind === 'monster') {
+        spawnMonsterFromDef(state, side, task.lane, task.def, task.pos, task.atkType);
+      } else if (task.kind === 'miniboss') {
+        spawnMinibossFromDef(state, side, task.mb);
+      } else if (task.kind === 'boss') {
+        spawnMonsterFromDef(state, side, 1, task.def, null, 'melee');
+      }
+      spawned++;
+    }
+  }
+  // Wave aktiv tills alla monsters borta OCH inga pending spawns kvar
+  if (w.active && side.monsters.length === 0 && (!w.spawnQueue || w.spawnQueue.length === 0)) {
     w.active = false;
     w.betweenTimer = WAVE_GAP_TIME;
   }
@@ -1189,26 +1210,37 @@ function clumpPositions(spawnX, laneZ, count) {
   return out;
 }
 
-function spawnWaveAtOnce(state, side, def) {
+// Bygger spawn-queue för wave istället för att spawna allt direkt.
+// updateWaves processar 4 spawns/tick → wave fyrar av över ~5 ticks
+// (170ms) istället för 1 tick (33ms) → mycket mindre CPU/render-spike.
+function enqueueWaveSpawn(state, side, def) {
+  const w = side.wave;
+  w.spawnQueue = w.spawnQueue || [];
   if (def.isBoss) {
-    spawnMonsterFromDef(state, side, 1, def, null, 'melee');
+    w.spawnQueue.push({ kind: 'boss', def });
     return;
   }
   const cfg = SIDE_CFG[side.idx];
+  // Vävt: lane 1 + lane 2 alternerat så båda lanes börjar fyllas direkt
+  // (annars: lane 1 fylls helt först, lane 2 sist → asymmetrisk lookout).
+  const laneQueues = { 1: [], 2: [] };
   for (const lane of [1, 2]) {
     const positions = clumpPositions(cfg.spawnX, cfg.laneZ[lane], WAVE_COUNT_PER_LANE);
-    // Bestäm per-monster attackType baserat på wave-typ
     let melee, range;
     if (def.waveType === 'range') { melee = 0; range = WAVE_COUNT_PER_LANE; }
     else if (def.waveType === 'mix') { melee = Math.ceil(WAVE_COUNT_PER_LANE / 2); range = WAVE_COUNT_PER_LANE - melee; }
     else { melee = WAVE_COUNT_PER_LANE; range = 0; }
-    let i = 0;
-    for (; i < melee; i++) spawnMonsterFromDef(state, side, lane, def, positions[i], 'melee');
-    for (let j = 0; j < range; j++) spawnMonsterFromDef(state, side, lane, def, positions[melee + j], 'range');
+    for (let i = 0; i < melee; i++) laneQueues[lane].push({ kind: 'monster', lane, def, pos: positions[i], atkType: 'melee' });
+    for (let j = 0; j < range; j++) laneQueues[lane].push({ kind: 'monster', lane, def, pos: positions[melee + j], atkType: 'range' });
   }
-  // Mini-boss: spawnas en gång (i lane 1) tillsammans med vanliga minions
+  // Interleave: pop alternerande från lane 1 + 2
+  while (laneQueues[1].length || laneQueues[2].length) {
+    if (laneQueues[1].length) w.spawnQueue.push(laneQueues[1].shift());
+    if (laneQueues[2].length) w.spawnQueue.push(laneQueues[2].shift());
+  }
+  // Mini-boss spawnas sist (efter alla vanliga monsters) i lane 1
   if (def.minibossDef) {
-    spawnMinibossFromDef(state, side, def.minibossDef);
+    w.spawnQueue.push({ kind: 'miniboss', mb: def.minibossDef });
   }
 }
 
@@ -4776,7 +4808,17 @@ function tickGame(state, dt) {
       tickThornPools(state, side, dt);
       tickKostefoSkills(state, side, opp, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
-      if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+      // Aragurn passive: throttla nearby-count till 5 Hz (recompute var 0.2s)
+      // istället för 30 Hz. Iterar alla monsters + creeps O(N+M), helt onödigt
+      // varje tick eftersom DR-värdet bara läses vid damageHero som inte triggar
+      // ofta nog för 30 Hz precision att vara märkbar. 6× CPU-spar för Aragurn-sidor.
+      if (side.heroId === 'aragurn') {
+        side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
+        if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
+          side._aragurnCountTickAccum = 0;
+          side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+        }
+      }
       // Ult-energy passive gain (0.5%/sek) — gainUltEnergy bail:ar om lockout aktiv
       if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
       // Tick ner lockout-timer (5s efter ult-cast)
@@ -4914,8 +4956,15 @@ function tickGame(state, dt) {
     tickLegolusInvis(side, dt);
     tickThornPools(state, side, dt);
     tickKostefoSkills(state, side, opp, dt);
-    // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
-    if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+    // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning.
+    // Throttlad till 5 Hz (recompute var 0.2s) — O(N+M) iter onödig varje tick.
+    if (side.heroId === 'aragurn') {
+      side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
+      if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
+        side._aragurnCountTickAccum = 0;
+        side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+      }
+    }
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
