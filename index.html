@@ -576,7 +576,11 @@
       flex-direction: column;
       gap: 10px;
       align-items: flex-end;
-      z-index: 50;
+      /* Måste vara över shop-modal-backdrop (z 90) — annars hamnar shop-body
+         och dess inner-knappar bakom backdropen pga stacking-context-regeln
+         (container z-index skapar context som scopar barnens z till den nivån,
+         så .shop-body z:95 begränsas till container z:50 utan denna bump). */
+      z-index: 100;
     }
     #shop-container.visible { display: flex; }
     .shop-panel { display: flex; flex-direction: column; align-items: stretch; }
