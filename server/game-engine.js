@@ -383,6 +383,15 @@ const LEGOLAS_LVL5_VT_MARK_DURATION = 3.0; // Vine Trap lvl5: mark-varaktighet p
 const LEGOLAS_LVL5_VT_MARK_DMG_MUL = 1.20; // +20% dmg från Legolas på marked targets
 const LEGOLAS_LVL5_HF_AA_CDR = 0.3;        // Hunter's Focus lvl5: -0.3s dash-CD per AA under buff
 // Dash lvl5: 2 stacks (separate CDs) — implementerat via side.legolasDashStackCd vid sidan av side.skills.e.cd
+// Gimlu
+const GIMLU_LVL5_TT_HEAL_PCT = 0.50;           // Taunt lvl5: 50% av healing-during-taunt → AoE-skada
+const GIMLU_LVL5_TT_EXPLOSION_RADIUS = 3.5;    // Taunt-explosion radie
+const GIMLU_LVL5_IW_REFLECT_PCT = 0.30;        // Iron Will lvl5: 30% av incoming dmg reflekteras
+const GIMLU_LVL5_IW_REFLECT_RADIUS = 3.0;      // Reflect-AoE radie runt Gimlu
+const GIMLU_LVL5_HAMMER_MS_DURATION = 1.0;     // Hammer lvl5: caster MS-buff varaktighet
+const GIMLU_LVL5_HAMMER_MS_MUL = 1.50;         // +50% MS
+const GIMLU_LVL5_HAMMER_SLOW_DURATION = 2.0;   // Hammer lvl5: slow på hit-targets
+const GIMLU_LVL5_HAMMER_SLOW_MUL = 0.80;       // -20% MS på hit
 // Stat-point-bonusar per point (additivt till motsvarande pct i recomputeSideStats)
 const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
 const STAT_PER_POINT = {
@@ -828,6 +837,11 @@ function damageHero(side, amount) {
   // Iron Will: stacka tagen skada för senare explosion
   if ((side.ironWillRemaining || 0) > 0) {
     side.ironWillStored = (side.ironWillStored || 0) + final;
+    // Lvl 5: queue 30% damage-reflect (AoE runt Gimlu vid nästa tick)
+    if (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX && final > 0) {
+      side.ironWillReflectQueue = side.ironWillReflectQueue || [];
+      side.ironWillReflectQueue.push(final * GIMLU_LVL5_IW_REFLECT_PCT);
+    }
   }
   // Gimlu tank-mekanik: bygger ult genom att tanka skada (kompenserar låg AA-frekvens
   // + single-target skills). 5% av damage taken som ult-gain, cap 2% per hit.
@@ -876,6 +890,17 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   side.hero.x = cfg.heroSpawn.x;
   side.hero.z = cfg.heroSpawn.z;
+  // Lvl-5 cleanup: rensa Gimlu taunt-state + iron-will reflect-queue så
+  // explosion inte fyrar på respawn-position. tauntHealAccum-tracker mätte
+  // hp-delta som lvl5 healing under taunt — utan respawn-rensning räknas
+  // respawn-hp-hopp (0 → maxHp) som healing → falsk explosion.
+  side.titansTauntRemaining = 0;
+  side.tauntLvl5 = false;
+  side.tauntHealAccum = 0;
+  side._tauntHpPrev = side.hero.hp;
+  if (side.ironWillReflectQueue) side.ironWillReflectQueue.length = 0;
+  side.ironWillRemaining = 0;
+  side.ironWillStored = 0;
   // Rensa Shadow Volley-state om Legolus dog medan invis (annars stannar
   // invis-flagga med "0" rem men cleared aaPending — säkert att nolla allt).
   side.legolusInvisRemaining = 0;
@@ -952,6 +977,11 @@ function createSide(idx) {
     // Lvl-5 max-skill bonus-buffar (per skill)
     windPuffMsRem: 0,          // Gandulf Q lvl5 — +30% MS
     legolasDashStackCd: 0,     // Legolas E lvl5 — andra stackens CD (oanvänd vid lvl<5)
+    tauntHealAccum: 0,         // Gimlu Q lvl5 — heal-tracker under taunt
+    _tauntHpPrev: 0,           // Gimlu Q lvl5 — internal: hp vid förra ticken
+    tauntLvl5: false,          // Gimlu Q lvl5 — flagga: är denna taunt en lvl5-cast
+    gimluHammerMsRem: 0,       // Gimlu E lvl5 — caster MS-buff timer
+    ironWillReflectQueue: [],  // Gimlu F lvl5 — reflect-damage queue
     shield: 0,
     // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
     portalUsesLeft: PORTAL_MAX_USES,
@@ -2696,6 +2726,12 @@ function castGimluTaunt(state, sideIdx) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
   side.titansTauntRemaining = TAUNT_DURATION;
+  // Lvl 5: reset heal-tracker så vi mäter healing från denna taunts start
+  side.tauntHealAccum = 0;
+  side._tauntHpPrev = side.hero.hp;
+  // Lvl5-cast-flagga: lagras så explosion fyrar vid taunt-slut även om skill-level
+  // ändras emellan (osannolikt men korrekt). Och så vi vet om vi ska explodera.
+  side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
   const r2 = TAUNT_RADIUS * TAUNT_RADIUS;
   // Tauntar alla monsters i radien
   for (const m of side.monsters) {
@@ -2718,6 +2754,78 @@ function castGimluTaunt(state, sideIdx) {
   if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) opp.hero.tauntedTime = TAUNT_DURATION;
+  }
+}
+
+// Lvl-5 Gimlu F (Iron Will) — flush reflect-queue: applicera AoE-skada runt Gimlu
+// från ackumulerad reflekterad skada (30% av incoming under iron-will).
+function flushIronWillReflectLvl5(state, side, opp) {
+  const q = side.ironWillReflectQueue;
+  if (!q || q.length === 0) return;
+  let total = 0;
+  for (const r of q) total += r;
+  q.length = 0;
+  if (total <= 0 || side.hero.dead) return;
+  const r2 = GIMLU_LVL5_IW_REFLECT_RADIUS * GIMLU_LVL5_IW_REFLECT_RADIUS;
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
+    const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      m.hp -= total;
+      if (m.hp <= 0) killMonster(side, i, side);
+    }
+  }
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
+    const ddx = c.x - side.hero.x, ddz = c.z - side.hero.z;
+    if (ddx * ddx + ddz * ddz < r2) {
+      c.hp -= total;
+      if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+    }
+  }
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
+    if (ddx * ddx + ddz * ddz < r2) damageHero(opp, total);
+  }
+}
+
+// Lvl-5 Gimlu Q (Titans Taunt) — track healing-during-taunt + fire AoE-explosion vid slut
+function tickGimluTauntLvl5(state, side, opp, dt) {
+  if ((side.titansTauntRemaining || 0) <= 0) return;
+  if (side.tauntLvl5) {
+    const prev = side._tauntHpPrev != null ? side._tauntHpPrev : side.hero.hp;
+    if (side.hero.hp > prev) side.tauntHealAccum = (side.tauntHealAccum || 0) + (side.hero.hp - prev);
+    side._tauntHpPrev = side.hero.hp;
+  }
+  side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+  if (side.titansTauntRemaining === 0 && side.tauntLvl5 && (side.tauntHealAccum || 0) > 0) {
+    const dmg = side.tauntHealAccum * GIMLU_LVL5_TT_HEAL_PCT;
+    const r2 = GIMLU_LVL5_TT_EXPLOSION_RADIUS * GIMLU_LVL5_TT_EXPLOSION_RADIUS;
+    for (let i = side.monsters.length - 1; i >= 0; i--) {
+      const m = side.monsters[i];
+      const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
+      if (ddx * ddx + ddz * ddz < r2) {
+        m.hp -= dmg;
+        if (m.hp <= 0) killMonster(side, i, side);
+      }
+    }
+    if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+      const c = opp.playerCreeps[i];
+      const ddx = c.x - side.hero.x, ddz = c.z - side.hero.z;
+      if (ddx * ddx + ddz * ddz < r2) {
+        c.hp -= dmg;
+        if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+    if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+      const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
+      if (ddx * ddx + ddz * ddz < r2) damageHero(opp, dmg);
+    }
+    // Visuell explosion-burst via samma ironWillExplosions-array (klient renderar ring)
+    side.ironWillExplosions = side.ironWillExplosions || [];
+    side.ironWillExplosions.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 0.7, maxLife: 0.7 });
+    side.tauntLvl5 = false;
+    side.tauntHealAccum = 0;
   }
 }
 
@@ -2769,6 +2877,7 @@ function updateIronWill(state, side, opp, dt) {
 function castGimluHammer(state, sideIdx, dirX, dirZ) {
   const side = state.sides[sideIdx];
   if (side.hero.dead) return;
+  const isLvl5 = !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
   // Om hammer redan ute → teleport till den och despawn
   if (side.hammers && side.hammers.length > 0) {
     const h = side.hammers[0];
@@ -2777,6 +2886,8 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
       side.hero.z = h.z;
     }
     side.hammers.splice(0, 1);
+    // Lvl 5: +50% MS i 1s efter tp
+    if (isLvl5) side.gimluHammerMsRem = GIMLU_LVL5_HAMMER_MS_DURATION;
     return;
   }
   if (side.skills.e.cd > 0) return;
@@ -2793,6 +2904,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
     returning: false,
     hit: new Set(),
     damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    lvl5Slow: isLvl5,
   });
 }
 
@@ -2812,7 +2924,11 @@ function updateHammers(state, side, opp, dt) {
     } else {
       const ddx = side.hero.x - h.x, ddz = side.hero.z - h.z;
       const d = Math.hypot(ddx, ddz);
-      if (d < 0.6) { side.hammers.splice(i, 1); continue; }
+      if (d < 0.6) {
+        // Lvl 5: +50% MS i 1s när hammer återvänder till Gimlu
+        if (h.lvl5Slow) side.gimluHammerMsRem = Math.max(side.gimluHammerMsRem || 0, GIMLU_LVL5_HAMMER_MS_DURATION);
+        side.hammers.splice(i, 1); continue;
+      }
       h.x += (ddx / d) * step;
       h.z += (ddz / d) * step;
     }
@@ -2825,6 +2941,10 @@ function updateHammers(state, side, opp, dt) {
       if (Math.hypot(m.x - h.x, m.z - h.z) < HAMMER_RADIUS) {
         h.hit.add(m.id);
         m.hp -= dmg;
+        if (h.lvl5Slow) {
+          m.slowTime = Math.max(m.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
+          m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+        }
         if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
         if (m.hp <= 0) killMonster(side, j, side);
       }
@@ -2836,6 +2956,10 @@ function updateHammers(state, side, opp, dt) {
       if (Math.hypot(c.x - h.x, c.z - h.z) < HAMMER_RADIUS) {
         h.hit.add(c.id);
         c.hp -= dmg;
+        if (h.lvl5Slow) {
+          c.slowTime = Math.max(c.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
+          c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+        }
         if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
         if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
@@ -2845,6 +2969,11 @@ function updateHammers(state, side, opp, dt) {
       if (Math.hypot(opp.hero.x - h.x, opp.hero.z - h.z) < HAMMER_RADIUS + 0.4) {
         h.hit.add('opp-hero');
         damageHero(opp, dmg);
+        // Lvl5 hero-slow via heroSlowTime/heroSlowMul (existerande hero-slow-fält)
+        if (h.lvl5Slow) {
+          opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
+          opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+        }
         if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
       }
     }
@@ -3863,10 +3992,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
-  // Lvl-5 MS-buffs (Gandulf Wind Puff lvl5 etc — fler hjältars lvl5 MS-buffs läggs här)
+  // Lvl-5 MS-buffs (Gandulf Wind Puff, Gimlu Hammer m.fl.)
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * strength * dt;
+  const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -4467,8 +4597,10 @@ function tickGame(state, dt) {
       // Tick ner lockout-timer (5s efter ult-cast)
       if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
       if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
-      if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+      tickGimluTauntLvl5(state, side, opp, dt);
       if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
+      if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+      flushIronWillReflectLvl5(state, side, opp);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
         side.ironWillExplosions[k].life -= dt;
         if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
@@ -4550,6 +4682,11 @@ function tickGame(state, dt) {
       }
       // Tick freeze på hero (om frusen, hjälten kan inte använda skills/AA — för enkelhet bara dekrementera)
       if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime -= dt;
+      // Hero-MS-slow tick (Gimlu Hammer lvl5 m.fl.)
+      if ((side.heroSlowTime || 0) > 0) {
+        side.heroSlowTime -= dt;
+        if (side.heroSlowTime <= 0) { side.heroSlowTime = 0; side.heroSlowMul = 1; }
+      }
       // Lvl-5 Legolas mark tick på hero (för duel/arena PvP)
       if ((side.hero.legolasMarked || 0) > 0) side.hero.legolasMarked = Math.max(0, side.hero.legolasMarked - dt);
       // Wind Puff debuff på hero
@@ -4594,7 +4731,7 @@ function tickGame(state, dt) {
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
     if (side.heroId === 'aragurn') side.aragurnNearbyCount = aragurnNearbyCount(state, side);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
-    if ((side.titansTauntRemaining || 0) > 0) side.titansTauntRemaining = Math.max(0, side.titansTauntRemaining - dt);
+    tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
       side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
       if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0;
@@ -4610,8 +4747,10 @@ function tickGame(state, dt) {
     updateFireballs(state, side, opp, dt);
     updateNovaEffects(side, dt);
     updateActiveBuffs(side, dt);
-    // Lvl-5 buff-timers (Gandulf Wind Puff MS m.fl.)
+    // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
+    if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    flushIronWillReflectLvl5(state, side, opp);
     tickIncome(side, dt);
   }
   checkMatchEnd(state);
@@ -4776,6 +4915,7 @@ function serializeSide(side) {
     gbuf: nzr2(side.gandulfBuffRemaining),
     gbStk: nz(side.gandulfBuffStacks),
     wpMs: nzr2(side.windPuffMsRem),
+    ghMs: nzr2(side.gimluHammerMsRem),
     shld: nzr1(side.shield),
     dSp: nzr2(side.duelSpeedBuffRemaining),
     IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
