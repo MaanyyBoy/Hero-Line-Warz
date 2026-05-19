@@ -178,6 +178,8 @@ const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
 const KENNEY_FX_TEXTURES = [
   // Magic/cast bursts
   'magic_01', 'magic_03', 'magic_05',
+  // Muzzle flashes (forward cone-burst, war shout, wind puff)
+  'muzzle_03', 'muzzle_04',
   // Star bursts (skill-cast feedback)
   'star_04', 'star_07',
   // Sparks (hit + crit feedback)
@@ -9398,6 +9400,26 @@ function hostCastWindPuff(side, ev) {
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xccddff, 1.4);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaccff);
   triggerCameraShake(0.14, 0.20);
+  // Kenney-FX: muzzle-burst framåt + 4 smoke-puffar längs cone
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'muzzle_03', x: side.hero.x + dirX * 1.0, y: 1.0, z: side.hero.z + dirZ * 1.0,
+      color: 0xccddff, scale: 2.2, scaleEnd: 4.5, life: 0.45,
+      additive: true, rotateSpeed: 2,
+    });
+    for (let i = 0; i < 4; i++) {
+      const fwd = 1.5 + i * 1.2;
+      spawnKenneyFx({
+        texName: 'smoke_05',
+        x: side.hero.x + dirX * fwd + (Math.random() - 0.5) * 1.0,
+        y: 0.7 + Math.random() * 0.5,
+        z: side.hero.z + dirZ * fwd + (Math.random() - 0.5) * 1.0,
+        color: 0xeef4ff, scale: 1.0 + Math.random() * 0.4, scaleEnd: 2.0 + Math.random() * 0.6,
+        life: 0.5 + Math.random() * 0.2, rotateSpeed: (Math.random() - 0.5) * 3,
+        vy: 0.6, opacity: 0.7,
+      });
+    }
+  }
   // Cone hit-test: punkt inom cone-area
   const inCone = (ex, ez) => {
     const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
@@ -10368,6 +10390,47 @@ function hostCastLegolusBuff(side) {
   side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION + extra;
   // Visuell aim-buff (gulgrön expanderande ring)
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff55, 1.1);
+  // Kenney persistent buff-aura: ljus-cirkel följer hero under buff-duration
+  // (cleanup i tickLegolusBuffAura nedan när legolusBuffRemaining <= 0)
+  attachLegolusBuffAura(side);
+}
+
+// Persistent aura-mesh som följer hero under Hunter's Focus-buff.
+// Skapas vid cast, tickas i tickLegolusBuffAura, disposas vid buff-end.
+function attachLegolusBuffAura(side) {
+  if (!side.mesh || kenneyTex.size === 0) return;
+  // Ta bort gammal aura om någon (ny cast under befintlig buff)
+  if (side._focusAura) {
+    side.mesh.remove(side._focusAura);
+    if (side._focusAura.material) side._focusAura.material.dispose();
+    side._focusAura = null;
+  }
+  const tex = kenneyTex.get('light_03');
+  if (!tex) return;
+  const mat = new THREE.SpriteMaterial({
+    map: tex, color: 0xddff55, transparent: true, opacity: 0.75,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(2.2, 2.2, 2.2);
+  sp.position.set(0, 2.6, 0);   // ovanför heroens huvud
+  side.mesh.add(sp);
+  side._focusAura = sp;
+}
+
+function tickLegolusBuffAura(side, dt) {
+  if (!side._focusAura) return;
+  if ((side.legolusBuffRemaining || 0) <= 0 || side.hero.dead) {
+    // Defensive: side.mesh kan vara null vid mid-cleanup race (hero swap, match-restart)
+    if (side.mesh) side.mesh.remove(side._focusAura);
+    if (side._focusAura.material) side._focusAura.material.dispose();
+    side._focusAura = null;
+    return;
+  }
+  // Mjuk pulse + slow rotation
+  const pulse = 0.85 + 0.15 * Math.sin(performance.now() * 0.006);
+  side._focusAura.material.opacity = 0.75 * pulse;
+  side._focusAura.material.rotation += dt * 1.5;
 }
 
 function hostCastLegolusDash(side, ev) {
@@ -10393,6 +10456,22 @@ function hostCastLegolusDash(side, ev) {
   else side.legolasDashStackCd = side.skills.e.max;
   // Visuella spår — start och slut
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ff88, 0.7);
+  // Kenney-FX: trace-streak längs dash-vägen (5 sprites mellan start/slut)
+  if (kenneyTex.size > 0) {
+    const startX = side.hero.x, startZ = side.hero.z;
+    for (let i = 1; i <= 5; i++) {
+      const t = i / 6;
+      spawnKenneyFx({
+        texName: 'trace_03',
+        x: startX + (nx - startX) * t,
+        y: 1.0,
+        z: startZ + (nz - startZ) * t,
+        color: 0x66ff88, scale: 0.9, scaleEnd: 1.6,
+        life: 0.35 - i * 0.04, additive: true,
+        opacity: 0.85 - i * 0.1,
+      });
+    }
+  }
   side.hero.x = nx; side.hero.z = nz;
   side.mesh.position.x = nx; side.mesh.position.z = nz;
   spawnSkillCastFx(nx, nz, 0x66ff88, 0.7);
@@ -10494,6 +10573,29 @@ function hostCastGimluTaunt(side) {
   side.tauntHealAccum = 0;
   side._tauntHpPrev = side.hero.hp;
   side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
+  // Kenney-FX: stor shockwave-burst runt Gimlu vid skrik + 6 sparks splash:ar
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'circle_03', x: side.hero.x, y: 0.1, z: side.hero.z,
+      color: 0xff9933, scale: TAUNT_RADIUS * 0.6, scaleEnd: TAUNT_RADIUS * 2.4,
+      life: 0.6, ground: true, additive: true, opacity: 0.85,
+    });
+    spawnKenneyFx({
+      texName: 'magic_01', x: side.hero.x, y: 1.3, z: side.hero.z,
+      color: 0xffcc44, scale: 1.6, scaleEnd: 3.2,
+      life: 0.45, additive: true, rotateSpeed: 5,
+    });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      spawnKenneyFx({
+        texName: 'spark_03',
+        x: side.hero.x + Math.cos(a) * 1.5, y: 0.6,
+        z: side.hero.z + Math.sin(a) * 1.5,
+        color: 0xffaa33, scale: 0.7, scaleEnd: 1.4,
+        life: 0.4, additive: true, rotateSpeed: 4,
+      });
+    }
+  }
   const r2 = TAUNT_RADIUS * TAUNT_RADIUS;
   for (const m of side.monsters) {
     const dx = m.mesh.position.x - side.hero.x, dz = m.mesh.position.z - side.hero.z;
@@ -10552,6 +10654,48 @@ function hostCastGimluIronWill(side) {
   side.ironWillStored = 0;
   // Visuell uppladdning — orange ring runt hero som indikerar buf
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 1.3);
+  // Kenney persistent shield-aura under iron-will duration
+  attachIronWillAura(side);
+}
+
+// Persistent defensiv aura runt Gimlu under Iron Will. Mesh följer hero,
+// disposas vid expiry (i tickIronWillAura).
+function attachIronWillAura(side) {
+  if (!side.mesh || kenneyTex.size === 0) return;
+  if (side._iwAura) {
+    side.mesh.remove(side._iwAura);
+    if (side._iwAura.material) side._iwAura.material.dispose();
+    if (side._iwAura.geometry) side._iwAura.geometry.dispose();
+    side._iwAura = null;
+  }
+  const tex = kenneyTex.get('light_01');
+  if (!tex) return;
+  // Ground-plane som glödande sköld-cirkel runt fötterna (matchar Gimlu-tema)
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, color: 0xff7733, transparent: true, opacity: 0.7,
+    depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+  const disk = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2), mat);
+  disk.rotation.x = -Math.PI / 2;
+  disk.position.set(0, 0.05, 0);
+  side.mesh.add(disk);
+  side._iwAura = disk;
+}
+
+function tickIronWillAura(side, dt) {
+  if (!side._iwAura) return;
+  if ((side.ironWillRemaining || 0) <= 0 || side.hero.dead) {
+    // Defensive: side.mesh kan vara null vid mid-cleanup race
+    if (side.mesh) side.mesh.remove(side._iwAura);
+    if (side._iwAura.material) side._iwAura.material.dispose();
+    if (side._iwAura.geometry) side._iwAura.geometry.dispose();
+    side._iwAura = null;
+    return;
+  }
+  // Pulse-glow + roterar
+  const pulse = 0.65 + 0.20 * Math.sin(performance.now() * 0.008);
+  if (side._iwAura.material) side._iwAura.material.opacity = pulse;
+  side._iwAura.rotation.z += dt * 1.8;
 }
 
 // Lvl-5 klient-helper: tick taunt + spawna explosion vid slut
@@ -10631,6 +10775,9 @@ function flushIronWillReflectLvl5Client(side) {
 }
 
 function updateIronWillSolo(side, dt) {
+  // Tick Kenney aura oavsett solo/MP — den behöver despawnas vid expiry även om
+  // updateIronWillSolo bail:ar på remaining=0 utan att aura cleanas (täcker MP-klient).
+  tickIronWillAura(side, dt);
   if (!side.ironWillRemaining || side.ironWillRemaining <= 0) return;
   side.ironWillRemaining -= dt;
   if (side.ironWillRemaining <= 0) {
@@ -10772,6 +10919,16 @@ function updateHammersSolo(side, dt) {
       h.mesh.position.z += (ddz / d) * step;
     }
     h.mesh.rotation.y += dt * 12; // spinn
+    // Kenney spark-trail: spawna en orange spark per 60ms längs hammer-vägen
+    h._trailAccum = (h._trailAccum || 0) + dt;
+    if (h._trailAccum > 0.06 && kenneyTex.size > 0) {
+      h._trailAccum = 0;
+      spawnKenneyFx({
+        texName: 'spark_05', x: h.mesh.position.x, y: h.mesh.position.y, z: h.mesh.position.z,
+        color: 0xffaa44, scale: 0.5, scaleEnd: 0.2,
+        life: 0.35, additive: true, rotateSpeed: 6,
+      });
+    }
     // Talent: Mighty Throw — återresan får full skada (var 50%)
     const returnMul = arenaHasTalent(side, 'g_hammer_full') ? 1.0 : HAMMER_RETURN_DMG_MUL;
     const dmgMul = h.returning ? returnMul : 1;
@@ -15408,6 +15565,16 @@ function tickClientKostefoSliders(side, dt) {
       s.mesh.position.z = s.z;
       s.mesh.rotation.y = Math.atan2(s.dx, s.dz);
     }
+    // Kenney trace-trail bakom slider: spawna per 50ms
+    s._trailAccum = (s._trailAccum || 0) + dt;
+    if (s._trailAccum > 0.05 && kenneyTex.size > 0) {
+      s._trailAccum = 0;
+      spawnKenneyFx({
+        texName: 'trace_05', x: s.x, y: 1.4, z: s.z,
+        color: 0xddaa44, scale: 1.0, scaleEnd: 0.3,
+        life: 0.4, additive: true,
+      });
+    }
     // Pierce opp-hero
     if (opp && !opp.hero.dead && !s.hitOppHero) {
       const rdx = opp.hero.x - s.x, rdz = opp.hero.z - s.z;
@@ -16111,6 +16278,27 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   // Visuell buff-cirkel runt Aragurn (separat från damage-konen)
   spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
   triggerCameraShake(0.18, 0.20);
+  // Kenney shout-burst framåt + ground-scorch i cone
+  if (kenneyTex.size > 0) {
+    spawnKenneyFx({
+      texName: 'muzzle_04',
+      x: side.hero.x + dirX * 1.0, y: 1.4,
+      z: side.hero.z + dirZ * 1.0,
+      color: 0xffd766, scale: 2.0, scaleEnd: 4.2,
+      life: 0.4, additive: true, rotateSpeed: 3,
+    });
+    // 3 scorch-markers längs cone
+    for (let i = 1; i <= 3; i++) {
+      const fwd = length * (i / 4);
+      spawnKenneyFx({
+        texName: 'scorch_02',
+        x: side.hero.x + dirX * fwd, y: 0.06,
+        z: side.hero.z + dirZ * fwd,
+        color: 0x886622, scale: 1.6, scaleEnd: 2.4,
+        life: 0.8, ground: true, opacity: 0.6,
+      });
+    }
+  }
   const passive = aragurnPassiveMul(side);
   const skillMul = passive * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   // Self-buff: bara DR (inte MS) + HoT 10%/s i 2s
@@ -21567,6 +21755,8 @@ function simulateAll(dt) {
     updateHammersSolo(side, dt);
     updateIronWillSolo(side, dt);
     if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    // Tick Hunter's Focus-aura (Kenney light_03 ovanför hero under buff)
+    if (side.heroId === 'legolas') tickLegolusBuffAura(side, dt);
     // Ult-cast-lockout (5s ingen ult-gain efter ult castas)
     if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
