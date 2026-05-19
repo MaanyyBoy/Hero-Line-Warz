@@ -5268,23 +5268,26 @@ function spawnBossWarsBoss(side, tier) {
   const tierSpeed = { 1: 3.8, 2: 4.3, 3: 4.7, 4: 5.0, 5: 5.4 };
   const bossSpeed = tierSpeed[tier] || 4.0;
   const bossId = nextEntityId++;
+  // Test-mode: nolla damage + skip skills så bossen står still som "display-piece".
+  // chasing=false så den inte heller jagar hjälten — bara står där och kan inspekteras.
+  const isTestMode = !!(APP.bossWars && APP.bossWars.testMode);
   side.monsters.push({
     id: bossId,
     lane: 1,
     hp, maxHp: hp,
-    speed: bossSpeed,
-    damage: dmg,
+    speed: isTestMode ? 0 : bossSpeed,
+    damage: isTestMode ? 0 : dmg,
     attackType: 'melee',
     attackRange: 2.4,           // bumpad så bossen kan slå utan att klistras in
     attackInterval: 0.9,        // snabbare AA (1.2 → 0.9s)
     pathIndex: 0,
-    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: true,
+    atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: !isTestMode,
     isBoss: true, isMiniBoss: false,
     isBossWarsBoss: true,
     bossDef,
     bossName: bossDef.name,
-    bossSkills: bossDef.skills,
-    skillCds: bossDef.skills.map(s => s.cd * 0.4),  // första cast snabbare
+    bossSkills: isTestMode ? [] : bossDef.skills,
+    skillCds: isTestMode ? [] : bossDef.skills.map(s => s.cd * 0.4),
     activeCast: null,
     // 2-phase tracking (gäller alla 5 bossar nu — phase2Skills definierat per wave)
     bossTier: tier,
@@ -5303,6 +5306,8 @@ function spawnBossWarsBoss(side, tier) {
 function checkBossWarsActivation() {
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
   if (APP.bossWars.bossActivated) return;
+  // Test-mode: ingen activation, ingen gate-close — bara fri inspektion.
+  if (APP.bossWars.testMode) return;
   // I MP boss-wars: alla 3 peers. I solo: bara sides[1].
   const isMp = bossMpState && bossMpState.matchActive;
   const activeIdxs = isMp ? [1, 2, 3] : [1];
@@ -13187,6 +13192,8 @@ function checkMatchEnd() {
   // hero-pick eftersom sides[1].monsters fortfarande är tom.
   if (APP.gameMode === 'bosswars') {
     if (!APP.bossWars || !APP.bossWars.started) return;
+    // Test-mode: ingen match-end-detection — fri inspektion utan win/loss.
+    if (APP.bossWars.testMode) return;
     const s = sides[1];
     if (!s) return;
     if (!s.bossWarsBossId) return;
@@ -21046,7 +21053,14 @@ function enterPlayPhase() {
     // Spawn-positioner: alla 3 hjältar i spawn-rummet, nära varandra.
     // Triangulär uppställning så de inte överlappar. Bossen är öster om
     // korridor + gate och inaktiv tills alla 3 är inne i boss-rummet.
-    const spawnPoints = {
+    // Test-mode: spawn:a direkt i boss-rummet bredvid bossen så det är
+    // omedelbart synligt — ingen poäng att gå korridoren först.
+    const isTestPhase = !!(APP.bossWars && APP.bossWars.testMode);
+    const spawnPoints = isTestPhase ? {
+      1: { x: BOSSWARS_CX - 8, z: BOSSWARS_CZ },
+      2: { x: BOSSWARS_CX - 8, z: BOSSWARS_CZ - 3 },
+      3: { x: BOSSWARS_CX - 8, z: BOSSWARS_CZ + 3 },
+    } : {
       1: { x: SPAWN_ROOM_CX - 2, z: SPAWN_ROOM_CZ },
       2: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ - 3 },
       3: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ + 3 },
@@ -21410,9 +21424,11 @@ function openBossDetail(tier) {
   }
   html += phase2Hint;
   body.innerHTML = html;
-  // Spara vald tier till fight-knappen
+  // Spara vald tier till fight + test-knapparna
   const fightBtn = document.getElementById('btn-boss-detail-fight');
   if (fightBtn) fightBtn.dataset.tier = String(tier);
+  const testBtn = document.getElementById('btn-boss-detail-test');
+  if (testBtn) testBtn.dataset.tier = String(tier);
   const modal = document.getElementById('boss-detail-modal');
   if (modal) modal.classList.remove('hidden');
 }
@@ -21435,6 +21451,63 @@ function bossWarsStartFight(tier) {
     sendGameMsg({ t: 'b-tier', tier });
   }
   showHeroPick('solo');
+}
+
+// Boss Wars Test Mode — skip hero-pick + boss-prep, drop player direkt i
+// arenan med boss spawn:ad MEN UTAN attacker/skills. För att inspektera
+// arena-tema, boss-mesh, props, lights innan riktig match.
+function bossWarsStartTest(tier) {
+  APP.gameMode = 'bosswars';
+  APP.arenaTeamSize = 1;
+  APP.bossWars = {
+    active: true, tier,
+    started: false,    // sätts till true i enterPlayPhase
+    testMode: true,    // flagga som spawnBossWarsBoss + checkBossWarsActivation läser
+    selectedTalents: [],
+    selectedItems: [],
+  };
+  matchState.gameOver = false;
+  matchState.gameWon = false;
+  matchState.winner = 0;
+  closeBossDetail();
+  // setupMatch skapar fresh sides[1] så re-entry inte ärver gammal hero-pos/CD
+  setupMatch('solo');
+  // Auto-pick magiker så vi slipper hero-pick-skärmen
+  heroPickState.selected = 'magiker';
+  heroPickState.confirmed = true;
+  heroPickState.active = false;
+  heroPickState.mode = null;
+  // Hoppa direkt till play-phase (skip hero-pick + boss-prep)
+  enterPlayPhase();
+  // Visa exit-knappen
+  const exitBtn = document.getElementById('bosswars-test-exit');
+  if (exitBtn) exitBtn.classList.remove('hidden');
+}
+
+// Exit ur test-mode: rensa state + visa lobby igen
+function bossWarsExitTest() {
+  if (!APP.bossWars || !APP.bossWars.testMode) return;
+  document.body.classList.remove('in-game');
+  const exitBtn = document.getElementById('bosswars-test-exit');
+  if (exitBtn) exitBtn.classList.add('hidden');
+  // Rensa scen
+  if (bossWarsSceneGroup) bossWarsSceneGroup.visible = false;
+  // Despawn boss + alla monsters på sidan
+  if (sides[1] && sides[1].monsters) {
+    for (let i = sides[1].monsters.length - 1; i >= 0; i--) {
+      const m = sides[1].monsters[i];
+      if (m.mesh) removeEntityMesh(m.mesh);
+      sides[1].monsters.splice(i, 1);
+    }
+  }
+  // Återställ heroPickState så nästa riktiga match inte ärver test-valet
+  heroPickState.selected = null;
+  heroPickState.confirmed = false;
+  APP.bossWars = { active: false, tier: 0 };
+  APP.gameMode = null;
+  // Visa lobby igen — krävs explicit unhide eftersom enterPlayPhase satte in-game
+  lobbyEl.classList.remove('hidden');
+  showLobbyPanel('boss-mode');
 }
 const btnModeBoss = document.getElementById('btn-mode-boss');
 if (btnModeBoss) btnModeBoss.addEventListener('click', bossWarsShow);
@@ -21619,6 +21692,13 @@ if (btnBossDetailFight) btnBossDetailFight.addEventListener('click', () => {
   const tier = parseInt(btnBossDetailFight.dataset.tier || '1', 10);
   bossWarsStartFight(tier);
 });
+const btnBossDetailTest = document.getElementById('btn-boss-detail-test');
+if (btnBossDetailTest) btnBossDetailTest.addEventListener('click', () => {
+  const tier = parseInt(btnBossDetailTest.dataset.tier || '1', 10);
+  bossWarsStartTest(tier);
+});
+const btnBossWarsTestExit = document.getElementById('bosswars-test-exit');
+if (btnBossWarsTestExit) btnBossWarsTestExit.addEventListener('click', bossWarsExitTest);
 const bossDetailModal = document.getElementById('boss-detail-modal');
 if (bossDetailModal) bossDetailModal.addEventListener('click', (e) => { if (e.target === bossDetailModal) closeBossDetail(); });
 
