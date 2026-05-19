@@ -4676,9 +4676,9 @@ const BOSSWARS_MAPS = {
   // Tier 2 — Warlock Female — WITCH'S SANCTUM (mörk magi, lila pelare)
   2: {
     name: "Witch's Sanctum",
-    color: 0x2a1840, edgeColor: 0x100a18, accent: 0xaa66ff,
+    color: 0x140a20, edgeColor: 0x080510, accent: 0xc060ff,
     torchColor: 0xaa44ff,                                   // lila magi-flamma
-    ambient: { color: 0x4a2068, intensity: 0.30 },
+    ambient: { color: 0x2a1040, intensity: 0.18 },          // mörkare kant → emissive-pentagram pops
     props: [
       { type: 'pillar', x: -22, z: -22 },
       { type: 'pillar', x:  22, z:  22 },
@@ -5263,6 +5263,185 @@ function makeArenaMonolith(stoneMat, ivyMat) {
   return grp;
 }
 
+// T2 General — sprucken pelare (vanhelgat ritualtempel). Kortare än standard-
+// pelaren, med ett avslaget topp-segment som ligger på marken bredvid, samt
+// horisontella sprickor och rasade stenflisor vid basen.
+function makeArenaBrokenPillar(stoneMat, darkStoneMat) {
+  const grp = new THREE.Group();
+  // Huvudaxel: cylinder ~5m hög (vs standard 7m) med "avslagen" topp
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.65, 5.0, 16),
+    stoneMat
+  );
+  shaft.position.y = 2.5;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  grp.add(shaft);
+  // Bas-platta (lite bredare än shaft)
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.95, 1.05, 0.5, 16),
+    stoneMat
+  );
+  base.position.y = 0.25;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  grp.add(base);
+  // Avslagen topp-bit: ligger på sidan vid basen, snett mot center
+  const fallen = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.50, 0.60, 1.8, 14),
+    stoneMat
+  );
+  fallen.position.set(0.8, 0.55, 0.2);
+  fallen.rotation.z = Math.PI / 2 - 0.15;
+  fallen.rotation.y = 0.3;
+  fallen.castShadow = true;
+  grp.add(fallen);
+  // 2 horisontella sprickor i shaft (mörka tunna ringar)
+  for (let i = 0; i < 2; i++) {
+    const crackY = 1.6 + i * 1.4;
+    const crack = new THREE.Mesh(
+      new THREE.TorusGeometry(0.58, 0.04, 6, 16),
+      darkStoneMat
+    );
+    crack.position.y = crackY;
+    crack.rotation.x = Math.PI / 2;
+    crack.rotation.z = i * 0.4;
+    grp.add(crack);
+  }
+  // Rasade stenflisor vid basen (3 små box-bitar)
+  const rubbleSpots = [
+    { x: -0.85, z: 0.2, w: 0.35, h: 0.25, d: 0.4 },
+    { x: -0.4, z: -0.7, w: 0.25, h: 0.18, d: 0.30 },
+    { x: 0.6, z: -0.5, w: 0.30, h: 0.20, d: 0.25 },
+  ];
+  for (const s of rubbleSpots) {
+    const piece = new THREE.Mesh(
+      new THREE.BoxGeometry(s.w, s.h, s.d),
+      darkStoneMat
+    );
+    piece.position.set(s.x, s.h / 2 + 0.05, s.z);
+    piece.rotation.y = Math.random() * Math.PI;
+    piece.castShadow = true;
+    grp.add(piece);
+  }
+  // Glödande lila rune-mark mitt på shaft
+  const rune = new THREE.Mesh(
+    new THREE.RingGeometry(0.15, 0.21, 16),
+    new THREE.MeshBasicMaterial({ color: 0xc060ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+  );
+  rune.position.set(0, 2.4, 0.66);
+  grp.add(rune);
+  return grp;
+}
+
+// T2 General — bruten staty (en huvudlös ockult kult-figur på sockel).
+// Sockel + benstump + bål + ena arm, andra armen och huvudet avslagna.
+function makeArenaBrokenStatue(stoneMat, darkStoneMat) {
+  const grp = new THREE.Group();
+  // Sockel: bred låg kub
+  const pedestal = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 0.7, 1.5),
+    stoneMat
+  );
+  pedestal.position.y = 0.35;
+  pedestal.castShadow = true;
+  pedestal.receiveShadow = true;
+  grp.add(pedestal);
+  // Bål (smalare överdel av kub): humanoid figur
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 1.8, 0.5),
+    stoneMat
+  );
+  torso.position.y = 1.7;
+  torso.castShadow = true;
+  grp.add(torso);
+  // Höft/ben-stump (kort cylinder under torso)
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 0.5, 0.45),
+    stoneMat
+  );
+  legs.position.y = 0.95;
+  grp.add(legs);
+  // Hals-stump (huvudet är avslaget)
+  const neck = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.20, 0.22, 0.15, 12),
+    stoneMat
+  );
+  neck.position.y = 2.68;
+  neck.rotation.z = 0.1;
+  grp.add(neck);
+  // Kvarvarande arm (vänster, hängande ner längs torso)
+  const arm = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.13, 0.13, 1.4, 10),
+    stoneMat
+  );
+  arm.position.set(-0.42, 1.6, 0);
+  arm.rotation.z = 0.15;
+  arm.castShadow = true;
+  grp.add(arm);
+  // Avslagen höger arm: liten cylinder-stump där armen satt
+  const armStub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.13, 0.13, 0.18, 10),
+    darkStoneMat
+  );
+  armStub.position.set(0.40, 2.3, 0);
+  armStub.rotation.z = -Math.PI / 2 + 0.3;
+  grp.add(armStub);
+  // Avslagen arm-bit på marken vid sockeln
+  const fallenArm = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.13, 1.1, 10),
+    stoneMat
+  );
+  fallenArm.position.set(0.95, 0.78, 0.4);
+  fallenArm.rotation.z = Math.PI / 2 + 0.2;
+  fallenArm.rotation.y = 0.5;
+  fallenArm.castShadow = true;
+  grp.add(fallenArm);
+  // Avslaget huvud på marken vid sockeln (sfär)
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.30, 12, 10),
+    stoneMat
+  );
+  head.position.set(-0.85, 0.78, -0.4);
+  head.castShadow = true;
+  grp.add(head);
+  // Lila kult-rune på torsons bröst
+  const rune = new THREE.Mesh(
+    new THREE.RingGeometry(0.16, 0.22, 16),
+    new THREE.MeshBasicMaterial({ color: 0xc060ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+  );
+  rune.position.set(0, 1.9, 0.26);
+  grp.add(rune);
+  return grp;
+}
+
+// T2 General — svävande mörk kristall (kluster av 2-3 octahedra som hovrar
+// över marken, lila emissive). Animeras via _bossArenaCrystals + tickBossArenaCrystals.
+function makeArenaFloatingCrystal(crystalMat, glowMat) {
+  const grp = new THREE.Group();
+  // Huvud-kristall (störst, octahedron)
+  const main = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), crystalMat);
+  main.scale.set(1, 1.6, 1);   // avlång
+  main.castShadow = true;
+  grp.add(main);
+  // 2 mindre satellit-kristaller
+  const s1 = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), crystalMat);
+  s1.position.set(0.38, -0.25, 0.18);
+  s1.scale.set(1, 1.3, 1);
+  s1.rotation.z = 0.6;
+  grp.add(s1);
+  const s2 = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), crystalMat);
+  s2.position.set(-0.32, 0.30, -0.15);
+  s2.scale.set(1, 1.4, 1);
+  s2.rotation.z = -0.5;
+  grp.add(s2);
+  // Yttre glow-aura (större transparent octahedron)
+  const halo = new THREE.Mesh(new THREE.OctahedronGeometry(0.95, 0), glowMat);
+  halo.scale.set(1, 1.6, 1);
+  grp.add(halo);
+  return grp;
+}
+
 // Bygger hela arena-arkitekturen runt boss-platformen.
 // 8 kolonner + facklor + banderoller + theme-accents.
 function buildBossArenaArchitecture(tier, map) {
@@ -5295,6 +5474,25 @@ function buildBossArenaArchitecture(tier, map) {
   const t1MonolithMat = isT1Forest ? new THREE.MeshStandardMaterial({
     color: 0x4a4438, roughness: 0.95, metalness: 0.05,
   }) : null;
+  // T2 General — vanhelgat ritualtempel: spruckna pelare + brutna statyer +
+  // svävande mörka kristaller. Delade material för att hålla shader-compile
+  // till ett minimum.
+  const isT2Temple = (tier === 2);
+  const t2StoneMat = isT2Temple ? new THREE.MeshStandardMaterial({
+    color: 0x2a2030, roughness: 0.95, metalness: 0.10,
+  }) : null;
+  const t2DarkStoneMat = isT2Temple ? new THREE.MeshStandardMaterial({
+    color: 0x140a18, roughness: 0.92, metalness: 0.08,
+  }) : null;
+  const t2CrystalMat = isT2Temple ? new THREE.MeshStandardMaterial({
+    color: 0x18101e, roughness: 0.35, metalness: 0.40,
+    emissive: 0x8030ff, emissiveIntensity: 0.55,
+  }) : null;
+  const t2CrystalGlowMat = isT2Temple ? new THREE.MeshBasicMaterial({
+    color: 0xa050ff, transparent: true, opacity: 0.18,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }) : null;
+  _bossArenaCrystals.length = 0;
   for (let i = 0; i < pillarCount; i++) {
     const a = (i / pillarCount) * Math.PI * 2;
     const px = BOSSWARS_CX + Math.cos(a) * r;
@@ -5305,15 +5503,27 @@ function buildBossArenaArchitecture(tier, map) {
       obj = (i % 2 === 0)
         ? makeArenaTree(t1BarkMat, t1LeafMat, t1IvyMat)
         : makeArenaMonolith(t1MonolithMat, t1IvyMat);
+    } else if (isT2Temple) {
+      // Alternerar sprucken pelare (jämn) och bruten staty (udda)
+      obj = (i % 2 === 0)
+        ? makeArenaBrokenPillar(t2StoneMat, t2DarkStoneMat)
+        : makeArenaBrokenStatue(t2StoneMat, t2DarkStoneMat);
     } else {
       obj = makeArenaPillar(theme, stoneMat);
     }
     obj.position.set(px, 0, pz);
-    obj.rotation.y = a + Math.PI + (isT1Forest ? Math.random() * 0.5 - 0.25 : 0);
+    // Pelaren/statyn vänd mot center; T1 har lätt slumpvis vinkling,
+    // T2 också för "fallen ruin"-känsla men mindre extrem
+    let yawJitter = 0;
+    if (isT1Forest) yawJitter = Math.random() * 0.5 - 0.25;
+    else if (isT2Temple) yawJitter = (Math.random() - 0.5) * 0.35;
+    obj.rotation.y = a + Math.PI + yawJitter;
+    // T2 spruckna pelare lutar lite för "rasande ruin"-känsla
+    if (isT2Temple && i % 2 === 0) obj.rotation.z = (Math.random() - 0.5) * 0.12;
     bossWarsSceneGroup.add(obj);
     pillars.push({ x: px, y: 7.0, z: pz });
-    // Fackla bara på icke-T1 (träd har ingen kapitäl-topp att stå på)
-    if (!isT1Forest) {
+    // Fackla bara på standard-pelare (T1 + T2 har inga kapitäl-toppar)
+    if (!isT1Forest && !isT2Temple) {
       const torch = makePillarTorch(theme);
       torch.position.set(px, 7.0, pz);
       bossWarsSceneGroup.add(torch);
@@ -5322,9 +5532,25 @@ function buildBossArenaArchitecture(tier, map) {
       });
     }
   }
-  // Banderoller mellan varannan kolonn (4 st) — skippas för T1 naturlund
-  // (passar inte temat; träd-lövverk + monolit-ring ger atmospheric feel istället)
-  if (!isT1Forest) for (let i = 0; i < pillarCount; i += 2) {
+  // T2: 6 svävande mörka kristaller mellan pelarna, ~4 m upp i luften
+  if (isT2Temple) {
+    const crystalCount = 6;
+    for (let i = 0; i < crystalCount; i++) {
+      const a = (i / crystalCount) * Math.PI * 2 + Math.PI / crystalCount;
+      const cr = r - 1.5;   // lite innanför pelar-ringen
+      const cx_ = BOSSWARS_CX + Math.cos(a) * cr;
+      const cz_ = BOSSWARS_CZ + Math.sin(a) * cr;
+      const baseY = 4.2 + (i % 2) * 0.4;
+      const crystal = makeArenaFloatingCrystal(t2CrystalMat, t2CrystalGlowMat);
+      crystal.position.set(cx_, baseY, cz_);
+      crystal.rotation.y = Math.random() * Math.PI * 2;
+      bossWarsSceneGroup.add(crystal);
+      _bossArenaCrystals.push({ mesh: crystal, baseY, phase: i * 1.04 });
+    }
+  }
+  // Banderoller mellan varannan kolonn (4 st) — skippas för T1 (naturlund)
+  // och T2 (ritualtempel), de temana har egna atmospheric accents istället
+  if (!isT1Forest && !isT2Temple) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
     const banner = makeArenaBanner(theme);
@@ -5334,8 +5560,9 @@ function buildBossArenaArchitecture(tier, map) {
     banner.rotation.y = Math.atan2(BOSSWARS_CX - banner.position.x, BOSSWARS_CZ - banner.position.z);
     bossWarsSceneGroup.add(banner);
   }
-  // Theme-specifika accents per tier
-  if (theme.accent === 'chains') {
+  // Theme-specifika accents per tier — T2:s chains hoppas över sedan ritual-
+  // arkitekturen har egen profil (kristaller + golv-pentagram istället)
+  if (theme.accent === 'chains' && !isT2Temple) {
     // Kedjor mellan alla 8 kolonn-toppar (octagonal chain-net)
     for (let i = 0; i < pillarCount; i++) {
       const p1 = pillars[i], p2 = pillars[(i + 1) % pillarCount];
@@ -5392,6 +5619,9 @@ function buildBossArenaArchitecture(tier, map) {
 // rensas i clearBossWarsScene). Undviker traverse av 200+ noder per frame.
 const _bossArenaFlameSprites = [];
 
+// Cache av T2 svävande kristaller — bob + rotation varje frame.
+const _bossArenaCrystals = [];
+
 // Tick: animera fackla-flames med flicker (skala + opacity).
 function tickBossArenaFlames(dt) {
   if (!bossWarsSceneGroup.visible || _bossArenaFlameSprites.length === 0) return;
@@ -5401,6 +5631,17 @@ function tickBossArenaFlames(dt) {
     const flicker = 0.9 + 0.15 * Math.sin(t * 8 + o.position.x);
     o.scale.set(1.2 * baseScale * flicker, 1.6 * baseScale * flicker, 1);
     if (o.material) o.material.opacity = 0.85 + 0.10 * Math.sin(t * 12 + o.position.z);
+  }
+}
+
+// Tick: bob + rotation på T2 ritualtempel-kristaller.
+function tickBossArenaCrystals(dt) {
+  if (!bossWarsSceneGroup.visible || _bossArenaCrystals.length === 0) return;
+  const t = performance.now() / 1000;
+  for (const c of _bossArenaCrystals) {
+    c.mesh.position.y = c.baseY + Math.sin(t * 0.8 + c.phase) * 0.30;
+    c.mesh.rotation.y += dt * 0.45;
+    c.mesh.rotation.x += dt * 0.20;
   }
 }
 
@@ -5733,78 +5974,165 @@ function drawForestFloor(ctx, size, map) {
   }
 }
 
-// T2 Witch's Sanctum — pentagram, arcane runes, etched circles, glow-prickar
-function drawArcaneFloor(ctx, size, map) {
+// Ren positions-helper för T2-pentagram. Används av både drawArcaneFloor
+// (color-canvas, etsade mörka linjer) och buildT2ArcaneEmissive (emissive
+// canvas, ljusa lila linjer) så bägge canvas matchar exakt.
+function getT2PentagramGeometry(size) {
   const cx = size / 2, cy = size / 2;
-  // Mega-cirkel i centrum (pentagram circle)
-  ctx.strokeStyle = 'rgba(170,100,255,0.55)';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.32, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx, cy, size * 0.28, 0, Math.PI * 2);
-  ctx.stroke();
-  // Pentagram (5-stjärnig linje inom inre cirkel)
-  ctx.strokeStyle = 'rgba(200,140,255,0.7)';
-  ctx.lineWidth = 3;
   const pentaR = size * 0.27;
+  const innerCircleR = size * 0.28;
+  const outerCircleR = size * 0.32;
+  const runeR = size * 0.42;
+  const runeCircleR = 22;
   const points = [];
   for (let i = 0; i < 5; i++) {
     const a = -Math.PI / 2 + (i / 5) * Math.PI * 2;
     points.push({ x: cx + Math.cos(a) * pentaR, y: cy + Math.sin(a) * pentaR });
   }
+  const runes = [];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 16;
+    runes.push({
+      x: cx + Math.cos(a) * runeR,
+      y: cy + Math.sin(a) * runeR,
+      seed: i,
+    });
+  }
+  return { cx, cy, pentaR, innerCircleR, outerCircleR, runeR, runeCircleR, points, runes };
+}
+
+// Ritar pentagram-mönstret på ctx. emissive=true → ljusa lila/magenta linjer
+// (för emissive-map). emissive=false → mörk etsad lila (för color-canvas).
+function drawT2PentagramPattern(ctx, size, emissive) {
+  const g = getT2PentagramGeometry(size);
+  const lineCol = emissive ? 'rgba(220,140,255,1)' : 'rgba(80,30,120,0.7)';
+  const lineColInner = emissive ? 'rgba(240,180,255,1)' : 'rgba(110,50,160,0.8)';
+  const lineColRune = emissive ? 'rgba(200,120,255,1)' : 'rgba(90,40,130,0.7)';
+  ctx.lineCap = 'round';
+  // Outer + inner pentagram-cirkel
+  ctx.strokeStyle = lineCol;
+  ctx.lineWidth = emissive ? 6 : 4;
+  ctx.beginPath();
+  ctx.arc(g.cx, g.cy, g.outerCircleR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = emissive ? 4 : 3;
+  ctx.beginPath();
+  ctx.arc(g.cx, g.cy, g.innerCircleR, 0, Math.PI * 2);
+  ctx.stroke();
+  // 5-spetsad pentagram (skip-2 line-pattern)
+  ctx.strokeStyle = lineColInner;
+  ctx.lineWidth = emissive ? 5 : 3;
   ctx.beginPath();
   for (let i = 0; i < 5; i++) {
-    const p = points[(i * 2) % 5];   // skip-2 ger pentagram
+    const p = g.points[(i * 2) % 5];
     if (i === 0) ctx.moveTo(p.x, p.y);
     else ctx.lineTo(p.x, p.y);
   }
   ctx.closePath();
   ctx.stroke();
-  // Rune-cirklar runt perimetern
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    const rx = cx + Math.cos(a) * size * 0.42;
-    const ry = cy + Math.sin(a) * size * 0.42;
-    ctx.strokeStyle = 'rgba(180,120,255,0.6)';
-    ctx.lineWidth = 2;
+  // Skarpa glow-prickar på pentagram-spetsarna (bara emissive-version)
+  if (emissive) {
+    for (const p of g.points) {
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 28);
+      grad.addColorStop(0, 'rgba(255,200,255,1)');
+      grad.addColorStop(1, 'rgba(180,80,255,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(p.x - 32, p.y - 32, 64, 64);
+    }
+  }
+  // 8 rune-medaljonger på perimeter med 4-spets stjärna inuti
+  for (const r of g.runes) {
+    ctx.strokeStyle = lineColRune;
+    ctx.lineWidth = emissive ? 3 : 2;
     ctx.beginPath();
-    ctx.arc(rx, ry, 22, 0, Math.PI * 2);
+    ctx.arc(r.x, r.y, g.runeCircleR, 0, Math.PI * 2);
     ctx.stroke();
-    // Rune-glyph (slumpvis triangulär/kvadrat-form inuti)
-    ctx.strokeStyle = 'rgba(220,170,255,0.85)';
-    ctx.lineWidth = 1.5;
+    const baseAng = r.seed * Math.PI / 7;
+    ctx.lineWidth = emissive ? 2.5 : 1.5;
     ctx.beginPath();
-    const seed = i * 7;
     for (let k = 0; k < 4; k++) {
-      const aa = seed + k * 90 * Math.PI / 180;
-      const px = rx + Math.cos(aa) * 10, py = ry + Math.sin(aa) * 10;
+      const aa = baseAng + k * Math.PI / 2;
+      const px = r.x + Math.cos(aa) * 10, py = r.y + Math.sin(aa) * 10;
       if (k === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
+    ctx.closePath();
     ctx.stroke();
   }
-  // Glow-prickar i pentagram-knutar
-  for (const p of points) {
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 20);
-    g.addColorStop(0, 'rgba(220,170,255,1)');
-    g.addColorStop(1, 'rgba(120,60,200,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(p.x - 25, p.y - 25, 50, 50);
-  }
-  // Slumpade etched-streck mellan rune-cirklar
-  ctx.strokeStyle = 'rgba(140,90,200,0.35)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 60; i++) {
-    const a1 = Math.random() * Math.PI * 2;
-    const a2 = a1 + (Math.random() - 0.5) * 0.6;
-    const r1 = size * 0.34, r2 = size * 0.46;
+  // 16 radiella chant-streck från ytter-circle ut till rune-circle
+  ctx.strokeStyle = lineCol;
+  ctx.lineWidth = emissive ? 2 : 1;
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const r1 = g.outerCircleR + 6, r2 = g.runeR - g.runeCircleR - 6;
     ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1);
-    ctx.lineTo(cx + Math.cos(a2) * r2, cy + Math.sin(a2) * r2);
+    ctx.moveTo(g.cx + Math.cos(a) * r1, g.cy + Math.sin(a) * r1);
+    ctx.lineTo(g.cx + Math.cos(a) * r2, g.cy + Math.sin(a) * r2);
     ctx.stroke();
   }
+}
+
+// Bygger emissive-canvas för T2 (svart bg, bara pentagram-mönstret i ljus lila).
+function buildT2ArcaneEmissive(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  drawT2PentagramPattern(ctx, size, true);
+  return canvas;
+}
+
+// T2 Witch's Sanctum — svart sten + etsat lila pentagram-mönster.
+// Emissive-map (via buildT2ArcaneEmissive) ger det glödet i 3D.
+function drawArcaneFloor(ctx, size, map) {
+  // BAS: svart sten — skriver över bas-färgen från drawBossArenaFloor
+  ctx.fillStyle = '#0a0710';
+  ctx.fillRect(0, 0, size, size);
+  // Sten-textur: radial-skuggor (mörk grå-purpurröd variation)
+  for (let i = 0; i < 18; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 80 + Math.random() * 140;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, 'rgba(45,30,55,0.50)');
+    grad.addColorStop(0.6, 'rgba(28,18,38,0.30)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // Sten-partiklar: små ljusare granit-prickar
+  for (let i = 0; i < 700; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 1 + Math.random() * 2.5;
+    const v = 35 + (Math.random() * 30) | 0;
+    ctx.fillStyle = `rgba(${v},${(v - 10) | 0},${(v + 10) | 0},0.55)`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 12 radiella sprickor från center mot kanten — 12-fold symmetri,
+  // deterministiska (offset PI/12 så de inte krockar med pentagram-spetsarna
+  // som ligger på -PI/2 + i*2PI/5)
+  ctx.strokeStyle = 'rgba(15,8,20,0.85)';
+  ctx.lineCap = 'round';
+  const ccx = size / 2, ccy = size / 2;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + Math.PI / 12;
+    const r1 = size * 0.18, r2 = size * 0.45;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(ccx + Math.cos(a) * r1, ccy + Math.sin(a) * r1);
+    ctx.lineTo(ccx + Math.cos(a) * r2, ccy + Math.sin(a) * r2);
+    ctx.stroke();
+  }
+  // Mörkare zon nära center (öppen mitt — låter user-bakgrund synas)
+  const centerGrad = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, size * 0.16);
+  centerGrad.addColorStop(0, 'rgba(0,0,0,0.45)');
+  centerGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = centerGrad;
+  ctx.fillRect(0, 0, size, size);
+  // PENTAGRAM-MÖNSTRET (etsat mörkt på svart sten — glow kommer från emissive map)
+  drawT2PentagramPattern(ctx, size, false);
 }
 
 // T3 Bio Lab — hexagonal grid, glowing seams, tech panels
@@ -6237,6 +6565,7 @@ function clearBossWarsScene() {
   bossWarsSceneGroup.userData.gateGlow = null;
   // Rensa flame-sprite-cache (fylls igen vid nästa buildBossArenaArchitecture)
   if (_bossArenaFlameSprites) _bossArenaFlameSprites.length = 0;
+  if (_bossArenaCrystals) _bossArenaCrystals.length = 0;
 }
 
 // Bygger en shape-yta baserat på map.shape
@@ -6292,13 +6621,23 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
-  // T1 Captain — separate emissive-map för rune-glow (svart bg, gröna runor).
-  // Lägger en mjuk grön emissiveIntensity ovanpå floor-material så runorna
-  // lyser även utan dynamisk ljuskälla.
+  // T1/T2 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
+  // T1: svart bg + gröna runor. T2: svart bg + lila pentagram + runor.
   let floorEmissiveTex = null;
+  let floorEmissiveColor = 0x000000;
+  let floorEmissiveIntensity = 0;
   if (tier === 1) {
     const { emiCanvas } = buildT1ForestRunes(TEX_SIZE);
     floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveColor = 0x66ff88;
+    floorEmissiveIntensity = 0.85;
+  } else if (tier === 2) {
+    const emiCanvas = buildT2ArcaneEmissive(TEX_SIZE);
+    floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveColor = 0xc060ff;
+    floorEmissiveIntensity = 1.10;
+  }
+  if (floorEmissiveTex) {
     floorEmissiveTex.wrapS = floorEmissiveTex.wrapT = THREE.RepeatWrapping;
     floorEmissiveTex.colorSpace = THREE.NoColorSpace;   // emissiveMap är inte sRGB
     floorEmissiveTex.magFilter = THREE.LinearFilter;
@@ -6317,10 +6656,10 @@ function buildBossWarsScene() {
   // Topp-yta = cirkel oavsett map.shape (tier-distinktion via färg/accent)
   const topMatProps = { map: floorTex, roughness: 0.88, metalness: 0.08 };
   if (floorEmissiveTex) {
-    // T1: rune-glow via emissive map. Grön emissive med medium intensity.
+    // Pattern-glow via emissive map. Färg + intensitet bestäms per tier ovan.
     topMatProps.emissiveMap = floorEmissiveTex;
-    topMatProps.emissive = new THREE.Color(0x66ff88);
-    topMatProps.emissiveIntensity = 0.85;
+    topMatProps.emissive = new THREE.Color(floorEmissiveColor);
+    topMatProps.emissiveIntensity = floorEmissiveIntensity;
   }
   const topMat = new THREE.MeshStandardMaterial(topMatProps);
   const top = new THREE.Mesh(new THREE.CircleGeometry(r - 0.4, 64), topMat);
@@ -6328,9 +6667,10 @@ function buildBossWarsScene() {
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
   top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
-  // T1 Captain skippar center-emblem så mittpunkten är ren (user-spec:
-  // "håll arenans mitt öppen, lämna plats för en separat bakgrundsbild").
-  if (tier !== 1) {
+  // T1 Captain och T2 General skippar center-emblem så mittpunkten är ren
+  // (user-spec: "håll arenans mitt öppen, lämna plats för en separat
+  // bakgrundsbild").
+  if (tier !== 1 && tier !== 2) {
     // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
     const accentRing = new THREE.Mesh(
       new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
@@ -24554,6 +24894,7 @@ function tick() {
   tickCombatFx(dt);
   tickAragurnVisuals(dt);
   tickBossArenaFlames(dt);
+  tickBossArenaCrystals(dt);
   // Kostefo state-meshes (companion + cloud + ult-joints) — körs i alla lägen
   // (även Line Wars MP där simulateAll inte körs). Synkas mot side-state från snap.
   updateKostefoMeshes(dt);
