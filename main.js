@@ -172,6 +172,12 @@ const loadedAnimationClips = {        // rig-grupp → AnimationClip[]
 };
 let assetsReady = false;
 
+// Mobil-detect används för: batched asset-load (lägre peak-memory), och för
+// att stänga av sekundära WebGL-renderers (hero-portrait-gen + hero-detail-
+// 3D-preview). iOS Safari kraschar med "a problem repeatedly occurred" om
+// flera WebGL-contexts allokeras samtidigt på minnesbegränsade enheter.
+const IS_MOBILE_UA = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent || '');
+
 async function preloadAllAssets() {
   console.log('[asset] preloadAllAssets START');
   const loader = new GLTFLoader();
@@ -199,8 +205,7 @@ async function preloadAllAssets() {
   // Mobil-OOM-fix: ladda i batches istället för alla ~40 GLB:er parallellt.
   // Peak memory under parse+texture-decode måste hållas nere på iOS/Android
   // (Safari heap ~250-500 MB). 2 parallella på mobil, 6 på desktop.
-  const IS_MOBILE_LOAD = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent);
-  const BATCH_SIZE = IS_MOBILE_LOAD ? 2 : 6;
+  const BATCH_SIZE = IS_MOBILE_UA ? 2 : 6;
 
   const charJobs = charEntries.map(([name, path]) => () => {
     const isMixamoHero = path.indexOf('heroes/mixamo/') >= 0;
@@ -18116,6 +18121,9 @@ const heroPreviewState = {
 function initHeroPreview() {
   if (heroPreviewState.initialized) return true;
   if (heroPreviewState.failed) return false;
+  // Mobil: skippa 3D-preview helt (extra WebGL-context kraschar iOS Safari).
+  // showHeroPreview() fallar till "3D preview unavailable"-text.
+  if (IS_MOBILE_UA) { heroPreviewState.failed = true; return false; }
   const canvas = document.createElement('canvas');
   let renderer;
   try {
@@ -18284,6 +18292,9 @@ const heroPortraitCache = new Map();   // heroId → dataURL
 function initPortraitGen() {
   if (portraitGenState.initialized) return true;
   if (portraitGenState.failed) return false;
+  // Mobil: skippa 3D-portrait-render helt (extra WebGL-context kraschar iOS).
+  // getHeroPortraitImage() returnerar null → renderHeroesBrowser fallar till SVG.
+  if (IS_MOBILE_UA) { portraitGenState.failed = true; return false; }
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 256;
