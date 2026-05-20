@@ -4540,6 +4540,10 @@ const ARENA_GOLD_START = 400;              // start-gold per spelare i runda 1
 // rör pickup-mesh). Buffs aktiveras direkt — speed/damage 8s, heal instant.
 const ARENA_POWERUP_SPAWN_INTERVAL = 20;
 const ARENA_POWERUP_COUNT_PER_SPAWN = 3;
+// Oupplockade power-ups försvinner efter denna tid. UTAN expiry växte
+// arenaState.powerUps obegränsat (3 spawn/20s, bara pickup tog bort) →
+// a-state-payloaden svällde → bandbredd + ping steg genom hela matchen.
+const ARENA_POWERUP_LIFETIME = 30;
 const ARENA_POWERUP_PICKUP_RADIUS = 1.0;
 const ARENA_POWERUP_BUFF_DURATION = 8.0;       // speed/damage duration
 const ARENA_POWERUP_SPEED_BOOST = 0.30;        // +30% MS
@@ -9109,6 +9113,7 @@ function spawnArenaPowerUps() {
     arenaState.powerUps.push({
       id: arenaState._powerUpNextId++,
       x, z, type,
+      life: ARENA_POWERUP_LIFETIME,
     });
   }
 }
@@ -9147,6 +9152,13 @@ function tickArenaPowerUps(dt) {
   const pickupR2 = ARENA_POWERUP_PICKUP_RADIUS * ARENA_POWERUP_PICKUP_RADIUS;
   for (let i = arenaState.powerUps.length - 1; i >= 0; i--) {
     const pu = arenaState.powerUps[i];
+    // Expiry: oupplockade power-ups försvinner efter ARENA_POWERUP_LIFETIME s
+    // så arenaState.powerUps inte växer obegränsat genom matchen (vilket
+    // svällde a-state-payloaden → stigande bandbredd/ping = "laggar mer ju
+    // längre matchen pågår"). Klientens mesh-reconcile städar bort meshen
+    // automatiskt när id:t försvinner ur listan.
+    pu.life -= dt;
+    if (pu.life <= 0) { arenaState.powerUps.splice(i, 1); continue; }
     let pickedBy = null;
     for (const idx of arenaSideIdxs()) {
       const s = sides[idx];
