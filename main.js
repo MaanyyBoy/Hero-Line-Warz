@@ -7998,10 +7998,10 @@ function makeArenaPowerUpMesh(type) {
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.05;
   grp.add(ring);
-  // Point-light för dynamic glow på närliggande terräng
-  const light = new THREE.PointLight(c.glow, 1.5, 4.0);
-  light.position.y = 1.2;
-  grp.add(light);
+  // Inget PointLight: power-up-meshes spawnas/tas bort löpande (3 var 20:e s +
+  // pickup + 30 s expiry) och varje ljus-add/remove rekompilerar alla shaders
+  // → hicka (decision 062, samma buggklass). Emissive-kärnan (1.8) + MeshBasic-
+  // halo/ring lyser ändå i full färg.
   grp.userData.core = core;
   grp.userData.halo = halo;
   grp.userData.ring = ring;
@@ -24924,17 +24924,30 @@ function triggerClientVisualAA(side) {
   const heroId = side.heroId || 'magiker';
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
   const color = colors[heroId] || 0xffdc66;
-  // Större projektil + längre liv så det blir tydligt synligt på klient
+  // Tydlig flygande projektil. Tidigare 0.30 r / 0.6 s / ingen trail — för
+  // svag att märka mot host:ens riktiga AA-projektiler. Nu i nivå med
+  // skill-projektilen (0.45 r, 0.9 s, trail-partiklar).
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.30, 14, 10),
+    new THREE.SphereGeometry(0.45, 16, 12),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
   );
   sphere.position.set(ox + fx * 0.5, 1.3, oz + fz * 0.5);
   scene.add(sphere);
   combatFx.push({
-    mesh: sphere, life: 0.6, maxLife: 0.6, kind: 'aaFly',
+    mesh: sphere, life: 0.9, maxLife: 0.9, kind: 'aaFly',
     vx: fx * 22, vz: fz * 22,
   });
+  // Trail-partiklar bakom projektilen (kind:'trail' — egen FX-typ, syns
+  // även om aaFly-sfären av någon anledning inte skulle renderas).
+  for (let i = 0; i < 3; i++) {
+    const pf = i * 0.06;
+    spawnProjectileTrailPuff(
+      ox + fx * (0.3 + pf),
+      1.2 + (Math.random() - 0.5) * 0.3,
+      oz + fz * (0.3 + pf),
+      color
+    );
+  }
   // Muzzle-flash vid hero (liten ring som expanderar snabbt)
   spawnSkillCastFx(ox + fx * 0.4, oz + fz * 0.4, color, 0.8);
 }
