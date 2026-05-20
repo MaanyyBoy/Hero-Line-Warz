@@ -14782,6 +14782,88 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
 // kända velocity istället för att meshen stannar och rycker när nästa snap
 // äntligen anländer. Cap:ar vid 100ms för att undvika runaway-extrapolation
 // vid längre dropouts.
+// ── FAS 3: BUFFRAD SNAPSHOT-INTERPOLATION (arena-motspelare) ──────────
+// Motspelarens hjälte renderas ~100 ms "i det förflutna" genom att lerpa
+// mellan de två buffrade snapshots som omger render-tiden. Tidigare
+// extrapolerades positionen framåt med en velocity uträknad ur snap-
+// ankomsttider (brusig) → överskjutning/ryck vid start/stopp/riktningsbyte.
+// Med interpolation rör sig motspelaren längs FAKTISKT mottagna positioner
+// → mjukt, ingen gissning. Pris: ~100 ms visuell fördröjning på motspelaren.
+const ARENA_INTERP_DELAY = 0.10;        // sek att rendera motspelaren bakom "nu"
+const ARENA_SNAP_BUFFER_MAX = 16;       // max buffrade snapshots (~0.5 s @ 30 Hz)
+const ARENA_SNAP_TELEPORT_DIST2 = 6.25; // (2.5 m)² — större hopp = blink/teleport
+
+// Pushar en mottagen hero-snapshot till mesh._snapBuf (ringbuffer). Första
+// snapshot placerar meshen direkt. Bufferten nollställs vid (a) lång lucka
+// (> 2 s, match-omstart/paus) eller (b) ett positions-hopp för stort för
+// normal rörelse (blink/teleport/knockback) → meshen snappar då i stället
+// för att glida över gapet.
+function pushHeroSnapToBuffer(mesh, t, x, z, ry) {
+  let buf = mesh._snapBuf;
+  if (!buf) buf = mesh._snapBuf = [];
+  const last = buf.length ? buf[buf.length - 1] : null;
+  if (last) {
+    const ddx = x - last.x, ddz = z - last.z;
+    if ((t - last.t) > 2.0 || (ddx * ddx + ddz * ddz) > ARENA_SNAP_TELEPORT_DIST2) {
+      buf.length = 0;
+    }
+  }
+  if (buf.length === 0) {
+    mesh.position.x = x; mesh.position.z = z; mesh.rotation.y = ry;
+    buf.push({ t, x, z, ry });
+    return;
+  }
+  const prev = buf[buf.length - 1];
+  if (t <= prev.t) {
+    // Två paket samma frame — uppdatera senaste i stället för bakåt-tid.
+    prev.x = x; prev.z = z; prev.ry = ry;
+  } else {
+    buf.push({ t, x, z, ry });
+    if (buf.length > ARENA_SNAP_BUFFER_MAX) buf.shift();
+  }
+}
+
+// Renderar mesh.position vid (nowSec - ARENA_INTERP_DELAY) genom att lerpa
+// mellan de två buffrade snapshots som omger den tiden. Vid slut på buffert
+// (packet-loss / host-stall) hålls senaste position — ingen extrapolation,
+// så ingen overshoot; en kort frys är mindre störande än en studs.
+function interpolateHeroSnapBuffer(mesh, nowSec) {
+  const buf = mesh._snapBuf;
+  if (!buf || buf.length === 0) return;
+  if (buf.length === 1) {
+    mesh.position.x = buf[0].x; mesh.position.z = buf[0].z;
+    mesh.rotation.y = buf[0].ry;
+    return;
+  }
+  const renderTime = nowSec - ARENA_INTERP_DELAY;
+  const oldest = buf[0], newest = buf[buf.length - 1];
+  if (renderTime <= oldest.t) {
+    mesh.position.x = oldest.x; mesh.position.z = oldest.z;
+    mesh.rotation.y = oldest.ry;
+    return;
+  }
+  if (renderTime >= newest.t) {
+    mesh.position.x = newest.x; mesh.position.z = newest.z;
+    mesh.rotation.y = newest.ry;
+    return;
+  }
+  for (let i = buf.length - 2; i >= 0; i--) {
+    const a = buf[i];
+    if (renderTime >= a.t) {
+      const b = buf[i + 1];
+      const span = b.t - a.t;
+      const f = span > 1e-5 ? (renderTime - a.t) / span : 0;
+      mesh.position.x = a.x + (b.x - a.x) * f;
+      mesh.position.z = a.z + (b.z - a.z) * f;
+      let d = b.ry - a.ry;
+      if (d > Math.PI) d -= 2 * Math.PI;
+      else if (d < -Math.PI) d += 2 * Math.PI;
+      mesh.rotation.y = a.ry + d * f;
+      return;
+    }
+  }
+}
+
 function smoothEntityMeshes(dt) {
   // Halflife 55 ms — matchar 30 Hz broadcast-rate (33 ms snap-intervall).
   // Längre halflife = mer "tail-drag" på rörelse, märks tydligt i duel-combat.
@@ -14790,7 +14872,7 @@ function smoothEntityMeshes(dt) {
   // Hero-meshes — alla 3 sidor (boss-wars MP har sides[3]).
   for (const sideIdx of [1, 2, 3]) {
     const side = sides[sideIdx];
-    if (!side || !side.mesh._target) continue;
+    if (!side || (!side.mesh._target && !side.mesh._snapBuf)) continue;
     smoothMeshToTarget(side.mesh, k, nowSec);
   }
   // Boss-wars boss-mesh (ligger i sides[1].monsters)
@@ -14816,6 +14898,8 @@ function smoothEntityMeshes(dt) {
 // undvik runaway-rörelse vid riktig packet-loss men bridge:ar normalt
 // 50ms-gap + ev. en missad snap (=100ms) utan stutter.
 function smoothMeshToTarget(mesh, k, nowSec) {
+  // Fas 3: arena-motspelaren renderas via buffrad snapshot-interpolation.
+  if (mesh._snapBuf) { interpolateHeroSnapBuffer(mesh, nowSec); return; }
   const t = mesh._target;
   if (!t) return;
   let tx = t.x, tz = t.z;
@@ -21178,35 +21262,40 @@ function applyHeroSnap(side, snap) {
   side.arenaDamageBuff = snap.adm || 0;
   if (side.mesh) {
     if (!isLocalMpClient) {
-      // Non-local: _target-baserad interpolation (smoothEntityMeshes lerpar
-      // mesh.position mot _target vid 60 fps med 55 ms halflife).
-      // Decision 044: spåra _targetTime + _vx/_vz för velocity-extrapolation
-      // under packet-jitter.
       const heroRy = (snap.fx || snap.fz) ? Math.atan2(snap.fx, snap.fz) : (side.mesh._target?.ry ?? side.mesh.rotation.y);
       const _nowSec = performance.now() / 1000;
-      if (!side.mesh._target) {
-        side.mesh.position.x = snap.x;
-        side.mesh.position.z = snap.z;
-        side.mesh.rotation.y = heroRy;
-        side.mesh._target = { x: snap.x, z: snap.z, ry: heroRy };
-        side.mesh._targetTime = _nowSec;
-        side.mesh._vx = 0; side.mesh._vz = 0;
+      if (isArenaMp()) {
+        // Fas 3: buffrad snapshot-interpolation — pusha snapshot till
+        // ringbuffer; interpolateHeroSnapBuffer renderar ~100 ms bakom "nu"
+        // mellan två faktiskt mottagna positioner (ingen extrapolation).
+        pushHeroSnapToBuffer(side.mesh, _nowSec, snap.x, snap.z, heroRy);
       } else {
-        const dt = _nowSec - (side.mesh._targetTime || _nowSec);
-        if (dt > 0.001 && dt < 0.2) {
-          const dx = snap.x - side.mesh._target.x;
-          const dz = snap.z - side.mesh._target.z;
-          if (dx * dx + dz * dz < 0.0009) {
-            side.mesh._vx = 0; side.mesh._vz = 0;
-          } else {
-            side.mesh._vx = dx / dt;
-            side.mesh._vz = dz / dt;
+        // Classic / boss-wars: _target-baserad velocity-extrapolation
+        // (decision 044). smoothEntityMeshes lerpar mesh.position mot _target.
+        if (!side.mesh._target) {
+          side.mesh.position.x = snap.x;
+          side.mesh.position.z = snap.z;
+          side.mesh.rotation.y = heroRy;
+          side.mesh._target = { x: snap.x, z: snap.z, ry: heroRy };
+          side.mesh._targetTime = _nowSec;
+          side.mesh._vx = 0; side.mesh._vz = 0;
+        } else {
+          const dt = _nowSec - (side.mesh._targetTime || _nowSec);
+          if (dt > 0.001 && dt < 0.2) {
+            const dx = snap.x - side.mesh._target.x;
+            const dz = snap.z - side.mesh._target.z;
+            if (dx * dx + dz * dz < 0.0009) {
+              side.mesh._vx = 0; side.mesh._vz = 0;
+            } else {
+              side.mesh._vx = dx / dt;
+              side.mesh._vz = dz / dt;
+            }
           }
+          side.mesh._target.x = snap.x;
+          side.mesh._target.z = snap.z;
+          side.mesh._target.ry = heroRy;
+          side.mesh._targetTime = _nowSec;
         }
-        side.mesh._target.x = snap.x;
-        side.mesh._target.z = snap.z;
-        side.mesh._target.ry = heroRy;
-        side.mesh._targetTime = _nowSec;
       }
     }
     if (side.heroId !== snap.hid) {
@@ -24816,10 +24905,22 @@ function spawnShieldBurstFx(x, z, color = 0x66c8ff) {
 // hero's facing-riktning. På HOST körs simulateAll och spawnar riktiga
 // projektiler; på CLIENT skippas simulateAll så vi behöver den här syntheten
 // för att användaren ska se "något" hända när de tappar AA.
+// Visuell ankarpunkt för klient-FX. Fas 3 renderar arena-motspelaren ~100 ms
+// bakom side.hero.x (buffrad interpolation), så FX ska följa MESHEN, inte den
+// råa snap-positionen. Lokal hjälte / classic / boss-wars saknar _snapBuf →
+// faller tillbaka på side.hero.x (oförändrat beteende).
+function heroFxAnchorX(side) {
+  return (side.mesh && side.mesh._snapBuf) ? side.mesh.position.x : side.hero.x;
+}
+function heroFxAnchorZ(side) {
+  return (side.mesh && side.mesh._snapBuf) ? side.mesh.position.z : side.hero.z;
+}
+
 function triggerClientVisualAA(side) {
   if (!side || !side.mesh || side.hero.dead) return;
   const fx = side.hero.facingX || 0;
   const fz = side.hero.facingZ || 1;
+  const ox = heroFxAnchorX(side), oz = heroFxAnchorZ(side);
   const heroId = side.heroId || 'magiker';
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
   const color = colors[heroId] || 0xffdc66;
@@ -24828,14 +24929,14 @@ function triggerClientVisualAA(side) {
     new THREE.SphereGeometry(0.30, 14, 10),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
   );
-  sphere.position.set(side.hero.x + fx * 0.5, 1.3, side.hero.z + fz * 0.5);
+  sphere.position.set(ox + fx * 0.5, 1.3, oz + fz * 0.5);
   scene.add(sphere);
   combatFx.push({
     mesh: sphere, life: 0.6, maxLife: 0.6, kind: 'aaFly',
     vx: fx * 22, vz: fz * 22,
   });
   // Muzzle-flash vid hero (liten ring som expanderar snabbt)
-  spawnSkillCastFx(side.hero.x + fx * 0.4, side.hero.z + fz * 0.4, color, 0.8);
+  spawnSkillCastFx(ox + fx * 0.4, oz + fz * 0.4, color, 0.8);
 }
 
 // Klient-visual för skill-cast — förstärkt med:
@@ -24862,9 +24963,10 @@ function triggerClientVisualSkill(side, key) {
   const colors = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff, r: 0xff44aa };
   const color = colors[key] || 0xffdc66;
   const radius = (key === 'r') ? 3.0 : 1.8;   // större än tidigare
+  const ox = heroFxAnchorX(side), oz = heroFxAnchorZ(side);
   // Cast-ring vid hero + sekundär ring på marken (ground-impact-feel)
-  spawnSkillCastFx(side.hero.x, side.hero.z, color, radius);
-  spawnShieldBurstFx(side.hero.x, side.hero.z, color);
+  spawnSkillCastFx(ox, oz, color, radius);
+  spawnShieldBurstFx(ox, oz, color);
   // Projektil-blast i facing-riktning för Q/E/R — större + flyger längre
   if (key === 'q' || key === 'e' || key === 'r') {
     const fx = side.hero.facingX || 0;
@@ -24874,7 +24976,7 @@ function triggerClientVisualSkill(side, key) {
       new THREE.SphereGeometry(size, 16, 12),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
     );
-    sphere.position.set(side.hero.x + fx * 0.7, 1.3, side.hero.z + fz * 0.7);
+    sphere.position.set(ox + fx * 0.7, 1.3, oz + fz * 0.7);
     scene.add(sphere);
     combatFx.push({
       mesh: sphere, life: (key === 'r') ? 1.2 : 0.9,
@@ -24885,15 +24987,15 @@ function triggerClientVisualSkill(side, key) {
     for (let i = 0; i < 3; i++) {
       const pf = i * 0.06;
       spawnProjectileTrailPuff(
-        side.hero.x + fx * (0.4 + pf),
+        ox + fx * (0.4 + pf),
         1.2 + (Math.random() - 0.5) * 0.3,
-        side.hero.z + fz * (0.4 + pf),
+        oz + fz * (0.4 + pf),
         color
       );
     }
   } else if (key === 'f') {
     // F är ofta AoE / self-buff — spawna en större ground-mark vid hero
-    spawnGroundImpact(side.hero.x, side.hero.z, 3.0, color);
+    spawnGroundImpact(ox, oz, 3.0, color);
   }
 }
 
