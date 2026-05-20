@@ -25537,11 +25537,20 @@ function tick() {
     tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
   }
-  // Arena MP host broadcastar state till klienten
+  // Arena MP host broadcastar state till klienten — fast 30 Hz-kadens via
+  // tids-ackumulator (steg 2 av MP-lagg-planen). Tidigare kollades
+  // (now - lastStateSent > intervall) en gång per rAF-frame; 33 ms är ingen
+  // multipel av 16,7 ms (60 Hz) så sändningen halkade till var 3:e frame
+  // ≈ 50 ms (ojämn ~20 Hz). Ackumulatorn drar av exakt ETT intervall per
+  // sändning → snittakt = exakt 30 Hz utan drift; tröskeln ×0.9 gör att en
+  // 60 Hz-host pålitligt träffar var 2:a frame trots flyttalsprecision.
   if (isArenaMp() && APP.mode === 'host' && wsOpen()) {
-    if (now - APP.lastStateSent > ARENA_STATE_SEND_INTERVAL) {
-      APP.lastStateSent = now;
+    APP.stateAccum = (APP.stateAccum || 0) + dt;
+    if (APP.stateAccum >= ARENA_STATE_SEND_INTERVAL * 0.9) {
       broadcastArenaState();
+      APP.stateAccum -= ARENA_STATE_SEND_INTERVAL;
+      // Anti-burst: efter en lång host-hicka, skicka inte ikapp-snapshots.
+      if (APP.stateAccum > ARENA_STATE_SEND_INTERVAL) APP.stateAccum = 0;
     }
   }
   // Boss Wars MP host broadcastar state till klienterna 30 Hz (matchar classic).
