@@ -23424,6 +23424,15 @@ function enterPlayPhase() {
       s.level = 30;
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
+      // Arena = full-power lvl 30: alla skills unlocked + maxade direkt.
+      // Decision 050 (skill-point-systemet) lämnar skillLvl på {q:0,f:0,e:0}
+      // (= låsta) — det gäller classic line wars där poäng tjänas per level.
+      // Arena har ingen skill-point-UI (progression sker via talent-systemet),
+      // så utan denna init blir alla Q/F/E permanent låsta → castLocalSkill +
+      // applyEvent bail:ar på skill-lock-gaten = "går ej att använda skills".
+      // R auto-unlockas (lvl 30 >= ULT_UNLOCK_LEVEL). skillLvlMul räknas om av
+      // recomputeSideStats nedan (rad ~23543).
+      s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
     }
     // Endast host (eller solo) initierar arenaState. Klienten följer via a-state-broadcast.
     if (APP.mode !== 'client') {
