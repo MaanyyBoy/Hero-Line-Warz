@@ -4635,7 +4635,7 @@ const BOSSWARS_ARCH_THEME = {
     accentColor: 0xff4488,
     capRingColor: 0xff4488,                    // rosa-röd glow-cap
   },
-  5: {  // Dragon King — Volcano Crater
+  5: {  // Dragon King — Ember Dojo (perimeter byggs av isT5Dojo-grenen)
     pillarColor: 0x281814, pillarMossy: false,
     bannerColor: 0x8a3010, bannerEdge: 0x300808,
     bannerSymbol: '☼',                         // sol/eld-symbol
@@ -4725,32 +4725,16 @@ const BOSSWARS_MAPS = {
     // hålls öppen så striden syns i strålen (user-spec).
     props: [],
   },
-  // Tier 5 — Alien Soldier — VOLCANO CRATER (eld, lava, mörka stenar)
+  // Tier 5 — Dragon King — EMBER DOJO (uråldrig hedrad träningsgård / dojo-tempel)
   5: {
-    name: 'Volcano Crater',
-    color: 0x40180c, edgeColor: 0x100400, accent: 0xff5010,
-    torchColor: 0xff5010,                                   // orange flame
-    ambient: { color: 0x4a1808, intensity: 0.40 },
-    props: [
-      { type: 'firePatch', x: -18, z: -18 },
-      { type: 'firePatch', x:  18, z:  18 },
-      { type: 'firePatch', x: -18, z:  18 },
-      { type: 'firePatch', x:  18, z: -18 },
-      { type: 'firePatch', x: -26, z:   0 },
-      { type: 'firePatch', x:  26, z:   0 },
-      { type: 'firePatch', x:   0, z: -26 },
-      { type: 'firePatch', x:   0, z:  26 },
-      { type: 'lavaPool', x: -12, z: -12 },
-      { type: 'lavaPool', x:  12, z:  12 },
-      { type: 'lavaPool', x: -12, z:  12 },
-      { type: 'lavaPool', x:  12, z: -12 },
-      { type: 'rock', x: -22, z: -24 },
-      { type: 'rock', x:  22, z:  24 },
-      { type: 'bigBoulder', x: -20, z:  22 },
-      { type: 'bigBoulder', x:  20, z: -22 },
-      { type: 'bigBoulder', x: -28, z:  10 },
-      { type: 'bigBoulder', x:  28, z: -10 },
-    ],
+    name: 'Ember Dojo',
+    color: 0x3a2614, edgeColor: 0x241810, accent: 0xffaa50,
+    torchColor: 0xffae5a,                                   // varmt bärnstens-sken
+    ambient: { color: 0x6a4424, intensity: 0.40 },          // varmt, mjukt, balanserat
+    // Lugna pelare, hängande lyktor och raka bjälkar byggs av
+    // buildBossArenaArchitecture (isT5Dojo-grenen). Arenans mitt hålls öppen
+    // och ren för en fokuserad duell (user-spec).
+    props: [],
   },
 };
 // Boss-wars platformens ovansida ligger på y=0.42 (bas-cylinder centrerad vid
@@ -5696,6 +5680,99 @@ function makeArenaLightBeam() {
   return grp;
 }
 
+// T5 Dragon King — lugn, värdig dojo-pelare: stenbas + rak träkolonn + trä-
+// kapitäl. Ren och upprätt (ingen jitter) — "raka, värdiga" arkitektur.
+function makeArenaDojoPillar(woodMat, stoneMat, darkWoodMat) {
+  const grp = new THREE.Group();
+  // Stenbas — bred, dignified, två steg
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.55, 1.9), stoneMat);
+  base.position.y = 0.275;
+  base.castShadow = true; base.receiveShadow = true;
+  grp.add(base);
+  const base2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.32, 1.5), stoneMat);
+  base2.position.y = 0.71;
+  base2.castShadow = true;
+  grp.add(base2);
+  // Rak träkolonn
+  const colH = 5.4, colY0 = 0.87;
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.40, 0.44, colH, 16), woodMat);
+  col.position.y = colY0 + colH / 2;
+  col.castShadow = true; col.receiveShadow = true;
+  grp.add(col);
+  // Dekorativa ringband
+  for (let i = 0; i < 2; i++) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.045, 6, 20), darkWoodMat);
+    band.position.y = colY0 + colH * (0.28 + i * 0.46);
+    band.rotation.x = Math.PI / 2;
+    grp.add(band);
+  }
+  // Kapitäl — bracket-stack
+  const cap1 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 1.0), darkWoodMat);
+  cap1.position.y = colY0 + colH + 0.14;
+  cap1.castShadow = true;
+  grp.add(cap1);
+  const cap2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.32, 1.5), woodMat);
+  cap2.position.y = colY0 + colH + 0.44;
+  cap2.castShadow = true;
+  grp.add(cap2);
+  return grp;
+}
+
+// T5 Dragon King — hängande pappers-lykta. Origin = fästpunkt (på en bjälke);
+// allt hänger nedåt (negativt y). paperMat glöder varmt (emissive, ingen light).
+function makeArenaLantern(paperMat, frameMat) {
+  const grp = new THREE.Group();
+  // Snöre ner från fästpunkten
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 6), frameMat);
+  cord.position.y = -0.25;
+  grp.add(cord);
+  // Topp-cap
+  const topCap = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.26, 0.13, 12), frameMat);
+  topCap.position.y = -0.57;
+  grp.add(topCap);
+  // Lykt-kropp — glödande papper
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.6, 16), paperMat);
+  body.position.y = -0.94;
+  grp.add(body);
+  // Frame-ribbor
+  for (let i = 0; i < 3; i++) {
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(0.325, 0.02, 6, 18), frameMat);
+    rib.position.y = -0.94 + (i - 1) * 0.24;
+    rib.rotation.x = Math.PI / 2;
+    grp.add(rib);
+  }
+  // Botten-cap + tofs
+  const botCap = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.16, 0.12, 12), frameMat);
+  botCap.position.y = -1.30;
+  grp.add(botCap);
+  const tassel = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.2, 6), frameMat);
+  tassel.position.y = -1.46;
+  tassel.rotation.x = Math.PI;
+  grp.add(tassel);
+  return grp;
+}
+
+// T5 Dragon King — rak trä-bjälke mellan två pelar-toppar (arkitrav).
+function makeArenaDojoBeam(fromX, fromZ, toX, toZ, woodMat, darkWoodMat) {
+  const grp = new THREE.Group();
+  const dx = toX - fromX, dz = toZ - fromZ;
+  const dist = Math.hypot(dx, dz);
+  const midX = (fromX + toX) / 2, midZ = (fromZ + toZ) / 2;
+  const yaw = -Math.atan2(dz, dx);
+  // Huvudbjälke (box vars X-axel = längden)
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(dist, 0.42, 0.5), woodMat);
+  beam.position.set(midX, 6.0, midZ);
+  beam.rotation.y = yaw;
+  beam.castShadow = true;
+  grp.add(beam);
+  // Mörkare under-list
+  const trim = new THREE.Mesh(new THREE.BoxGeometry(dist, 0.16, 0.62), darkWoodMat);
+  trim.position.set(midX, 5.74, midZ);
+  trim.rotation.y = yaw;
+  grp.add(trim);
+  return grp;
+}
+
 // Bygger hela arena-arkitekturen runt boss-platformen.
 // 8 kolonner + facklor + banderoller + theme-accents.
 function buildBossArenaArchitecture(tier, map) {
@@ -5772,6 +5849,25 @@ function buildBossArenaArchitecture(tier, map) {
     color: 0x1a0308, roughness: 0.5, metalness: 0.2,
     emissive: 0xff1840, emissiveIntensity: 0.9,
   }) : null;
+  // T5 Dragon King — uråldrig dojo-tempel: lugna trä/sten-pelare, hängande
+  // lyktor, raka arkitektoniska bjälkar. Delade material (shader-cache).
+  const isT5Dojo = (tier === 5);
+  const t5WoodMat = isT5Dojo ? new THREE.MeshStandardMaterial({
+    color: 0x6e4828, roughness: 0.82, metalness: 0.04,
+  }) : null;
+  const t5DarkWoodMat = isT5Dojo ? new THREE.MeshStandardMaterial({
+    color: 0x2e1c0e, roughness: 0.85, metalness: 0.04,
+  }) : null;
+  const t5StoneMat = isT5Dojo ? new THREE.MeshStandardMaterial({
+    color: 0x6a6058, roughness: 0.55, metalness: 0.12,     // polerad sten
+  }) : null;
+  const t5PaperMat = isT5Dojo ? new THREE.MeshStandardMaterial({
+    color: 0xffd28a, roughness: 0.7, metalness: 0.0,
+    emissive: 0xff8c2a, emissiveIntensity: 0.95,           // varmt glödande papper
+  }) : null;
+  const t5FrameMat = isT5Dojo ? new THREE.MeshStandardMaterial({
+    color: 0x241608, roughness: 0.6, metalness: 0.3,
+  }) : null;
   _bossArenaCrystals.length = 0;
   for (let i = 0; i < pillarCount; i++) {
     const a = (i / pillarCount) * Math.PI * 2;
@@ -5796,6 +5892,9 @@ function buildBossArenaArchitecture(tier, map) {
     } else if (isT4Abyss) {
       // Alternerar hög spetsig (jämn) och låg bred (udda) obsidian-formation
       obj = makeArenaAbyssFormation(t4BlackMat, t4GlowMat, i % 2 === 0);
+    } else if (isT5Dojo) {
+      // 8 identiska lugna dojo-pelare — uniformitet = värdighet
+      obj = makeArenaDojoPillar(t5WoodMat, t5StoneMat, t5DarkWoodMat);
     } else {
       obj = makeArenaPillar(theme, stoneMat);
     }
@@ -5815,8 +5914,8 @@ function buildBossArenaArchitecture(tier, map) {
     if (isT4Abyss) obj.rotation.z = (Math.random() - 0.5) * 0.16;
     bossWarsSceneGroup.add(obj);
     pillars.push({ x: px, y: 7.0, z: pz });
-    // Fackla bara på standard-pelare (T1 + T2 + T3 + T4 har inga kapitäl-toppar)
-    if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss) {
+    // Fackla bara på standard-pelare (T1-T5 har inga klassiska kapitäl-toppar)
+    if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss && !isT5Dojo) {
       const torch = makePillarTorch(theme);
       torch.position.set(px, 7.0, pz);
       bossWarsSceneGroup.add(torch);
@@ -5845,6 +5944,18 @@ function buildBossArenaArchitecture(tier, map) {
     beamLight.position.set(BOSSWARS_CX, 11, BOSSWARS_CZ);
     bossWarsSceneGroup.add(beamLight);
   }
+  // T5: raka trä-bjälkar mellan alla pelar-toppar (octagonal arkitrav) + en
+  // hängande lykta per bjälke. Lugn, symmetrisk, värdig dojo-arkitektur.
+  if (isT5Dojo) {
+    for (let i = 0; i < pillarCount; i++) {
+      const p1 = pillars[i], p2 = pillars[(i + 1) % pillarCount];
+      const beam = makeArenaDojoBeam(p1.x, p1.z, p2.x, p2.z, t5WoodMat, t5DarkWoodMat);
+      bossWarsSceneGroup.add(beam);
+      const lantern = makeArenaLantern(t5PaperMat, t5FrameMat);
+      lantern.position.set((p1.x + p2.x) / 2, 5.75, (p1.z + p2.z) / 2);
+      bossWarsSceneGroup.add(lantern);
+    }
+  }
   // T2: 6 svävande mörka kristaller mellan pelarna, ~4 m upp i luften
   if (isT2Temple) {
     const crystalCount = 6;
@@ -5861,9 +5972,9 @@ function buildBossArenaArchitecture(tier, map) {
       _bossArenaCrystals.push({ mesh: crystal, baseY, phase: i * 1.04 });
     }
   }
-  // Banderoller mellan varannan kolonn (4 st) — skippas för T1/T2/T3/T4 där
-  // de temana har egna atmospheric accents istället
-  if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss) for (let i = 0; i < pillarCount; i += 2) {
+  // Banderoller mellan varannan kolonn (4 st) — skippas för T1-T5 där de
+  // temana har egna atmospheric accents istället
+  if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss && !isT5Dojo) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
     const banner = makeArenaBanner(theme);
@@ -5916,8 +6027,9 @@ function buildBossArenaArchitecture(tier, map) {
       crystal.rotation.y = Math.random() * Math.PI * 2;
       bossWarsSceneGroup.add(crystal);
     }
-  } else if (theme.accent === 'lavaTrough') {
-    // Lava-tråg mellan varannan kolonn-par (4 totalt)
+  } else if (theme.accent === 'lavaTrough' && !isT5Dojo) {
+    // Lava-tråg mellan varannan kolonn-par (4 totalt) — skippas för T5
+    // (dojo-arenan har bjälkar + lyktor istället)
     for (let i = 0; i < pillarCount; i += 2) {
       const next = (i + 1) % pillarCount;
       const p1 = pillars[i], p2 = pillars[next];
@@ -5986,7 +6098,7 @@ function drawBossArenaFloor(ctx, size, tier, map) {
   else if (tier === 2) drawArcaneFloor(ctx, size, map);
   else if (tier === 3) drawCryptLabFloor(ctx, size, map);
   else if (tier === 4) drawObsidianFloor(ctx, size, map);
-  else if (tier === 5) drawVolcanoFloor(ctx, size, map);
+  else if (tier === 5) drawDojoFloor(ctx, size, map);
 }
 
 // Ritar runda runinskriptioner med GLYPHS på en separat emissive-canvas
@@ -6813,261 +6925,167 @@ function drawObsidianFloor(ctx, size, map) {
   drawT4CrackPattern(ctx, size, false);
 }
 
-// T5 Dragon King / Volcano Crater — central dragon-eye emblem,
-// dragon-scale-mönster, bones, dramatic lava channels.
-function drawVolcanoFloor(ctx, size, map) {
-  const cx = size / 2, cy = size / 2;
-  // === CENTRAL MAGMA CRATER GLOW === (huge bright orange center)
-  const craterGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.35);
-  craterGlow.addColorStop(0, 'rgba(255,180,60,0.55)');
-  craterGlow.addColorStop(0.4, 'rgba(220,80,20,0.35)');
-  craterGlow.addColorStop(1, 'rgba(40,15,5,0)');
-  ctx.fillStyle = craterGlow;
-  ctx.fillRect(0, 0, size, size);
-  // === DRAGON SCALE PATTERN === (concentric arc of scales runt center)
-  for (let ring = 1; ring <= 5; ring++) {
-    const ringR = size * (0.08 + ring * 0.06);
-    const scaleCount = 8 + ring * 4;
-    for (let i = 0; i < scaleCount; i++) {
-      const a = (i / scaleCount) * Math.PI * 2 + (ring % 2 === 0 ? Math.PI / scaleCount : 0);
-      const sx = cx + Math.cos(a) * ringR;
-      const sy = cy + Math.sin(a) * ringR;
-      // Scale = mörk halv-ellips med glödande inner edge
-      ctx.save();
-      ctx.translate(sx, sy);
-      ctx.rotate(a + Math.PI / 2);
-      // Mörk bas
-      ctx.fillStyle = 'rgba(25,8,3,0.7)';
+// ============================================================
+// T5 Dragon King — EMBER DOJO: en uråldrig, hedrad träningsgård / dojo-tempel.
+// Golvet är varmt trä + polerad sten med ett elegant, symmetriskt cirkel-
+// mönster som lyser svagt orange/bärnstensfärgat. Mönstret ritas
+// DETERMINISTISKT (ren geometri) så color- och emissive-canvasen matchar —
+// samma princip som T2/T3/T4.
+// ============================================================
+
+// Ren positions-helper för dojo-cirkelmönstret. Anropas av både
+// drawT5CirclePattern (color) och buildT5DojoEmissive (emissive).
+function getT5CircleGeometry(size) {
+  return {
+    cx: size / 2, cy: size / 2,
+    rings: [size * 0.17, size * 0.275, size * 0.375, size * 0.405],
+    ringW: [3, 4.5, 5.5, 2.5],
+    tickInner: size * 0.285,
+    tickOuter: size * 0.365,
+    tickCount: 24,
+    medallionR: size * 0.325,
+    medallionCount: 8,
+    medallionSize: size * 0.024,
+  };
+}
+
+// Ritar dojo-cirkelmönstret: koncentriska ringar + radiella streck +
+// medaljonger. emissive=true → ljusa bärnstens-linjer + mjuk halo på svart
+// (emissiveMap). emissive=false → mörkt etsat i träet.
+function drawT5CirclePattern(ctx, size, emissive) {
+  const g = getT5CircleGeometry(size);
+  ctx.lineCap = 'round';
+  // Mjukt bärnstens-halo bakom (bara emissive — ritas först)
+  if (emissive) {
+    ctx.strokeStyle = 'rgba(255,150,60,0.26)';
+    for (let i = 0; i < g.rings.length; i++) {
+      ctx.lineWidth = g.ringW[i] + 9;
       ctx.beginPath();
-      ctx.ellipse(0, 0, 16, 10, 0, 0, Math.PI);
-      ctx.fill();
-      // Glödande inner edge
-      ctx.strokeStyle = `rgba(255,${130 + ring * 15},${30 + ring * 8},${0.45 - ring * 0.04})`;
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI);
+      ctx.arc(g.cx, g.cy, g.rings[i], 0, Math.PI * 2);
       ctx.stroke();
-      ctx.restore();
     }
   }
-  // === STORA ASH-PATCHES === (extra mörka områden för kontrast i ytterkanten)
-  for (let i = 0; i < 12; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    // Skip om för nära center (vi vill se scale-mönstret där)
-    if (Math.hypot(x - cx, y - cy) < size * 0.35) continue;
-    const r = 60 + Math.random() * 110;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(10,5,2,0.78)');
-    g.addColorStop(0.6, 'rgba(25,12,8,0.45)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, size, size);
+  const ringCol = emissive ? 'rgba(255,182,92,0.92)' : 'rgba(120,72,28,0.78)';
+  const fineCol = emissive ? 'rgba(255,212,142,0.85)' : 'rgba(138,90,40,0.7)';
+  // Koncentriska ringar
+  for (let i = 0; i < g.rings.length; i++) {
+    ctx.strokeStyle = ringCol;
+    ctx.lineWidth = emissive ? g.ringW[i] + 1.5 : g.ringW[i];
+    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.rings[i], 0, Math.PI * 2);
+    ctx.stroke();
   }
-  // === MAGMA-CRACKS === (förgrenande glödande sprickor, kraftigare än innan)
-  const drawMagmaCrack = (sx, sy, ex, ey, depth) => {
-    if (depth <= 0) return;
-    const mx = (sx + ex) / 2 + (Math.random() - 0.5) * 40;
-    const my = (sy + ey) / 2 + (Math.random() - 0.5) * 40;
-    const lineW = 5 + depth * 2;
-    // Outer halo (bred mörk-orange)
-    ctx.strokeStyle = 'rgba(255,90,20,0.45)';
-    ctx.lineWidth = lineW + 10;
-    ctx.lineCap = 'round';
+  // Radiella streck mellan tick-ringarna
+  ctx.strokeStyle = fineCol;
+  ctx.lineWidth = emissive ? 3 : 2;
+  for (let i = 0; i < g.tickCount; i++) {
+    const a = (i / g.tickCount) * Math.PI * 2;
     ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
+    ctx.moveTo(g.cx + Math.cos(a) * g.tickInner, g.cy + Math.sin(a) * g.tickInner);
+    ctx.lineTo(g.cx + Math.cos(a) * g.tickOuter, g.cy + Math.sin(a) * g.tickOuter);
     ctx.stroke();
-    // Mid orange
-    ctx.strokeStyle = 'rgba(255,160,40,0.7)';
-    ctx.lineWidth = lineW + 3;
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
-    ctx.stroke();
-    // Bright core (gul-vit)
-    ctx.strokeStyle = 'rgba(255,240,180,1)';
-    ctx.lineWidth = Math.max(1.5, lineW - 2);
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(mx, my, ex, ey);
-    ctx.stroke();
-    // Rekursiva förgreningar
-    if (depth > 1 && Math.random() < 0.65) {
-      const bx = mx + (Math.random() - 0.5) * 90;
-      const by = my + (Math.random() - 0.5) * 90;
-      drawMagmaCrack(mx, my, bx, by, depth - 1);
+  }
+  // Medaljonger på 8-falt-symmetriska positioner
+  for (let i = 0; i < g.medallionCount; i++) {
+    const a = (i / g.medallionCount) * Math.PI * 2 + Math.PI / g.medallionCount;
+    const mx = g.cx + Math.cos(a) * g.medallionR;
+    const my = g.cy + Math.sin(a) * g.medallionR;
+    if (emissive) {
+      const gr = ctx.createRadialGradient(mx, my, 0, mx, my, g.medallionSize * 2.4);
+      gr.addColorStop(0, 'rgba(255,200,130,0.6)');
+      gr.addColorStop(1, 'rgba(255,150,60,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(mx - g.medallionSize * 2.4, my - g.medallionSize * 2.4,
+        g.medallionSize * 4.8, g.medallionSize * 4.8);
     }
-  };
-  // 5 stora magma-floder + 1 specialfall: dragon-shape diagonal från
-  // upper-left till lower-right (Dragon King's territory-mark)
-  drawMagmaCrack(size * 0.15, size * 0.20, size * 0.85, size * 0.80, 5);
-  drawMagmaCrack(size * 0.80, size * 0.15, size * 0.20, size * 0.85, 5);
-  for (let i = 0; i < 4; i++) {
-    const x1 = Math.random() * size, y1 = Math.random() * size;
-    const ang = Math.random() * Math.PI * 2;
-    const len = 200 + Math.random() * 250;
-    const x2 = x1 + Math.cos(ang) * len;
-    const y2 = y1 + Math.sin(ang) * len;
-    drawMagmaCrack(x1, y1, x2, y2, 4);
+    ctx.strokeStyle = ringCol;
+    ctx.lineWidth = emissive ? 3.5 : 2.5;
+    ctx.beginPath();
+    ctx.arc(mx, my, g.medallionSize, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = emissive ? 'rgba(255,206,140,0.92)' : 'rgba(128,80,34,0.7)';
+    ctx.beginPath();
+    ctx.arc(mx, my, g.medallionSize * 0.4, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // === CENTRAL DRAGON-EYE EMBLEM === (HUGE focal point i mitten)
-  const eyeR = size * 0.065;
-  // Eye glow halo
-  const eyeHalo = ctx.createRadialGradient(cx, cy, 0, cx, cy, eyeR * 2.4);
-  eyeHalo.addColorStop(0, 'rgba(255,200,80,0.85)');
-  eyeHalo.addColorStop(0.6, 'rgba(255,120,30,0.35)');
-  eyeHalo.addColorStop(1, 'rgba(255,80,20,0)');
-  ctx.fillStyle = eyeHalo;
-  ctx.fillRect(cx - eyeR * 2.4, cy - eyeR * 2.4, eyeR * 4.8, eyeR * 4.8);
-  // Iris (gyllene-orange)
-  const iris = ctx.createRadialGradient(cx, cy, 0, cx, cy, eyeR);
-  iris.addColorStop(0, 'rgba(255,240,150,1)');
-  iris.addColorStop(0.5, 'rgba(255,180,40,1)');
-  iris.addColorStop(1, 'rgba(180,60,10,0.95)');
-  ctx.fillStyle = iris;
-  ctx.beginPath();
-  ctx.arc(cx, cy, eyeR, 0, Math.PI * 2);
-  ctx.fill();
-  // Slit pupil (vertikal smal mörk slit som en drak-pupill)
-  ctx.fillStyle = 'rgba(8,3,1,1)';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, eyeR * 0.15, eyeR * 0.85, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Highlight på pupillen (top-right)
-  ctx.fillStyle = 'rgba(255,255,220,0.85)';
-  ctx.beginPath();
-  ctx.ellipse(cx + eyeR * 0.05, cy - eyeR * 0.30, eyeR * 0.06, eyeR * 0.15, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Eye-outline (mörk ring runt iris)
-  ctx.strokeStyle = 'rgba(20,8,3,0.9)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(cx, cy, eyeR, 0, Math.PI * 2);
-  ctx.stroke();
-  // === BONES/SKULL SILHUETTER === (scattered runt arenan)
-  // Skull-form (förenklad cirkel + 2 ögonhålor + käke)
-  const drawSkull = (sx, sy, scl) => {
-    ctx.fillStyle = 'rgba(180,170,150,0.7)';
-    ctx.beginPath();
-    ctx.arc(sx, sy, 10 * scl, 0, Math.PI * 2);
-    ctx.fill();
-    // Käke (mindre cirkel under)
-    ctx.beginPath();
-    ctx.ellipse(sx, sy + 8 * scl, 7 * scl, 5 * scl, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Ögonhåla x2 (mörka prickar)
-    ctx.fillStyle = 'rgba(15,8,5,0.95)';
-    ctx.beginPath(); ctx.arc(sx - 4 * scl, sy - 2 * scl, 2.5 * scl, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(sx + 4 * scl, sy - 2 * scl, 2.5 * scl, 0, Math.PI * 2); ctx.fill();
-    // Näshåla
-    ctx.beginPath();
-    ctx.moveTo(sx, sy + 2 * scl);
-    ctx.lineTo(sx - 2 * scl, sy + 5 * scl);
-    ctx.lineTo(sx + 2 * scl, sy + 5 * scl);
-    ctx.closePath();
-    ctx.fill();
-  };
-  // Bone (lång stav med knottror i ändarna)
-  const drawBone = (sx, sy, ang, scl) => {
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(ang);
-    ctx.fillStyle = 'rgba(190,180,160,0.6)';
-    // Shaft
-    ctx.fillRect(-14 * scl, -2 * scl, 28 * scl, 4 * scl);
-    // Knobs
-    ctx.beginPath();
-    ctx.arc(-14 * scl, -3 * scl, 4 * scl, 0, Math.PI * 2);
-    ctx.arc(-14 * scl, 3 * scl, 4 * scl, 0, Math.PI * 2);
-    ctx.arc(14 * scl, -3 * scl, 4 * scl, 0, Math.PI * 2);
-    ctx.arc(14 * scl, 3 * scl, 4 * scl, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  };
-  // Scatter 3 skulls + 5 bones runt arenan (skip för nära center)
-  for (let i = 0; i < 3; i++) {
-    let x, y;
-    do {
-      x = Math.random() * size; y = Math.random() * size;
-    } while (Math.hypot(x - cx, y - cy) < size * 0.25);
-    drawSkull(x, y, 0.9 + Math.random() * 0.5);
+}
+
+// Bygger emissive-canvas för T5 (svart bg + cirkelmönstret i ljus bärnsten).
+function buildT5DojoEmissive(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  drawT5CirclePattern(ctx, size, true);
+  return canvas;
+}
+
+// T5 Dragon King — varmt trägolv + polerad sten-perimeter med etsat cirkel-
+// mönster. Glödet kommer från emissive-map (buildT5DojoEmissive).
+function drawDojoFloor(ctx, size, map) {
+  const cx = size / 2, cy = size / 2;
+  // BAS: varmt trä
+  ctx.fillStyle = '#3a2614';
+  ctx.fillRect(0, 0, size, size);
+  // Trä-plankor — horisontella med varm ton-variation
+  const plankH = 62;
+  let pi = 0;
+  for (let py = 0; py < size; py += plankH, pi++) {
+    const shade = (pi % 3) - 1;
+    const v = 64 + shade * 12;
+    ctx.fillStyle = `rgba(${v},${(v * 0.62) | 0},${(v * 0.34) | 0},0.5)`;
+    ctx.fillRect(0, py, size, plankH - 2);
+    ctx.fillStyle = 'rgba(18,10,4,0.55)';
+    ctx.fillRect(0, py + plankH - 2, size, 2);
   }
-  for (let i = 0; i < 5; i++) {
-    let x, y;
-    do {
-      x = Math.random() * size; y = Math.random() * size;
-    } while (Math.hypot(x - cx, y - cy) < size * 0.22);
-    drawBone(x, y, Math.random() * Math.PI, 0.8 + Math.random() * 0.4);
-  }
-  // === SMÅ CRACKELMÖNSTER === (sekundär detalj på mörka områden)
-  ctx.strokeStyle = 'rgba(40,20,12,0.55)';
+  // Trä-ådring — svaga böjda streck
+  ctx.strokeStyle = 'rgba(28,16,6,0.28)';
   ctx.lineWidth = 1;
-  for (let i = 0; i < 50; i++) {
-    let x = Math.random() * size, y = Math.random() * size;
+  for (let i = 0; i < 220; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const len = 40 + Math.random() * 120;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    const segs = 2 + (Math.random() * 3 | 0);
-    for (let s = 0; s < segs; s++) {
-      x += (Math.random() - 0.5) * 60;
-      y += (Math.random() - 0.5) * 60;
-      ctx.lineTo(x, y);
-    }
+    ctx.quadraticCurveTo(x + len * 0.5, y + (Math.random() - 0.5) * 9, x + len, y);
     ctx.stroke();
   }
-  // === EMBER-PRICKAR === (bright gula/orange glow-prickar)
-  for (let i = 0; i < 90; i++) {
+  // Kvistar i träet
+  for (let i = 0; i < 14; i++) {
     const x = Math.random() * size, y = Math.random() * size;
-    const r = 1 + Math.random() * 2.8;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
-    g.addColorStop(0, Math.random() < 0.4 ? 'rgba(255,200,100,1)' : 'rgba(255,255,180,1)');
-    g.addColorStop(1, 'rgba(255,100,30,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
-  }
-  // === OBSIDIAN GLASS-PATCHES === (mörka reflekterande shards)
-  for (let i = 0; i < 12; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    if (Math.hypot(x - cx, y - cy) < size * 0.18) continue;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.random() * Math.PI);
-    // Dark obsidian shard
-    ctx.fillStyle = 'rgba(15,8,18,0.95)';
+    const r = 3 + Math.random() * 6;
+    const gd = ctx.createRadialGradient(x, y, 0, x, y, r);
+    gd.addColorStop(0, 'rgba(22,12,5,0.6)');
+    gd.addColorStop(1, 'rgba(22,12,5,0)');
+    ctx.fillStyle = gd;
     ctx.beginPath();
-    ctx.moveTo(0, -10);
-    ctx.lineTo(8, 0);
-    ctx.lineTo(0, 12);
-    ctx.lineTo(-7, 2);
-    ctx.closePath();
-    ctx.fill();
-    // Highlight strake
-    ctx.fillStyle = 'rgba(100,80,120,0.4)';
-    ctx.beginPath();
-    ctx.moveTo(-3, -6);
-    ctx.lineTo(2, 8);
-    ctx.lineTo(-1, 9);
-    ctx.lineTo(-5, -5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-  // === DARK ROCKS === (kraftiga silhuetter)
-  for (let i = 0; i < 8; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    if (Math.hypot(x - cx, y - cy) < size * 0.20) continue;
-    ctx.fillStyle = 'rgba(20,10,5,0.85)';
-    ctx.beginPath();
-    const verts = 5 + (Math.random() * 3 | 0);
-    for (let k = 0; k < verts; k++) {
-      const a = (k / verts) * Math.PI * 2;
-      const r = 10 + Math.random() * 20;
-      const vx = x + Math.cos(a) * r, vy = y + Math.sin(a) * r;
-      if (k === 0) ctx.moveTo(vx, vy);
-      else ctx.lineTo(vx, vy);
-    }
-    ctx.closePath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   }
+  // POLERAD STEN-RING vid perimetern (annulus utanför cirkelmönstret)
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2);
+  ctx.arc(cx, cy, size * 0.43, 0, Math.PI * 2);
+  ctx.fillStyle = '#574d44';
+  ctx.fill('evenodd');
+  // Sten-polering: radiella ljus-/skugg-segment
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * Math.PI * 2;
+    ctx.strokeStyle = (i % 2 === 0) ? 'rgba(150,140,128,0.18)' : 'rgba(20,16,12,0.22)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * size * 0.435, cy + Math.sin(a) * size * 0.435);
+    ctx.lineTo(cx + Math.cos(a) * size * 0.495, cy + Math.sin(a) * size * 0.495);
+    ctx.stroke();
+  }
+  // Mörk fog mellan trä och sten
+  ctx.strokeStyle = 'rgba(16,10,5,0.7)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, size * 0.43, 0, Math.PI * 2);
+  ctx.stroke();
+  // CIRKELMÖNSTER (etsat i träet — glow kommer från emissive-map)
+  drawT5CirclePattern(ctx, size, false);
 }
 
 function clearBossWarsScene() {
@@ -7154,9 +7172,9 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
-  // T1-T4 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
+  // T1-T5 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
   // T1: gröna runor. T2: lila pentagram. T3: cyan-grönt hexagon-rutnät.
-  // T4: röda/magenta energilinjer.
+  // T4: röda/magenta energilinjer. T5: bärnstens-cirkelmönster.
   let floorEmissiveTex = null;
   let floorEmissiveColor = 0x000000;
   let floorEmissiveIntensity = 0;
@@ -7180,6 +7198,11 @@ function buildBossWarsScene() {
     floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
     floorEmissiveColor = 0xff2a5a;
     floorEmissiveIntensity = 1.25;
+  } else if (tier === 5) {
+    const emiCanvas = buildT5DojoEmissive(TEX_SIZE);
+    floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveColor = 0xffaa50;
+    floorEmissiveIntensity = 0.6;
   }
   if (floorEmissiveTex) {
     floorEmissiveTex.wrapS = floorEmissiveTex.wrapT = THREE.RepeatWrapping;
@@ -7211,26 +7234,9 @@ function buildBossWarsScene() {
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
   top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
-  // T1-T4 skippar center-emblem så mittpunkten är ren (user-spec: "håll
-  // arenans mitt öppen, lämna plats för en separat bakgrundsbild").
-  if (tier !== 1 && tier !== 2 && tier !== 3 && tier !== 4) {
-    // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
-    const accentRing = new THREE.Mesh(
-      new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
-      new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
-    );
-    accentRing.rotation.x = -Math.PI / 2;
-    accentRing.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
-    bossWarsSceneGroup.add(accentRing);
-    // Inre cirkel
-    const innerDot = new THREE.Mesh(
-      new THREE.CircleGeometry(r * 0.18, 36),
-      new THREE.MeshBasicMaterial({ color: map.accent, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
-    );
-    innerDot.rotation.x = -Math.PI / 2;
-    innerDot.position.set(BOSSWARS_CX, 0.44, BOSSWARS_CZ);
-    bossWarsSceneGroup.add(innerDot);
-  }
+  // Alla 5 tiers skippar center-emblemet — varje tema har sitt eget golv-
+  // mönster (emissive-map) och håller arena-mitten öppen + ren (user-spec:
+  // "håll arenans mitt öppen, lämna plats för en separat bakgrundsbild").
 
   // ===== SPAWN-RUM (västra) + KORRIDOR + GATE =====
   // Spawn-golvet — mörkare ton än boss-rummet så zonen visuellt skiljer sig.
