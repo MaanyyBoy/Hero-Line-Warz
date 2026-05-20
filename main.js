@@ -21450,10 +21450,9 @@ function makeDuelOrbMesh(type) {
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = 0.36;
   grp.add(ground);
-  // Pointlight
-  const light = new THREE.PointLight(color, 0.7, 4, 2);
-  light.position.y = 0.9;
-  grp.add(light);
+  // Inget PointLight: duel-orbar spawnar/konsumeras löpande och varje
+  // ljus-add/remove rekompilerar shaders (hicka). Emissive-kärnan (1.4) +
+  // MeshBasic-halo/ring lyser ändå i full färg.
   // Icon ovanför (sphere som matchar typ)
   if (isHeal) {
     // Plus-symbol av två boxes ovanför
@@ -21548,13 +21547,12 @@ function ensureDuelBigOrbMesh() {
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = 0.06;
   grp.add(ground);
-  // Pointlight
-  const light = new THREE.PointLight(0x55ffcc, 1.4, 8, 2);
-  light.position.y = 1.4;
-  grp.add(light);
   attachHpBar(grp, 2.4);
   scene.add(grp);
-  duelBigOrbMeshState = { grp, core, halo, ground, light, age: 0 };
+  // light: lånas ur FX-poolen medan orben lever (syncDuelBigOrbFromState),
+  // INTE barn till grp — grp.visible togglas vid respawn var 15:e sek och
+  // ett barn-ljus skulle då rekompilera shaders varje gång (hicka).
+  duelBigOrbMeshState = { grp, core, halo, ground, light: null, age: 0 };
   return duelBigOrbMeshState;
 }
 
@@ -21566,13 +21564,18 @@ function syncDuelBigOrbFromState(bo) {
   if (bo.a) {
     // Uppdatera HP-bar via standard-helper
     updateEntityHpBar(mesh.grp, bo.hp, bo.mh, performance.now() / 1000, 0);
-  } else if (mesh.grp.userData.hpBar) {
-    mesh.grp.userData.hpBar.visible = false;
+    // Låna ett pool-ljus medan orben lever; flytta det med orben.
+    if (!mesh.light) mesh.light = acquireFxLight(0x55ffcc, 1.4, 8, bo.x, 1.4, bo.z);
+    else mesh.light.position.set(bo.x, 1.4, bo.z);
+  } else {
+    if (mesh.light) { releaseFxLight(mesh.light); mesh.light = null; }
+    if (mesh.grp.userData.hpBar) mesh.grp.userData.hpBar.visible = false;
   }
 }
 
 function clearDuelBigOrbMesh() {
   if (!duelBigOrbMeshState) return;
+  if (duelBigOrbMeshState.light) releaseFxLight(duelBigOrbMeshState.light);
   duelBigOrbMeshState.grp.traverse(o => {
     if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
   });
