@@ -119,6 +119,15 @@ const CHARACTER_ASSETS = {
   skel_rogue:   'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Rogue.glb',
   skel_minion:  'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Minion.glb',
 };
+// Mobil-OOM-fix: dessa ~75 MB character-GLB:er laddas INTE i den initiala
+// preloaden — bara i de lägen som faktiskt behöver dem. Wave-bossar (wave
+// 10/20/.../50) bara i classic line wars; boss-wars-bossar bara i Boss Wars.
+// Att eager-ladda alla tippade iOS Safari-fliken över sin minnesgräns
+// ("a problem repeatedly occurred"). ensureCharactersLoaded() hämtar dem
+// on-demand via triggers i bossWarsShow() + enterPlayPhase().
+const WAVE_BOSS_KEYS = ['parasite_boss', 'gun_zombie_boss', 'alien_boss', 'elk_head_boss', 'undead_boss'];
+const BOSSWARS_BOSS_KEYS = ['bosswars_1', 'bosswars_2', 'bosswars_3', 'bosswars_4', 'bosswars_5'];
+const DEFERRED_CHARACTER_KEYS = new Set([...WAVE_BOSS_KEYS, ...BOSSWARS_BOSS_KEYS]);
 // Rig_Medium_*.glb innehåller animations-clips som matchar både hero- och
 // skeleton-skeletten (samma rig-naming i KayKit-paken). Vi slår ihop alla
 // clips per rig-grupp.
@@ -219,7 +228,10 @@ const IS_MOBILE_UA = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent
 async function preloadAllAssets() {
   console.log('[asset] preloadAllAssets START');
   const loader = new GLTFLoader();
-  const charEntries = Object.entries(CHARACTER_ASSETS);
+  // Mobil-OOM-fix: hoppa över DEFERRED_CHARACTER_KEYS i den initiala preloaden.
+  // De laddas on-demand via ensureCharactersLoaded() när rätt läge startas.
+  const charEntries = Object.entries(CHARACTER_ASSETS)
+    .filter(([name]) => !DEFERRED_CHARACTER_KEYS.has(name));
   const animEntries = Object.entries(ANIMATION_ASSETS);
   const envEntries = Object.entries(ENVIRONMENT_ASSETS);
   const total = charEntries.length + animEntries.length + envEntries.length;
@@ -420,6 +432,50 @@ function instantiateCharacter(charName, animGroup) {
   clone.userData.currentAction = null;
   clone.userData.gltfCharName = charName;
   return clone;
+}
+
+// ── Mobil-OOM-fix: on-demand-laddare för tunga character-GLB:er ──────────────
+// Laddar DEFERRED_CHARACTER_KEYS som hoppades över i preloadAllAssets. Idempotent:
+// redan laddade keys hoppas, pågående laddningar delas via _charLoadPromises så
+// dubbla triggers (bossWarsShow + enterPlayPhase) inte laddar samma GLB två
+// gånger. Batchad (2 på mobil) precis som preloadAllAssets för att hålla
+// parse-minnestoppen nere. Per-asset .catch → en misslyckad GLB stoppar inte
+// resten (makeMonsterMesh har placeholder-fallback om en key saknas).
+const _charLoadPromises = new Map();   // name → Promise (pågående laddning)
+async function ensureCharactersLoaded(keys) {
+  const loader = new GLTFLoader();
+  const BATCH = IS_MOBILE_UA ? 2 : 6;
+  const todo = [];
+  for (const name of keys) {
+    if (loadedCharacters.has(name)) continue;            // redan klar
+    const path = CHARACTER_ASSETS[name];
+    if (!path) { console.warn(`[asset] ensureCharactersLoaded: okänd key ${name}`); continue; }
+    todo.push([name, path]);
+  }
+  for (let i = 0; i < todo.length; i += BATCH) {
+    const batch = todo.slice(i, i + BATCH);
+    await Promise.all(batch.map(([name, path]) => {
+      if (loadedCharacters.has(name)) return Promise.resolve();
+      if (_charLoadPromises.has(name)) return _charLoadPromises.get(name);
+      const p = loader.loadAsync(ASSET_BASE + path).then(gltf => {
+        gltf.scene.traverse(o => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = false;
+            if (o.material && o.material.map) o.material.map.magFilter = THREE.NearestFilter;
+          }
+        });
+        loadedCharacters.set(name, { scene: gltf.scene, animations: gltf.animations || [] });
+        console.log(`[asset] on-demand laddad: ${name}`);
+      }).catch(err => {
+        console.error(`[asset] on-demand FAILED ${name} (${path}):`, err);
+      }).finally(() => {
+        _charLoadPromises.delete(name);
+      });
+      _charLoadPromises.set(name, p);
+      return p;
+    }));
+  }
 }
 
 // Swap:ar proceduella Rivendell-fontäner mot Quaternius medieval-LargeTower.
@@ -23392,6 +23448,15 @@ function enterPlayPhase() {
   waveBannerState.lastSeenPulse = 0;
   if (waveBannerState.hideTimeout) { clearTimeout(waveBannerState.hideTimeout); waveBannerState.hideTimeout = null; }
   if (waveBannerEl) waveBannerEl.classList.add('hidden');
+  // Mobil-OOM-fix: säkerställ att läges-specifika tunga GLB:er laddas (de
+  // hoppades över i initiala preloaden). Classic: Mixamo-wave-bossar behövs
+  // först vid wave 10 — gott om runway, fire-and-forget. Bosswars: backup-
+  // trigger (bossWarsShow har normalt redan startat laddningen).
+  if (APP.gameMode === 'classic') {
+    ensureCharactersLoaded(WAVE_BOSS_KEYS);
+  } else if (APP.gameMode === 'bosswars') {
+    ensureCharactersLoaded(BOSSWARS_BOSS_KEYS);
+  }
   // Sätt heroId och byt mesh.
   // Solo: läs från heroPickState.selected.
   // Arena-MP: peer-to-peer pick (selected = lokal, oppSelected = motståndare).
@@ -23768,6 +23833,10 @@ function bossWarsShow() {
   APP.gameMode = 'bosswars';
   APP.bossWars = { active: false, tier: 0 };  // reset
   showLobbyPanel('boss-mode');
+  // Mobil-OOM-fix: börja ladda boss-wars-boss-GLB:erna nu (de hoppades över i
+  // initiala preloaden). Användaren navigerar boss-mode → boss-pick → detalj →
+  // hero-pick innan matchen — gott om tid för ~40 MB att laddas i bakgrunden.
+  ensureCharactersLoaded(BOSSWARS_BOSS_KEYS);
 }
 // Klick på Host Game från boss-mode-menyn → boss-pick (steg före riktig MP-host)
 function bossWarsShowPick() {
