@@ -21149,6 +21149,10 @@ function heroSnap(side) {
     // Arena power-up buffs (undefined när inaktiva)
     asp: _nzr2(side.arenaSpeedBuff),
     adm: _nzr2(side.arenaDamageBuff),
+    // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
+    // syntetiska AA-projektil hit i stället för hjältens facing.
+    tx: _nzr2(side.targetX),
+    tz: _nzr2(side.targetZ),
   };
 }
 
@@ -21260,6 +21264,9 @@ function applyHeroSnap(side, snap) {
   // Arena power-up buffs — undefined i snap → 0 (inaktiv)
   side.arenaSpeedBuff = snap.asp || 0;
   side.arenaDamageBuff = snap.adm || 0;
+  // AA-målets position — triggerClientVisualAA siktar projektilen hit.
+  side._aaTargetX = snap.tx || 0;
+  side._aaTargetZ = snap.tz || 0;
   if (side.mesh) {
     if (!isLocalMpClient) {
       const heroRy = (snap.fx || snap.fz) ? Math.atan2(snap.fx, snap.fz) : (side.mesh._target?.ry ?? side.mesh.rotation.y);
@@ -24921,6 +24928,17 @@ function triggerClientVisualAA(side) {
   const fx = side.hero.facingX || 0;
   const fz = side.hero.facingZ || 1;
   const ox = heroFxAnchorX(side), oz = heroFxAnchorZ(side);
+  // Rikta projektilen mot AA-MÅLET (host:ens targetX/targetZ via snapshot),
+  // inte hjältens facing — annars missar projektilen när man kitar (rör sig
+  // medan man AA:ar → facing pekar i rörelseriktningen, inte mot målet).
+  // Faller tillbaka på facing om inget mål finns.
+  let dirX = fx, dirZ = fz;
+  const tgx = side._aaTargetX || 0, tgz = side._aaTargetZ || 0;
+  if (tgx || tgz) {
+    const ddx = tgx - ox, ddz = tgz - oz;
+    const dl = Math.hypot(ddx, ddz);
+    if (dl > 0.3) { dirX = ddx / dl; dirZ = ddz / dl; }
+  }
   const heroId = side.heroId || 'magiker';
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
   const color = colors[heroId] || 0xffdc66;
@@ -24929,27 +24947,27 @@ function triggerClientVisualAA(side) {
   // hammare. Tidigare en generisk sfär oavsett hjälte. makeHeroAaProjectileMesh
   // är ljus-fri sedan decision 062 → ingen shader-rekompilering per AA.
   const proj = makeHeroAaProjectileMesh(heroId, false, false);
-  proj.position.set(ox + fx * 0.5, 1.3, oz + fz * 0.5);
-  proj.rotation.y = Math.atan2(fx, fz);   // orientera i flygriktningen
+  proj.position.set(ox + dirX * 0.5, 1.3, oz + dirZ * 0.5);
+  proj.rotation.y = Math.atan2(dirX, dirZ);   // orientera i flygriktningen
   proj.traverse(o => { if (o.material) o.material.transparent = true; });
   scene.add(proj);
   combatFx.push({
     mesh: proj, life: 0.9, maxLife: 0.9, kind: 'aaFly',
-    vx: fx * 22, vz: fz * 22,
+    vx: dirX * 22, vz: dirZ * 22,
   });
   // Trail-partiklar bakom projektilen (kind:'trail' — egen FX-typ, syns
   // även om aaFly-sfären av någon anledning inte skulle renderas).
   for (let i = 0; i < 3; i++) {
     const pf = i * 0.06;
     spawnProjectileTrailPuff(
-      ox + fx * (0.3 + pf),
+      ox + dirX * (0.3 + pf),
       1.2 + (Math.random() - 0.5) * 0.3,
-      oz + fz * (0.3 + pf),
+      oz + dirZ * (0.3 + pf),
       color
     );
   }
   // Muzzle-flash vid hero (liten ring som expanderar snabbt)
-  spawnSkillCastFx(ox + fx * 0.4, oz + fz * 0.4, color, 0.8);
+  spawnSkillCastFx(ox + dirX * 0.4, oz + dirZ * 0.4, color, 0.8);
 }
 
 // Klient-visual för skill-cast — förstärkt med:
