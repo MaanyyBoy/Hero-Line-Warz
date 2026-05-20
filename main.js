@@ -4626,7 +4626,7 @@ const BOSSWARS_ARCH_THEME = {
     accentColor: 0x66ffcc,
     capRingColor: 0x44ffcc,                    // cyan glow-cap
   },
-  4: {  // Demon Prince — Hive Chamber
+  4: {  // Demon Prince — Obsidian Abyss (perimeter byggs av isT4Abyss-grenen)
     pillarColor: 0x4a1828, pillarMossy: false,
     bannerColor: 0x802040, bannerEdge: 0x300810,
     bannerSymbol: '✷',                         // alien-stjärna
@@ -4714,28 +4714,16 @@ const BOSSWARS_MAPS = {
       { type: 'rock', x:  -8, z: -29 },
     ],
   },
-  // Tier 4 — Big Alien — HIVE CHAMBER (rosa/röd organic, fallna torn = tentakler)
+  // Tier 4 — Demon Prince — OBSIDIAN ABYSS (arena född ur mörker)
   4: {
-    name: 'Hive Chamber',
-    color: 0x2a0e1a, edgeColor: 0x100408, accent: 0xff4488,
-    torchColor: 0xff44aa,                                   // hot pink alien
-    ambient: { color: 0x4a1830, intensity: 0.30 },
-    props: [
-      { type: 'fallenTower', x: -22, z: -12, rot: 0.4 },    // ser ut som tentakler
-      { type: 'fallenTower', x:  22, z:  12, rot: 2.4 },
-      { type: 'fallenTower', x: -10, z:  22, rot: 1.6 },
-      { type: 'fallenTower', x:  10, z: -22, rot: 1.6 },
-      { type: 'pillar', x: -28, z:   0 },
-      { type: 'pillar', x:  28, z:   0 },
-      { type: 'firePatch', x: -16, z:  18 },
-      { type: 'firePatch', x:  16, z: -18 },
-      { type: 'firePatch', x: -22, z: -22 },
-      { type: 'firePatch', x:  22, z:  22 },
-      { type: 'lavaPool', x:  -8, z: -10 },
-      { type: 'lavaPool', x:   8, z:  10 },
-      { type: 'bigBoulder', x: -26, z:  18 },
-      { type: 'bigBoulder', x:  26, z: -18 },
-    ],
+    name: 'Obsidian Abyss',
+    color: 0x08060c, edgeColor: 0x040206, accent: 0xff1c50,
+    torchColor: 0xff2a55,                                   // skarpt rött sken
+    ambient: { color: 0x2a0612, intensity: 0.10 },          // nästan helt mörkt
+    // Kant-formationerna (taggiga svarta shards) + den centrala ljusstrålen
+    // byggs av buildBossArenaArchitecture (isT4Abyss-grenen). Arenans mitt
+    // hålls öppen så striden syns i strålen (user-spec).
+    props: [],
   },
   // Tier 5 — Alien Soldier — VOLCANO CRATER (eld, lava, mörka stenar)
   5: {
@@ -5615,6 +5603,99 @@ function makeArenaFloatingCrystal(crystalMat, glowMat) {
   return grp;
 }
 
+// T4 Demon Prince — taggig svart obsidian-formation: ett kluster av skarpa
+// shards som "spricker fram" ur marken. `tall`=true ger en hög spetsig
+// formation, false en lägre bredare. Röda emissive-sprickor vid basen knyter
+// an till golvets energilinjer. blackMat/glowMat delas (shader-cache).
+function makeArenaAbyssFormation(blackMat, glowMat, tall) {
+  const grp = new THREE.Group();
+  // Mörk bas-klump — formationen växer ur golvet
+  const base = new THREE.Mesh(new THREE.DodecahedronGeometry(1.7, 0), blackMat);
+  base.position.y = 0.35;
+  base.scale.set(1.0, 0.5, 1.0);
+  base.rotation.y = Math.random() * Math.PI;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  grp.add(base);
+  // Central spira
+  const spireH = (tall ? 9.5 : 5.5) * (0.85 + Math.random() * 0.3);
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(0.6, spireH, 5), blackMat);
+  spire.position.y = spireH / 2 + 0.2;
+  spire.rotation.z = (Math.random() - 0.5) * 0.18;
+  spire.castShadow = true;
+  grp.add(spire);
+  // Omgivande shards — skarpa koner, lutade utåt från center
+  const shardCount = tall ? 5 : 7;
+  for (let i = 0; i < shardCount; i++) {
+    const a = (i / shardCount) * Math.PI * 2 + Math.random() * 0.7;
+    const dist = 0.7 + Math.random() * 1.5;
+    const h = (tall ? 5.5 : 3.4) * (0.5 + Math.random() * 0.95);
+    const rad = 0.28 + Math.random() * 0.4;
+    const shard = new THREE.Mesh(
+      new THREE.ConeGeometry(rad, h, 4 + (Math.random() * 2 | 0)),
+      blackMat
+    );
+    const lean = 0.2 + Math.random() * 0.5;
+    shard.position.set(Math.cos(a) * dist, h / 2 + 0.15, Math.sin(a) * dist);
+    shard.rotation.z = Math.cos(a) * -lean;
+    shard.rotation.x = Math.sin(a) * lean;
+    shard.castShadow = true;
+    grp.add(shard);
+  }
+  // Glödande röda energi-sprickor instuckna vid basen
+  for (let i = 0; i < 4; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const ch = 1.4 + Math.random() * 2.4;
+    const crack = new THREE.Mesh(new THREE.ConeGeometry(0.13, ch, 3), glowMat);
+    const cd = 0.5 + Math.random() * 0.8;
+    crack.position.set(Math.cos(a) * cd, ch / 2 + 0.1, Math.sin(a) * cd);
+    crack.rotation.z = (Math.random() - 0.5) * 0.5;
+    crack.rotation.x = (Math.random() - 0.5) * 0.5;
+    grp.add(crack);
+  }
+  return grp;
+}
+
+// T4 Demon Prince — en enda skarp ljusstråle som skär ner i mörkret ovanifrån.
+// Volymetrisk fake: nästlade additiva koner + en ljus-pool på golvet. Den
+// faktiska upplysningen av striden sköts av en separat PointLight (isT4Abyss).
+function makeArenaLightBeam() {
+  const grp = new THREE.Group();
+  const beamH = 26;
+  // Yttre ljusaxel — öppen cylinder (smal topp, bred botten)
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.9, 4.0, beamH, 24, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe0ee, transparent: true, opacity: 0.15,
+      depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    })
+  );
+  beam.position.y = beamH / 2 + 0.45;
+  grp.add(beam);
+  // Inre ljusare kärna
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.35, 1.7, beamH, 20, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.22,
+      depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    })
+  );
+  core.position.y = beamH / 2 + 0.45;
+  grp.add(core);
+  // Ljus-pool där strålen träffar golvet
+  const pool = new THREE.Mesh(
+    new THREE.CircleGeometry(5.0, 36),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe0ee, transparent: true, opacity: 0.26,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    })
+  );
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.y = 0.46;
+  grp.add(pool);
+  return grp;
+}
+
 // Bygger hela arena-arkitekturen runt boss-platformen.
 // 8 kolonner + facklor + banderoller + theme-accents.
 function buildBossArenaArchitecture(tier, map) {
@@ -5681,6 +5762,16 @@ function buildBossArenaArchitecture(tier, map) {
   const t3DarkMat = isT3Lab ? new THREE.MeshStandardMaterial({
     color: 0x05080a, roughness: 0.95, metalness: 0.20,
   }) : null;
+  // T4 Demon Prince — arena född ur mörker: taggiga svarta obsidian-formationer
+  // + en central ljusstråle. Delade material för shader-cache.
+  const isT4Abyss = (tier === 4);
+  const t4BlackMat = isT4Abyss ? new THREE.MeshStandardMaterial({
+    color: 0x07060a, roughness: 0.30, metalness: 0.55,      // glansig obsidian
+  }) : null;
+  const t4GlowMat = isT4Abyss ? new THREE.MeshStandardMaterial({
+    color: 0x1a0308, roughness: 0.5, metalness: 0.2,
+    emissive: 0xff1840, emissiveIntensity: 0.9,
+  }) : null;
   _bossArenaCrystals.length = 0;
   for (let i = 0; i < pillarCount; i++) {
     const a = (i / pillarCount) * Math.PI * 2;
@@ -5702,6 +5793,9 @@ function buildBossArenaArchitecture(tier, map) {
       obj = (i % 2 === 0)
         ? makeArenaBrokenWall(t3StoneMat, t3RustMat, t3DarkMat)
         : makeArenaAbandonedApparatus(t3MetalMat, t3RustMat, t3DarkMat);
+    } else if (isT4Abyss) {
+      // Alternerar hög spetsig (jämn) och låg bred (udda) obsidian-formation
+      obj = makeArenaAbyssFormation(t4BlackMat, t4GlowMat, i % 2 === 0);
     } else {
       obj = makeArenaPillar(theme, stoneMat);
     }
@@ -5709,16 +5803,20 @@ function buildBossArenaArchitecture(tier, map) {
     // Pelaren/statyn vänd mot center; T1 har lätt slumpvis vinkling,
     // T2 också för "fallen ruin"-känsla men mindre extrem.
     // T3 inga jitter — laboratorium ska se mekaniskt anlagt ut.
+    // T4 kraftig jitter — taggig kaotisk "född ur mörker"-känsla.
     let yawJitter = 0;
     if (isT1Forest) yawJitter = Math.random() * 0.5 - 0.25;
     else if (isT2Temple) yawJitter = (Math.random() - 0.5) * 0.35;
+    else if (isT4Abyss) yawJitter = (Math.random() - 0.5) * 0.7;
     obj.rotation.y = a + Math.PI + yawJitter;
     // T2 spruckna pelare lutar lite för "rasande ruin"-känsla
     if (isT2Temple && i % 2 === 0) obj.rotation.z = (Math.random() - 0.5) * 0.12;
+    // T4 formationer lutar lite för aggressiv, ostadig siluett
+    if (isT4Abyss) obj.rotation.z = (Math.random() - 0.5) * 0.16;
     bossWarsSceneGroup.add(obj);
     pillars.push({ x: px, y: 7.0, z: pz });
-    // Fackla bara på standard-pelare (T1 + T2 + T3 har inga kapitäl-toppar)
-    if (!isT1Forest && !isT2Temple && !isT3Lab) {
+    // Fackla bara på standard-pelare (T1 + T2 + T3 + T4 har inga kapitäl-toppar)
+    if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss) {
       const torch = makePillarTorch(theme);
       torch.position.set(px, 7.0, pz);
       bossWarsSceneGroup.add(torch);
@@ -5736,6 +5834,17 @@ function buildBossArenaArchitecture(tier, map) {
       bossWarsSceneGroup.add(bridge);
     }
   }
+  // T4: en enda skarp ljusstråle ner i arena-mitten — lyser upp striden trots
+  // mörkret. EN PointLight läggs (engångskostnad vid scene-build, OK — samma
+  // grepp som korridor-ljuset; undviker dynamiska light-recompiles).
+  if (isT4Abyss) {
+    const beam = makeArenaLightBeam();
+    beam.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
+    bossWarsSceneGroup.add(beam);
+    const beamLight = new THREE.PointLight(0xffe6f0, 5.0, 30, 2);
+    beamLight.position.set(BOSSWARS_CX, 11, BOSSWARS_CZ);
+    bossWarsSceneGroup.add(beamLight);
+  }
   // T2: 6 svävande mörka kristaller mellan pelarna, ~4 m upp i luften
   if (isT2Temple) {
     const crystalCount = 6;
@@ -5752,9 +5861,9 @@ function buildBossArenaArchitecture(tier, map) {
       _bossArenaCrystals.push({ mesh: crystal, baseY, phase: i * 1.04 });
     }
   }
-  // Banderoller mellan varannan kolonn (4 st) — skippas för T1/T2/T3 där
+  // Banderoller mellan varannan kolonn (4 st) — skippas för T1/T2/T3/T4 där
   // de temana har egna atmospheric accents istället
-  if (!isT1Forest && !isT2Temple && !isT3Lab) for (let i = 0; i < pillarCount; i += 2) {
+  if (!isT1Forest && !isT2Temple && !isT3Lab && !isT4Abyss) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
     const banner = makeArenaBanner(theme);
@@ -5795,8 +5904,9 @@ function buildBossArenaArchitecture(tier, map) {
       panel.rotation.y = a + Math.PI;
       bossWarsSceneGroup.add(panel);
     }
-  } else if (theme.accent === 'crystals') {
-    // Kristall-cluster vid varje kolonn-bas
+  } else if (theme.accent === 'crystals' && !isT4Abyss) {
+    // Kristall-cluster vid varje kolonn-bas — skippas för T4 (obsidian-arenan
+    // har egna taggiga formationer + ljusstråle istället)
     for (let i = 0; i < pillarCount; i++) {
       const a = (i / pillarCount) * Math.PI * 2 + Math.PI / pillarCount;
       const cx = BOSSWARS_CX + Math.cos(a) * (r - 1.5);
@@ -5875,7 +5985,7 @@ function drawBossArenaFloor(ctx, size, tier, map) {
   if (tier === 1) drawForestFloor(ctx, size, map);
   else if (tier === 2) drawArcaneFloor(ctx, size, map);
   else if (tier === 3) drawCryptLabFloor(ctx, size, map);
-  else if (tier === 4) drawHiveFloor(ctx, size, map);
+  else if (tier === 4) drawObsidianFloor(ctx, size, map);
   else if (tier === 5) drawVolcanoFloor(ctx, size, map);
 }
 
@@ -6527,76 +6637,180 @@ function drawCryptLabFloor(ctx, size, map) {
   drawT3HexPattern(ctx, size, false);
 }
 
-// T4 Hive Chamber — organic veins, chitin patterns, alien growths
-function drawHiveFloor(ctx, size, map) {
-  // Glowing vein-nätverk (winding rosa-röda linjer som strålar ut från centra)
-  const veinCenters = [];
-  for (let i = 0; i < 6; i++) {
-    veinCenters.push({ x: Math.random() * size, y: Math.random() * size });
-  }
-  for (const c of veinCenters) {
-    const branches = 5 + (Math.random() * 4 | 0);
+// ============================================================
+// T4 Demon Prince — OBSIDIAN ABYSS: en arena född ur mörker.
+// Golvet är mörk obsidian-sten med skarpa, aggressiva röda/magenta
+// energilinjer som spricker fram. Energilinjerna ritas DETERMINISTISKT
+// (seedad PRNG) så color-canvasen och emissive-canvasen matchar exakt —
+// samma princip som T2-pentagrammet och T3-hexrutnätet.
+// ============================================================
+
+// Liten deterministisk PRNG (mulberry32) — ger samma sekvens för samma seed.
+function makeT4Rng(seed) {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Ren positions-helper: deterministiska energi-spricklinjer. Varje linje är
+// en taggig polyline som jaggar inåt mot mitten, plus 1-2 grenar. Anropas av
+// både drawT4CrackPattern (color) och buildT4AbyssEmissive (emissive).
+function getT4CrackPaths(size) {
+  const rng = makeT4Rng(0x4ab1f3);
+  const cx = size / 2, cy = size / 2;
+  const paths = [];
+  const mainCount = 9;
+  for (let m = 0; m < mainCount; m++) {
+    const a = (m / mainCount) * Math.PI * 2 + (rng() - 0.5) * 0.4;
+    const rStart = size * (0.46 + rng() * 0.06);
+    const rEnd = size * (0.17 + rng() * 0.08);
+    const segs = 7 + (rng() * 4 | 0);
+    const pts = [];
+    for (let s = 0; s <= segs; s++) {
+      const t = s / segs;
+      const rr = rStart + (rEnd - rStart) * t;
+      // Skarp vinkel-jitter — aggressivt, inte mjukt
+      const ja = a + (rng() - 0.5) * 0.55 * (1 - t * 0.4);
+      pts.push({ x: cx + Math.cos(ja) * rr, y: cy + Math.sin(ja) * rr });
+    }
+    paths.push({ pts, width: 2.4 + rng() * 2.6, main: true });
+    // 1-2 grenar som spricker av från huvudlinjen
+    const branches = 1 + (rng() * 2 | 0);
     for (let b = 0; b < branches; b++) {
-      ctx.strokeStyle = `rgba(255,${60 + Math.random() * 60 | 0},${100 + Math.random() * 50 | 0},${0.55 + Math.random() * 0.25})`;
-      ctx.lineWidth = 2 + Math.random() * 3;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(c.x, c.y);
-      let x = c.x, y = c.y;
-      const segs = 5 + (Math.random() * 5 | 0);
-      const dir = Math.random() * Math.PI * 2;
-      for (let s = 0; s < segs; s++) {
-        const stepLen = 20 + Math.random() * 40;
-        const da = (Math.random() - 0.5) * 1.2;
-        x += Math.cos(dir + da * s) * stepLen;
-        y += Math.sin(dir + da * s) * stepLen;
-        const cpx = x + (Math.random() - 0.5) * 30;
-        const cpy = y + (Math.random() - 0.5) * 30;
-        ctx.quadraticCurveTo(cpx, cpy, x, y);
+      const bi = 2 + (rng() * (pts.length - 4) | 0);
+      const origin = pts[bi];
+      let bang = Math.atan2(origin.y - cy, origin.x - cx)
+        + (rng() < 0.5 ? 1 : -1) * (0.7 + rng() * 0.7);
+      const bsegs = 3 + (rng() * 3 | 0);
+      const bpts = [origin];
+      let bx = origin.x, by = origin.y;
+      for (let s = 0; s < bsegs; s++) {
+        const len = size * (0.03 + rng() * 0.055);
+        bang += (rng() - 0.5) * 0.85;
+        bx += Math.cos(bang) * len;
+        by += Math.sin(bang) * len;
+        bpts.push({ x: bx, y: by });
       }
-      ctx.stroke();
+      paths.push({ pts: bpts, width: 1.4 + rng() * 1.6, main: false });
     }
   }
-  // Chitinous honeycomb-celler (mörk rosa-röd kant)
-  ctx.strokeStyle = 'rgba(120,30,55,0.6)';
-  ctx.lineWidth = 2;
-  const cellR = 50;
-  for (let i = 0; i < 18; i++) {
-    const cx = Math.random() * size, cy = Math.random() * size;
+  return paths;
+}
+
+// Ritar en polyline (moveTo/lineTo) på ctx.
+function t4StrokePolyline(ctx, pts) {
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    if (i === 0) ctx.moveTo(pts[i].x, pts[i].y);
+    else ctx.lineTo(pts[i].x, pts[i].y);
+  }
+  ctx.stroke();
+}
+
+// Ritar energilinjerna. emissive=true → ljusa röda/magenta linjer på svart
+// (för emissiveMap). emissive=false → mörkt etsade linjer på obsidianen.
+function drawT4CrackPattern(ctx, size, emissive) {
+  const paths = getT4CrackPaths(size);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  for (const p of paths) {
+    // Yttre glöd-halo (bara emissive)
+    if (emissive) {
+      ctx.strokeStyle = 'rgba(255,28,86,0.28)';
+      ctx.lineWidth = p.width * 3.2;
+      t4StrokePolyline(ctx, p.pts);
+    }
+    // Huvudlinje
+    ctx.strokeStyle = emissive
+      ? (p.main ? 'rgba(255,66,116,0.95)' : 'rgba(232,40,150,0.92)')
+      : (p.main ? 'rgba(116,16,40,0.82)' : 'rgba(92,14,58,0.72)');
+    ctx.lineWidth = p.width;
+    t4StrokePolyline(ctx, p.pts);
+    // Het kärna
+    ctx.strokeStyle = emissive ? 'rgba(255,214,228,0.95)' : 'rgba(168,44,72,0.5)';
+    ctx.lineWidth = Math.max(0.8, p.width * 0.4);
+    t4StrokePolyline(ctx, p.pts);
+  }
+  // Öppen mitt (user-spec) — radial-gradient dämpar glow i centrum.
+  const ccx = size / 2, ccy = size / 2;
+  const fade = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, size * 0.18);
+  if (emissive) {
+    fade.addColorStop(0, 'rgba(0,0,0,0.95)');
+    fade.addColorStop(0.62, 'rgba(0,0,0,0.5)');
+    fade.addColorStop(1, 'rgba(0,0,0,0)');
+  } else {
+    fade.addColorStop(0, 'rgba(6,5,10,0.9)');
+    fade.addColorStop(0.62, 'rgba(6,5,10,0.45)');
+    fade.addColorStop(1, 'rgba(6,5,10,0)');
+  }
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, size, size);
+}
+
+// Bygger emissive-canvas för T4 (svart bg + energilinjerna i ljus röd/magenta).
+function buildT4AbyssEmissive(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  drawT4CrackPattern(ctx, size, true);
+  return canvas;
+}
+
+// T4 Demon Prince — mörk obsidian-sten med etsade energilinjer. Glödet kommer
+// från emissive-map (buildT4AbyssEmissive). Skräckinjagande, intensiv, mörk.
+function drawObsidianFloor(ctx, size, map) {
+  // BAS: nästan svart obsidian med svag lila ton
+  ctx.fillStyle = '#08060c';
+  ctx.fillRect(0, 0, size, size);
+  const rng = makeT4Rng(0x0b51d7);
+  // Obsidian-facetter: stora vinkliga polygoner i lätt varierande svart-toner
+  for (let i = 0; i < 120; i++) {
+    const x = rng() * size, y = rng() * size;
+    const r = 40 + rng() * 120;
+    const sides = 3 + (rng() * 3 | 0);
+    const rot = rng() * Math.PI * 2;
+    const v = 8 + (rng() * 16 | 0);
+    ctx.fillStyle = `rgba(${v},${Math.max(0, v - 2)},${v + 6},0.55)`;
     ctx.beginPath();
-    for (let k = 0; k < 6; k++) {
-      const a = (k / 6) * Math.PI * 2;
-      const x = cx + Math.cos(a) * cellR;
-      const y = cy + Math.sin(a) * cellR;
-      if (k === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+    for (let k = 0; k < sides; k++) {
+      const a = rot + (k / sides) * Math.PI * 2;
+      const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
     }
     ctx.closePath();
-    ctx.stroke();
-  }
-  // Alien-growths (irreguljära blob-former, mörkare lila/röd kant + ljus mitt)
-  for (let i = 0; i < 22; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    const r = 14 + Math.random() * 20;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(255,120,160,0.7)');
-    g.addColorStop(0.5, 'rgba(180,40,80,0.5)');
-    g.addColorStop(1, 'rgba(60,10,20,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Bright emissive-prickar (glödande organisk eldflugor)
-  for (let i = 0; i < 50; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    const r = 1.5 + Math.random() * 2.5;
-    const gd = ctx.createRadialGradient(x, y, 0, x, y, r * 3);
-    gd.addColorStop(0, 'rgba(255,180,210,1)');
-    gd.addColorStop(1, 'rgba(255,80,140,0)');
-    ctx.fillStyle = gd;
-    ctx.fillRect(x - r * 3, y - r * 3, r * 6, r * 6);
+  // Skarpa facett-kanter: tunna ljusare streck (obsidian-glans)
+  ctx.strokeStyle = 'rgba(58,52,78,0.3)';
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 90; i++) {
+    const x = rng() * size, y = rng() * size;
+    const a = rng() * Math.PI * 2, len = 30 + rng() * 90;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+    ctx.stroke();
   }
+  // Svaga lila-magenta sheen-fläckar
+  for (let i = 0; i < 16; i++) {
+    const x = rng() * size, y = rng() * size;
+    const r = 60 + rng() * 130;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(40,12,40,0.4)');
+    g.addColorStop(1, 'rgba(40,12,40,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // ENERGILINJER (etsat mörkrött — glow kommer från emissive-map)
+  drawT4CrackPattern(ctx, size, false);
 }
 
 // T5 Dragon King / Volcano Crater — central dragon-eye emblem,
@@ -6940,8 +7154,9 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
-  // T1/T2/T3 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
+  // T1-T4 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
   // T1: gröna runor. T2: lila pentagram. T3: cyan-grönt hexagon-rutnät.
+  // T4: röda/magenta energilinjer.
   let floorEmissiveTex = null;
   let floorEmissiveColor = 0x000000;
   let floorEmissiveIntensity = 0;
@@ -6960,6 +7175,11 @@ function buildBossWarsScene() {
     floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
     floorEmissiveColor = 0x44ffcc;
     floorEmissiveIntensity = 0.85;
+  } else if (tier === 4) {
+    const emiCanvas = buildT4AbyssEmissive(TEX_SIZE);
+    floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveColor = 0xff2a5a;
+    floorEmissiveIntensity = 1.25;
   }
   if (floorEmissiveTex) {
     floorEmissiveTex.wrapS = floorEmissiveTex.wrapT = THREE.RepeatWrapping;
@@ -6991,10 +7211,9 @@ function buildBossWarsScene() {
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
   top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
-  // T1 Captain, T2 General och T3 Warlord skippar center-emblem så mittpunkten
-  // är ren (user-spec: "håll arenans mitt öppen, lämna plats för en separat
-  // bakgrundsbild").
-  if (tier !== 1 && tier !== 2 && tier !== 3) {
+  // T1-T4 skippar center-emblem så mittpunkten är ren (user-spec: "håll
+  // arenans mitt öppen, lämna plats för en separat bakgrundsbild").
+  if (tier !== 1 && tier !== 2 && tier !== 3 && tier !== 4) {
     // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
     const accentRing = new THREE.Mesh(
       new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
