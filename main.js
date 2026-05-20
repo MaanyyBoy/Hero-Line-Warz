@@ -24924,17 +24924,17 @@ function triggerClientVisualAA(side) {
   const heroId = side.heroId || 'magiker';
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
   const color = colors[heroId] || 0xffdc66;
-  // Tydlig flygande projektil. Tidigare 0.30 r / 0.6 s / ingen trail — för
-  // svag att märka mot host:ens riktiga AA-projektiler. Nu i nivå med
-  // skill-projektilen (0.45 r, 0.9 s, trail-partiklar).
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.45, 16, 12),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.98, depthWrite: false })
-  );
-  sphere.position.set(ox + fx * 0.5, 1.3, oz + fz * 0.5);
-  scene.add(sphere);
+  // Hjälte-specifik projektil-mesh (samma factory som host:ens riktiga
+  // AA-projektil) — Legolas pil, Magiker frostbolt, Aragurn klinga, Gimlu
+  // hammare. Tidigare en generisk sfär oavsett hjälte. makeHeroAaProjectileMesh
+  // är ljus-fri sedan decision 062 → ingen shader-rekompilering per AA.
+  const proj = makeHeroAaProjectileMesh(heroId, false, false);
+  proj.position.set(ox + fx * 0.5, 1.3, oz + fz * 0.5);
+  proj.rotation.y = Math.atan2(fx, fz);   // orientera i flygriktningen
+  proj.traverse(o => { if (o.material) o.material.transparent = true; });
+  scene.add(proj);
   combatFx.push({
-    mesh: sphere, life: 0.9, maxLife: 0.9, kind: 'aaFly',
+    mesh: proj, life: 0.9, maxLife: 0.9, kind: 'aaFly',
     vx: fx * 22, vz: fz * 22,
   });
   // Trail-partiklar bakom projektilen (kind:'trail' — egen FX-typ, syns
@@ -25192,7 +25192,11 @@ function tickCombatFx(dt) {
     } else if (e.kind === 'aaFly') {
       e.mesh.position.x += (e.vx || 0) * dt;
       e.mesh.position.z += (e.vz || 0) * dt;
-      if (e.mesh.material) e.mesh.material.opacity = 0.95 * (1 - t);
+      const aaOp = 0.95 * (1 - t);
+      // Enkel mesh-sfär (skill-projektil) har .material; grupp-projektil
+      // (makeHeroAaProjectileMesh) fadas via traversering av barn-material.
+      if (e.mesh.material) e.mesh.material.opacity = aaOp;
+      else e.mesh.traverse(o => { if (o.material) o.material.opacity = aaOp; });
     } else if (e.kind === 'kenneyFx') {
       // Kenney sprite-fx: lerp scale start→end + fade-out + rotate (Sprite endast)
       const s = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
