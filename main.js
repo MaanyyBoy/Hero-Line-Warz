@@ -10,6 +10,55 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x14202c);
 scene.fog = new THREE.Fog(0x14202c, 30, 75);
 
+// ── FX-PUNKTLJUS-POOL ────────────────────────────────────────────────
+// Att lägga till/ta bort en PointLight i scenen ändrar NUM_POINT_LIGHTS i
+// shadern → Three.js rekompilerar ALLA MeshStandardMaterial-program, vilket
+// ger en synlig hicka (decision 045 = samma buggklass). Tidigare skapade
+// varje skill-cast och varje orb-spawn en ny PointLight → hicka varje gång.
+// Lösning: en liten pool av PointLights som ligger i scenen från frame 0
+// (kompileras EN gång) och aldrig tas bort. FX "lånar" ett ljus genom att
+// sätta dess uniforms (färg/intensitet/distans/position) och "lämnar
+// tillbaka" genom att nolla intensiteten — light-count ändras aldrig.
+// Storlek 5: i 1v1 är som mest ~3-4 ljus-bärande FX vid liv samtidigt
+// (souldrain-explosion, frost-nova, Kostefo-slider, souldrain-aura), så
+// steal-pathen nedan nås i praktiken aldrig under normal spel.
+const FX_LIGHT_POOL_SIZE = 5;
+const fxLightPool = [];
+let _fxLightSeq = 0;
+for (let i = 0; i < FX_LIGHT_POOL_SIZE; i++) {
+  const _fxl = new THREE.PointLight(0xffffff, 0, 6, 2);
+  _fxl.castShadow = false;
+  scene.add(_fxl);
+  fxLightPool.push({ light: _fxl, busy: false, seq: 0 });
+}
+// Lånar ett ljus ur poolen och returnerar PointLight-instansen. Om alla
+// slots är upptagna stjäls det äldst lånade ljuset (LRU) — så ett glömt
+// releaseFxLight aldrig kan låsa poolen permanent. Funktionen returnerar
+// därmed alltid ett ljus (anroparna null-kollar ändå defensivt).
+function acquireFxLight(color, intensity, distance, x, y, z) {
+  let slot = fxLightPool.find(s => !s.busy);
+  if (!slot) {
+    slot = fxLightPool[0];
+    for (const s of fxLightPool) if (s.seq < slot.seq) slot = s;
+  }
+  slot.busy = true;
+  slot.seq = ++_fxLightSeq;
+  const l = slot.light;
+  l.color.set(color);
+  l.intensity = intensity;
+  l.distance = distance;
+  l.position.set(x, y, z);
+  return l;
+}
+// Lämnar tillbaka ett lånat ljus (nollar intensiteten — ljuset ligger kvar
+// i scenen så light-count är oförändrad → ingen shader-rekompilering).
+function releaseFxLight(l) {
+  if (!l) return;
+  l.intensity = 0;
+  const slot = fxLightPool.find(s => s.light === l);
+  if (slot) slot.busy = false;
+}
+
 // Mobil-detection (touchskärm + smal viewport): sänk pixel-ratio och stäng
 // av antialias för bättre FPS. På desktop (mus + bred skärm) kör vi full
 // kvalitet.
@@ -8428,11 +8477,10 @@ function makeArenaOrbMesh() {
   base.castShadow = true;
   base.receiveShadow = true;
   grp.add(base);
-  // Pointlight
-  const light = new THREE.PointLight(0x66ffcc, 1.2, 8, 2);
-  light.position.y = 1.3;
-  grp.add(light);
-  grp.userData.light = light;
+  // Punktljuset ligger INTE i orb-gruppen — orb-meshen togglas .visible varje
+  // spawn/death och ett barn-ljus skulle då tas in/ut ur renderingen →
+  // shader-rekompilering (hicka). Ljuset skapas som separat permanent
+  // arenaOrbLight i buildArenaScene och styrs i updateArenaOrb.
   attachHpBar(grp, 2.7);
   return grp;
 }
@@ -8500,6 +8548,7 @@ function clearArenaScene() {
   arenaBraziers.length = 0;
   arenaOrbBuilt = false;
   arenaOrbMesh = null;
+  arenaOrbLight = null;      // togs bort med arenaSceneGroup-barnen ovan
   shrinkRingMesh = null;     // återskapas vid nästa shrink-tick
   shrinkSmokeMesh = null;
   arenaSceneGroup.userData.mapIdx = -1;
@@ -8628,6 +8677,13 @@ function buildArenaScene() {
   arenaOrbMesh.position.set(ARENA_CFG.orb.x, 0, ARENA_CFG.orb.z);
   arenaOrbMesh.visible = false;
   arenaSceneGroup.add(arenaOrbMesh);
+  // Orb-ljus som SEPARAT permanent ljus (se makeArenaOrbMesh): ligger kvar i
+  // arenaSceneGroup hela matchen så orb-spawn/death inte rekompilerar shaders.
+  // Intensiteten styrs av orb-statet i updateArenaOrb (0 = orb död).
+  arenaOrbLight = new THREE.PointLight(0x66ffcc, 0, 8, 2);
+  arenaOrbLight.castShadow = false;
+  arenaOrbLight.position.set(ARENA_CFG.orb.x, 1.3, ARENA_CFG.orb.z);
+  arenaSceneGroup.add(arenaOrbLight);
   arenaOrbBuilt = true;
 }
 
@@ -9109,6 +9165,7 @@ function updateArenaOrb(dt) {
   const orb = arenaState.orb;
   if (!orb.alive) {
     orb.spawnTimer -= dt;
+    if (arenaOrbLight) arenaOrbLight.intensity = 0;
     if (orb.spawnTimer <= 0) {
       orb.alive = true;
       orb.hp = orb.maxHp;
@@ -9134,8 +9191,8 @@ function updateArenaOrb(dt) {
       const pulse = 0.18 + Math.sin(t * 3.2) * 0.08;
       arenaOrbMesh.userData.halo.material.opacity = pulse;
     }
-    if (arenaOrbMesh.userData.light) {
-      arenaOrbMesh.userData.light.intensity = 1.0 + Math.sin(t * 2.6) * 0.4;
+    if (arenaOrbLight) {
+      arenaOrbLight.intensity = 1.0 + Math.sin(t * 2.6) * 0.4;
     }
   }
 }
@@ -9485,8 +9542,15 @@ function removeSide(side) {
   for (const c of side.playerCreeps) removeEntityMesh(c.mesh);
   for (const p of side.projectiles) scene.remove(p.mesh);
   for (const f of side.fireballs) scene.remove(f.mesh);
-  for (const n of side.novaEffects) scene.remove(n.mesh);
+  // novaEffects kan innehålla ett lånat FX-pool-ljus (isLight) — det ska
+  // lämnas tillbaka, INTE scene.remove:as (pool-ljus måste ligga kvar i scenen).
+  for (const n of side.novaEffects) {
+    if (n.isLight) releaseFxLight(n.mesh); else scene.remove(n.mesh);
+  }
   for (const cp of side.creepProjectiles) scene.remove(cp.mesh);
+  // Lämna tillbaka ev. lånade pool-ljus från souldrain-FX.
+  if (side.soulDrainBeam && side.soulDrainBeam.auraLight) releaseFxLight(side.soulDrainBeam.auraLight);
+  if (side.soulExplosions) for (const e of side.soulExplosions) if (e.light) releaseFxLight(e.light);
 }
 
 // ============================================================
@@ -12134,10 +12198,8 @@ function spawnSoulDrainExplosion(side, opp, x, z, damage) {
   );
   halo.position.set(x, 1.0, z);
   scene.add(halo);
-  // Point-light som blinkar starkt
-  const lit = new THREE.PointLight(0x66ff66, 4.0, SOULDRAIN_EXPLOSION_RADIUS * 2);
-  lit.position.set(x, 1.5, z);
-  scene.add(lit);
+  // Point-light som blinkar starkt — via FX-poolen (ingen shader-rekompilering)
+  const lit = acquireFxLight(0x66ff66, 4.0, SOULDRAIN_EXPLOSION_RADIUS * 2, x, 1.5, z);
   side.soulExplosions = side.soulExplosions || [];
   side.soulExplosions.push({
     ring, flash, halo, light: lit,
@@ -12215,7 +12277,7 @@ function tickSoulExplosions(side, dt) {
         scene.remove(o);
       };
       dispose(e.ring); dispose(e.flash); dispose(e.halo);
-      if (e.light) scene.remove(e.light);
+      if (e.light) releaseFxLight(e.light);
       side.soulExplosions.splice(i, 1);
     }
   }
@@ -12258,10 +12320,8 @@ function ensureSoulDrainBeam(side) {
   auraDisk.rotation.x = -Math.PI / 2;
   auraDisk.position.set(side.hero.x, 0.05, side.hero.z);
   scene.add(auraDisk);
-  // Liten point-light som följer Gandulf
-  const auraLight = new THREE.PointLight(0x66ff66, 1.6, 4);
-  auraLight.position.set(side.hero.x, 1.0, side.hero.z);
-  scene.add(auraLight);
+  // Liten point-light som följer Gandulf — via FX-poolen (ingen rekompilering)
+  const auraLight = acquireFxLight(0x66ff66, 1.6, 4, side.hero.x, 1.0, side.hero.z);
   side.soulDrainBeam = {
     group: grp, core, beam, halo,
     auraRing, auraDisk, auraLight,
@@ -12338,7 +12398,7 @@ function removeSoulDrainBeam(side) {
   }
   cleanup(sdb.auraRing);
   cleanup(sdb.auraDisk);
-  if (sdb.auraLight) scene.remove(sdb.auraLight);
+  if (sdb.auraLight) releaseFxLight(sdb.auraLight);
   side.soulDrainBeam = null;
 }
 
@@ -12420,11 +12480,9 @@ function hostCastFrostnova(side, ev) {
     scene.add(shard);
     side.novaEffects.push({ mesh: shard, life: 0.7, maxLife: 0.7 });
   }
-  // Kall point-light som pulserar ut
-  const frostLight = new THREE.PointLight(0x88ccff, 2.4, NOVA_RADIUS * 2.5);
-  frostLight.position.set(center.x, 1.2, center.z);
-  scene.add(frostLight);
-  side.novaEffects.push({ mesh: frostLight, life: 0.7, maxLife: 0.7, isLight: true });
+  // Kall point-light som pulserar ut — via FX-poolen (ingen shader-rekompilering)
+  const frostLight = acquireFxLight(0x88ccff, 2.4, NOVA_RADIUS * 2.5, center.x, 1.2, center.z);
+  if (frostLight) side.novaEffects.push({ mesh: frostLight, life: 0.7, maxLife: 0.7, isLight: true });
   // Kenney-FX-lager: expanderande blå glow + magic-rune på marken + 6 ice-stars
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -12528,7 +12586,10 @@ function updateNovaEffects(side, dt) {
       }
       n.mesh.material.opacity = n.baseOpacity * tNorm;
     }
-    if (n.life <= 0) { scene.remove(n.mesh); side.novaEffects.splice(i, 1); }
+    if (n.life <= 0) {
+      if (n.isLight) releaseFxLight(n.mesh); else scene.remove(n.mesh);
+      side.novaEffects.splice(i, 1);
+    }
   }
   // Fire Wave-cone fade ut (gruppen innehåller 2 cone-meshar + 1 light)
   if (side.fireWaves) for (let i = side.fireWaves.length - 1; i >= 0; i--) {
@@ -17547,12 +17608,11 @@ function spawnKostefoSliderExplosionFx(x, z) {
     flame.rotation.x = Math.sin(ang) * 0.3;
     grp.add(flame);
   }
-  // Point-light för dynamic illumination
-  const light = new THREE.PointLight(0xff5522, 3.5, 5.0);
-  light.position.y = 0.4;
-  grp.add(light);
   scene.add(grp);
-  combatFx.push({ mesh: grp, life: 0.7, maxLife: 0.7, kind: 'kostefoSliderExplosion', light });
+  // Point-light via FX-poolen (ingen shader-rekompilering). grp ligger på
+  // (x, 0.6, z) → ljuset på y≈1.0. Lagras som fxLight, släpps i tickCombatFx.
+  const fxLight = acquireFxLight(0xff5522, 3.5, 5.0, x, 1.0, z);
+  combatFx.push({ mesh: grp, life: 0.7, maxLife: 0.7, kind: 'kostefoSliderExplosion', fxLight });
   triggerCameraShake(0.18, 0.25);
 }
 
@@ -18365,10 +18425,8 @@ function _legacyHostCastLegolasUlt_UNUSED(side, dx, dz) {
     leafGroup.add(leaf);
   }
   grp.add(leafGroup);
-  // Glow-light som följer med
-  const glow = new THREE.PointLight(0xaaff55, 2.4, 6);
-  glow.position.z = ULT_ARROW_LENGTH / 2;
-  grp.add(glow);
+  // Inget PointLight: pilen flyger snabbt och ljus-add/remove rekompilerar
+  // shaders (hicka). Leaf-meshes (MeshBasicMaterial) lyser redan i full färg.
   // Orientation: +Z framåt → atan2(dx, dz) (samma som hero-facing)
   grp.rotation.y = Math.atan2(dx, dz);
   grp.position.set(side.hero.x, 1.0, side.hero.z);
@@ -19093,9 +19151,8 @@ function hostCastAragurnUlt(side) {
     );
     blade.position.y = 1.4;
     grp.add(blade);
-    const tipGlow = new THREE.PointLight(0xff7733, 2.4, 4);
-    tipGlow.position.y = 2.4;
-    grp.add(tipGlow);
+    // Inget spets-PointLight: svärdet togglas .visible per berserk-cast och
+    // ett barn-ljus skulle då rekompilera shaders. Klingans emissive räcker.
     const hilt = new THREE.Mesh(
       new THREE.BoxGeometry(0.5, 0.1, 0.1),
       new THREE.MeshStandardMaterial({ color: 0x553311, metalness: 0.3 })
@@ -19111,7 +19168,6 @@ function hostCastAragurnUlt(side) {
     grp.add(halo);
     grp.userData.halo = halo;
     grp.userData.blade = blade;
-    grp.userData.tipGlow = tipGlow;
     scene.add(grp);
     side.berserkSwordMesh = grp;
   }
@@ -20435,9 +20491,7 @@ function spawnClientLocalBigArrow(side, worldDx, worldDz, tap) {
     leafGroup.add(leaf);
   }
   grp.add(leafGroup);
-  const arrowLight = new THREE.PointLight(0xaaff55, 2.4, 6);
-  arrowLight.position.z = ULT_ARROW_LENGTH / 2;
-  grp.add(arrowLight);
+  // Inget PointLight (se ovan: pil-glow rekompilerar shaders → hicka).
   grp.rotation.y = Math.atan2(dx, dz);
   grp.position.set(side.hero.x, 1.0, side.hero.z);
   scene.add(grp);
@@ -24542,8 +24596,8 @@ function makeHeroAaProjectileMesh(heroId, isAoE, isCrit) {
     f.position.set(Math.cos(a) * coreSize * 1.4, Math.sin(a * 1.3) * 0.12, Math.sin(a) * coreSize * 1.4);
     grp.add(f);
   }
-  const lt = new THREE.PointLight(isAoE ? 0xaa66ff : 0x66bbff, 1.6, 4.5);
-  grp.add(lt);
+  // Inget per-projektil-PointLight: projektiler spawnar konstant och varje
+  // ljus-add/remove rekompilerar shaders (hicka). Emissive-kärnan glöder kvar.
   grp.userData.spin = true;
   grp.userData.trailColor = isAoE ? 0xcc66ff : 0x88ccff;
   return grp;
@@ -24981,6 +25035,7 @@ function tickCombatFx(dt) {
         if (e.mesh.material) e.mesh.material.dispose();
         if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
       }
+      if (e.fxLight) releaseFxLight(e.fxLight);
       scene.remove(e.mesh);
       combatFx.splice(i, 1);
       continue;
@@ -25034,8 +25089,8 @@ function tickCombatFx(dt) {
           const init = e._initOpacity.get(c) || 0.8;
           c.material.opacity = init * (1 - t);
         }
-        if (c.isLight) c.intensity = 3.5 * (1 - t);
       });
+      if (e.fxLight) e.fxLight.intensity = 3.5 * (1 - t);
     }
   }
 }
