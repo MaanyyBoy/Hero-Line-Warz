@@ -23295,7 +23295,9 @@ async function hostGame() {
     showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
-  wsSendEnvelope({ t: 'host' });
+  // mode: låter servern veta att arena-rum är host-auktoritativa i webbläsaren
+  // → servern ska inte köra/broadcasta den klassiska engine:n för dem.
+  wsSendEnvelope({ t: 'host', mode: APP.gameMode });
   lobbyHostMsgEl.textContent = 'Skapar rum...';
 }
 

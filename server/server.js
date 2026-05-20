@@ -202,9 +202,9 @@ function relayPeerSend(peer, envelope, isState) {
   send(peer, envelope);
 }
 
-// Arena MP är peer-to-peer (host simulerar lokalt). Servern relayar
-// arena-meddelanden mellan peers; den klassiska engine tickar fortfarande
-// men ignoreras av klienterna när APP.gameMode === 'arena1v1'.
+// Arena MP är peer-to-peer (host simulerar lokalt i webbläsaren). Servern
+// bara relayar arena-meddelanden mellan peers. Den server-körda klassiska
+// engine:n startas aldrig för arena-rum — se 'join'-handlern.
 function relayArenaMessage(room, fromWs, envelope) {
   // Spoof-skydd: bara host får broadcasta auktoritativ state.
   if (envelope.d && envelope.d.t === 'a-state' && fromWs !== room.host) return;
@@ -258,6 +258,11 @@ wss.on('connection', (ws) => {
         code, host: ws, client: null,
         clients: [],          // multi-peer: lista av extra klienter (utöver host)
         maxPeers,
+        // Spel-läge från host-meddelandet. Arena är host-auktoritativt i
+        // webbläsaren → servern ska INTE köra den klassiska engine:n för
+        // arena-rum (se 'join'-handlern nedan). Saniteras: bara 'arena1v1'
+        // eller 'classic'. Gammal klient utan fältet → 'classic' (oförändrat).
+        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : 'classic',
         game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
       };
       rooms.set(code, room);
@@ -334,9 +339,13 @@ wss.on('connection', (ws) => {
       for (const c of room.clients) if (c !== ws) send(c, peerJoinedMsg);
       if (room.client && room.client !== ws) send(room.client, peerJoinedMsg);
       console.log(`[${code}] peer joined (${newPeersTotal}/${maxPeers})`);
-      // 2-peer-rum: starta klassisk engine direkt (oförändrat beteende).
-      // 3-peer-rum: host bestämmer själv när matchen startar via separat 'start-match'-meddelande.
-      if (maxPeers <= 2) startGame(room);
+      // 2-peer-rum: starta klassisk engine direkt — MEN bara för classic-rum.
+      // Arena är host-auktoritativt i webbläsaren och rör aldrig den server-
+      // körda engine:n; att köra den skulle slösa CPU + broadcasta en full
+      // classic-state (~10-15 KB) 30 ggr/s till båda peers som ändå kastar bort
+      // varje paket → mättad nedlänk → jitter/hack trots låg ping.
+      // 3-peer-rum (boss wars): host bestämmer själv när matchen startar.
+      if (maxPeers <= 2 && room.mode !== 'arena1v1') startGame(room);
     } else if (msg.t === 'msg') {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
