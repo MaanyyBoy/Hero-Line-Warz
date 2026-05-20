@@ -4617,7 +4617,7 @@ const BOSSWARS_ARCH_THEME = {
     accentColor: 0x666660,
     capRingColor: 0xaa66ff,                    // lila glow-cap
   },
-  3: {  // Warlord — Bio Lab (tech bestämd kolonn-stil)
+  3: {  // Warlord — Cryo Crypt (kall lab; perimeter byggs av isT3Lab-grenen)
     pillarColor: 0x2a3838, pillarMossy: false,
     bannerColor: 0x2a5050, bannerEdge: 0x0a1820,
     bannerSymbol: '▲',                         // triangulär tech-symbol
@@ -4696,27 +4696,22 @@ const BOSSWARS_MAPS = {
       { type: 'firePatch', x:  24, z:  16 },
     ],
   },
-  // Tier 3 — No-Face Alien — BIO LAB (cyan slime, alien-tech pelare)
+  // Tier 3 — Warlord — CRYO CRYPT (kall steril gravkammare/laboratorium)
   3: {
-    name: 'Bio Lab',
-    color: 0x1a2828, edgeColor: 0x080e10, accent: 0x66ffcc,
-    torchColor: 0x44ffcc,                                   // cyan alien-glow
-    ambient: { color: 0x2a5050, intensity: 0.30 },
+    name: 'Cryo Crypt',
+    color: 0x0f161a, edgeColor: 0x070b0d, accent: 0x44ffcc,
+    torchColor: 0x44ffcc,                                   // kallt cyan-grönt sken
+    ambient: { color: 0x183038, intensity: 0.16 },          // mörkt & kallt → golv-glow dominerar
     props: [
-      { type: 'pillar', x: -24, z: -20 },
-      { type: 'pillar', x:  24, z:  20 },
-      { type: 'pillar', x: -24, z:  20 },
-      { type: 'pillar', x:  24, z: -20 },
-      { type: 'pillar', x:   0, z: -28 },
-      { type: 'pillar', x:   0, z:  28 },
-      { type: 'lavaPool', x: -18, z:   0 },                 // grön slime-look via tint
-      { type: 'lavaPool', x:  18, z:   0 },
-      { type: 'lavaPool', x:   0, z:  20 },
-      { type: 'lavaPool', x:   0, z: -20 },
-      { type: 'bigBoulder', x: -12, z: -22 },
-      { type: 'bigBoulder', x:  12, z:  22 },
-      { type: 'rock', x: -28, z:   8 },
-      { type: 'rock', x:  28, z:  -8 },
+      // Kant-objekten (rostiga rör/väggsektioner/övergivna apparater) byggs
+      // av buildBossArenaArchitecture (isT3Lab-grenen). Interiört bara låg
+      // rasmassa nära kanten — arenans mitt hålls öppen (user-spec).
+      { type: 'rock', x: -20, z: -24 },
+      { type: 'rock', x:  20, z:  24 },
+      { type: 'rock', x: -26, z:  12 },
+      { type: 'rock', x:  26, z: -12 },
+      { type: 'rock', x:   8, z:  29 },
+      { type: 'rock', x:  -8, z: -29 },
     ],
   },
   // Tier 4 — Big Alien — HIVE CHAMBER (rosa/röd organic, fallna torn = tentakler)
@@ -5415,6 +5410,184 @@ function makeArenaBrokenStatue(stoneMat, darkStoneMat) {
   return grp;
 }
 
+// T3 Warlord — sprucken väggsektion med 2 rostiga vertikala rör vid sidorna.
+function makeArenaBrokenWall(stoneMat, rustMat, darkMat) {
+  const grp = new THREE.Group();
+  // Bred sten-vägg-sektion
+  const wall = new THREE.Mesh(
+    new THREE.BoxGeometry(2.8, 5.5, 0.45),
+    stoneMat
+  );
+  wall.position.y = 2.75;
+  wall.castShadow = true; wall.receiveShadow = true;
+  grp.add(wall);
+  // Bas (smutsig fot)
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(3.2, 0.6, 0.7),
+    stoneMat
+  );
+  base.position.y = 0.3;
+  base.castShadow = true;
+  grp.add(base);
+  // 3 vertikala sprickor
+  for (let i = 0; i < 3; i++) {
+    const crack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 2.0 + Math.random() * 2.0, 0.46),
+      darkMat
+    );
+    crack.position.set((Math.random() - 0.5) * 2.2, 2.0 + Math.random() * 1.5, 0.01);
+    crack.rotation.z = (Math.random() - 0.5) * 0.25;
+    grp.add(crack);
+  }
+  // Hål i väggen (mörk djup box)
+  const hole = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 0.55, 0.46),
+    darkMat
+  );
+  hole.position.set((Math.random() - 0.5) * 1.6, 3.5, 0);
+  grp.add(hole);
+  // 2 vertikala rostiga rör vid väggens sidor
+  for (const dir of [-1, 1]) {
+    const pipe = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.18, 5.0, 10),
+      rustMat
+    );
+    pipe.position.set(dir * 1.6, 2.5, 0.35);
+    pipe.castShadow = true;
+    grp.add(pipe);
+    // 3 flänsar längs varje rör
+    for (let k = 0; k < 3; k++) {
+      const flange = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.23, 0.23, 0.14, 10),
+        rustMat
+      );
+      flange.position.set(dir * 1.6, 0.8 + k * 1.8, 0.35);
+      grp.add(flange);
+    }
+  }
+  // Cyan glow-panel på väggen (övergiven monitor)
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.40, 0.22),
+    new THREE.MeshBasicMaterial({ color: 0x44ffcc, transparent: true, opacity: 0.80, side: THREE.DoubleSide })
+  );
+  panel.position.set(0, 4.2, 0.24);
+  grp.add(panel);
+  return grp;
+}
+
+// T3 Warlord — övergiven apparat (kontrollkonsoll med rörtorn bakom).
+function makeArenaAbandonedApparatus(metalMat, rustMat, darkMat) {
+  const grp = new THREE.Group();
+  // Stor metallbas
+  const baseBox = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 1.2, 1.0),
+    metalMat
+  );
+  baseBox.position.y = 0.6;
+  baseBox.castShadow = true; baseBox.receiveShadow = true;
+  grp.add(baseBox);
+  // Konsoll-top (tilted)
+  const console_ = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 0.5, 0.9),
+    metalMat
+  );
+  console_.position.set(0, 1.45, 0);
+  console_.rotation.x = -0.25;
+  console_.castShadow = true;
+  grp.add(console_);
+  // Display (cyan glow)
+  const display = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 0.35),
+    new THREE.MeshBasicMaterial({ color: 0x44ffcc, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  display.position.set(0, 1.50, 0.50);
+  display.rotation.x = -0.25;
+  grp.add(display);
+  // Sprucken display-glas (svart diagonalstreck)
+  const crack = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.1, 0.04),
+    darkMat
+  );
+  crack.position.set(0, 1.51, 0.51);
+  crack.rotation.x = -0.25;
+  crack.rotation.z = 0.3;
+  grp.add(crack);
+  // 3 stigande rostiga rör bakom konsollen
+  for (let i = 0; i < 3; i++) {
+    const pipeH = 2.5 + i * 0.6;
+    const pipe = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.14, 0.14, pipeH, 10),
+      rustMat
+    );
+    pipe.position.set(-0.5 + i * 0.5, 1.2 + pipeH / 2, -0.35);
+    pipe.castShadow = true;
+    grp.add(pipe);
+    // Pipe-cap top (rostig fläns)
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.20, 0.20, 0.10, 10),
+      rustMat
+    );
+    cap.position.set(-0.5 + i * 0.5, 1.2 + pipeH + 0.05, -0.35);
+    grp.add(cap);
+  }
+  // 3 färgade knappar på konsollen
+  const btnColors = [0xff4444, 0x66ff66, 0x44ffcc];
+  for (let i = 0; i < 3; i++) {
+    const button = new THREE.Mesh(
+      new THREE.CircleGeometry(0.05, 12),
+      new THREE.MeshBasicMaterial({ color: btnColors[i], transparent: true, opacity: 0.95, side: THREE.DoubleSide })
+    );
+    button.position.set(-0.40 + i * 0.40, 1.20, 0.46);
+    button.rotation.x = -Math.PI / 2 + 0.25;
+    grp.add(button);
+  }
+  // 2 rust-fläckar längs basen
+  for (let i = 0; i < 2; i++) {
+    const stain = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.50, 0.30),
+      rustMat
+    );
+    stain.position.set((Math.random() - 0.5) * 1.4, 0.4, 0.51);
+    stain.rotation.x = -0.05;
+    grp.add(stain);
+  }
+  return grp;
+}
+
+// T3 Warlord — horisontellt rostigt rör som spänner mellan två pillar-toppar.
+// Ersätter chains/banners visuellt (4 st mellan varannan pillar-par).
+function makeArenaPipeBridge(fromX, fromZ, toX, toZ, rustMat) {
+  const grp = new THREE.Group();
+  const dx = toX - fromX, dz = toZ - fromZ;
+  const dist = Math.hypot(dx, dz);
+  const midX = (fromX + toX) / 2, midZ = (fromZ + toZ) / 2;
+  const yaw = -Math.atan2(dz, dx);
+  // Huvudrör (horisontal cylinder roterad så längden går längs from→to)
+  const pipe = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.20, 0.20, dist, 12),
+    rustMat
+  );
+  pipe.rotation.z = Math.PI / 2;
+  pipe.rotation.y = yaw;
+  pipe.position.set(midX, 4.5, midZ);
+  pipe.castShadow = true;
+  grp.add(pipe);
+  // 3 flänsar längs röret (vid 25 %, 50 %, 75 %)
+  for (let i = 0; i < 3; i++) {
+    const t = (i + 1) / 4;
+    const x = fromX + dx * t, z = fromZ + dz * t;
+    const flange = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.27, 0.27, 0.12, 10),
+      rustMat
+    );
+    flange.position.set(x, 4.5, z);
+    flange.rotation.z = Math.PI / 2;
+    flange.rotation.y = yaw;
+    grp.add(flange);
+  }
+  return grp;
+}
+
 // T2 General — svävande mörk kristall (kluster av 2-3 octahedra som hovrar
 // över marken, lila emissive). Animeras via _bossArenaCrystals + tickBossArenaCrystals.
 function makeArenaFloatingCrystal(crystalMat, glowMat) {
@@ -5492,6 +5665,22 @@ function buildBossArenaArchitecture(tier, map) {
     color: 0xa050ff, transparent: true, opacity: 0.18,
     blending: THREE.AdditiveBlending, depthWrite: false,
   }) : null;
+  // T3 Warlord — kall steril gravkammare/laboratorium: rostiga rör, spruckna
+  // väggsektioner och övergivna apparater. Delade material för shader-cache.
+  const isT3Lab = (tier === 3);
+  const t3StoneMat = isT3Lab ? new THREE.MeshStandardMaterial({
+    color: 0x2a3036, roughness: 0.92, metalness: 0.12,
+  }) : null;
+  const t3MetalMat = isT3Lab ? new THREE.MeshStandardMaterial({
+    color: 0x1a2228, roughness: 0.55, metalness: 0.65,
+  }) : null;
+  const t3RustMat = isT3Lab ? new THREE.MeshStandardMaterial({
+    color: 0x6a3818, roughness: 0.88, metalness: 0.30,
+    emissive: 0x180a04, emissiveIntensity: 0.15,
+  }) : null;
+  const t3DarkMat = isT3Lab ? new THREE.MeshStandardMaterial({
+    color: 0x05080a, roughness: 0.95, metalness: 0.20,
+  }) : null;
   _bossArenaCrystals.length = 0;
   for (let i = 0; i < pillarCount; i++) {
     const a = (i / pillarCount) * Math.PI * 2;
@@ -5508,12 +5697,18 @@ function buildBossArenaArchitecture(tier, map) {
       obj = (i % 2 === 0)
         ? makeArenaBrokenPillar(t2StoneMat, t2DarkStoneMat)
         : makeArenaBrokenStatue(t2StoneMat, t2DarkStoneMat);
+    } else if (isT3Lab) {
+      // Alternerar sprucken väggsektion (jämn) och övergiven apparat (udda)
+      obj = (i % 2 === 0)
+        ? makeArenaBrokenWall(t3StoneMat, t3RustMat, t3DarkMat)
+        : makeArenaAbandonedApparatus(t3MetalMat, t3RustMat, t3DarkMat);
     } else {
       obj = makeArenaPillar(theme, stoneMat);
     }
     obj.position.set(px, 0, pz);
     // Pelaren/statyn vänd mot center; T1 har lätt slumpvis vinkling,
-    // T2 också för "fallen ruin"-känsla men mindre extrem
+    // T2 också för "fallen ruin"-känsla men mindre extrem.
+    // T3 inga jitter — laboratorium ska se mekaniskt anlagt ut.
     let yawJitter = 0;
     if (isT1Forest) yawJitter = Math.random() * 0.5 - 0.25;
     else if (isT2Temple) yawJitter = (Math.random() - 0.5) * 0.35;
@@ -5522,14 +5717,23 @@ function buildBossArenaArchitecture(tier, map) {
     if (isT2Temple && i % 2 === 0) obj.rotation.z = (Math.random() - 0.5) * 0.12;
     bossWarsSceneGroup.add(obj);
     pillars.push({ x: px, y: 7.0, z: pz });
-    // Fackla bara på standard-pelare (T1 + T2 har inga kapitäl-toppar)
-    if (!isT1Forest && !isT2Temple) {
+    // Fackla bara på standard-pelare (T1 + T2 + T3 har inga kapitäl-toppar)
+    if (!isT1Forest && !isT2Temple && !isT3Lab) {
       const torch = makePillarTorch(theme);
       torch.position.set(px, 7.0, pz);
       bossWarsSceneGroup.add(torch);
       torch.traverse(o => {
         if (o.userData && o.userData.isPillarFlame) _bossArenaFlameSprites.push(o);
       });
+    }
+  }
+  // T3: 4 horisontella rostiga rör-broar mellan pillar-par i 4 cardinal-positioner
+  if (isT3Lab) {
+    for (let i = 0; i < pillarCount; i += 2) {
+      const next = (i + 1) % pillarCount;
+      const p1 = pillars[i], p2 = pillars[next];
+      const bridge = makeArenaPipeBridge(p1.x, p1.z, p2.x, p2.z, t3RustMat);
+      bossWarsSceneGroup.add(bridge);
     }
   }
   // T2: 6 svävande mörka kristaller mellan pelarna, ~4 m upp i luften
@@ -5548,9 +5752,9 @@ function buildBossArenaArchitecture(tier, map) {
       _bossArenaCrystals.push({ mesh: crystal, baseY, phase: i * 1.04 });
     }
   }
-  // Banderoller mellan varannan kolonn (4 st) — skippas för T1 (naturlund)
-  // och T2 (ritualtempel), de temana har egna atmospheric accents istället
-  if (!isT1Forest && !isT2Temple) for (let i = 0; i < pillarCount; i += 2) {
+  // Banderoller mellan varannan kolonn (4 st) — skippas för T1/T2/T3 där
+  // de temana har egna atmospheric accents istället
+  if (!isT1Forest && !isT2Temple && !isT3Lab) for (let i = 0; i < pillarCount; i += 2) {
     const next = (i + 1) % pillarCount;
     const p1 = pillars[i], p2 = pillars[next];
     const banner = makeArenaBanner(theme);
@@ -5579,8 +5783,9 @@ function buildBossArenaArchitecture(tier, map) {
       wf.rotation.y = ang + Math.PI;
       bossWarsSceneGroup.add(wf);
     }
-  } else if (theme.accent === 'techPanels') {
-    // Tech-paneler på varannan kolonn (sidan-facing inåt)
+  } else if (theme.accent === 'techPanels' && !isT3Lab) {
+    // Tech-paneler på varannan kolonn (sidan-facing inåt) — skippas för T3
+    // (laboratorium har inbyggda paneler på apparaterna istället)
     for (let i = 0; i < pillarCount; i += 2) {
       const a = (i / pillarCount) * Math.PI * 2;
       const px = BOSSWARS_CX + Math.cos(a) * (r - 0.7);   // strax innanför kolonn
@@ -5669,7 +5874,7 @@ function drawBossArenaFloor(ctx, size, tier, map) {
   // Theme-specifika detaljer
   if (tier === 1) drawForestFloor(ctx, size, map);
   else if (tier === 2) drawArcaneFloor(ctx, size, map);
-  else if (tier === 3) drawBioLabFloor(ctx, size, map);
+  else if (tier === 3) drawCryptLabFloor(ctx, size, map);
   else if (tier === 4) drawHiveFloor(ctx, size, map);
   else if (tier === 5) drawVolcanoFloor(ctx, size, map);
 }
@@ -6135,77 +6340,191 @@ function drawArcaneFloor(ctx, size, map) {
   drawT2PentagramPattern(ctx, size, false);
 }
 
-// T3 Bio Lab — hexagonal grid, glowing seams, tech panels
-function drawBioLabFloor(ctx, size, map) {
-  // Hex-grid
-  const hexR = 28;
-  const hexW = hexR * 2, hexH = hexR * Math.sqrt(3);
-  ctx.strokeStyle = 'rgba(80,255,200,0.45)';
-  ctx.lineWidth = 1.5;
-  for (let row = 0; row * hexH * 0.75 < size + hexH; row++) {
-    for (let col = 0; col * hexW * 1.5 < size + hexW; col++) {
-      const cx = col * hexW * 1.5 + (row % 2 === 0 ? 0 : hexW * 0.75);
-      const cy = row * hexH * 0.75;
-      // Skip cells utanför canvas + slumpvis 15% saknade celler
-      if (cx > size + hexW || cy > size + hexH) continue;
-      if (Math.random() < 0.15) continue;
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const x = cx + Math.cos(a) * hexR;
-        const y = cy + Math.sin(a) * hexR;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.stroke();
+// ============================================================
+// T3 Warlord — CRYO CRYPT: kall steril gravkammare/laboratorium.
+// Golvet är sliten metall + sten med ett glödande cyan-grönt hexagon-
+// rutnät. Hex-mönstret ritas DETERMINISTISKT (hash per cell) så color-
+// canvasen och emissive-canvasen matchar exakt — samma princip som
+// T2-pentagrammet (getT2PentagramGeometry / drawT2PentagramPattern).
+// ============================================================
+
+// Ren positions-helper: alla flat-top hex-celler som täcker canvasen.
+// `lit` = en deterministiskt utvald delmängd som glöder starkare ("aktiva
+// tech-paneler"). Anropas av både drawT3HexPattern (color-canvas) och
+// buildT3HexEmissive (emissive-canvas) → bägge blir identiska.
+function getT3HexCells(size) {
+  const R = size * 0.046;                  // hex-circumradius
+  const colStep = R * 1.5;                 // flat-top: horisontellt steg
+  const rowStep = R * Math.sqrt(3);        // vertikalt steg
+  const cols = Math.ceil(size / colStep) + 3;
+  const rows = Math.ceil(size / rowStep) + 3;
+  const cells = [];
+  for (let c = -1; c < cols; c++) {
+    for (let rr = -1; rr < rows; rr++) {
+      const cx = c * colStep;
+      const cy = rr * rowStep + ((c & 1) ? rowStep / 2 : 0);
+      // Deterministisk hash → 0..99 (ingen Math.random → canvas matchar)
+      const h = (((c * 73856093) ^ (rr * 19349663)) >>> 0);
+      cells.push({ cx, cy, R, lit: (h % 100) < 20 });
     }
   }
-  // Glowing seam-lines (kraftiga cyan-strålar i diagonalt kors)
-  ctx.strokeStyle = 'rgba(100,255,220,0.7)';
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 5; i++) {
-    const x1 = Math.random() * size, y1 = Math.random() * size;
-    const ang = Math.random() * Math.PI * 2;
-    const len = 200 + Math.random() * 300;
-    const x2 = x1 + Math.cos(ang) * len, y2 = y1 + Math.sin(ang) * len;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+  return cells;
+}
+
+// Ritar en flat-top hexagon som path (anroparen gör stroke/fill).
+function t3HexPath(ctx, cx, cy, R) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const x = cx + Math.cos(a) * R, y = cy + Math.sin(a) * R;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+// Ritar hex-rutnätet. emissive=true → ljusa cyan-gröna linjer på svart
+// (för emissiveMap). emissive=false → mörkt etsade linjer på metallgolvet.
+function drawT3HexPattern(ctx, size, emissive) {
+  const cells = getT3HexCells(size);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // 1) Bas-rutnät — alla hexar, svag linje
+  ctx.strokeStyle = emissive ? 'rgba(64,200,168,0.55)' : 'rgba(34,72,68,0.6)';
+  ctx.lineWidth = emissive ? 2.2 : 2;
+  for (const cell of cells) {
+    t3HexPath(ctx, cell.cx, cell.cy, cell.R);
     ctx.stroke();
   }
-  // Tech-paneler (kvadratiska bleck med inre detaljer)
-  for (let i = 0; i < 12; i++) {
-    const x = Math.random() * (size - 70), y = Math.random() * (size - 70);
-    const w = 30 + Math.random() * 40;
-    ctx.fillStyle = 'rgba(20,50,55,0.55)';
-    ctx.fillRect(x, y, w, w);
-    ctx.strokeStyle = 'rgba(120,255,220,0.8)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, w - 1);
-    // Inre LED-dots
-    ctx.fillStyle = 'rgba(150,255,220,0.9)';
-    for (let k = 0; k < 3; k++) {
+  // 2) Lit-celler — starkare linje + inre hex + center-nod
+  for (const cell of cells) {
+    if (!cell.lit) continue;
+    ctx.strokeStyle = emissive ? 'rgba(150,255,224,0.95)' : 'rgba(72,150,134,0.8)';
+    ctx.lineWidth = emissive ? 3.6 : 2.6;
+    t3HexPath(ctx, cell.cx, cell.cy, cell.R);
+    ctx.stroke();
+    ctx.lineWidth = emissive ? 1.8 : 1.4;
+    t3HexPath(ctx, cell.cx, cell.cy, cell.R * 0.52);
+    ctx.stroke();
+    if (emissive) {
+      const gr = ctx.createRadialGradient(cell.cx, cell.cy, 0, cell.cx, cell.cy, cell.R * 0.75);
+      gr.addColorStop(0, 'rgba(196,255,236,0.85)');
+      gr.addColorStop(1, 'rgba(80,255,200,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(cell.cx - cell.R, cell.cy - cell.R, cell.R * 2, cell.R * 2);
+    } else {
+      ctx.fillStyle = 'rgba(60,128,116,0.5)';
       ctx.beginPath();
-      ctx.arc(x + 6 + k * 8, y + w - 6, 1.5, 0, Math.PI * 2);
+      ctx.arc(cell.cx, cell.cy, cell.R * 0.13, 0, Math.PI * 2);
       ctx.fill();
     }
   }
-  // Circuit-board traces (tunna glow-linjer i 90°-böjar)
-  ctx.strokeStyle = 'rgba(100,255,200,0.5)';
+  // 3) Öppen mitt (user-spec) — radial-gradient dämpar hex-glow i centrum.
+  const ccx = size / 2, ccy = size / 2;
+  const fade = ctx.createRadialGradient(ccx, ccy, 0, ccx, ccy, size * 0.18);
+  if (emissive) {
+    fade.addColorStop(0, 'rgba(0,0,0,0.94)');
+    fade.addColorStop(0.65, 'rgba(0,0,0,0.5)');
+    fade.addColorStop(1, 'rgba(0,0,0,0)');
+  } else {
+    fade.addColorStop(0, 'rgba(8,12,14,0.85)');
+    fade.addColorStop(0.65, 'rgba(8,12,14,0.4)');
+    fade.addColorStop(1, 'rgba(8,12,14,0)');
+  }
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, size, size);
+}
+
+// Bygger emissive-canvas för T3 (svart bg + hex-rutnätet i ljus cyan-grön).
+function buildT3HexEmissive(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  drawT3HexPattern(ctx, size, true);
+  return canvas;
+}
+
+// T3 Warlord — sliten metall + sten med etsat hexagon-rutnät. Kall, livlös,
+// obehaglig. Glödet kommer från emissive-map (buildT3HexEmissive).
+function drawCryptLabFloor(ctx, size, map) {
+  // BAS: kall mörk metall — skriver över bas-färgen från drawBossArenaFloor
+  ctx.fillStyle = '#0f161a';
+  ctx.fillRect(0, 0, size, size);
+  // Metallplattor: regelbundet rutnät med svaga ton-skillnader
+  const plate = 196;
+  for (let px = 0; px < size; px += plate) {
+    for (let py = 0; py < size; py += plate) {
+      const t = (((px / plate) * 3 + (py / plate) * 5) % 4) / 4;
+      const v = 20 + t * 16;
+      ctx.fillStyle = `rgba(${v | 0},${(v + 7) | 0},${(v + 9) | 0},0.5)`;
+      ctx.fillRect(px + 1.5, py + 1.5, plate - 3, plate - 3);
+    }
+  }
+  // Mörka söm-linjer mellan plattorna
+  ctx.strokeStyle = 'rgba(4,7,9,0.7)';
+  ctx.lineWidth = 2.5;
+  for (let p = 0; p <= size; p += plate) {
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+  }
+  // Nitar vid söm-korsningarna
+  for (let px = 0; px <= size; px += plate) {
+    for (let py = 0; py <= size; py += plate) {
+      ctx.fillStyle = 'rgba(86,98,102,0.65)';
+      ctx.beginPath(); ctx.arc(px, py, 3.2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(5,8,10,0.8)';
+      ctx.beginPath(); ctx.arc(px + 0.8, py + 0.8, 1.4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // Sten-patchar: oregelbundna mörkgrå zoner (sliten sten mellan metallen)
+  for (let i = 0; i < 13; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const r = 55 + Math.random() * 115;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(40,45,47,0.5)');
+    g.addColorStop(1, 'rgba(40,45,47,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // Sten-korn: ljusare granit-prickar
+  for (let i = 0; i < 480; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const v = 28 + (Math.random() * 26 | 0);
+    ctx.fillStyle = `rgba(${v},${v + 4},${v + 6},0.4)`;
+    ctx.beginPath();
+    ctx.arc(x, y, 0.8 + Math.random() * 1.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Rost-streck: subtila brun-orange smutsspår (övergivet men kallt → dämpade)
+  for (let i = 0; i < 9; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const w = 14 + Math.random() * 26, h = 45 + Math.random() * 120;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((Math.random() - 0.5) * 0.5);
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, 'rgba(74,44,22,0.32)');
+    g.addColorStop(1, 'rgba(74,44,22,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-w / 2, 0, w, h);
+    ctx.restore();
+  }
+  // Repor: tunna ljusa streck
+  ctx.strokeStyle = 'rgba(120,130,134,0.2)';
   ctx.lineWidth = 1;
-  for (let i = 0; i < 25; i++) {
-    let x = Math.random() * size, y = Math.random() * size;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 38; i++) {
+    const x = Math.random() * size, y = Math.random() * size;
+    const a = Math.random() * Math.PI * 2, len = 20 + Math.random() * 65;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    const segs = 3 + (Math.random() * 4 | 0);
-    for (let s = 0; s < segs; s++) {
-      if (Math.random() < 0.5) x += (Math.random() - 0.5) * 80;
-      else y += (Math.random() - 0.5) * 80;
-      ctx.lineTo(x, y);
-    }
+    ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
     ctx.stroke();
   }
+  // HEXAGON-RUTNÄT (etsat mörkt — glow kommer från emissive-map)
+  drawT3HexPattern(ctx, size, false);
 }
 
 // T4 Hive Chamber — organic veins, chitin patterns, alien growths
@@ -6621,8 +6940,8 @@ function buildBossWarsScene() {
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
   floorTex.anisotropy = 16;
-  // T1/T2 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
-  // T1: svart bg + gröna runor. T2: svart bg + lila pentagram + runor.
+  // T1/T2/T3 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
+  // T1: gröna runor. T2: lila pentagram. T3: cyan-grönt hexagon-rutnät.
   let floorEmissiveTex = null;
   let floorEmissiveColor = 0x000000;
   let floorEmissiveIntensity = 0;
@@ -6636,6 +6955,11 @@ function buildBossWarsScene() {
     floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
     floorEmissiveColor = 0xc060ff;
     floorEmissiveIntensity = 1.10;
+  } else if (tier === 3) {
+    const emiCanvas = buildT3HexEmissive(TEX_SIZE);
+    floorEmissiveTex = new THREE.CanvasTexture(emiCanvas);
+    floorEmissiveColor = 0x44ffcc;
+    floorEmissiveIntensity = 0.85;
   }
   if (floorEmissiveTex) {
     floorEmissiveTex.wrapS = floorEmissiveTex.wrapT = THREE.RepeatWrapping;
@@ -6667,10 +6991,10 @@ function buildBossWarsScene() {
   top.position.set(BOSSWARS_CX, 0.42, BOSSWARS_CZ);
   top.receiveShadow = true;
   bossWarsSceneGroup.add(top);
-  // T1 Captain och T2 General skippar center-emblem så mittpunkten är ren
-  // (user-spec: "håll arenans mitt öppen, lämna plats för en separat
+  // T1 Captain, T2 General och T3 Warlord skippar center-emblem så mittpunkten
+  // är ren (user-spec: "håll arenans mitt öppen, lämna plats för en separat
   // bakgrundsbild").
-  if (tier !== 1 && tier !== 2) {
+  if (tier !== 1 && tier !== 2 && tier !== 3) {
     // Accent-ring/mönster för visuell smak (cirkel-emblem i mitten oavsett shape)
     const accentRing = new THREE.Mesh(
       new THREE.RingGeometry(r * 0.35, r * 0.42, 48),
