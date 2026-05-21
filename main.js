@@ -25748,10 +25748,9 @@ function tickLocalPrediction(dt) {
   }
 }
 
-// TILLFÄLLIGT diagnos-verktyg: FPS (live + LÄGSTA per runda) + geo som
-// sanity-check. Geo-läckan är fixad (decision 083) — nu mäter vi frame-stutter.
-// Om min-fps dippar runda för runda → enheten håller inte takten (thermal/perf).
-// Tas bort när problemet är spårat.
+// TILLFÄLLIGT diagnos-verktyg: FPS (live + lägsta/runda) + draw calls +
+// trianglar. Användaren kör flaggskepp (iPhone 15 Plus) men får 21 FPS i strid
+// → kod-bugg. calls/tris avslöjar om scenen renderar för mycket. Tas bort sen.
 let _leakDbgEl = null;
 let _leakDbgAccum = 0;
 let _leakDbgLastRound = -1;
@@ -25774,22 +25773,23 @@ function updateLeakDebugReadout(dt) {
     document.body.appendChild(_leakDbgEl);
   }
   const info = (typeof renderer !== 'undefined' && renderer && renderer.info) ? renderer.info : null;
-  const geoN = info ? info.memory.geometries : 0;
-  // Snapshot per runda: föregående rundas LÄGSTA fps (fångar stutter mitt i
-  // rundan, inte bara vid round-start) → användaren läser historiken efteråt.
+  // info.render nollställs vid varje render(); här (tidigt i tick) håller den
+  // föregående frames värden — draw calls + trianglar.
+  const callsN = info ? info.render.calls : 0;
+  const trisN = info ? Math.round(info.render.triangles / 1000) : 0;
   const rn = (typeof arenaState !== 'undefined' && arenaState) ? (arenaState.roundNum || 0) : 0;
   if (rn > 0 && rn !== _leakDbgLastRound) {
     if (rn < _leakDbgLastRound) _leakDbgHistory.length = 0;  // ny match → nollställ
     if (_leakDbgLastRound > 0) {
-      _leakDbgHistory.push({ r: _leakDbgLastRound, minfps: Math.round(_leakDbgRoundMinFps), geo: geoN });
+      _leakDbgHistory.push({ r: _leakDbgLastRound, minfps: Math.round(_leakDbgRoundMinFps) });
       if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
     }
     _leakDbgLastRound = rn;
     _leakDbgRoundMinFps = 999;
   }
-  let txt = 'LIVE fps:' + Math.round(_leakDbgFps) + '  geo:' + geoN;
+  let txt = 'LIVE fps:' + Math.round(_leakDbgFps) + ' calls:' + callsN + ' tris:' + trisN + 'k';
   for (const h of _leakDbgHistory) {
-    txt += '\nR' + h.r + ' min-fps:' + h.minfps + ' geo:' + h.geo;
+    txt += '\nR' + h.r + ' min-fps:' + h.minfps;
   }
   _leakDbgEl.textContent = txt;
 }
