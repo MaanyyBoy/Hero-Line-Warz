@@ -25725,11 +25725,38 @@ function tickLocalPrediction(dt) {
   }
 }
 
+// TILLFÄLLIGT diagnos-verktyg: visar scen-/grupp-/FX-/DOM-räknare för att spåra
+// den progressiva per-runda-läckan i arena-MP. Den siffra som växer runda för
+// runda pekar ut vad som läcker. Tas bort när läckan är hittad.
+let _leakDbgEl = null;
+let _leakDbgAccum = 0;
+function updateLeakDebugReadout(dt) {
+  _leakDbgAccum += dt;
+  if (_leakDbgAccum < 0.5) return;
+  _leakDbgAccum = 0;
+  if (!_leakDbgEl) {
+    _leakDbgEl = document.createElement('div');
+    _leakDbgEl.style.cssText =
+      'position:fixed;top:2px;left:2px;z-index:200;pointer-events:none;'
+      + 'font:700 11px/1.35 monospace;color:#7fff7f;'
+      + 'background:rgba(0,0,0,0.6);padding:3px 6px;border-radius:4px;white-space:pre;';
+    document.body.appendChild(_leakDbgEl);
+  }
+  const grpN = (typeof arenaSceneGroup !== 'undefined' && arenaSceneGroup) ? arenaSceneGroup.children.length : 0;
+  const fxN = (typeof combatFx !== 'undefined' && combatFx) ? combatFx.length : 0;
+  _leakDbgEl.textContent =
+    'scene:' + scene.children.length
+    + '  grp:' + grpN
+    + '  fx:' + fxN
+    + '  dom:' + document.body.childElementCount;
+}
+
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   resetFxPopupBudget();
   tickPerfMeter(dt);
+  updateLeakDebugReadout(dt);
   // Tick lokal optimistic ult-lockout för classic MP-klient (line wars).
   // I solo + arena/boss host körs simulateAll som tickar via buff-loopen
   // — guard:a här så det inte blir dubbel tick (2.5s istället för 5s lockout).
