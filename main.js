@@ -21234,15 +21234,27 @@ function applyHeroSnap(side, snap) {
   const prevUe = side.ultEnergy || 0;
 
   if (isLocalMpClient) {
-    // Reconcile: snap till host om diff > 2.5 enheter (knockback, teleport, stun)
+    // Reconcile mot host:ens auktoritativa position.
     if (side.mesh) {
       const dx = side.hero.x - snap.x;
       const dz = side.hero.z - snap.z;
-      if (dx * dx + dz * dz > 6.25) {
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 25) {
+        // Stor divergens (teleport/blink/knockback) — hård snäpp.
         side.hero.x = snap.x;
         side.hero.z = snap.z;
         side.mesh.position.x = snap.x;
         side.mesh.position.z = snap.z;
+        side._reconErrX = 0;
+        side._reconErrZ = 0;
+      } else if (d2 > 6.25) {
+        // Liten divergens (typiskt prediction-vs-RTT vid riktningsbyte):
+        // korrigera LOGISKT direkt, men spara felmarginalen så meshen glider
+        // mjukt dit i tickLocalPrediction — ingen hård snäpp = ingen hicka.
+        side._reconErrX = side.mesh.position.x - snap.x;
+        side._reconErrZ = side.mesh.position.z - snap.z;
+        side.hero.x = snap.x;
+        side.hero.z = snap.z;
       }
       // Rensa _target så smoothEntityMeshes inte fightar applyMovement
       side.mesh._target = null;
@@ -25687,6 +25699,22 @@ function tickLocalPrediction(dt) {
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   applyMovement(side, dir.x, dir.z, dt);
+  // Mjuk reconcile-korrigering: rendera meshen vid hero.x + en decayande
+  // felmarginal (satt av applyHeroSnap vid liten divergens) → en reconcile-
+  // justering blir en mjuk glid i st f en hård snäpp (hicka vid riktningsbyte).
+  if (side.mesh) {
+    let ex = side._reconErrX || 0, ez = side._reconErrZ || 0;
+    if (ex !== 0 || ez !== 0) {
+      const decay = Math.pow(0.5, dt / 0.11);   // ~110 ms halflife
+      ex *= decay; ez *= decay;
+      if (Math.abs(ex) < 0.012) ex = 0;
+      if (Math.abs(ez) < 0.012) ez = 0;
+      side._reconErrX = ex;
+      side._reconErrZ = ez;
+    }
+    side.mesh.position.x = side.hero.x + ex;
+    side.mesh.position.z = side.hero.z + ez;
+  }
 }
 
 function tick() {
