@@ -25730,6 +25730,8 @@ function tickLocalPrediction(dt) {
 // runda pekar ut vad som läcker. Tas bort när läckan är hittad.
 let _leakDbgEl = null;
 let _leakDbgAccum = 0;
+let _leakDbgLastRound = -1;
+const _leakDbgHistory = [];
 function updateLeakDebugReadout(dt) {
   _leakDbgAccum += dt;
   if (_leakDbgAccum < 0.5) return;
@@ -25738,17 +25740,28 @@ function updateLeakDebugReadout(dt) {
     _leakDbgEl = document.createElement('div');
     _leakDbgEl.style.cssText =
       'position:fixed;top:2px;left:2px;z-index:200;pointer-events:none;'
-      + 'font:700 11px/1.35 monospace;color:#7fff7f;'
-      + 'background:rgba(0,0,0,0.6);padding:3px 6px;border-radius:4px;white-space:pre;';
+      + 'font:700 12px/1.4 monospace;color:#7fff7f;'
+      + 'background:rgba(0,0,0,0.65);padding:4px 7px;border-radius:4px;white-space:pre;';
     document.body.appendChild(_leakDbgEl);
   }
+  const sceneN = scene.children.length;
   const grpN = (typeof arenaSceneGroup !== 'undefined' && arenaSceneGroup) ? arenaSceneGroup.children.length : 0;
   const fxN = (typeof combatFx !== 'undefined' && combatFx) ? combatFx.length : 0;
-  _leakDbgEl.textContent =
-    'scene:' + scene.children.length
-    + '  grp:' + grpN
-    + '  fx:' + fxN
-    + '  dom:' + document.body.childElementCount;
+  const domN = document.body.childElementCount;
+  // Snapshot AUTOMATISKT en gång per runda (när roundNum ändras) → användaren
+  // behöver inte hålla koll under spel, bara läsa historiken efteråt.
+  const rn = (typeof arenaState !== 'undefined' && arenaState) ? (arenaState.roundNum || 0) : 0;
+  if (rn > 0 && rn !== _leakDbgLastRound) {
+    if (rn < _leakDbgLastRound) _leakDbgHistory.length = 0;  // ny match → nollställ
+    _leakDbgLastRound = rn;
+    _leakDbgHistory.push({ r: rn, s: sceneN, g: grpN, f: fxN, d: domN });
+    if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
+  }
+  let txt = 'LIVE  scene:' + sceneN + ' grp:' + grpN + ' fx:' + fxN + ' dom:' + domN;
+  for (const h of _leakDbgHistory) {
+    txt += '\nR' + h.r + '   scene:' + h.s + ' grp:' + h.g + ' fx:' + h.f + ' dom:' + h.d;
+  }
+  _leakDbgEl.textContent = txt;
 }
 
 function tick() {
