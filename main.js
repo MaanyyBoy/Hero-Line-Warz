@@ -4544,6 +4544,9 @@ const ARENA_POWERUP_COUNT_PER_SPAWN = 3;
 // arenaState.powerUps obegränsat (3 spawn/20s, bara pickup tog bort) →
 // a-state-payloaden svällde → bandbredd + ping steg genom hela matchen.
 const ARENA_POWERUP_LIFETIME = 30;
+// Power-ups (de små orbsen) avstängda per användarbeslut — bara mitten-orben
+// kvar. Sätt true för att återaktivera. spawnArenaPowerUps bail:ar tidigt.
+const ARENA_POWERUPS_ENABLED = false;
 const ARENA_POWERUP_PICKUP_RADIUS = 1.0;
 const ARENA_POWERUP_BUFF_DURATION = 8.0;       // speed/damage duration
 const ARENA_POWERUP_SPEED_BOOST = 0.30;        // +30% MS
@@ -9100,6 +9103,7 @@ function tickShrinkCircle(dt) {
 // ============================================================
 
 function spawnArenaPowerUps() {
+  if (!ARENA_POWERUPS_ENABLED) return;   // power-ups avstängda — se konstanten
   if (!arenaState) return;
   const bounds = ARENA_CFG.bounds;
   const margin = ARENA_POWERUP_SAFE_MARGIN;
