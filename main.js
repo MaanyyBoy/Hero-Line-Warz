@@ -25246,11 +25246,22 @@ function tickCombatFx(dt) {
     const e = combatFx[i];
     e.life -= dt;
     if (e.life <= 0) {
-      // Dispose Kenney-fx material + geometry (textur är shared så NOT disposad).
-      // Andra fx-typer har enkla shared-material — GC sköter det.
       if (e.kind === 'kenneyFx' && e.mesh) {
+        // Kenney-fx: Sprite-material disposas; geometrin bara om ground-plan
+        // (Sprite delar intern geometri). Textur är shared → ej disposad.
         if (e.mesh.material) e.mesh.material.dispose();
         if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
+      } else if (e.mesh) {
+        // Alla andra fx-typer: dispose geometry + material. GC frigör INTE
+        // GPU-buffrar — bara .dispose() gör det. Varje fx skapar nya
+        // geometrier/material → säkert att disposa (inget delas mellan fx).
+        e.mesh.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+            else o.material.dispose();
+          }
+        });
       }
       if (e.fxLight) releaseFxLight(e.fxLight);
       scene.remove(e.mesh);
