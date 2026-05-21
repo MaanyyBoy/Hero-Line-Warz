@@ -69,9 +69,10 @@ const renderer = new THREE.WebGLRenderer({
   antialias: !isMobileDevice,
   powerPreference: 'high-performance',
 });
-// Pixel-ratio cap 1.5 på mobil (retina-skärmar har devicePixelRatio 2-3 →
-// renderar 4-9× pixlar utan visuell vinst vid spel-zoom). Desktop kör 2x.
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2));
+// Pixel-ratio cap 1.0 på mobil (sänkt 1.5→1.0 — iPhone 15 Plus tappade FPS).
+// devicePixelRatio är 2-3 på retina → 1.0 = CSS-upplösning, ~55% färre pixlar
+// än 1.5. Bilden blir mjukare men fill-rate (mobil-GPU-flaskhals) mer än halveras.
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.0 : 2));
 // FPS-cap för mobil (motverkar thermal throttling): rendera ~30 ggr/sek i
 // stället för 60-120. Render är den GPU-tunga delen — halverad render = mycket
 // mindre värme. 22 ms tröskel → ~30 FPS på 60 Hz-skärm, ~40 på 120 Hz. Logik +
