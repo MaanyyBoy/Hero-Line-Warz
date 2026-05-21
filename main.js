@@ -14997,6 +14997,7 @@ function animateGltfCharacter(mesh, dt, side, type) {
       lastX: mesh.position.x,
       lastZ: mesh.position.z,
       attackTimer: 0,
+      lowVelTime: 999,   // hur länge vel varit låg — run-clip-debounce
     };
   }
 
@@ -15063,8 +15064,15 @@ function animateGltfCharacter(mesh, dt, side, type) {
     return;
   }
 
-  // Movement state
-  if (vel > 4.0 && clips.run) {
+  // Movement state. Debounce: vid riktningsbyte passerar joysticken center
+  // → applyMovement early-return:ar → meshen fryser 1-3 frames → vel dippar
+  // kortvarigt mot 0. Utan debounce flippar clip:en run→walk/idle→run = en
+  // synlig animations-pop på karaktären. lowVelTime mäter hur länge vel
+  // varit låg; en kort dipp (< 0.15 s) räknas fortfarande som "springer".
+  if (vel > 4.0) st.lowVelTime = 0;
+  else st.lowVelTime = (st.lowVelTime || 0) + dt;
+  const running = vel > 4.0 || st.lowVelTime < 0.15;
+  if (running && clips.run) {
     playGltfAction(mesh, clips.run);
   } else if (vel > 0.4 && clips.walk) {
     playGltfAction(mesh, clips.walk);
