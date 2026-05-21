@@ -25725,9 +25725,11 @@ function tickLocalPrediction(dt) {
   }
 }
 
-// TILLFÄLLIGT diagnos-verktyg: visar scen-/grupp-/FX-/DOM-räknare för att spåra
-// den progressiva per-runda-läckan i arena-MP. Den siffra som växer runda för
-// runda pekar ut vad som läcker. Tas bort när läckan är hittad.
+// TILLFÄLLIGT diagnos-verktyg: scen + GPU-resurs-räknare (geometrier, texturer,
+// shader-program) för att spåra den progressiva per-runda-läckan i arena-MP.
+// scen/grp/FX/DOM var FLATA i användartest → läckan är odisponerade
+// GPU-resurser (mesh tas bort ur scenen men geometry/material .dispose():as ej).
+// Tas bort när läckan är hittad.
 let _leakDbgEl = null;
 let _leakDbgAccum = 0;
 let _leakDbgLastRound = -1;
@@ -25745,21 +25747,22 @@ function updateLeakDebugReadout(dt) {
     document.body.appendChild(_leakDbgEl);
   }
   const sceneN = scene.children.length;
-  const grpN = (typeof arenaSceneGroup !== 'undefined' && arenaSceneGroup) ? arenaSceneGroup.children.length : 0;
-  const fxN = (typeof combatFx !== 'undefined' && combatFx) ? combatFx.length : 0;
-  const domN = document.body.childElementCount;
+  const info = (typeof renderer !== 'undefined' && renderer && renderer.info) ? renderer.info : null;
+  const geoN = info ? info.memory.geometries : 0;
+  const texN = info ? info.memory.textures : 0;
+  const progN = (info && info.programs) ? info.programs.length : 0;
   // Snapshot AUTOMATISKT en gång per runda (när roundNum ändras) → användaren
   // behöver inte hålla koll under spel, bara läsa historiken efteråt.
   const rn = (typeof arenaState !== 'undefined' && arenaState) ? (arenaState.roundNum || 0) : 0;
   if (rn > 0 && rn !== _leakDbgLastRound) {
     if (rn < _leakDbgLastRound) _leakDbgHistory.length = 0;  // ny match → nollställ
     _leakDbgLastRound = rn;
-    _leakDbgHistory.push({ r: rn, s: sceneN, g: grpN, f: fxN, d: domN });
+    _leakDbgHistory.push({ r: rn, s: sceneN, geo: geoN, tex: texN, prog: progN });
     if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
   }
-  let txt = 'LIVE  scene:' + sceneN + ' grp:' + grpN + ' fx:' + fxN + ' dom:' + domN;
+  let txt = 'LIVE  scene:' + sceneN + ' geo:' + geoN + ' tex:' + texN + ' prog:' + progN;
   for (const h of _leakDbgHistory) {
-    txt += '\nR' + h.r + '   scene:' + h.s + ' grp:' + h.g + ' fx:' + h.f + ' dom:' + h.d;
+    txt += '\nR' + h.r + '   scene:' + h.s + ' geo:' + h.geo + ' tex:' + h.tex + ' prog:' + h.prog;
   }
   _leakDbgEl.textContent = txt;
 }
