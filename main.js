@@ -20450,8 +20450,13 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // visualer för sina egna casts. Solo körs som vanligt via applyEvent och
   // skippar denna (sin egen hostCast-funktion spawnar fx direkt).
   const isClassicMp = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
-  if (isArenaMpClient || isClassicMp ||
-      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars')) {
+  // Arena Legolas Q/E spawnas av spawnClientLocalVineTrap/Dash nedan (med
+  // korrekt cast-aim). triggerClientVisualSkill:s Legolas-gren skulle spawna
+  // SAMMA vine trap/dash en gång till → dubbla cirklar 2-3 m isär. Skippa den
+  // i det fallet — den explicita spawnen nedan gör hela visualen (inkl cast-fx).
+  const isArenaLegolasQE = isArenaMpClient && side.heroId === 'legolas' && (key === 'q' || key === 'e');
+  if (!isArenaLegolasQE && (isArenaMpClient || isClassicMp ||
+      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))) {
     triggerClientVisualSkill(side, key);
   }
   // Klient-prediktion i arena MP för Legolas Q (vine trap) + E (dash). Host broadcastar
@@ -25718,8 +25723,16 @@ function tick() {
     // Klient: tickArena körs INTE (host-auth), men shrink-cirkelns visual måste
     // uppdateras lokalt så klienten ser cirkeln. arenaState.shrinkRadius synkas
     // via a-state.
-    else if (APP.mode === 'client' && arenaState.phase === 'fight') {
-      updateShrinkCircleVisual(dt);
+    else if (APP.mode === 'client') {
+      if (arenaState.phase === 'fight') updateShrinkCircleVisual(dt);
+      // Klienten kör inte simulateAll → localOnly vine traps (klient-prediktion
+      // via spawnClientLocalVineTrap) tickas/fade:as aldrig → de blir kvar för
+      // evigt. updateVineTrapsSolo:s localOnly-gren sköter fade + borttagning;
+      // kör den för båda arena-sidor (ofarlig no-op om inga traps finns).
+      for (const idx of arenaSideIdxs()) {
+        const s = sides[idx];
+        if (s) updateVineTrapsSolo(s, dt);
+      }
     }
   }
 
