@@ -8557,7 +8557,7 @@ function clearArenaScene() {
   arenaOrbMesh = null;
   arenaOrbLight = null;      // togs bort med arenaSceneGroup-barnen ovan
   shrinkRingMesh = null;     // återskapas vid nästa shrink-tick
-  shrinkSmokeMesh = null;
+  shrinkZoneMesh = null;
   arenaSceneGroup.userData.mapIdx = -1;
 }
 
@@ -9004,7 +9004,7 @@ function checkArenaRoundEnd() {
 // ===== SHRINK CIRCLE (battle-royale) =====
 // Klient-state för visuell smoke-mesh (rebuilt per match)
 let shrinkRingMesh = null;
-let shrinkSmokeMesh = null;
+let shrinkZoneMesh = null;
 
 function ensureShrinkMeshes() {
   if (shrinkRingMesh) return;
@@ -9018,15 +9018,18 @@ function ensureShrinkMeshes() {
   shrinkRingMesh.position.set(0, 0.12, ARENA_Z_OFFSET);
   shrinkRingMesh.visible = false;
   arenaSceneGroup.add(shrinkRingMesh);
-  // Smoke-vägg utanför circle — hollow cylinder med ljusgrön gradient
-  const smokeMat = new THREE.MeshBasicMaterial({
-    color: 0x66ee55, transparent: true, opacity: 0.30, side: THREE.BackSide, depthWrite: false,
+  // Fara-zon: tunt rött lager på GOLVET utanför cirkeln (ingen rök/vägg —
+  // inget som sticker upp i höjden). Annulus: inre radie 1 skalas till
+  // shrinkRadius, yttre radie 40 (×shrinkRadius blir alltid > hela arenan).
+  const zoneGeom = new THREE.RingGeometry(1.0, 40.0, 64, 1);
+  const zoneMat = new THREE.MeshBasicMaterial({
+    color: 0xff5544, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false,
   });
-  const smokeGeom = new THREE.CylinderGeometry(1.0, 1.0, 6, 48, 1, true);
-  shrinkSmokeMesh = new THREE.Mesh(smokeGeom, smokeMat);
-  shrinkSmokeMesh.position.set(0, 3.0, ARENA_Z_OFFSET);
-  shrinkSmokeMesh.visible = false;
-  arenaSceneGroup.add(shrinkSmokeMesh);
+  shrinkZoneMesh = new THREE.Mesh(zoneGeom, zoneMat);
+  shrinkZoneMesh.rotation.x = -Math.PI / 2;
+  shrinkZoneMesh.position.set(0, 0.06, ARENA_Z_OFFSET);
+  shrinkZoneMesh.visible = false;
+  arenaSceneGroup.add(shrinkZoneMesh);
 }
 
 // Visuell uppdatering av shrink-cirkel — körs både på host och klient så att
@@ -9036,7 +9039,7 @@ function updateShrinkCircleVisual(dt) {
   const r = arenaState.shrinkRadius || 0;
   if (r <= 0) {
     if (shrinkRingMesh) shrinkRingMesh.visible = false;
-    if (shrinkSmokeMesh) shrinkSmokeMesh.visible = false;
+    if (shrinkZoneMesh) shrinkZoneMesh.visible = false;
     return;
   }
   ensureShrinkMeshes();
@@ -9047,13 +9050,11 @@ function updateShrinkCircleVisual(dt) {
     shrinkRingMesh.scale.x *= pulse;
     shrinkRingMesh.scale.y *= pulse;
   }
-  if (shrinkSmokeMesh) {
-    shrinkSmokeMesh.visible = true;
-    shrinkSmokeMesh.scale.set(r, 1, r);
-    shrinkSmokeMesh.rotation.y += (dt || 0) * 0.3;
-    if (shrinkSmokeMesh.material) {
-      shrinkSmokeMesh.material.opacity = 0.28 + 0.10 * Math.sin(performance.now() * 0.003);
-    }
+  if (shrinkZoneMesh) {
+    // Skala r → inre radie = r (cirkelkanten), yttre radie = 40·r (utanför
+    // arenan) → röd yta täcker hela golvet utanför cirkeln. Platt, inget höjd-led.
+    shrinkZoneMesh.visible = true;
+    shrinkZoneMesh.scale.set(r, r, 1);
   }
 }
 
