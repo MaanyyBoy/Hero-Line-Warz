@@ -21150,9 +21150,10 @@ function heroSnap(side) {
     asp: _nzr2(side.arenaSpeedBuff),
     adm: _nzr2(side.arenaDamageBuff),
     // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
-    // syntetiska AA-projektil hit i stället för hjältens facing.
-    tx: _nzr2(side.targetX),
-    tz: _nzr2(side.targetZ),
+    // syntetiska AA-projektil hit i stället för hjältens facing. MÅSTE vara
+    // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
+    tx: _r2(side.targetX),
+    tz: _r2(side.targetZ),
   };
 }
 
