@@ -89,7 +89,9 @@ function getViewportSize() {
 }
 const __vp0 = getViewportSize();
 renderer.setSize(__vp0.w, __vp0.h);
-renderer.shadowMap.enabled = true;
+// Skuggor AV på mobil: shadow-passet renderar all castShadow-geometri en gång
+// EXTRA varje frame → stor GPU-/värme-kostnad. Desktop behåller skuggor.
+renderer.shadowMap.enabled = !isMobileDevice;
 // PCFShadowMap istället för PCFSoftShadowMap: cheaper sampling (4 taps vs 16),
 // ~30% snabbare shadow-pass utan synlig kvalitetsskillnad vid spel-zoom.
 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -25746,16 +25748,20 @@ function tickLocalPrediction(dt) {
   }
 }
 
-// TILLFÄLLIGT diagnos-verktyg: scen + GPU-resurs-räknare (geometrier, texturer,
-// shader-program) för att spåra den progressiva per-runda-läckan i arena-MP.
-// scen/grp/FX/DOM var FLATA i användartest → läckan är odisponerade
-// GPU-resurser (mesh tas bort ur scenen men geometry/material .dispose():as ej).
-// Tas bort när läckan är hittad.
+// TILLFÄLLIGT diagnos-verktyg: FPS (live + LÄGSTA per runda) + geo som
+// sanity-check. Geo-läckan är fixad (decision 083) — nu mäter vi frame-stutter.
+// Om min-fps dippar runda för runda → enheten håller inte takten (thermal/perf).
+// Tas bort när problemet är spårat.
 let _leakDbgEl = null;
 let _leakDbgAccum = 0;
 let _leakDbgLastRound = -1;
+let _leakDbgFps = 60;
+let _leakDbgRoundMinFps = 999;
 const _leakDbgHistory = [];
 function updateLeakDebugReadout(dt) {
+  const instFps = dt > 0 ? (1 / dt) : 60;
+  _leakDbgFps += (instFps - _leakDbgFps) * 0.1;          // smoothad live-fps
+  if (instFps < _leakDbgRoundMinFps) _leakDbgRoundMinFps = instFps;
   _leakDbgAccum += dt;
   if (_leakDbgAccum < 0.5) return;
   _leakDbgAccum = 0;
@@ -25767,23 +25773,23 @@ function updateLeakDebugReadout(dt) {
       + 'background:rgba(0,0,0,0.65);padding:4px 7px;border-radius:4px;white-space:pre;';
     document.body.appendChild(_leakDbgEl);
   }
-  const sceneN = scene.children.length;
   const info = (typeof renderer !== 'undefined' && renderer && renderer.info) ? renderer.info : null;
   const geoN = info ? info.memory.geometries : 0;
-  const texN = info ? info.memory.textures : 0;
-  const progN = (info && info.programs) ? info.programs.length : 0;
-  // Snapshot AUTOMATISKT en gång per runda (när roundNum ändras) → användaren
-  // behöver inte hålla koll under spel, bara läsa historiken efteråt.
+  // Snapshot per runda: föregående rundas LÄGSTA fps (fångar stutter mitt i
+  // rundan, inte bara vid round-start) → användaren läser historiken efteråt.
   const rn = (typeof arenaState !== 'undefined' && arenaState) ? (arenaState.roundNum || 0) : 0;
   if (rn > 0 && rn !== _leakDbgLastRound) {
     if (rn < _leakDbgLastRound) _leakDbgHistory.length = 0;  // ny match → nollställ
+    if (_leakDbgLastRound > 0) {
+      _leakDbgHistory.push({ r: _leakDbgLastRound, minfps: Math.round(_leakDbgRoundMinFps), geo: geoN });
+      if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
+    }
     _leakDbgLastRound = rn;
-    _leakDbgHistory.push({ r: rn, s: sceneN, geo: geoN, tex: texN, prog: progN });
-    if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
+    _leakDbgRoundMinFps = 999;
   }
-  let txt = 'LIVE  scene:' + sceneN + ' geo:' + geoN + ' tex:' + texN + ' prog:' + progN;
+  let txt = 'LIVE fps:' + Math.round(_leakDbgFps) + '  geo:' + geoN;
   for (const h of _leakDbgHistory) {
-    txt += '\nR' + h.r + '   scene:' + h.s + ' geo:' + h.geo + ' tex:' + h.tex + ' prog:' + h.prog;
+    txt += '\nR' + h.r + ' min-fps:' + h.minfps + ' geo:' + h.geo;
   }
   _leakDbgEl.textContent = txt;
 }
