@@ -72,6 +72,13 @@ const renderer = new THREE.WebGLRenderer({
 // Pixel-ratio cap 1.5 på mobil (retina-skärmar har devicePixelRatio 2-3 →
 // renderar 4-9× pixlar utan visuell vinst vid spel-zoom). Desktop kör 2x.
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2));
+// FPS-cap för mobil (motverkar thermal throttling): rendera ~30 ggr/sek i
+// stället för 60-120. Render är den GPU-tunga delen — halverad render = mycket
+// mindre värme. 22 ms tröskel → ~30 FPS på 60 Hz-skärm, ~40 på 120 Hz. Logik +
+// input körs fortfarande varje frame (input-rate orörd → ingen MP-regression).
+// Desktop ocapad (dev/test, ingen värme-budget).
+const _renderMinIntervalMs = isMobileDevice ? 22 : 0;
+let _lastRenderMs = 0;
 // getViewportSize() läser visualViewport när det finns (mer exakt på mobil vid
 // rotation, adressfält som glider, pinch-zoom) och faller tillbaka på innerWidth.
 function getViewportSize() {
@@ -1898,8 +1905,11 @@ const TEXTURES = {
   // 1024 istället för 2048: 4× mindre GPU-minne (4 MB → 16 MB), märkbart
   // snabbare shadow-pass på mobil/low-end. Visuell skillnad ej synlig vid
   // spel-zoom (top-down isometrisk).
-  sun.shadow.mapSize.width = 1024;
-  sun.shadow.mapSize.height = 1024;
+  // Shadow-map: 512 på mobil (halverat → billigare shadow-pass + sampling),
+  // 1024 på desktop. Vid spel-zoom är skillnaden knappt synlig.
+  const _shadowRes = isMobileDevice ? 512 : 1024;
+  sun.shadow.mapSize.width = _shadowRes;
+  sun.shadow.mapSize.height = _shadowRes;
   sun.shadow.camera.left = -40;
   sun.shadow.camera.right = 40;
   sun.shadow.camera.top = 28;
@@ -25928,8 +25938,18 @@ function tick() {
   // EFTER applyHeroSnap (som sätter visible = !dead) och FÖRE render.
   for (const side of activeSides()) updateLegolusInvisVisibility(side);
 
-  if (bloomComposer) bloomComposer.render();
-  else renderer.render(scene, camera);
+  // FPS-cap (mobil): rendera bara om tillräckligt lång tid passerat sedan
+  // förra renderade framen. Logik + input ovanför har redan körts denna frame.
+  let _doRender = true;
+  if (_renderMinIntervalMs > 0) {
+    const _nowMs = performance.now();
+    if (_nowMs - _lastRenderMs < _renderMinIntervalMs) _doRender = false;
+    else _lastRenderMs = _nowMs;
+  }
+  if (_doRender) {
+    if (bloomComposer) bloomComposer.render();
+    else renderer.render(scene, camera);
+  }
   requestAnimationFrame(tick);
 }
 
