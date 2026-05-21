@@ -8557,7 +8557,6 @@ function clearArenaScene() {
   arenaOrbMesh = null;
   arenaOrbLight = null;      // togs bort med arenaSceneGroup-barnen ovan
   shrinkRingMesh = null;     // återskapas vid nästa shrink-tick
-  shrinkZoneMesh = null;
   arenaSceneGroup.userData.mapIdx = -1;
 }
 
@@ -9004,35 +9003,23 @@ function checkArenaRoundEnd() {
 // ===== SHRINK CIRCLE (battle-royale) =====
 // Klient-state för visuell smoke-mesh (rebuilt per match)
 let shrinkRingMesh = null;
-let shrinkZoneMesh = null;
+let shrinkVignetteEl = null;   // röd skärm-kant-vinjett (DOM) när lokala hjälten är utanför cirkeln
 
 function ensureShrinkMeshes() {
   if (shrinkRingMesh) return;
-  // Boundary-ring på marken — ljusgrön ring som visar circle-edge
+  // Boundary-ring på marken — röd faro-ring som markerar circle-edge. Ingen
+  // golv-yta utanför cirkeln (transparent golv-lager kostade fill-rate på
+  // mobil); faro-feedback ges i stället av skärm-kant-vinjetten, se
+  // updateShrinkVignette. Platt ring, inget i höjdled.
   const ringGeom = new THREE.RingGeometry(0.94, 1.0, 64);
   const ringMat = new THREE.MeshBasicMaterial({
-    color: 0x88ff77, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+    color: 0xff4d3d, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
   });
   shrinkRingMesh = new THREE.Mesh(ringGeom, ringMat);
   shrinkRingMesh.rotation.x = -Math.PI / 2;
   shrinkRingMesh.position.set(0, 0.12, ARENA_Z_OFFSET);
   shrinkRingMesh.visible = false;
   arenaSceneGroup.add(shrinkRingMesh);
-  // Fara-zon: solitt rött lager på GOLVET utanför cirkeln (ingen rök/vägg —
-  // inget som sticker upp i höjden). Annulus: inre radie 1 skalas till
-  // shrinkRadius, yttre radie 40 (×shrinkRadius blir alltid > hela arenan).
-  const zoneGeom = new THREE.RingGeometry(1.0, 40.0, 64, 1);
-  // OPAKT (ej transparent): alpha-blending är dyrt på mobil-GPU och röda zonen
-  // täcker nästan hela golvet när cirkeln krympt → genomskinligt orsakade lagg.
-  // Opakt = ingen blending = mycket billigare.
-  const zoneMat = new THREE.MeshBasicMaterial({
-    color: 0xff5544, side: THREE.DoubleSide,
-  });
-  shrinkZoneMesh = new THREE.Mesh(zoneGeom, zoneMat);
-  shrinkZoneMesh.rotation.x = -Math.PI / 2;
-  shrinkZoneMesh.position.set(0, 0.06, ARENA_Z_OFFSET);
-  shrinkZoneMesh.visible = false;
-  arenaSceneGroup.add(shrinkZoneMesh);
 }
 
 // Visuell uppdatering av shrink-cirkel — körs både på host och klient så att
@@ -9042,7 +9029,6 @@ function updateShrinkCircleVisual(dt) {
   const r = arenaState.shrinkRadius || 0;
   if (r <= 0) {
     if (shrinkRingMesh) shrinkRingMesh.visible = false;
-    if (shrinkZoneMesh) shrinkZoneMesh.visible = false;
     return;
   }
   ensureShrinkMeshes();
@@ -9051,12 +9037,38 @@ function updateShrinkCircleVisual(dt) {
     shrinkRingMesh.visible = true;
     shrinkRingMesh.scale.set(r, r, 1);
   }
-  if (shrinkZoneMesh) {
-    // Skala r → inre radie = r (cirkelkanten), yttre radie = 40·r (utanför
-    // arenan) → röd yta täcker hela golvet utanför cirkeln. Platt, inget höjd-led.
-    shrinkZoneMesh.visible = true;
-    shrinkZoneMesh.scale.set(r, r, 1);
+}
+
+// Röd skärm-kant-vinjett (DOM-overlay) — tänds när LOKALA hjälten är utanför
+// shrink-cirkeln. Billig faro-feedback i stället för ett golv-täckande lager.
+function ensureShrinkVignette() {
+  if (shrinkVignetteEl) return;
+  const el = document.createElement('div');
+  el.style.cssText =
+    'position:fixed;inset:0;pointer-events:none;z-index:70;opacity:0;' +
+    'transition:opacity 0.18s;box-shadow:inset 0 0 17vmin 4vmin rgba(255,45,35,0.55);';
+  document.body.appendChild(el);
+  shrinkVignetteEl = el;
+}
+
+// Körs varje frame (självskyddad) — visar vinjetten bara i arena-fight när
+// shrink-cirkeln är aktiv OCH lokala hjälten är utanför den.
+function updateShrinkVignette() {
+  let outside = false;
+  if (APP.gameMode === 'arena1v1' && arenaState.phase === 'fight') {
+    const r = arenaState.shrinkRadius || 0;
+    const ls = sides[APP.localSide];
+    if (r > 0 && ls && ls.hero && !ls.hero.dead) {
+      const ddx = ls.hero.x, ddz = ls.hero.z - ARENA_Z_OFFSET;
+      outside = (ddx * ddx + ddz * ddz) > r * r;
+    }
   }
+  if (!outside) {
+    if (shrinkVignetteEl) shrinkVignetteEl.style.opacity = '0';
+    return;
+  }
+  ensureShrinkVignette();
+  shrinkVignetteEl.style.opacity = '1';
 }
 
 function tickShrinkCircle(dt) {
@@ -25751,6 +25763,9 @@ function tick() {
       }
     }
   }
+  // Röd skärm-kant-vinjett när lokala hjälten är utanför shrink-cirkeln
+  // (självskyddad — gör inget utanför arena-fight).
+  updateShrinkVignette();
 
   tickMixers(dt);
   // Throttle heavy per-frame loops till ~30 Hz (33ms intervall) — halverar
