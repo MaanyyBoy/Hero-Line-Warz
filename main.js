@@ -9018,12 +9018,15 @@ function ensureShrinkMeshes() {
   shrinkRingMesh.position.set(0, 0.12, ARENA_Z_OFFSET);
   shrinkRingMesh.visible = false;
   arenaSceneGroup.add(shrinkRingMesh);
-  // Fara-zon: tunt rött lager på GOLVET utanför cirkeln (ingen rök/vägg —
+  // Fara-zon: solitt rött lager på GOLVET utanför cirkeln (ingen rök/vägg —
   // inget som sticker upp i höjden). Annulus: inre radie 1 skalas till
   // shrinkRadius, yttre radie 40 (×shrinkRadius blir alltid > hela arenan).
   const zoneGeom = new THREE.RingGeometry(1.0, 40.0, 64, 1);
+  // OPAKT (ej transparent): alpha-blending är dyrt på mobil-GPU och röda zonen
+  // täcker nästan hela golvet när cirkeln krympt → genomskinligt orsakade lagg.
+  // Opakt = ingen blending = mycket billigare.
   const zoneMat = new THREE.MeshBasicMaterial({
-    color: 0xff5544, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false,
+    color: 0xff5544, side: THREE.DoubleSide,
   });
   shrinkZoneMesh = new THREE.Mesh(zoneGeom, zoneMat);
   shrinkZoneMesh.rotation.x = -Math.PI / 2;
@@ -9044,11 +9047,9 @@ function updateShrinkCircleVisual(dt) {
   }
   ensureShrinkMeshes();
   if (shrinkRingMesh) {
+    // Ingen puls — cirkeln ska bara krympa långsamt och jämnt (användarbeslut).
     shrinkRingMesh.visible = true;
     shrinkRingMesh.scale.set(r, r, 1);
-    const pulse = 1 + 0.04 * Math.sin(performance.now() * 0.005);
-    shrinkRingMesh.scale.x *= pulse;
-    shrinkRingMesh.scale.y *= pulse;
   }
   if (shrinkZoneMesh) {
     // Skala r → inre radie = r (cirkelkanten), yttre radie = 40·r (utanför
