@@ -8774,6 +8774,9 @@ function resetArenaState() {
   // Rensa virtual-target-cacher (recreate on demand i findClosestHostile)
   arenaState.orbTarget = null;
   arenaState.heroTargets = { 1: null, 2: null };
+  // Fas 4: nollställ host:ens input-ackumulator så stale events (skill-casts)
+  // från en tidigare match inte kan appliceras i en ny.
+  APP.remoteArenaInput = null;
 }
 
 function startArenaRound(roundNum) {
@@ -21030,7 +21033,19 @@ function handleNetworkMessage(msg) {
   }
   // Arena MP-meddelanden
   if (msg.t === 'a-input' && APP.mode === 'host' && isArenaMp()) {
-    APP.remoteArenaInput = msg;  // konsumeras i simulateAll
+    // Fas 4: movement (jx/jz) — senaste vinner, overwrite ok. Events
+    // (skill-casts/AA) — KÖA. En ren overwrite (APP.remoteArenaInput = msg)
+    // tappade events om två input-paket anlände mellan två host-sim-frames →
+    // tappade skill-casts. Nu ackumuleras events; simulateAll tömmer kön.
+    let ri = APP.remoteArenaInput;
+    if (!ri) ri = APP.remoteArenaInput = { jx: 0, jz: 0, events: [] };
+    ri.jx = msg.jx; ri.jz = msg.jz;
+    if (msg.events && msg.events.length) {
+      if (!ri.events) ri.events = [];
+      for (const ev of msg.events) ri.events.push(ev);
+      // Säkerhetscap mot obegränsad tillväxt om kön av någon anledning ej töms.
+      if (ri.events.length > 32) ri.events.splice(0, ri.events.length - 32);
+    }
     return;
   }
   if (msg.t === 'a-state' && APP.mode === 'client' && isArenaMp()) {
