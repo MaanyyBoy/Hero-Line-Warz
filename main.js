@@ -8689,6 +8689,16 @@ function buildArenaScene() {
   arenaOrbLight.position.set(ARENA_CFG.orb.x, 1.3, ARENA_CFG.orb.z);
   arenaSceneGroup.add(arenaOrbLight);
   arenaOrbBuilt = true;
+  // Pre-warma shaders. Arena-orben byggs visible=false → dess material-shaders
+  // kompileras annars först när den blir synlig vid fight-start = synlig hicka
+  // ~2 s in i matchen ("Msen jättehög"). renderer.compile kompilerar hela
+  // arena-scenens material NU (under scen-bygget — en laddnings-stund där en
+  // hicka inte märks). Orben görs tillfälligt synlig så den kommer med.
+  if (renderer && camera) {
+    arenaOrbMesh.visible = true;
+    try { renderer.compile(scene, camera); } catch (e) { /* defensivt — pre-warm är best-effort */ }
+    arenaOrbMesh.visible = false;
+  }
 }
 
 // ============================================================
