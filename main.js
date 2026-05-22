@@ -23230,7 +23230,10 @@ function showLobbyPanel(which) {
   else if (which === 'boss-join') lobbyBossJoinEl.classList.add('visible');
   else if (which === 'boss-wait') lobbyBossWaitEl.classList.add('visible');
   const _lobbyEl = document.getElementById('lobby');
-  if (_lobbyEl) _lobbyEl.classList.toggle('home-active', which === 'main');
+  if (_lobbyEl) {
+    _lobbyEl.classList.toggle('home-active', which === 'main');
+    _lobbyEl.classList.toggle('heroes-active', which === 'heroes');
+  }
 }
 
 function showLobbyError(msg) {
