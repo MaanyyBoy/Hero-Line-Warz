@@ -14673,6 +14673,7 @@ const clientMeshes = {
   fireballs: new Map(),
   projectiles: new Map(),
   novaEffects: new Map(),
+  aragurnBanners: new Map(),
   creepProjectiles: new Map(),
   heroCopies: new Map(),
   heroCopyFireballs: new Map(),
@@ -19166,6 +19167,8 @@ function tickAragurnLeap(side, dt) {
 }
 
 // Lvl-5 banner: spawnar mesh (stång + flag + aura-ring) på given pos.
+// Stabilt löpnummer per Aragurn-banner (route B — broadcastas till joinaren).
+let _abnIdSeq = 0;
 function spawnAragurnBannerClient(side, x, z) {
   const grp = new THREE.Group();
   const pole = new THREE.Mesh(
@@ -19192,6 +19195,7 @@ function spawnAragurnBannerClient(side, x, z) {
   scene.add(grp);
   side.aragurnBanners = side.aragurnBanners || [];
   side.aragurnBanners.push({
+    id: ++_abnIdSeq,
     mesh: grp, ring,
     x, z,
     life: ARAGURN_LVL5_BANNER_DURATION,
@@ -21247,7 +21251,7 @@ function heroSnap(side) {
     // Aragurn whirlwind-state — joinaren behöver det för spinn-animationen.
     wwr: _nzr2(side.whirlwindRemaining),
     // Aragurn leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
-    lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME) } : undefined,
+    lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME), tx: _r2(side.aragurnLeap.targetX), tz: _r2(side.aragurnLeap.targetZ) } : undefined,
     // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
     // syntetiska AA-projektil hit i stället för hjältens facing. MÅSTE vara
     // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
@@ -21381,7 +21385,7 @@ function applyHeroSnap(side, snap) {
   side.whirlwindRemaining = snap.wwr || 0;
   if (side.mesh) side.mesh.userData._whirl = (snap.wwr || 0) > 0;
   // Aragurn leap — tickAragurnVisuals renderar y-bågen från {active, u}.
-  side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u } : null;
+  side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u, tx: snap.lp.tx, tz: snap.lp.tz } : null;
   // AA-målets position — triggerClientVisualAA siktar projektilen hit.
   side._aaTargetX = snap.tx || 0;
   side._aaTargetZ = snap.tz || 0;
@@ -21495,6 +21499,45 @@ function makeClientFrostNovaMesh() {
   return ring;
 }
 
+// Klient-mesh för en host-broadcastad Aragurn-banner (route B). Stång + flagga
+// + aura-ring — matchar spawnAragurnBannerClient. Färska geometrier per anrop.
+function makeClientAragurnBannerMesh() {
+  const grp = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.06, 1.8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a2818, roughness: 0.85 })
+  );
+  pole.position.y = 0.9;
+  grp.add(pole);
+  const flag = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.9, 0.55),
+    new THREE.MeshStandardMaterial({ color: 0xb33e2a, emissive: 0x551a10, emissiveIntensity: 0.55, side: THREE.DoubleSide })
+  );
+  flag.position.set(0.45, 1.45, 0);
+  grp.add(flag);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(ARAGURN_LVL5_BANNER_RADIUS - 0.25, ARAGURN_LVL5_BANNER_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0xffe399, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  grp.add(ring);
+  return grp;
+}
+
+// Landnings-indikator för Aragurns leap (route B) — orange ring vid målet,
+// lever leap-restiden ut. combatFx-entry → tickCombatFx sköter livstid+dispose.
+function spawnLeapIndicator(x, z) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(LEAP_RADIUS * 0.85, LEAP_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.08, z);
+  scene.add(ring);
+  combatFx.push({ mesh: ring, life: LEAP_TRAVEL_TIME, maxLife: LEAP_TRAVEL_TIME, kind: 'leapMark' });
+}
+
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
@@ -21549,6 +21592,11 @@ function broadcastArenaState() {
         .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
       2: ((sides[2] && sides[2].novaEffects) || []).filter(n => n.id != null && n.mesh)
         .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
+    },
+    // Route B: Aragurn-bannrar (lvl-5 leap-bonus) — stationära entiteter.
+    ab: {
+      1: ((sides[1] && sides[1].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
+      2: ((sides[2] && sides[2].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
     },
   });
 }
@@ -21661,6 +21709,8 @@ function applyArenaState(msg) {
       makeClientWindPuffMesh, true);
     clientReconcileEntities(_seIdx, 'novaEffects', (msg.nv && msg.nv[_seIdx]) || [],
       makeClientFrostNovaMesh, true);
+    clientReconcileEntities(_seIdx, 'aragurnBanners', (msg.ab && msg.ab[_seIdx]) || [],
+      makeClientAragurnBannerMesh, true);
   }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
@@ -25362,6 +25412,11 @@ function tickAragurnVisuals(dt) {
         s._leapActive = true;
         spawnSkillCastFx(s.hero.x, s.hero.z, 0xff8844, 1.4);
         spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffaa66);
+        // Landnings-indikator vid målet — bara på joinaren (host:ens
+        // aragurnLeap har en egen .indicator; joinarens synkade shape har tx).
+        if (s.aragurnLeap && s.aragurnLeap.tx !== undefined) {
+          spawnLeapIndicator(s.aragurnLeap.tx, s.aragurnLeap.tz);
+        }
       }
     } else {
       // Y-fix: boss-wars platform är på y=0.42, andra modes på y=0
