@@ -2382,7 +2382,12 @@ const INCOME_INTERVAL = 15.0;     // sekunder mellan tick
 const INCOME_MINION_RATIO = 0.2;  // 20% av minion-kostnaden går till income-boost
 
 // ---- Tier-unlocks (sekventiellt) ----
-const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
+// Decision 105: tier-unlock-kostnader × 1.5 (svårare att stiga i tier).
+const TIER_UNLOCK_COST = { 2: 300, 3: 750, 4: 1500, 5: 3000 };
+// Decision 105: minions +30% HP/dmg, +50% kostnad.
+const MINION_HP_MUL = 1.3;
+const MINION_DMG_MUL = 1.3;
+const MINION_COST_MUL = 1.5;
 
 // ---- Minion-arketyper och tiers ----
 // 6 arketyper × 5 tiers = 30 unika minions.
@@ -2421,10 +2426,10 @@ for (const tier of [1, 2, 3, 4, 5]) {
     MINION_TYPES[id] = {
       id, tier, archetype: arch,
       name: `${TIER_NAMES[tier]} ${ARCHETYPE_NAMES[arch]}`,
-      cost: Math.round(base.cost * mult),
-      hp: Math.round(base.hp * mult),
+      cost: Math.round(base.cost * mult * MINION_COST_MUL),
+      hp: Math.round(base.hp * mult * MINION_HP_MUL),
       speed: base.speed,
-      damage: Math.round(base.damage * mult),
+      damage: Math.round(base.damage * mult * MINION_DMG_MUL),
       range: base.range,
       interval: base.interval,
       attackType: base.attackType,
@@ -9556,6 +9561,8 @@ function createSide(idx) {
       name: '',
       isBoss: false,
       bannerPulse: 0,
+      waveReady: false,           // decision 105: nästa wave väntar tills BÅDA sidor klara
+
     },
   };
   recomputeSideStats(side);
@@ -9666,7 +9673,8 @@ const WAVE_SPAWNS_PER_TICK = 4;
 function updateWaves(side, dt) {
   const w = side.wave;
   if (w.current >= MAX_WAVES && !w.active) return;
-  if (!w.active) {
+  // Decision 105: tickar bara ner till nästa wave om vi INTE väntar på motståndaren.
+  if (!w.active && !w.waveReady) {
     w.betweenTimer = Math.max(0, w.betweenTimer - dt);
     if (w.betweenTimer <= 0 && w.current < MAX_WAVES) {
       w.current += 1;
@@ -9695,7 +9703,22 @@ function updateWaves(side, dt) {
   }
   if (w.active && side.monsters.length === 0 && (!w.spawnQueue || w.spawnQueue.length === 0)) {
     w.active = false;
-    w.betweenTimer = WAVE_GAP_TIME;
+    w.waveReady = true;           // decision 105: vänta tills motståndaren också är klar
+    // betweenTimer sätts först när BÅDA sidor är klara (syncWaves)
+  }
+}
+
+// Decision 105: när BÅDA sidor avslutat sin wave, starta countdown till nästa wave
+// samtidigt på båda sidor (så de förblir synkade hela matchen).
+function syncWaves(allSides) {
+  const w1 = allSides[1] && allSides[1].wave;
+  const w2 = allSides[2] && allSides[2].wave;
+  // Defensiv: om en sida saknas (t.ex. solo-edge-case) behandla den som "klar"
+  // så waves fortsätter rinna istället för att fastna på waveReady.
+  if (w1 && w1.waveReady && (!w2 || w2.waveReady)) {
+    w1.betweenTimer = WAVE_GAP_TIME;
+    w1.waveReady = false;
+    if (w2) { w2.betweenTimer = WAVE_GAP_TIME; w2.waveReady = false; }
   }
 }
 
@@ -15463,6 +15486,7 @@ function applyRemoteState(state) {
     side.wave.name = sData.w.n || '';
     side.wave.isBoss = !!sData.w.b;
     side.wave.bannerPulse = sData.w.p || 0;
+    side.wave.waveReady = !!sData.w.wr;          // decision 105
     // Entiteter — bossar (e.boss=true) får Mixamo-mesh per wave (decision 047).
     // Vanliga wave-monster får Quaternius tier-mesh per wave-batch (decision 048).
     // Mini-bossar använder samma tier-mesh som vanliga wave-monster.
@@ -15826,7 +15850,7 @@ function serializeSide(side) {
     ac: side.attackCounter,
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     sk: { q: side.skills.q.cd, f: side.skills.f.cd, e: side.skills.e.cd },
-    w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer },
+    w: { c: side.wave.current, a: side.wave.active, bt: side.wave.betweenTimer, wr: side.wave.waveReady ? 1 : 0 },
     M: side.monsters.map(m => ({ id: m.id, x: m.mesh.position.x, z: m.mesh.position.z, ry: m.mesh.rotation.y })),
     C: side.playerCreeps.map(c => ({ id: c.id, typeId: c.typeId, x: c.mesh.position.x, z: c.mesh.position.z, ry: c.mesh.rotation.y })),
     F: side.fireballs.map((f, i) => ({ id: 'f' + side.idx + '_' + i, x: f.mesh.position.x, y: 1.0, z: f.mesh.position.z })),
@@ -16082,6 +16106,8 @@ function updateHud() {
       waveDisplayEl.classList.remove('hidden');
       if (waveTextEl) {
         if (side.wave.active) waveTextEl.textContent = `Wave ${side.wave.current}`;
+        // Decision 105: vi väntar på motståndaren innan nästa wave
+        else if (side.wave.waveReady) waveTextEl.textContent = `Waiting for opponent...`;
         else waveTextEl.textContent = `Wave ${side.wave.current + 1} in ${side.wave.betweenTimer.toFixed(1)}s`;
       }
     } else {
@@ -24999,7 +25025,18 @@ function simulateAll(dt) {
     tickClientThornPools(side, dt);
     tickClientKostefoSkills(side, dt);
     if (!isArena) tickIncome(side, dt);
+    // Decision 105: tornet helar 5% av max-HP per sek (Line Wars + solo).
+    if (!isArena && !isBossWars && side.tower.hp > 0 && side.tower.hp < side.tower.maxHp) {
+      side._towerHealAccum = (side._towerHealAccum || 0) + side.tower.maxHp * 0.05 * dt;
+      while (side._towerHealAccum >= 1) {
+        side._towerHealAccum -= 1;
+        side.tower.hp = Math.min(side.tower.maxHp, side.tower.hp + 1);
+      }
+    }
   }
+  // Decision 105: synka wave-progression mellan sidor (nästa wave startar
+  // bara när BÅDA har avslutat sin wave).
+  if (!isArena && !isBossWars) syncWaves(sides);
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }

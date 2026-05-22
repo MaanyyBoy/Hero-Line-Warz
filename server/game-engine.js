@@ -456,7 +456,12 @@ const HERO_COPY_SKILL_INTERVAL = 6.0; // hur ofta boten castar Eldklot
 const HERO_COPY_AGGRO_RANGE = 5.5;
 const HERO_COPY_RADIUS = 0.45;   // XP = creep.cost * 0.6
 
-const TIER_UNLOCK_COST = { 2: 200, 3: 500, 4: 1000, 5: 2000 };
+// Decision 105: tier-unlock-kostnader × 1.5 (svårare att stiga i tier).
+const TIER_UNLOCK_COST = { 2: 300, 3: 750, 4: 1500, 5: 3000 };
+// Decision 105: minions +30% HP/dmg, +50% kostnad.
+const MINION_HP_MUL = 1.3;
+const MINION_DMG_MUL = 1.3;
+const MINION_COST_MUL = 1.5;
 
 // === Minion-data ===
 const ARCHETYPE_BASE = {
@@ -479,10 +484,10 @@ for (const tier of [1, 2, 3, 4, 5]) {
     const id = `T${tier}_${arch}`;
     MINION_TYPES[id] = {
       id, tier, archetype: arch,
-      cost: Math.round(base.cost * mult),
-      hp: Math.round(base.hp * mult),
+      cost: Math.round(base.cost * mult * MINION_COST_MUL),
+      hp: Math.round(base.hp * mult * MINION_HP_MUL),
       speed: base.speed,
-      damage: Math.round(base.damage * mult),
+      damage: Math.round(base.damage * mult * MINION_DMG_MUL),
       range: base.range,
       interval: base.interval,
       attackType: base.attackType,
@@ -1046,6 +1051,7 @@ function createSide(idx) {
       name: '',
       isBoss: false,
       bannerPulse: 0,             // ökas vid wave-start så klienten triggar banner
+      waveReady: false,           // decision 105: nästa wave väntar tills BÅDA sidor klara
     },
     heroCopies: [],
   };
@@ -1162,7 +1168,8 @@ function updateWaves(state, side, dt) {
   const w = side.wave;
   // Slut: efter wave 50 + alla döda, inga fler waves
   if (w.current >= MAX_WAVES && !w.active) return;
-  if (!w.active) {
+  // Decision 105: tickar bara ner till nästa wave om vi INTE väntar på motståndaren.
+  if (!w.active && !w.waveReady) {
     w.betweenTimer = Math.max(0, w.betweenTimer - dt);
     if (w.betweenTimer <= 0 && w.current < MAX_WAVES) {
       w.current += 1;
@@ -1192,7 +1199,21 @@ function updateWaves(state, side, dt) {
   // Wave aktiv tills alla monsters borta OCH inga pending spawns kvar
   if (w.active && side.monsters.length === 0 && (!w.spawnQueue || w.spawnQueue.length === 0)) {
     w.active = false;
-    w.betweenTimer = WAVE_GAP_TIME;
+    w.waveReady = true;           // decision 105: vänta tills motståndaren också är klar
+    // betweenTimer sätts först när BÅDA sidor är klara (syncWaves)
+  }
+}
+
+// Decision 105: när BÅDA sidor avslutat sin wave, starta countdown till nästa wave
+// samtidigt på båda sidor (så de förblir synkade hela matchen).
+function syncWaves(sides) {
+  const w1 = sides[1] && sides[1].wave;
+  const w2 = sides[2] && sides[2].wave;
+  // Defensiv: om en sida saknas behandla den som "klar" så waves inte fastnar.
+  if (w1 && w1.waveReady && (!w2 || w2.waveReady)) {
+    w1.betweenTimer = WAVE_GAP_TIME;
+    w1.waveReady = false;
+    if (w2) { w2.betweenTimer = WAVE_GAP_TIME; w2.waveReady = false; }
   }
 }
 
@@ -4988,7 +5009,18 @@ function tickGame(state, dt) {
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
+    // Decision 105: tornet helar 5% av max-HP per sek.
+    if (side.tower.hp > 0 && side.tower.hp < side.tower.maxHp) {
+      side._towerHealAccum = (side._towerHealAccum || 0) + side.tower.maxHp * 0.05 * dt;
+      while (side._towerHealAccum >= 1) {
+        side._towerHealAccum -= 1;
+        side.tower.hp = Math.min(side.tower.maxHp, side.tower.hp + 1);
+      }
+    }
   }
+  // Decision 105: synka wave-progression mellan sidor (nästa wave startar
+  // bara när BÅDA har avslutat sin wave).
+  syncWaves(state.sides);
   checkMatchEnd(state);
 }
 
@@ -5081,6 +5113,7 @@ function serializeSide(side) {
       n: side.wave.name || '',
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
+      wr: side.wave.waveReady ? 1 : 0,   // decision 105
     },
     M: arrOpt(side.monsters, m => ({
       id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
