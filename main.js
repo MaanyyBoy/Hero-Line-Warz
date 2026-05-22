@@ -11944,6 +11944,8 @@ const KOSTEFO_LVL5_CLOUD_RADIUS_MUL = 1.20;
 const KOSTEFO_LVL5_CLONE_LIFETIME = 5.0;
 const KOSTEFO_LVL5_CLONE_SPEED = 4.0;
 
+// Stabilt löpnummer per wind-puff-kon (route B — broadcastas till joinaren).
+let _fwIdSeq = 0;
 function hostCastWindPuff(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
@@ -11980,6 +11982,7 @@ function hostCastWindPuff(side, ev) {
   );
   scene.add(coneGrp);
   side.fireWaves.push({
+    id: ++_fwIdSeq,
     mesh: coneGrp, life: 0.6, maxLife: 0.6,
     dx: dirX, dz: dirZ,
   });
@@ -21449,6 +21452,18 @@ function makeClientBlackHoleMesh() {
   return grp;
 }
 
+// Klient-mesh för en host-broadcastad wind-puff-kon (route B). Kon-lutningen
+// bakas in i geometrin → meshen behöver bara rotation.y (som clientReconcile-
+// Entities sätter). Färsk geometri/material per anrop → säker att disposa.
+function makeClientWindPuffMesh() {
+  const geo = new THREE.ConeGeometry(
+    WIND_PUFF_LENGTH * Math.tan(WIND_PUFF_HALF_ANGLE), WIND_PUFF_LENGTH, 18, 1, true);
+  geo.rotateX(-Math.PI / 2);
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: 0xddeeff, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+  }));
+}
+
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
@@ -21487,6 +21502,14 @@ function broadcastArenaState() {
     bh: {
       1: ((sides[1] && sides[1].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
       2: ((sides[2] && sides[2].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
+    },
+    // Route B steg 2: Wind Puff-koner (fireWaves). Pos/rotation/life läses från
+    // kon-meshen; clientReconcileEntities placerar + fadar via life.
+    fw: {
+      1: ((sides[1] && sides[1].fireWaves) || []).filter(w => w.id != null && w.mesh)
+        .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
+      2: ((sides[2] && sides[2].fireWaves) || []).filter(w => w.id != null && w.mesh)
+        .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
     },
   });
 }
@@ -21590,11 +21613,13 @@ function applyArenaState(msg) {
   // Hero-snapshots
   applyHeroSnap(sides[1], msg.h1);
   applyHeroSnap(sides[2], msg.h2);
-  // Route B steg 1: rendera host:ens riktiga black holes. disposeOnRemove=true
-  // — makeClientBlackHoleMesh skapar färska geometrier → säkert att disposa.
-  for (const _bhIdx of [1, 2]) {
-    clientReconcileEntities(_bhIdx, 'blackHoles', (msg.bh && msg.bh[_bhIdx]) || [],
+  // Route B: rendera host:ens riktiga skill-effekt-entiteter. disposeOnRemove=
+  // true — make*Mesh skapar färska geometrier → säkert att disposa.
+  for (const _seIdx of [1, 2]) {
+    clientReconcileEntities(_seIdx, 'blackHoles', (msg.bh && msg.bh[_seIdx]) || [],
       makeClientBlackHoleMesh, true);
+    clientReconcileEntities(_seIdx, 'fireWaves', (msg.fw && msg.fw[_seIdx]) || [],
+      makeClientWindPuffMesh, true);
   }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
@@ -25107,9 +25132,9 @@ function triggerClientVisualAA(side) {
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
   const heroId = side.heroId || 'magiker';
-  // Route B: Gandulfs black hole (E) broadcastas som entitet och renderas via
-  // clientReconcileEntities i arena → skippa generiska synten (annars dubbel).
-  if (heroId === 'magiker' && key === 'e' && APP.mode === 'client' && isArenaMp()) return;
+  // Route B: Gandulfs black hole (E) + wind puff (Q) broadcastas som entiteter
+  // och renderas via clientReconcileEntities i arena → skippa generiska synten.
+  if (heroId === 'magiker' && (key === 'e' || key === 'q') && APP.mode === 'client' && isArenaMp()) return;
   // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
   // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
   // big arrows. I CLASSIC MP är servern auktoritativ och broadcastar VT/BA
