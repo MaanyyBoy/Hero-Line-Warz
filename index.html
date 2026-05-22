@@ -2018,6 +2018,191 @@
     .card-icon { padding: 0; overflow: hidden; }
     .hp-portrait { padding: 0; overflow: hidden; background: transparent; border: 2px solid rgba(255,255,255,0.3); }
 
+    /* ===== Hero-detail-sidan (decision 103) — egen lobby-panel ===== */
+    #lobby-hero-detail.visible { display: block; }
+    #lobby-hero-detail #btn-hd-back {
+      position: fixed;
+      top: max(14px, calc(env(safe-area-inset-top) + 4px));
+      left: max(14px, calc(env(safe-area-inset-left) + 4px));
+      z-index: 6;
+      margin-bottom: 0 !important;
+    }
+    #hd-name-block {
+      position: fixed;
+      top: max(16px, calc(env(safe-area-inset-top) + 8px));
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      z-index: 4;
+      pointer-events: none;
+    }
+    #hd-name-block h2 {
+      font: 900 26px/1 system-ui, sans-serif;
+      color: #ffd86a;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 9px rgba(0,0,0,0.85);
+      margin: 0 0 4px;
+    }
+    #hd-name-block .hd-role {
+      font: 700 11.5px/1 system-ui, sans-serif;
+      color: #cdd7ec;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    }
+    #hd-preview {
+      position: fixed;
+      top: max(80px, calc(env(safe-area-inset-top) + 70px));
+      bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+      left: max(20px, calc(env(safe-area-inset-left) + 12px));
+      width: 36%;
+      max-width: 360px;
+      min-width: 180px;
+      background: linear-gradient(180deg, rgba(15,25,45,0.55), rgba(5,10,20,0.65));
+      border: 2px solid rgba(255,211,74,0.45);
+      border-radius: 14px;
+      overflow: hidden;
+      touch-action: none;
+      cursor: grab;
+      z-index: 3;
+    }
+    #hd-preview:active { cursor: grabbing; }
+    #hd-preview canvas { display: block; width: 100%; height: 100%; }
+    #hd-preview .hd-preview-fallback {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #ffd34a;
+      font: 700 14px/1.2 system-ui, sans-serif;
+    }
+    #hd-preview .hd-preview-fallback img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    /* Skill-kluster nere höger — matchar in-game-layouten */
+    #hd-skill-cluster {
+      position: fixed;
+      right: max(20px, calc(env(safe-area-inset-right) + 12px));
+      bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+      width: 260px;
+      height: 310px;
+      z-index: 4;
+    }
+    .hd-skill, .hd-aa {
+      position: absolute;
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(180,200,255,0.7);
+      background: rgba(40,60,120,0.55);
+      color: #fff;
+      font: 800 20px/1 system-ui, sans-serif;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.55);
+      transition: transform 0.08s ease, border-color 0.12s, box-shadow 0.12s;
+    }
+    .hd-skill:hover { border-color: #fff; }
+    .hd-skill:active { transform: scale(0.94); }
+    .hd-skill.selected {
+      border-color: #ffd86a;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.55), 0 0 20px rgba(255,211,74,0.85);
+    }
+    .hd-skill .hd-sk-lbl {
+      position: absolute; bottom: 4px; right: 7px;
+      font: 800 10px/1 system-ui, sans-serif;
+      opacity: 0.85;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+    }
+    .hd-aa {
+      width: 90px; height: 90px;
+      right: 0; bottom: 0;
+      background: rgba(180,70,30,0.62);
+      border-color: rgba(255,180,100,0.8);
+      font-size: 18px;
+      letter-spacing: 1.5px;
+      cursor: default;
+    }
+    .hd-aa:active { transform: none; }
+    #hd-skill-q { right: 9px; bottom: 127px; background: rgba(180,70,30,0.62); border-color: rgba(255,160,90,0.8); }
+    #hd-skill-f { right: 92px; bottom: 92px; background: rgba(40,120,180,0.62); border-color: rgba(140,200,255,0.8); }
+    #hd-skill-e { right: 127px; bottom: 9px; background: rgba(130,90,200,0.62); border-color: rgba(200,160,255,0.8); }
+    #hd-skill-r {
+      width: 86px; height: 86px;
+      right: 2px; bottom: 218px;
+      background: rgba(60,30,80,0.7);
+      border: 3px solid rgba(180,140,255,0.8);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.55), 0 0 12px rgba(180,140,255,0.4);
+    }
+    #hd-skill-p {
+      width: 56px; height: 56px;
+      right: 218px; bottom: 18px;
+      background: rgba(180,140,60,0.62);
+      border-color: rgba(255,220,120,0.78);
+      font-size: 16px;
+    }
+    /* Skill-info-rutan — täcker preview-området (kluster syns för byte) */
+    #hd-info-box {
+      position: fixed;
+      top: max(80px, calc(env(safe-area-inset-top) + 70px));
+      bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+      left: max(20px, calc(env(safe-area-inset-left) + 12px));
+      right: max(300px, calc(env(safe-area-inset-right) + 290px));
+      max-width: 520px;
+      overflow-y: auto;
+      background: linear-gradient(150deg, rgba(20,30,52,0.97), rgba(10,16,28,0.98));
+      border: 2px solid rgba(180,200,255,0.5);
+      border-radius: 14px;
+      padding: 22px 26px 20px;
+      color: #fff;
+      z-index: 5;
+      box-shadow: 0 14px 36px rgba(0,0,0,0.75);
+      display: none;
+      pointer-events: auto;
+    }
+    #hd-info-box.visible { display: block; }
+    .hd-info-close {
+      position: absolute; top: 8px; right: 10px;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: rgba(60,80,140,0.7);
+      border: 1px solid rgba(180,200,255,0.55);
+      color: #fff;
+      font: 800 14px/1 system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .hd-info-close:active { transform: scale(0.92); }
+    #hd-info-key-name {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 12px;
+      padding-right: 36px;
+    }
+    #hd-info-key {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font: 800 20px/1 system-ui, sans-serif;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    #hd-info-key.q { background: rgba(180,70,30,0.85); }
+    #hd-info-key.f { background: rgba(40,120,180,0.85); }
+    #hd-info-key.e { background: rgba(130,90,200,0.85); }
+    #hd-info-key.r { background: linear-gradient(135deg, #ffd34a, #ff7733); box-shadow: 0 0 8px rgba(255,180,80,0.55); }
+    #hd-info-key.p { background: rgba(180,140,60,0.85); }
+    #hd-info-name {
+      font: 800 18px/1.2 system-ui, sans-serif;
+      color: #ffd86a;
+    }
+    #hd-info-desc {
+      font: 400 13.5px/1.55 system-ui, sans-serif;
+      color: #e0e8ff;
+    }
+
     /* Flytande damage/heal/shield-siffror */
     #fx-overlay {
       position: fixed; inset: 0;
@@ -3159,6 +3344,31 @@
         <button class="lobby-btn secondary browser-back" id="btn-heroes-back">← Back</button>
       </div>
       <div id="heroes-browser-content"></div>
+    </div>
+
+    <div class="lobby-panel" id="lobby-hero-detail">
+      <button class="lobby-btn secondary" id="btn-hd-back">← Back</button>
+      <div id="hd-name-block">
+        <h2 id="hd-name"></h2>
+        <div class="hd-role" id="hd-role"></div>
+      </div>
+      <div id="hd-preview"></div>
+      <div id="hd-skill-cluster">
+        <button class="hd-skill" id="hd-skill-r" data-skill="r"></button>
+        <button class="hd-skill" id="hd-skill-q" data-skill="q"></button>
+        <button class="hd-skill" id="hd-skill-f" data-skill="f"></button>
+        <button class="hd-skill" id="hd-skill-e" data-skill="e"></button>
+        <button class="hd-aa" id="hd-aa">AA</button>
+        <button class="hd-skill" id="hd-skill-p" data-skill="p"></button>
+      </div>
+      <div id="hd-info-box">
+        <button class="hd-info-close" id="hd-info-close" aria-label="Close">✕</button>
+        <div id="hd-info-key-name">
+          <div id="hd-info-key"></div>
+          <div id="hd-info-name"></div>
+        </div>
+        <div id="hd-info-desc"></div>
+      </div>
     </div>
 
     <div class="lobby-panel" id="lobby-items">

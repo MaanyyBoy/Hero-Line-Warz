@@ -22172,8 +22172,9 @@ function initHeroPreview() {
   // Bakgrund: transparent (CSS-gradient under canvas syns igenom)
 
   const previewCamera = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
-  previewCamera.position.set(0, 1.55, 3.6);
-  previewCamera.lookAt(0, 1.05, 0);
+  // Decision 103: kameran utzoomad så HELA hjälten syns (inte bara över-kroppen).
+  previewCamera.position.set(0, 1.0, 4.5);
+  previewCamera.lookAt(0, 0.9, 0);
 
   // 3-punkts-belysning (hemisphere + key + fill + rim)
   previewScene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.7));
@@ -22269,14 +22270,16 @@ function startHeroPreviewLoop() {
   if (!st.clock) st.clock = new THREE.Clock();
   st.clock.start();
   const loop = () => {
-    // Stop när modal döljs
-    if (!heroDetailModal || heroDetailModal.classList.contains('hidden')) {
+    // Stoppa loopen när vare sig gamla modalen eller nya hero-detail-panelen syns
+    const oldVisible = heroDetailModal && !heroDetailModal.classList.contains('hidden');
+    const newVisible = lobbyHeroDetailEl && lobbyHeroDetailEl.classList.contains('visible');
+    if (!oldVisible && !newVisible) {
       stopHeroPreviewLoop();
       return;
     }
     const dt = Math.min(0.1, st.clock.getDelta());
     if (st.mixer) st.mixer.update(dt);
-    if (st.currentMesh) st.currentMesh.rotation.y += dt * 0.55;
+    // Decision 103: auto-rotation borttagen — användaren drar manuellt.
     // Resize: matcha canvas drawing-buffer mot CSS-storlek (3:4-aspect via CSS)
     const w = st.canvas.clientWidth | 0;
     const h = st.canvas.clientHeight | 0;
@@ -22468,7 +22471,7 @@ function renderHeroesBrowser() {
       portraitHtml = svg ? svg : h.initial;
     }
     card.innerHTML = `<div class="card-icon">${portraitHtml}</div><div class="card-name">${h.name}</div><div class="card-role">${h.role}</div>`;
-    if (h.available) card.addEventListener('click', () => openHeroDetailModal(h.id));
+    if (h.available) card.addEventListener('click', () => openHeroDetailPanel(h.id));
     grid.appendChild(card);
   }
   heroesBrowserContent.appendChild(grid);
@@ -22540,6 +22543,122 @@ function renderHeroDetail(heroId, hero, info, def) {
     });
   });
 }
+
+// === HERO-DETAIL-PANEL (decision 103) — ersätter den gamla hero-detail-modalen ===
+const hdNameEl = document.getElementById('hd-name');
+const hdRoleEl = document.getElementById('hd-role');
+const hdPreviewEl = document.getElementById('hd-preview');
+const hdSkillBtns = {
+  q: document.getElementById('hd-skill-q'),
+  f: document.getElementById('hd-skill-f'),
+  e: document.getElementById('hd-skill-e'),
+  r: document.getElementById('hd-skill-r'),
+  p: document.getElementById('hd-skill-p'),
+};
+const hdInfoBox = document.getElementById('hd-info-box');
+const hdInfoKey = document.getElementById('hd-info-key');
+const hdInfoName = document.getElementById('hd-info-name');
+const hdInfoDesc = document.getElementById('hd-info-desc');
+let _hdHeroData = null;
+let _hdDragSetup = false;
+
+function openHeroDetailPanel(heroId) {
+  const hero = HEROES.find(h => h.id === heroId);
+  const info = HERO_INFO[heroId];
+  const def = HERO_DEFS[heroId] || HERO_DEFS.magiker;
+  if (!hero || !info || !lobbyHeroDetailEl) return;
+  _hdHeroData = { heroId, hero, info, def };
+  if (hdNameEl) hdNameEl.textContent = hero.name;
+  if (hdRoleEl) hdRoleEl.textContent = hero.role;
+  // Skill-knappar: ikon + key-label. Dölj ult/passive om hjälten saknar dem.
+  if (hdSkillBtns.q) hdSkillBtns.q.innerHTML = `${info.skills.q.icon || ''}<span class="hd-sk-lbl">Q</span>`;
+  if (hdSkillBtns.f) hdSkillBtns.f.innerHTML = `${info.skills.f.icon || ''}<span class="hd-sk-lbl">F</span>`;
+  if (hdSkillBtns.e) hdSkillBtns.e.innerHTML = `${info.skills.e.icon || ''}<span class="hd-sk-lbl">E</span>`;
+  if (hdSkillBtns.r) {
+    if (info.ult) { hdSkillBtns.r.innerHTML = `${info.ult.icon || ''}<span class="hd-sk-lbl">R</span>`; hdSkillBtns.r.style.display = ''; }
+    else hdSkillBtns.r.style.display = 'none';
+  }
+  if (hdSkillBtns.p) {
+    if (info.passive) { hdSkillBtns.p.innerHTML = `${info.passive.icon || ''}<span class="hd-sk-lbl">P</span>`; hdSkillBtns.p.style.display = ''; }
+    else hdSkillBtns.p.style.display = 'none';
+  }
+  for (const k of ['q','f','e','r','p']) { if (hdSkillBtns[k]) hdSkillBtns[k].classList.remove('selected'); }
+  if (hdInfoBox) hdInfoBox.classList.remove('visible');
+  showLobbyPanel('hero-detail');
+  mountHeroDetailPreview(heroId);
+}
+
+function mountHeroDetailPreview(heroId) {
+  if (!hdPreviewEl) return;
+  if (IS_MOBILE_UA) {
+    // Mobil: pre-renderad porträtt (live 3D är avstängd pga iOS 2:a-kontext-krasch)
+    const url = heroPortraitCache.get(heroId);
+    hdPreviewEl.innerHTML = url
+      ? `<div class="hd-preview-fallback"><img src="${url}" alt=""></div>`
+      : `<div class="hd-preview-fallback">No preview</div>`;
+    return;
+  }
+  showHeroPreview(hdPreviewEl, heroId);
+  if (!_hdDragSetup) { setupHeroDetailDrag(hdPreviewEl); _hdDragSetup = true; }
+}
+
+function setupHeroDetailDrag(container) {
+  let dragging = false;
+  let lastX = 0;
+  container.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    lastX = e.clientX;
+    try { container.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  container.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    lastX = e.clientX;
+    const mesh = heroPreviewState && heroPreviewState.currentMesh;
+    if (mesh) mesh.rotation.y += dx * 0.013;
+  });
+  const endDrag = (e) => {
+    dragging = false;
+    try { if (e && e.pointerId != null) container.releasePointerCapture(e.pointerId); } catch (_) {}
+  };
+  container.addEventListener('pointerup', endDrag);
+  container.addEventListener('pointercancel', endDrag);
+  container.addEventListener('pointerleave', endDrag);
+}
+
+function showSkillInfo(skillKey) {
+  if (!_hdHeroData) return;
+  const info = _hdHeroData.info;
+  let skillData = null;
+  if (skillKey === 'q' || skillKey === 'f' || skillKey === 'e') skillData = info.skills[skillKey];
+  else if (skillKey === 'r') skillData = info.ult;
+  else if (skillKey === 'p') skillData = info.passive;
+  if (!skillData) return;
+  const keyLetter = skillKey.toUpperCase();
+  if (hdInfoKey) {
+    hdInfoKey.textContent = skillData.icon || keyLetter;
+    hdInfoKey.className = skillKey;
+  }
+  if (hdInfoName) hdInfoName.textContent = `${keyLetter} · ${skillData.name}`;
+  if (hdInfoDesc) hdInfoDesc.textContent = skillData.desc;
+  if (hdInfoBox) hdInfoBox.classList.add('visible');
+  for (const k of ['q','f','e','r','p']) { if (hdSkillBtns[k]) hdSkillBtns[k].classList.toggle('selected', k === skillKey); }
+}
+
+function hideSkillInfo() {
+  if (hdInfoBox) hdInfoBox.classList.remove('visible');
+  for (const k of ['q','f','e','r','p']) { if (hdSkillBtns[k]) hdSkillBtns[k].classList.remove('selected'); }
+}
+
+// Event wiring för hero-detail-panelen
+for (const _hdK of ['q','f','e','r','p']) {
+  const _hdBtn = hdSkillBtns[_hdK];
+  if (_hdBtn) _hdBtn.addEventListener('click', () => showSkillInfo(_hdK));
+}
+const _hdInfoCloseBtn = document.getElementById('hd-info-close');
+if (_hdInfoCloseBtn) _hdInfoCloseBtn.addEventListener('click', hideSkillInfo);
+const _hdBackBtn = document.getElementById('btn-hd-back');
+if (_hdBackBtn) _hdBackBtn.addEventListener('click', () => showLobbyPanel('heroes'));
 
 // === Items-browser ===
 // Items har antingen flera varianter (Boots / Glove) ELLER egna statsAtLevel direkt
@@ -23210,13 +23329,15 @@ const lobbyBossJoinEl = document.getElementById('lobby-boss-join');
 const lobbyBossWaitEl = document.getElementById('lobby-boss-wait');
 const lobbyPlayEl = document.getElementById('lobby-play');
 const lobbyComingSoonEl = document.getElementById('lobby-coming-soon');
+const lobbyHeroDetailEl = document.getElementById('lobby-hero-detail');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
   else if (which === 'play') lobbyPlayEl.classList.add('visible');
   else if (which === 'coming-soon') lobbyComingSoonEl.classList.add('visible');
+  else if (which === 'hero-detail') lobbyHeroDetailEl.classList.add('visible');
   else if (which === 'hosting') lobbyHostingEl.classList.add('visible');
   else if (which === 'joining') lobbyJoiningEl.classList.add('visible');
   else if (which === 'heroes') lobbyHeroesEl.classList.add('visible');
@@ -23236,7 +23357,7 @@ function showLobbyPanel(which) {
   const _lobbyEl = document.getElementById('lobby');
   if (_lobbyEl) {
     _lobbyEl.classList.toggle('home-active', which === 'main');
-    _lobbyEl.classList.toggle('heroes-active', which === 'heroes');
+    _lobbyEl.classList.toggle('heroes-active', which === 'heroes' || which === 'hero-detail');
   }
 }
 
