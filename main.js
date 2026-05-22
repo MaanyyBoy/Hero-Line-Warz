@@ -463,6 +463,7 @@ async function preloadAllAssets() {
   // fallback (Rivendell-fontän); detta byter ut dem in-place.
   swapTowersToMedieval();
   placeBaseProps();
+  pregenHeroPortraits();
   setTimeout(() => {
     const al = document.getElementById('asset-loading');
     if (al) al.classList.add('hidden');
@@ -22371,36 +22372,80 @@ function initPortraitGen() {
 }
 
 function getHeroPortraitImage(heroId) {
-  if (heroPortraitCache.has(heroId)) return heroPortraitCache.get(heroId);
-  if (!assetsReady) return null;
-  if (!initPortraitGen()) return null;
-  const charName = HERO_GLTF_MAP[heroId];
-  if (!charName) return null;
-  const mesh = instantiateCharacter(charName, 'mixamo_hero');
-  if (!mesh) return null;
-  const sc = HERO_GLTF_SCALE[heroId] || HERO_GLTF_SCALE.magiker;
-  mesh.scale.set(sc.x, sc.y, sc.z);
-  mesh.position.set(0, 0, 0);
-  // Tick mixern en gång till idle-pose så hjälten inte står i T-pose
-  const actions = mesh.userData.actions;
-  if (actions) {
-    const idleName = findClipName(actions, 'Idle');
-    if (idleName && actions[idleName]) {
-      actions[idleName].play();
-      if (mesh.userData.mixer) mesh.userData.mixer.update(0.5);
-    }
-  }
-  portraitGenState.scene.add(mesh);
+  return heroPortraitCache.get(heroId) || null;
+}
+
+// Förrenderar hjälte-porträtt (huvud→midja) EN gång vid laddning via HUVUD-
+// renderaren + ett render-target — ingen extra WebGL-kontext (iOS-säkert,
+// till skillnad från gamla portrait-gen). Cachas som dataURL; Heroes-korten
+// läser cachen. Allt try/catch:at → ett fel faller tyst tillbaka, spelet
+// laddar oavsett. (Gamla initPortraitGen/portraitGenState är nu oanvända.)
+function pregenHeroPortraits() {
+  let rt = null;
+  let prevTarget = null;
   try {
-    portraitGenState.renderer.render(portraitGenState.scene, portraitGenState.camera);
-    const dataURL = portraitGenState.renderer.domElement.toDataURL('image/png');
-    heroPortraitCache.set(heroId, dataURL);
-    portraitGenState.scene.remove(mesh);
-    return dataURL;
+    const PW = 420, PH = 560;
+    rt = new THREE.WebGLRenderTarget(PW, PH);
+    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    const pScene = new THREE.Scene();
+    pScene.background = new THREE.Color(0x1b2238);
+    pScene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.9));
+    const kL = new THREE.DirectionalLight(0xffe9c2, 1.55); kL.position.set(2, 4, 3); pScene.add(kL);
+    const fL = new THREE.DirectionalLight(0xaaccff, 0.55); fL.position.set(-2.5, 2, 2); pScene.add(fL);
+    const rL = new THREE.DirectionalLight(0xffffff, 0.65); rL.position.set(0, 3, -3); pScene.add(rL);
+    const pCam = new THREE.PerspectiveCamera(30, PW / PH, 0.1, 50);
+    pCam.position.set(0, 1.4, 1.95);
+    pCam.lookAt(0, 1.4, 0);
+    const buf = new Uint8Array(PW * PH * 4);
+    const cv = document.createElement('canvas');
+    cv.width = PW; cv.height = PH;
+    const ctx = cv.getContext('2d');
+    prevTarget = renderer.getRenderTarget();
+    for (const h of HEROES) {
+      if (!h.available) continue;
+      try {
+        const charName = HERO_GLTF_MAP[h.id];
+        if (!charName) continue;
+        const mesh = instantiateCharacter(charName, 'mixamo_hero');
+        if (!mesh) continue;
+        // Normalisera höjd (1.8 m) så alla hjältar ramas lika oavsett HERO_GLTF_SCALE.
+        mesh.position.set(0, 0, 0);
+        mesh.scale.set(1, 1, 1);
+        mesh.updateMatrixWorld(true);
+        const bbox = new THREE.Box3().setFromObject(mesh);
+        const meshH = bbox.max.y - bbox.min.y;
+        if (meshH > 0.01) { const f = 1.8 / meshH; mesh.scale.set(f, f, f); }
+        // Idle-pose (inte T-pose)
+        const actions = mesh.userData.actions;
+        if (actions) {
+          const idleName = findClipName(actions, 'Idle');
+          if (idleName && actions[idleName]) {
+            actions[idleName].play();
+            if (mesh.userData.mixer) mesh.userData.mixer.update(0.6);
+          }
+        }
+        pScene.add(mesh);
+        renderer.setRenderTarget(rt);
+        renderer.render(pScene, pCam);
+        renderer.readRenderTargetPixels(rt, 0, 0, PW, PH, buf);
+        pScene.remove(mesh);
+        // WebGL-buffern är bottom-up → flippa Y in i 2D-canvasen.
+        const imgData = ctx.createImageData(PW, PH);
+        for (let y = 0; y < PH; y++) {
+          const src = (PH - 1 - y) * PW * 4;
+          imgData.data.set(buf.subarray(src, src + PW * 4), y * PW * 4);
+        }
+        ctx.putImageData(imgData, 0, 0);
+        heroPortraitCache.set(h.id, cv.toDataURL('image/png'));
+      } catch (eHero) {
+        console.warn('[portrait] fail for', h.id, eHero);
+      }
+    }
   } catch (e) {
-    console.warn('[portrait-gen] render fail for', heroId, e);
-    portraitGenState.scene.remove(mesh);
-    return null;
+    console.warn('[portrait] pregen failed', e);
+  } finally {
+    renderer.setRenderTarget(prevTarget);
+    if (rt) rt.dispose();
   }
 }
 
