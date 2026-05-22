@@ -3045,7 +3045,7 @@ const HERO_GLTF_SCALE = {
   magiker: { x: 1.44, y: 1.44, z: 1.44 },
   legolas: { x: 1.44, y: 1.44, z: 1.44 },
   gimlu:   { x: 1.32, y: 1.32, z: 1.32 },     // tank-känsla, 1.1 × 1.2
-  aragurn: { x: 1.512, y: 1.512, z: 1.512 },  // 1.26 × 1.2
+  aragurn: { x: 1.7388, y: 1.7388, z: 1.7388 },  // 1.26 × 1.2, decision 101: ×1.15
   kostefo: { x: 1.44, y: 1.44, z: 1.44 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
@@ -3098,53 +3098,14 @@ function makeHeroMesh(idx, heroId) {
   grp.add(ring);
   grp.userData.sideRing = ring;
 
-  // Aragurn-specifik: alltid synligt STORT svärd (4× större) som sitter på högersidan,
-  // slår med det vid AA och spinner med det vid Whirlwind.
-  if ((heroId || '').toLowerCase() === 'aragurn') {
-    const sword = makeAragurnSword();
-    sword.scale.set(1.92, 1.92, 1.92);     // −40% från 3.2 (tidigare 4×, nu kompakt)
-    sword.position.set(0.85, 1.0, 0.15);   // höger sida, högre upp pga storlek
-    sword.rotation.z = -0.35;
-    sword.rotation.x = 0.15;
-    grp.add(sword);
-    grp.userData.aragurnSword = sword;
-    grp.userData.aragurnSwordDefault = {
-      pos: sword.position.clone(),
-      rot: sword.rotation.clone(),
-      scale: sword.scale.clone(),
-    };
-  }
+  // Decision 101: det procedurella Aragurn-svärdet borttaget — Mixamo-modellen
+  // har redan eget svärd + sköld. Whirlwind-koden refererar userData.aragurnSword
+  // men är guardad (if-checkad) → blir no-op när svärdet saknas.
 
   return grp;
 }
 
-// Aragurn-svärdet: stort sword-mesh, alltid synligt.
-function makeAragurnSword() {
-  const grp = new THREE.Group();
-  const bladeMat = new THREE.MeshStandardMaterial({ color: 0xdadcdf, metalness: 0.75, roughness: 0.28 });
-  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.10, 1.5, 0.03), bladeMat);
-  blade.position.y = 0.95;
-  grp.add(blade);
-  // Spets-tip på toppen
-  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.20, 6), bladeMat);
-  tip.position.y = 1.80;
-  grp.add(tip);
-  // Hilt (parerstång)
-  const guardMat = new THREE.MeshStandardMaterial({ color: 0x8a6a30, metalness: 0.6, roughness: 0.4 });
-  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.08, 0.10), guardMat);
-  guard.position.y = 0.20;
-  grp.add(guard);
-  // Grip
-  const gripMat = new THREE.MeshStandardMaterial({ color: 0x553311, roughness: 0.85 });
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.30, 10), gripMat);
-  grip.position.y = 0.05;
-  grp.add(grip);
-  // Pommel
-  const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), guardMat);
-  pommel.position.y = -0.12;
-  grp.add(pommel);
-  return grp;
-}
+// (makeAragurnSword borttagen — decision 101; Mixamo-Aragurn har eget svärd.)
 
 // ---- GLTF-animations-hjälpare ----
 function findClipName(actions, ...substrs) {
