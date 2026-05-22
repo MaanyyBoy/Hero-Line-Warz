@@ -1218,7 +1218,8 @@
       position: fixed;
       z-index: 3;
       display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(150deg, rgba(34,46,72,0.94), rgba(15,21,37,0.96));
+      background: rgba(12,16,28,0.32);
+      text-shadow: 0 1px 4px rgba(0,0,0,0.8);
       border: 2px solid rgba(150,178,228,0.55);
       border-radius: 13px;
       color: #f3f6ff;
@@ -1255,20 +1256,45 @@
       height: 50px; padding: 0 22px;
       font-size: 15px;
     }
-    /* Nedre vänster rad — Heroes / Skins / Level / Shop */
-    #home-bottom-left {
+    /* Nedre meny — EN lång rektangel, 4 sammansatta segment-knappar */
+    #home-dock {
       position: fixed;
-      left: max(14px, calc(env(safe-area-inset-left) + 6px));
-      bottom: max(14px, calc(env(safe-area-inset-bottom) + 6px));
-      display: flex; gap: 9px;
+      box-sizing: border-box;
+      left: max(12px, calc(env(safe-area-inset-left) + 4px));
+      right: max(158px, calc(env(safe-area-inset-right) + 158px));
+      bottom: max(12px, calc(env(safe-area-inset-bottom) + 4px));
+      height: 58px;
+      display: flex;
       z-index: 3;
+      border: 2px solid rgba(150,178,228,0.50);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5);
     }
-    #home-bottom-left .home-btn {
+    #home-dock .home-btn {
       position: static;
-      height: 56px;
-      min-width: 92px;
-      padding: 0 14px;
+      box-sizing: border-box;
+      flex: 1;
+      height: 100%;
+      min-width: 0;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
       font-size: 13px;
+    }
+    #home-dock .home-btn + .home-btn {
+      border-left: 1.5px solid rgba(170,190,230,0.28);
+    }
+    #home-dock .home-btn:active { transform: none; background: rgba(44,56,86,0.5); }
+    /* Shop-segmentet — gyllene glöd inifrån (aura inom den sammansatta raden) */
+    #home-dock .dock-shop {
+      color: #ffe6a6;
+      animation: dock-shop-glow 1.9s ease-in-out infinite;
+    }
+    @keyframes dock-shop-glow {
+      0%,100% { box-shadow: inset 0 0 14px rgba(255,196,74,0.25); }
+      50%     { box-shadow: inset 0 0 30px rgba(255,196,74,0.6); }
     }
     /* PLAY — nedre höger, rund, större. Med dekorativ ring-båge i hörnet. */
     #btn-play {
@@ -1276,7 +1302,7 @@
       bottom: max(20px, calc(env(safe-area-inset-bottom) + 10px));
       width: 124px; height: 124px;
       border-radius: 50%;
-      background: radial-gradient(circle at 38% 32%, #ffc070, #e0612a 72%, #b8431a);
+      background: radial-gradient(circle at 38% 32%, rgba(255,184,112,0.30), rgba(208,90,44,0.26) 72%, rgba(150,55,25,0.30));
       border: 4px solid rgba(255,228,178,0.95);
       color: #fff;
       font: 900 23px/1 system-ui, sans-serif;
@@ -2892,11 +2918,11 @@
     <div class="lobby-panel visible" id="lobby-main">
       <button class="home-btn" id="btn-avatar" aria-label="Profile">👤</button>
       <button class="home-btn aura" id="btn-event">Event</button>
-      <div id="home-bottom-left">
+      <div id="home-dock">
         <button class="home-btn" id="btn-heroes">Heroes</button>
         <button class="home-btn" id="btn-skins">Skins</button>
         <button class="home-btn" id="btn-level">Level</button>
-        <button class="home-btn aura" id="btn-shop">Shop</button>
+        <button class="home-btn dock-shop" id="btn-shop">Shop</button>
       </div>
       <div id="home-play-arc"></div>
       <button class="home-btn" id="btn-play">Play</button>
