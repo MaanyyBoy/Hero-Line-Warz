@@ -1317,17 +1317,7 @@
       0%,100% { box-shadow: 0 0 20px rgba(255,140,55,0.55), 0 7px 20px rgba(0,0,0,0.6), inset 0 -5px 12px rgba(120,40,10,0.55), inset 0 4px 10px rgba(255,255,255,0.35); }
       50%     { box-shadow: 0 0 40px rgba(255,150,60,0.95), 0 7px 20px rgba(0,0,0,0.6), inset 0 -5px 12px rgba(120,40,10,0.55), inset 0 4px 10px rgba(255,255,255,0.35); }
     }
-    /* Ring-båge — stor cirkel centrerad i hörnet, bara bågen syns på skärmen */
-    #home-play-arc {
-      position: fixed;
-      right: -196px; bottom: -196px;
-      width: 392px; height: 392px;
-      border-radius: 50%;
-      border: 3px solid rgba(255,206,120,0.55);
-      box-shadow: 0 0 26px rgba(255,150,60,0.35), inset 0 0 34px rgba(255,150,60,0.20);
-      pointer-events: none;
-      z-index: 3;
-    }
+    /* (Play-bågen borttagen — decision 097) */
     /* PLAY-fönstret — 3 läges-kort centrerade */
     #lobby-play.visible { margin: auto 0; }
     .play-title {
@@ -2862,14 +2852,14 @@
     /* Asset-loading-screen (visas innan lobbyn) */
     #asset-loading {
       position: fixed; inset: 0;
-      background: linear-gradient(135deg, #08111e 0%, #1a253b 100%);
+      background: linear-gradient(to bottom, rgba(6,9,17,0) 42%, rgba(6,9,17,0.92) 100%), url('./assets/home-bg.jpg') center center / cover no-repeat #08111e;
       color: #fff;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: flex-end;
       flex-direction: column;
       z-index: 1500;
       font: 14px/1.4 system-ui, sans-serif;
       text-align: center;
-      padding: 24px;
+      padding: 24px 24px 46px;
     }
     #asset-loading.hidden { display: none; }
     #asset-loading .al-spinner {
@@ -2886,6 +2876,7 @@
       color: #ffd34a;
       letter-spacing: 1px;
       margin-bottom: 14px;
+      text-shadow: 0 2px 9px rgba(0,0,0,0.95);
     }
     #asset-loading .al-bar {
       width: min(360px, 80vw); height: 10px;
@@ -2901,8 +2892,9 @@
     #al-status {
       margin-top: 10px;
       font: 500 12px/1 ui-monospace, monospace;
-      opacity: 0.75;
+      opacity: 0.9;
       letter-spacing: 0.5px;
+      text-shadow: 0 1px 5px rgba(0,0,0,0.95);
     }
 
     /* Desktop-tips */
@@ -2924,7 +2916,6 @@
         <button class="home-btn" id="btn-level">Level</button>
         <button class="home-btn dock-shop" id="btn-shop">Shop</button>
       </div>
-      <div id="home-play-arc"></div>
       <button class="home-btn" id="btn-play">Play</button>
       <button id="btn-items" style="display:none" aria-hidden="true"></button>
     </div>
@@ -3484,7 +3475,7 @@
 
   <div id="asset-loading">
     <div class="al-spinner"></div>
-    <div class="al-title">Loading graphics...</div>
+    <div class="al-title">Preparing heroes</div>
     <div class="al-bar"><div id="al-bar-fill"></div></div>
     <div id="al-status">0 / 0</div>
   </div>

@@ -311,6 +311,17 @@ async function preloadAllAssets() {
     if (al) al.classList.add('hidden');
   }, 45000);
 
+  // Loading-skärmens titel växlar mellan två fraser tills skärmen döljs.
+  const _alTitleEl = document.querySelector('#asset-loading .al-title');
+  const _alPhrases = ['Preparing heroes', 'Waking up monsters'];
+  let _alPhraseIdx = 0;
+  const _alTitleTimer = setInterval(() => {
+    const _al = document.getElementById('asset-loading');
+    if (!_al || _al.classList.contains('hidden')) { clearInterval(_alTitleTimer); return; }
+    _alPhraseIdx = (_alPhraseIdx + 1) % _alPhrases.length;
+    if (_alTitleEl) _alTitleEl.textContent = _alPhrases[_alPhraseIdx];
+  }, 2200);
+
   // Mobil-OOM-fix: ladda i batches istället för alla ~40 GLB:er parallellt.
   // Peak memory under parse+texture-decode måste hållas nere på iOS/Android
   // (Safari heap ~250-500 MB). 2 parallella på mobil, 6 på desktop.
