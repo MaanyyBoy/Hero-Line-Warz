@@ -14894,21 +14894,25 @@ function pushHeroSnapToBuffer(mesh, t, x, z, ry) {
 function interpolateHeroSnapBuffer(mesh, nowSec) {
   const buf = mesh._snapBuf;
   if (!buf || buf.length === 0) return;
+  // Hoppa över rotations-interpolering om hjälten whirlwindar — då äger
+  // animateGltfCharacter rotation.y (spinnet). Annars fightar interpoleringen
+  // spinnet (drar tillbaka mot facing) → ingen synlig snurr.
+  const setRot = !(mesh.userData && mesh.userData._whirl);
   if (buf.length === 1) {
     mesh.position.x = buf[0].x; mesh.position.z = buf[0].z;
-    mesh.rotation.y = buf[0].ry;
+    if (setRot) mesh.rotation.y = buf[0].ry;
     return;
   }
   const renderTime = nowSec - ARENA_INTERP_DELAY;
   const oldest = buf[0], newest = buf[buf.length - 1];
   if (renderTime <= oldest.t) {
     mesh.position.x = oldest.x; mesh.position.z = oldest.z;
-    mesh.rotation.y = oldest.ry;
+    if (setRot) mesh.rotation.y = oldest.ry;
     return;
   }
   if (renderTime >= newest.t) {
     mesh.position.x = newest.x; mesh.position.z = newest.z;
-    mesh.rotation.y = newest.ry;
+    if (setRot) mesh.rotation.y = newest.ry;
     return;
   }
   for (let i = buf.length - 2; i >= 0; i--) {
@@ -14919,10 +14923,12 @@ function interpolateHeroSnapBuffer(mesh, nowSec) {
       const f = span > 1e-5 ? (renderTime - a.t) / span : 0;
       mesh.position.x = a.x + (b.x - a.x) * f;
       mesh.position.z = a.z + (b.z - a.z) * f;
-      let d = b.ry - a.ry;
-      if (d > Math.PI) d -= 2 * Math.PI;
-      else if (d < -Math.PI) d += 2 * Math.PI;
-      mesh.rotation.y = a.ry + d * f;
+      if (setRot) {
+        let d = b.ry - a.ry;
+        if (d > Math.PI) d -= 2 * Math.PI;
+        else if (d < -Math.PI) d += 2 * Math.PI;
+        mesh.rotation.y = a.ry + d * f;
+      }
       return;
     }
   }
@@ -18899,9 +18905,9 @@ function tickAragurnWhirlwind(side, dt) {
   side.heroFearTime = 0;
   side.hero.dotRemaining = 0;
   side.hero.poisonRemaining = 0;
-  // Snabb spinn på hero-mesh (rotation.y override:as här, applyMovement skippar
-  // sin egen rotation under whirl). Svärdet är child så det snurrar med.
-  if (side.mesh) side.mesh.rotation.y += dt * 18;
+  // Spinn på hero-mesh görs i tickAragurnVisuals (render-koden) så den syns
+  // även för joinaren. applyMovement skippar sin rotation under whirl; svärdet
+  // är child så det snurrar med.
   while (side.whirlwindTickAccum >= WHIRLWIND_TICK && side.whirlwindRemaining > -WHIRLWIND_TICK) {
     side.whirlwindTickAccum -= WHIRLWIND_TICK;
     applyWhirlwindTick(side);
@@ -21238,6 +21244,10 @@ function heroSnap(side) {
     // Arena power-up buffs (undefined när inaktiva)
     asp: _nzr2(side.arenaSpeedBuff),
     adm: _nzr2(side.arenaDamageBuff),
+    // Aragurn whirlwind-state — joinaren behöver det för spinn-animationen.
+    wwr: _nzr2(side.whirlwindRemaining),
+    // Aragurn leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
+    lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME) } : undefined,
     // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
     // syntetiska AA-projektil hit i stället för hjältens facing. MÅSTE vara
     // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
@@ -21366,6 +21376,12 @@ function applyHeroSnap(side, snap) {
   // Arena power-up buffs — undefined i snap → 0 (inaktiv)
   side.arenaSpeedBuff = snap.asp || 0;
   side.arenaDamageBuff = snap.adm || 0;
+  // Aragurn whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
+  // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
+  side.whirlwindRemaining = snap.wwr || 0;
+  if (side.mesh) side.mesh.userData._whirl = (snap.wwr || 0) > 0;
+  // Aragurn leap — tickAragurnVisuals renderar y-bågen från {active, u}.
+  side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u } : null;
   // AA-målets position — triggerClientVisualAA siktar projektilen hit.
   side._aaTargetX = snap.tx || 0;
   side._aaTargetZ = snap.tz || 0;
@@ -25160,6 +25176,14 @@ function triggerClientVisualSkill(side, key) {
   // Route B: Gandulfs black hole (E), wind puff (Q) + frost nova (F) broadcastas
   // som entiteter och renderas via clientReconcileEntities → skippa gen. synten.
   if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && APP.mode === 'client' && isArenaMp()) return;
+  // Route B: Aragurns shout (F) — spawna RIKTIGA shout-visualen (cone-flash +
+  // buff-cirkel) i st f generisk synt. Riktning ≈ hjältens facing.
+  if (heroId === 'aragurn' && key === 'f' && APP.mode === 'client' && isArenaMp()) {
+    const afx = side.hero.facingX || 0, afz = side.hero.facingZ || 1;
+    spawnConeFlash(side.hero.x, side.hero.z, afx, afz, SHOUT_LENGTH, SHOUT_HALF_ANGLE, 0xffe399);
+    spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
+    return;
+  }
   // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
   // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
   // big arrows. I CLASSIC MP är servern auktoritativ och broadcastar VT/BA
