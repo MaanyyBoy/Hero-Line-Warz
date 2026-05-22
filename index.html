@@ -1296,6 +1296,38 @@
       0%,100% { box-shadow: inset 0 0 14px rgba(255,196,74,0.25); }
       50%     { box-shadow: inset 0 0 30px rgba(255,196,74,0.6); }
     }
+    /* Vänster sido-meny — liten vertikal rektangel, 3 sammansatta segment */
+    #home-side-dock {
+      position: fixed;
+      box-sizing: border-box;
+      left: max(14px, calc(env(safe-area-inset-left) + 6px));
+      top: max(80px, calc(env(safe-area-inset-top) + 72px));
+      width: 104px;
+      display: flex;
+      flex-direction: column;
+      z-index: 3;
+      border: 2px solid rgba(150,178,228,0.50);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    }
+    #home-side-dock .home-btn {
+      position: static;
+      box-sizing: border-box;
+      width: 100%;
+      height: 34px;
+      min-width: 0;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      font-size: 10px;
+      letter-spacing: 0.6px;
+    }
+    #home-side-dock .home-btn + .home-btn {
+      border-top: 1.5px solid rgba(170,190,230,0.28);
+    }
+    #home-side-dock .home-btn:active { transform: none; background: rgba(44,56,86,0.5); }
     /* PLAY — nedre höger, rund, större. Med dekorativ ring-båge i hörnet. */
     #btn-play {
       right: max(20px, calc(env(safe-area-inset-right) + 10px));
@@ -2909,6 +2941,11 @@
 
     <div class="lobby-panel visible" id="lobby-main">
       <button class="home-btn" id="btn-avatar" aria-label="Profile">👤</button>
+      <div id="home-side-dock">
+        <button class="home-btn" id="btn-friends">Friends</button>
+        <button class="home-btn" id="btn-mail">Mail</button>
+        <button class="home-btn" id="btn-leaderboard">Leaderboard</button>
+      </div>
       <button class="home-btn aura" id="btn-event">Event</button>
       <div id="home-dock">
         <button class="home-btn" id="btn-heroes">Heroes</button>

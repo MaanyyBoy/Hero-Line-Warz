@@ -24228,7 +24228,7 @@ function openComingSoon(name) {
   if (comingSoonNameEl) comingSoonNameEl.textContent = name;
   showLobbyPanel('coming-soon');
 }
-for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop']]) {
+for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop'], ['btn-friends', 'Friends'], ['btn-mail', 'Mail'], ['btn-leaderboard', 'Leaderboard']]) {
   const csBtn = document.getElementById(csId);
   if (csBtn) csBtn.addEventListener('click', () => openComingSoon(csLabel));
 }
