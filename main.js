@@ -2386,6 +2386,21 @@ const INCOME_MINION_RATIO = 0.2;  // 20% av minion-kostnaden går till income-bo
 const TIER_UNLOCK_COST = { 2: 300, 3: 750, 4: 1500, 5: 3000 };
 // Decision 106: Clone-knapp i minion-shoppen — 100% stats hero-copy.
 const CLONE_COST = 50000;
+// Decision 107: hero-copy konstanter (matchar server) — solo Line Wars-port + multi-skill.
+const HERO_COPY_STAT_RATIO = 0.7;
+const CLONE_STAT_RATIO = 1.0;
+const HERO_COPY_TOWER_DAMAGE = 10;
+const HERO_COPY_ATTACK_RANGE = 4.0;
+const HERO_COPY_ATTACK_INTERVAL = 1.2;
+const HERO_COPY_AGGRO_RANGE = 5.5;
+const HERO_COPY_RADIUS = 0.45;
+const HERO_COPY_Q_INTERVAL = 6.0;
+const HERO_COPY_F_INTERVAL = 10.0;
+const HERO_COPY_E_INTERVAL = 8.0;
+const HERO_COPY_DASH_DISTANCE = 2.5;
+const HERO_COPY_DASH_DMG_MUL = 1.8;
+const HERO_COPY_F_DMG_MUL = 0.6;
+const HERO_COPY_F_SPREAD = 0.26;     // ~15° i radianer
 // Decision 105: minions +30% HP/dmg, +50% kostnad.
 const MINION_HP_MUL = 1.3;
 const MINION_DMG_MUL = 1.3;
@@ -2768,6 +2783,8 @@ function tickAllHpBars() {
       if (!s) continue;
       for (const m of s.monsters) updateEntityHpBar(m.mesh, m.hp, m.maxHp || 10, now);
       for (const c of s.playerCreeps) updateEntityHpBar(c.mesh, c.hp, c.maxHp, now);
+      // Decision 107: hero-kopior i solo Line Wars — HP-bar update.
+      if (s.heroCopies) for (const hc of s.heroCopies) if (hc.mesh) updateEntityHpBar(hc.mesh, hc.hp, hc.maxHp, now);
     }
   } else {
     for (const idx of [1, 2]) {
@@ -9555,6 +9572,8 @@ function createSide(idx) {
     fireballs: [],           // Q (Eldklot)
     novaEffects: [],         // F (Frostnova) visuell ring
     creepProjectiles: [],    // pilar/magi från MINA minions (i opp's arena)
+    heroCopies: [],          // (decision 107) bot-styrda hero-kloner som attackerar DENNA sida
+    heroCopyFireballs: [],   // (decision 107) skill-projektiler från hero-kloner
     // Wave-system
     wave: {
       current: 0,
@@ -9605,6 +9624,171 @@ function hostSpawnMonster(side, lane) {
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     mesh,
   });
+}
+
+// Decision 107: hero-copy spawn (solo Line Wars — mirror av server.spawnHeroCopy).
+// side = OWNER. Clonen spawnar på opp-sidan och attackerar opp-hero/torn.
+function hostSpawnHeroCopy(side, statRatio) {
+  const oppIdx = 3 - side.idx;
+  const oppCfg = SIDE_CFG[oppIdx];
+  const opp = sides[oppIdx];
+  if (!opp) return;
+  // Alternera lanes baserat på antal befintliga kloner
+  const cloneCount = (opp.heroCopies && opp.heroCopies.length) || 0;
+  const lane = (cloneCount % 2) === 0 ? 1 : 2;
+  const z = oppCfg.laneZ[lane];
+  const stat = (typeof statRatio === 'number') ? statRatio : HERO_COPY_STAT_RATIO;
+  const maxHp = Math.round(side.hero.maxHp * stat);
+  const mesh = makeHeroCopyMesh(side.idx, side.heroId || 'magiker');
+  attachHpBar(mesh, 2.0);
+  mesh.position.set(oppCfg.spawnX, 0, z);
+  scene.add(mesh);
+  opp.heroCopies = opp.heroCopies || [];
+  opp.heroCopies.push({
+    id: nextEntityId++,
+    ownerSideIdx: side.idx,
+    heroId: side.heroId || 'magiker',
+    x: oppCfg.spawnX, z, ry: 0,
+    lane,
+    hp: maxHp, maxHp,
+    attackDmg: side.attackDmg * stat,
+    moveSpeed: side.moveSpeed * stat,
+    skillDmg: ELDKLOT_DAMAGE * (side.skillDmgMul || 1) * stat,
+    attackCd: 0,
+    qCd: 0, fCd: 0, eCd: 0,
+    chasing: false,
+    facingX: 1, facingZ: 0,
+    mesh,
+  });
+}
+
+// Helper för fireball-spawn (delas av Q + F-skill).
+function hostSpawnHeroCopyFireball(arenaSide, hc, ndx, ndz, damage) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.35, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xff3010, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 }),
+  );
+  mesh.position.set(hc.x, 1.0, hc.z);
+  scene.add(mesh);
+  arenaSide.heroCopyFireballs = arenaSide.heroCopyFireballs || [];
+  arenaSide.heroCopyFireballs.push({
+    id: nextEntityId++,
+    ownerSideIdx: hc.ownerSideIdx,
+    x: hc.x, y: 1.0, z: hc.z,
+    dx: ndx, dz: ndz,
+    hit: new Set(),
+    traveled: 0,
+    damage,
+    mesh,
+  });
+}
+
+// Solo-tick för hero-kloner. side = den sida klonerna är "i" (= owner-opp).
+function updateHeroCopies(side, dt) {
+  if (!side.heroCopies || side.heroCopies.length === 0) return;
+  const cfg = SIDE_CFG[side.idx];
+  const towerPos = cfg.tower;
+  for (let i = side.heroCopies.length - 1; i >= 0; i--) {
+    const hc = side.heroCopies[i];
+    hc.attackCd = Math.max(0, hc.attackCd - dt);
+    hc.qCd = Math.max(0, hc.qCd - dt);
+    hc.fCd = Math.max(0, hc.fCd - dt);
+    hc.eCd = Math.max(0, hc.eCd - dt);
+    // Nått tornet?
+    const dxT = towerPos.x - hc.x, dzT = towerPos.z - hc.z;
+    if (dxT * dxT + dzT * dzT < (TOWER_REACH + HERO_COPY_RADIUS) * (TOWER_REACH + HERO_COPY_RADIUS)) {
+      side.tower.hp = Math.max(0, side.tower.hp - HERO_COPY_TOWER_DAMAGE);
+      scene.remove(hc.mesh);
+      side.heroCopies.splice(i, 1);
+      continue;
+    }
+    if (hc.hp <= 0) {
+      scene.remove(hc.mesh);
+      side.heroCopies.splice(i, 1);
+      continue;
+    }
+    // Aggro mot side.hero
+    const heroAlive = !side.hero.dead;
+    let aggro = false;
+    let d = 999;
+    if (heroAlive) {
+      d = Math.hypot(side.hero.x - hc.x, side.hero.z - hc.z);
+      if (!hc.chasing && d < HERO_COPY_AGGRO_RANGE) hc.chasing = true;
+      else if (hc.chasing && d > HERO_COPY_AGGRO_RANGE * 1.5) hc.chasing = false;
+      aggro = hc.chasing && d < HERO_COPY_AGGRO_RANGE * 1.5;
+      // Skill-rotation Q/F/E (max en per tick)
+      const dxh = side.hero.x - hc.x, dzh = side.hero.z - hc.z;
+      const mh = Math.hypot(dxh, dzh) || 1;
+      const ndx = dxh / mh, ndz = dzh / mh;
+      if (d < ELDKLOT_RANGE && hc.qCd <= 0) {
+        hostSpawnHeroCopyFireball(side, hc, ndx, ndz, hc.skillDmg);
+        hc.qCd = HERO_COPY_Q_INTERVAL;
+      } else if (d < ELDKLOT_RANGE * 0.85 && hc.fCd <= 0) {
+        const cs = Math.cos(HERO_COPY_F_SPREAD), sn = Math.sin(HERO_COPY_F_SPREAD);
+        const fDmg = hc.skillDmg * HERO_COPY_F_DMG_MUL;
+        hostSpawnHeroCopyFireball(side, hc, ndx, ndz, fDmg);
+        hostSpawnHeroCopyFireball(side, hc, ndx * cs - ndz * sn, ndx * sn + ndz * cs, fDmg);
+        hostSpawnHeroCopyFireball(side, hc, ndx * cs + ndz * sn, -ndx * sn + ndz * cs, fDmg);
+        hc.fCd = HERO_COPY_F_INTERVAL;
+      } else if (d > 1.5 && d < 6 && hc.eCd <= 0) {
+        const dashStep = Math.min(HERO_COPY_DASH_DISTANCE, d - 1.2);
+        hc.x += ndx * dashStep;
+        hc.z += ndz * dashStep;
+        damageHero(side, hc.attackDmg * HERO_COPY_DASH_DMG_MUL);
+        hc.eCd = HERO_COPY_E_INTERVAL;
+      }
+      // AA mot hero om nära nog
+      if (aggro && d < HERO_COPY_ATTACK_RANGE && hc.attackCd <= 0) {
+        damageHero(side, hc.attackDmg);
+        hc.attackCd = HERO_COPY_ATTACK_INTERVAL;
+      }
+    }
+    // Rörelse: chasa hero om aggro, annars mot tornet
+    let tx, tz;
+    if (aggro) { tx = side.hero.x; tz = side.hero.z; }
+    else { tx = towerPos.x; tz = towerPos.z; }
+    const dx = tx - hc.x, dz = tz - hc.z;
+    const m = Math.hypot(dx, dz);
+    if (m > 0.1) {
+      const stop = aggro ? HERO_COPY_ATTACK_RANGE - 0.4 : TOWER_REACH;
+      if (m > stop) {
+        const step = hc.moveSpeed * dt;
+        hc.x += (dx / m) * step;
+        hc.z += (dz / m) * step;
+        hc.ry = Math.atan2(-dz, dx);
+        hc.facingX = dx / m; hc.facingZ = dz / m;
+      }
+    }
+    hc.mesh.position.set(hc.x, 0, hc.z);
+    hc.mesh.rotation.y = hc.ry;
+  }
+}
+
+function updateHeroCopyFireballs(side, dt) {
+  if (!side.heroCopyFireballs || side.heroCopyFireballs.length === 0) return;
+  for (let i = side.heroCopyFireballs.length - 1; i >= 0; i--) {
+    const f = side.heroCopyFireballs[i];
+    const step = ELDKLOT_SPEED * dt;
+    f.x += f.dx * step;
+    f.z += f.dz * step;
+    f.traveled += step;
+    if (f.mesh) f.mesh.position.set(f.x, f.y, f.z);
+    if (!side.hero.dead && !f.hit.has('h')) {
+      const d = Math.hypot(side.hero.x - f.x, side.hero.z - f.z);
+      if (d < ELDKLOT_RADIUS + 0.5) {
+        f.hit.add('h');
+        damageHero(side, f.damage);
+      }
+    }
+    if (f.traveled > ELDKLOT_RANGE) {
+      if (f.mesh) {
+        scene.remove(f.mesh);
+        if (f.mesh.geometry) f.mesh.geometry.dispose();
+        if (f.mesh.material) f.mesh.material.dispose();
+      }
+      side.heroCopyFireballs.splice(i, 1);
+    }
+  }
 }
 
 function hostSpawnMinion(side, typeId, lane) {
@@ -14648,11 +14832,11 @@ function applyEvent(side, ev) {
     side.income += Math.floor(def.cost * INCOME_MINION_RATIO);
     hostSpawnMinion(side, ev.minionType, ev.lane);
   } else if (ev.kind === 'clone') {
-    // Decision 106: Clone-knappen — 100%-stats hero-copy. Server-side
-    // implementation finns för classic MP (server.applyEvent). Solo Line
-    // Wars saknar hero-copy-infrastruktur än — knappen är disabled i solo
-    // (se refreshShopUI). Här är vi en no-op om eventet ändå når oss.
-    return;
+    // Decision 107: Clone-knappen funkar nu även i solo Line Wars (port av
+    // server.spawnHeroCopy + updateHeroCopies). Kostnad 50k g; 100%-stats.
+    if (side.gold < CLONE_COST) return;
+    side.gold -= CLONE_COST;
+    hostSpawnHeroCopy(side, CLONE_STAT_RATIO);
   } else if (ev.kind === 'unlock') {
     const tier = ev.tier;
     if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
@@ -19710,10 +19894,7 @@ function populateShop() {
 function onCloneClick() {
   const side = sides[APP.localSide];
   if (!side) return;
-  // Solo Line Wars saknar hero-copy-spawn-logik — knappen är visuellt disabled
-  // (refreshShopUI), men dubbelklick-säkring här.
-  const isMp = (APP.mode === 'host' || APP.mode === 'client');
-  if (!isMp) return;
+  // Decision 107: funkar nu både i MP (server-auth) och solo (lokal sim).
   if (side.gold < CLONE_COST) return;
   sendOrApplyEvent({ type: 'shop', kind: 'clone' });
 }
@@ -19848,13 +20029,12 @@ function refreshShopUI() {
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
   }
 
-  // Decision 106: Clone-knappens state (50k g, MP-only än så länge)
+  // Decision 107: Clone-knappens state (50k g, funkar i MP + solo)
   if (shopRefs.cloneBtn) {
-    const isMp = (APP.mode === 'host' || APP.mode === 'client');
-    const canBuy = isMp && inBase && !side.hero.dead && side.gold >= CLONE_COST;
-    shopRefs.cloneBtn.innerHTML = `⚔ Clone (${CLONE_COST}g)<small>${isMp ? '100%-stats bot-clone på opp-sida' : 'Multiplayer only'}</small>`;
+    const canBuy = inBase && !side.hero.dead && side.gold >= CLONE_COST;
+    shopRefs.cloneBtn.innerHTML = `⚔ Clone (${CLONE_COST}g)<small>100%-stats bot på motståndarens sida</small>`;
     shopRefs.cloneBtn.disabled = !canBuy;
-    shopRefs.cloneBtn.title = isMp ? '' : 'Available in multiplayer only';
+    shopRefs.cloneBtn.title = '';
   }
 
   // I arena: shop tillgänglig under prep-fasen (köpa items innan match)
@@ -25008,6 +25188,9 @@ function simulateAll(dt) {
       updateMonsters(side, dt);
       updatePlayerCreeps(side, dt);
       updateCreepProjectiles(side, dt);
+      // Decision 107: hero-kopior (clone-knapp + duel-belöning) + deras fireballs.
+      updateHeroCopies(side, dt);
+      updateHeroCopyFireballs(side, dt);
     } else if (isBossWars) {
       // Boss Wars: bara monster-tick (för boss-AI), inga waves/creeps.
       // Sides 2/3 delar samma monsters-array som sides[1] (shared-pointer

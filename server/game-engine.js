@@ -455,9 +455,17 @@ const CLONE_STAT_RATIO = 1.0;
 const HERO_COPY_TOWER_DAMAGE = 10;
 const HERO_COPY_ATTACK_RANGE = 4.0;
 const HERO_COPY_ATTACK_INTERVAL = 1.2;
-const HERO_COPY_SKILL_INTERVAL = 6.0; // hur ofta boten castar Eldklot
+const HERO_COPY_SKILL_INTERVAL = 6.0; // hur ofta boten castar Eldklot (legacy = qInterval)
 const HERO_COPY_AGGRO_RANGE = 5.5;
 const HERO_COPY_RADIUS = 0.45;   // XP = creep.cost * 0.6
+// Decision 107: hero-copy cyklar 3 skills (Q/F/E) istället för bara en.
+const HERO_COPY_Q_INTERVAL = 6.0;    // single fireball
+const HERO_COPY_F_INTERVAL = 10.0;   // triple fireball-spread (3 i kon)
+const HERO_COPY_E_INTERVAL = 8.0;    // dash-strike (gap close + AA-burst)
+const HERO_COPY_DASH_DISTANCE = 2.5;
+const HERO_COPY_DASH_DMG_MUL = 1.8;  // dash AA-skadan = attackDmg × 1.8
+const HERO_COPY_F_DMG_MUL = 0.6;     // varje fireball i triple-spread = skillDmg × 0.6
+const HERO_COPY_F_SPREAD = 0.26;     // ~15° i radianer
 
 // Decision 105: tier-unlock-kostnader × 1.5 (svårare att stiga i tier).
 const TIER_UNLOCK_COST = { 2: 300, 3: 750, 4: 1500, 5: 3000 };
@@ -4502,6 +4510,21 @@ function applyEvent(state, sideIdx, ev) {
 // === Hero-kopia (Fas 5) ===
 // Spawnar en bot-styrd hero-kopia i fiendens lane som duel-belöning
 // för max-level-vinnare. Lagras på MOTSTÅNDARENS sida (i deras arena).
+// Decision 107: helper för fireball-spawn (återanvänds av Q och F-skill).
+// ndx/ndz måste vara NORMALISERAD riktning (sqrt(ndx² + ndz²) === 1).
+function spawnHeroCopyFireball(state, arenaSide, hc, ndx, ndz, damage) {
+  if (!arenaSide.heroCopyFireballs) arenaSide.heroCopyFireballs = [];
+  arenaSide.heroCopyFireballs.push({
+    id: state.nextEntityId++,
+    ownerSideIdx: hc.ownerSideIdx,
+    x: hc.x, y: 1.0, z: hc.z,
+    dx: ndx, dz: ndz,
+    hit: new Set(),
+    traveled: 0,
+    damage,
+  });
+}
+
 function spawnHeroCopy(state, winnerSide, statRatio) {
   const winnerIdx = winnerSide.idx;
   const oppIdx = 3 - winnerIdx;
@@ -4524,7 +4547,8 @@ function spawnHeroCopy(state, winnerSide, statRatio) {
     moveSpeed: winnerSide.moveSpeed * stat,
     skillDmg: ELDKLOT_DAMAGE * (winnerSide.skillDmgMul || 1) * stat,
     attackCd: 0,
-    skillCd: 0,
+    // Decision 107: 3 skill-CDs istället för en (Q/F/E)
+    qCd: 0, fCd: 0, eCd: 0,
     chasing: false,
     facingX: 1, facingZ: 0,
     pathIndex: 0,
@@ -4539,7 +4563,10 @@ function updateHeroCopies(state, arenaSide, dt) {
   for (let i = arenaSide.heroCopies.length - 1; i >= 0; i--) {
     const hc = arenaSide.heroCopies[i];
     hc.attackCd = Math.max(0, hc.attackCd - dt);
-    hc.skillCd = Math.max(0, hc.skillCd - dt);
+    // Decision 107: 3 separata skill-CDs (Q/F/E)
+    hc.qCd = Math.max(0, (hc.qCd || 0) - dt);
+    hc.fCd = Math.max(0, (hc.fCd || 0) - dt);
+    hc.eCd = Math.max(0, (hc.eCd || 0) - dt);
     // Nått tornet?
     const dxT = towerPos.x - hc.x, dzT = towerPos.z - hc.z;
     if (dxT * dxT + dzT * dzT < (TOWER_REACH + HERO_COPY_RADIUS) * (TOWER_REACH + HERO_COPY_RADIUS)) {
@@ -4560,23 +4587,29 @@ function updateHeroCopies(state, arenaSide, dt) {
       if (!hc.chasing && d < HERO_COPY_AGGRO_RANGE) hc.chasing = true;
       else if (hc.chasing && d > HERO_COPY_AGGRO_RANGE * 1.5) hc.chasing = false;
       aggro = hc.chasing && d < HERO_COPY_AGGRO_RANGE * 1.5;
-      // Skill: cast Eldklot mot hero om i range och CD redo
-      if (heroAlive && d < ELDKLOT_RANGE && hc.skillCd <= 0) {
-        const dx = arenaSide.hero.x - hc.x, dz = arenaSide.hero.z - hc.z;
-        const m = Math.hypot(dx, dz) || 1;
-        state.sides[hc.ownerSideIdx]; // bara reference för läsbarhet
-        // Skapa fireball — lagras på arenaSide.heroCopies[i] men vi använder en separat fält
-        if (!arenaSide.heroCopyFireballs) arenaSide.heroCopyFireballs = [];
-        arenaSide.heroCopyFireballs.push({
-          id: state.nextEntityId++,
-          ownerSideIdx: hc.ownerSideIdx,
-          x: hc.x, y: 1.0, z: hc.z,
-          dx: dx / m, dz: dz / m,
-          hit: new Set(),
-          traveled: 0,
-          damage: hc.skillDmg,
-        });
-        hc.skillCd = HERO_COPY_SKILL_INTERVAL;
+      // Decision 107: skill-rotation (Q/F/E) — högst en skill per tick.
+      const dxh = arenaSide.hero.x - hc.x, dzh = arenaSide.hero.z - hc.z;
+      const mh = Math.hypot(dxh, dzh) || 1;
+      const ndx = dxh / mh, ndz = dzh / mh;
+      if (heroAlive && d < ELDKLOT_RANGE && hc.qCd <= 0) {
+        // Q: enkel fireball (orginal-beteendet)
+        spawnHeroCopyFireball(state, arenaSide, hc, ndx, ndz, hc.skillDmg);
+        hc.qCd = HERO_COPY_Q_INTERVAL;
+      } else if (heroAlive && d < ELDKLOT_RANGE * 0.85 && hc.fCd <= 0) {
+        // F: 3 fireballs i kon (center + ±15°), 60% damage var
+        const cs = Math.cos(HERO_COPY_F_SPREAD), sn = Math.sin(HERO_COPY_F_SPREAD);
+        const fDmg = hc.skillDmg * HERO_COPY_F_DMG_MUL;
+        spawnHeroCopyFireball(state, arenaSide, hc, ndx, ndz, fDmg);
+        spawnHeroCopyFireball(state, arenaSide, hc, ndx * cs - ndz * sn, ndx * sn + ndz * cs, fDmg);
+        spawnHeroCopyFireball(state, arenaSide, hc, ndx * cs + ndz * sn, -ndx * sn + ndz * cs, fDmg);
+        hc.fCd = HERO_COPY_F_INTERVAL;
+      } else if (heroAlive && d > 1.5 && d < 6 && hc.eCd <= 0) {
+        // E: dash forward + AA-burst (bonus dmg)
+        const dashStep = Math.min(HERO_COPY_DASH_DISTANCE, d - 1.2);
+        hc.x += ndx * dashStep;
+        hc.z += ndz * dashStep;
+        damageHero(arenaSide, hc.attackDmg * HERO_COPY_DASH_DMG_MUL);
+        hc.eCd = HERO_COPY_E_INTERVAL;
       }
       // AA mot hero om nära nog
       if (aggro && d < HERO_COPY_ATTACK_RANGE && hc.attackCd <= 0) {
