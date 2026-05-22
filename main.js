@@ -12498,6 +12498,8 @@ function updateFireballs(side, dt) {
 }
 
 // Frost Nova (F): target-AoE freeze + shatter.
+// Stabilt löpnummer per frost-nova-ring (route B — broadcastas till joinaren).
+let _fnIdSeq = 0;
 function hostCastFrostnova(side, ev) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
@@ -12516,7 +12518,7 @@ function hostCastFrostnova(side, ev) {
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(center.x, 0.08, center.z);
   scene.add(ring);
-  side.novaEffects.push({ mesh: ring, life: 0.7, maxLife: 0.7 });
+  side.novaEffects.push({ id: ++_fnIdSeq, mesh: ring, life: 0.7, maxLife: 0.7 });
   // Inner frost-disk (semi-transparent), fade:as separat
   const disk = new THREE.Mesh(
     new THREE.CircleGeometry(NOVA_RADIUS * 0.85, 32),
@@ -21464,6 +21466,19 @@ function makeClientWindPuffMesh() {
   }));
 }
 
+// Klient-mesh för en host-broadcastad frost-nova-ring (route B). Platt ljusblå
+// ring; clientReconcileEntities placerar + fadar via life. Färsk geometri/
+// material per anrop → säker att disposa.
+function makeClientFrostNovaMesh() {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, NOVA_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  return ring;
+}
+
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
@@ -21510,6 +21525,14 @@ function broadcastArenaState() {
         .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
       2: ((sides[2] && sides[2].fireWaves) || []).filter(w => w.id != null && w.mesh)
         .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
+    },
+    // Route B steg 3: Frost Nova-ringar (novaEffects med id — endast huvudringen,
+    // ej disk/shards/ljus). life skickas normaliserad (0..1) för fade.
+    nv: {
+      1: ((sides[1] && sides[1].novaEffects) || []).filter(n => n.id != null && n.mesh)
+        .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
+      2: ((sides[2] && sides[2].novaEffects) || []).filter(n => n.id != null && n.mesh)
+        .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
     },
   });
 }
@@ -21620,6 +21643,8 @@ function applyArenaState(msg) {
       makeClientBlackHoleMesh, true);
     clientReconcileEntities(_seIdx, 'fireWaves', (msg.fw && msg.fw[_seIdx]) || [],
       makeClientWindPuffMesh, true);
+    clientReconcileEntities(_seIdx, 'novaEffects', (msg.nv && msg.nv[_seIdx]) || [],
+      makeClientFrostNovaMesh, true);
   }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
@@ -25132,9 +25157,9 @@ function triggerClientVisualAA(side) {
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
   const heroId = side.heroId || 'magiker';
-  // Route B: Gandulfs black hole (E) + wind puff (Q) broadcastas som entiteter
-  // och renderas via clientReconcileEntities i arena → skippa generiska synten.
-  if (heroId === 'magiker' && (key === 'e' || key === 'q') && APP.mode === 'client' && isArenaMp()) return;
+  // Route B: Gandulfs black hole (E), wind puff (Q) + frost nova (F) broadcastas
+  // som entiteter och renderas via clientReconcileEntities → skippa gen. synten.
+  if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && APP.mode === 'client' && isArenaMp()) return;
   // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
   // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
   // big arrows. I CLASSIC MP är servern auktoritativ och broadcastar VT/BA
