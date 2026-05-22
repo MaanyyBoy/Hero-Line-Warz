@@ -21252,6 +21252,9 @@ function heroSnap(side) {
     wwr: _nzr2(side.whirlwindRemaining),
     // Aragurn leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
     lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME), tx: _r2(side.aragurnLeap.targetX), tz: _r2(side.aragurnLeap.targetZ) } : undefined,
+    // Kostefo — companion + cannabis-moln (updateKostefoMeshes renderar dem).
+    kComp: side.kostefoCompanion ? { x: _r2(side.kostefoCompanion.x), z: _r2(side.kostefoCompanion.z), ry: _r3(side.kostefoCompanion.ry || 0) } : undefined,
+    kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: _r2(side.kostefoCloudRemaining), x: _r2(side.kostefoCloudX), z: _r2(side.kostefoCloudZ), rm: _r2(side.kostefoCloudRadiusMul || 1) } : undefined,
     // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
     // syntetiska AA-projektil hit i stället för hjältens facing. MÅSTE vara
     // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
@@ -21386,6 +21389,16 @@ function applyHeroSnap(side, snap) {
   if (side.mesh) side.mesh.userData._whirl = (snap.wwr || 0) > 0;
   // Aragurn leap — tickAragurnVisuals renderar y-bågen från {active, u}.
   side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u, tx: snap.lp.tx, tz: snap.lp.tz } : null;
+  // Kostefo companion + cannabis-moln — updateKostefoMeshes renderar från detta.
+  side.kostefoCompanion = snap.kComp ? { x: snap.kComp.x, z: snap.kComp.z, ry: snap.kComp.ry } : null;
+  if (snap.kCl) {
+    side.kostefoCloudRemaining = snap.kCl.r;
+    side.kostefoCloudX = snap.kCl.x;
+    side.kostefoCloudZ = snap.kCl.z;
+    side.kostefoCloudRadiusMul = snap.kCl.rm;
+  } else {
+    side.kostefoCloudRemaining = 0;
+  }
   // AA-målets position — triggerClientVisualAA siktar projektilen hit.
   side._aaTargetX = snap.tx || 0;
   side._aaTargetZ = snap.tz || 0;
