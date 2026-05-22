@@ -21538,6 +21538,24 @@ function spawnLeapIndicator(x, z) {
   combatFx.push({ mesh: ring, life: LEAP_TRAVEL_TIME, maxLife: LEAP_TRAVEL_TIME, kind: 'leapMark' });
 }
 
+// Rök-puffar för Kostefos cannabis-moln (route B) — joinaren spawnar dem på
+// E-cast. Engångs-burst (molnets gameplay ligger kvar längre än pufrarna).
+function spawnKostefoCloudSmoke(x, z) {
+  if (kenneyTex.size === 0) return;
+  const cloudR = _K_CLOUD_RADIUS;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r = cloudR * (0.3 + Math.random() * 0.6);
+    spawnKenneyFx({
+      texName: i % 2 === 0 ? 'smoke_03' : 'smoke_07',
+      x: x + Math.cos(a) * r, y: 1.0 + Math.random() * 1.5, z: z + Math.sin(a) * r,
+      color: 0xddffcc, scale: 2.2 + Math.random() * 0.8, scaleEnd: 4.0 + Math.random() * 1.0,
+      life: 1.6 + Math.random() * 0.4, rotateSpeed: (Math.random() - 0.5) * 2,
+      vy: 0.4 + Math.random() * 0.3, opacity: 0.7,
+    });
+  }
+}
+
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
@@ -21597,6 +21615,15 @@ function broadcastArenaState() {
     ab: {
       1: ((sides[1] && sides[1].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
       2: ((sides[2] && sides[2].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
+    },
+    // Route B: Kostefo — goose-waves (Q) + sliders (F). Entiteterna har redan id.
+    kg: {
+      1: ((sides[1] && sides[1].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
+      2: ((sides[2] && sides[2].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
+    },
+    ks: {
+      1: ((sides[1] && sides[1].kostefoSliders) || []).filter(s => s.id != null).map(s => ({ id: s.id, x: _r2(s.x), z: _r2(s.z), ry: _r2(Math.atan2(s.dx, s.dz)) })),
+      2: ((sides[2] && sides[2].kostefoSliders) || []).filter(s => s.id != null).map(s => ({ id: s.id, x: _r2(s.x), z: _r2(s.z), ry: _r2(Math.atan2(s.dx, s.dz)) })),
     },
   });
 }
@@ -21711,6 +21738,10 @@ function applyArenaState(msg) {
       makeClientFrostNovaMesh, true);
     clientReconcileEntities(_seIdx, 'aragurnBanners', (msg.ab && msg.ab[_seIdx]) || [],
       makeClientAragurnBannerMesh, true);
+    clientReconcileEntities(_seIdx, 'kostefoGooseWaves', (msg.kg && msg.kg[_seIdx]) || [],
+      () => makeKostefoGooseWaveMesh({ w: _K_GOOSEWAVE_WIDTH, l: _K_GOOSEWAVE_LENGTH }), true);
+    clientReconcileEntities(_seIdx, 'kostefoSliders', (msg.ks && msg.ks[_seIdx]) || [],
+      makeKostefoSliderMesh, true);
   }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
@@ -25233,6 +25264,12 @@ function triggerClientVisualSkill(side, key) {
     spawnConeFlash(side.hero.x, side.hero.z, afx, afz, SHOUT_LENGTH, SHOUT_HALF_ANGLE, 0xffe399);
     spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
     return;
+  }
+  // Route B: Kostefo — Q (goose-wave) + F (slider) broadcastas som entiteter
+  // (skippa generiska synten); E (cannabis-moln) → spawna rök-pufrarna.
+  if (heroId === 'kostefo' && APP.mode === 'client' && isArenaMp()) {
+    if (key === 'q' || key === 'f') return;
+    if (key === 'e') { spawnKostefoCloudSmoke(side.hero.x, side.hero.z); return; }
   }
   // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
   // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
