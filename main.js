@@ -3905,15 +3905,13 @@ const BOSS_SCALE = {
   alien_boss:      4.2,
   elk_head_boss:   3.7,
   undead_boss:     3.5,
-  // Boss-Wars-tiers (decision 048) — större scale eftersom boss-wars
-  // är raid-mode med massiva bossar i arena. User-bumpade per boss för
-  // dramatisk skala-progression: Captain x2.5, General x2, Warlord x3,
-  // Demon Prince x3, Dragon King x2 (jmf ursprungliga 1.8/1.9/2.0/2.2/2.3).
-  bosswars_1: 4.5,   // Captain — 1.8 × 2.5
-  bosswars_2: 3.8,   // General — 1.9 × 2
-  bosswars_3: 6.0,   // Warlord — 2.0 × 3
-  bosswars_4: 6.6,   // Demon Prince — 2.2 × 3
-  bosswars_5: 4.6,   // Dragon King — 2.3 × 2
+  // Boss-Wars-tiers (decision 048). Decision 100: alla -30% (user-begäran)
+  // — tidigare 4.5/3.8/6.0/6.6/4.6.
+  bosswars_1: 3.15,  // Captain
+  bosswars_2: 2.66,  // General
+  bosswars_3: 4.2,   // Warlord
+  bosswars_4: 4.62,  // Demon Prince
+  bosswars_5: 3.22,  // Dragon King
 };
 
 // Decision 048: Quaternius wave-monster per tier ersätter KayKit-skeleton.
