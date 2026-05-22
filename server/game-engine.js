@@ -449,6 +449,9 @@ const DUEL_ORB_MIN_SPAWN = 0.5;            // sek tidigaste spawn-tid
 
 // Hero-kopia (Fas 5): duel-belöning för max-level vinnare istället för level-up
 const HERO_COPY_STAT_RATIO = 0.7;
+// Decision 106: Clone-knappen i minion-shoppen — 100% stats (vs duel-clonens 70%).
+const CLONE_COST = 50000;
+const CLONE_STAT_RATIO = 1.0;
 const HERO_COPY_TOWER_DAMAGE = 10;
 const HERO_COPY_ATTACK_RANGE = 4.0;
 const HERO_COPY_ATTACK_INTERVAL = 1.2;
@@ -4479,6 +4482,12 @@ function applyEvent(state, sideIdx, ev) {
     side.gold -= def.cost;
     side.income += Math.floor(def.cost * INCOME_MINION_RATIO);
     spawnMinion(state, side, ev.minionType, ev.lane);
+  } else if (ev.kind === 'clone') {
+    // Decision 106: köp en 100%-stats-clone av din hero (50k g), spawnar på
+    // motståndarens sida och attackerar motståndarens hero (bot-AI).
+    if (side.gold < CLONE_COST) return;
+    side.gold -= CLONE_COST;
+    spawnHeroCopy(state, side, CLONE_STAT_RATIO);
   } else if (ev.kind === 'unlock') {
     const tier = ev.tier;
     if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
@@ -4493,7 +4502,7 @@ function applyEvent(state, sideIdx, ev) {
 // === Hero-kopia (Fas 5) ===
 // Spawnar en bot-styrd hero-kopia i fiendens lane som duel-belöning
 // för max-level-vinnare. Lagras på MOTSTÅNDARENS sida (i deras arena).
-function spawnHeroCopy(state, winnerSide) {
+function spawnHeroCopy(state, winnerSide, statRatio) {
   const winnerIdx = winnerSide.idx;
   const oppIdx = 3 - winnerIdx;
   const oppCfg = SIDE_CFG[oppIdx];
@@ -4501,7 +4510,8 @@ function spawnHeroCopy(state, winnerSide) {
   if (!oppSide) return;
   const lane = (state.duelCount % 2 === 1) ? 1 : 2; // alternera mellan lanes
   const z = oppCfg.laneZ[lane];
-  const stat = HERO_COPY_STAT_RATIO;
+  // Decision 106: statRatio = 1.0 för shop-clone, 0.7 för duel-clone (default).
+  const stat = (typeof statRatio === 'number') ? statRatio : HERO_COPY_STAT_RATIO;
   const maxHp = Math.round(winnerSide.hero.maxHp * stat);
   oppSide.heroCopies.push({
     id: state.nextEntityId++,

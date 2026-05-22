@@ -2384,6 +2384,8 @@ const INCOME_MINION_RATIO = 0.2;  // 20% av minion-kostnaden går till income-bo
 // ---- Tier-unlocks (sekventiellt) ----
 // Decision 105: tier-unlock-kostnader × 1.5 (svårare att stiga i tier).
 const TIER_UNLOCK_COST = { 2: 300, 3: 750, 4: 1500, 5: 3000 };
+// Decision 106: Clone-knapp i minion-shoppen — 100% stats hero-copy.
+const CLONE_COST = 50000;
 // Decision 105: minions +30% HP/dmg, +50% kostnad.
 const MINION_HP_MUL = 1.3;
 const MINION_DMG_MUL = 1.3;
@@ -14645,6 +14647,12 @@ function applyEvent(side, ev) {
     side.gold -= def.cost;
     side.income += Math.floor(def.cost * INCOME_MINION_RATIO);
     hostSpawnMinion(side, ev.minionType, ev.lane);
+  } else if (ev.kind === 'clone') {
+    // Decision 106: Clone-knappen — 100%-stats hero-copy. Server-side
+    // implementation finns för classic MP (server.applyEvent). Solo Line
+    // Wars saknar hero-copy-infrastruktur än — knappen är disabled i solo
+    // (se refreshShopUI). Här är vi en no-op om eventet ändå når oss.
+    return;
   } else if (ev.kind === 'unlock') {
     const tier = ev.tier;
     if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
@@ -19591,7 +19599,7 @@ function updateShopBackdrop() {
                || (shopMinionEl && shopMinionEl.classList.contains('expanded'));
   shopBackdropEl.classList.toggle('visible', anyOpen);
 }
-const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [] };
+const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [], cloneBtn: null };
 
 function getNextLockedTier(side) {
   for (let t = 2; t <= 5; t++) if (!side.tierUnlocks[t]) return t;
@@ -19686,6 +19694,28 @@ function populateShop() {
     grid.appendChild(btn);
     shopRefs.minionBtns.push(btn);
   }
+  // Decision 106: Clone-knapp — 50 000 gold, spawnar bot-styrd 100%-stats-copy.
+  const cloneRow = document.getElementById('shop-clone-row');
+  if (cloneRow) {
+    cloneRow.innerHTML = '';
+    const cbtn = document.createElement('button');
+    cbtn.className = 'shop-btn minion-btn minion-champion';
+    cbtn.style.minWidth = '160px';
+    cbtn.addEventListener('click', onCloneClick);
+    cloneRow.appendChild(cbtn);
+    shopRefs.cloneBtn = cbtn;
+  }
+}
+
+function onCloneClick() {
+  const side = sides[APP.localSide];
+  if (!side) return;
+  // Solo Line Wars saknar hero-copy-spawn-logik — knappen är visuellt disabled
+  // (refreshShopUI), men dubbelklick-säkring här.
+  const isMp = (APP.mode === 'host' || APP.mode === 'client');
+  if (!isMp) return;
+  if (side.gold < CLONE_COST) return;
+  sendOrApplyEvent({ type: 'shop', kind: 'clone' });
 }
 
 function onItemPrimaryClick(itemId, variantId) {
@@ -19816,6 +19846,15 @@ function refreshShopUI() {
     btn.innerHTML = `${ARCHETYPE_NAMES[arch]} (${def.cost}g)<small>HP ${def.hp} · DMG ${def.damage}${def.attackType === 'arrow' ? ' · pil' : def.attackType === 'magic' ? ' · AoE' : ''}</small>`;
     const unlocked = !!side.tierUnlocks[shopState.selectedTier];
     btn.disabled = !unlocked || side.gold < def.cost || side.hero.dead;
+  }
+
+  // Decision 106: Clone-knappens state (50k g, MP-only än så länge)
+  if (shopRefs.cloneBtn) {
+    const isMp = (APP.mode === 'host' || APP.mode === 'client');
+    const canBuy = isMp && inBase && !side.hero.dead && side.gold >= CLONE_COST;
+    shopRefs.cloneBtn.innerHTML = `⚔ Clone (${CLONE_COST}g)<small>${isMp ? '100%-stats bot-clone på opp-sida' : 'Multiplayer only'}</small>`;
+    shopRefs.cloneBtn.disabled = !canBuy;
+    shopRefs.cloneBtn.title = isMp ? '' : 'Available in multiplayer only';
   }
 
   // I arena: shop tillgänglig under prep-fasen (köpa items innan match)
