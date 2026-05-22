@@ -22320,7 +22320,8 @@ const portraitGenState = {
   scene: null,
   camera: null,
 };
-const heroPortraitCache = new Map();   // heroId → dataURL
+const heroPortraitCache = new Map();        // heroId → dataURL (kort, huvud→midja)
+const heroFullPortraitCache = new Map();    // heroId → dataURL (hela kroppen, för detail-sidan)
 
 function initPortraitGen() {
   if (portraitGenState.initialized) return true;
@@ -22384,26 +22385,52 @@ function getHeroPortraitImage(heroId) {
 // läser cachen. Allt try/catch:at → ett fel faller tyst tillbaka, spelet
 // laddar oavsett. (Gamla initPortraitGen/portraitGenState är nu oanvända.)
 function pregenHeroPortraits() {
-  let rt = null;
+  let rtCard = null, rtFull = null;
   let prevTarget = null;
   try {
-    const PW = 420, PH = 560;
-    rt = new THREE.WebGLRenderTarget(PW, PH);
-    rt.texture.colorSpace = THREE.SRGBColorSpace;
+    // Två framings per hjälte:
+    //   kort = huvud→midja (för Heroes-browser-korten)
+    //   full = hela kroppen, avlångt (för hero-detail-sidan på mobil) (decision 104)
+    const PWC = 420, PHC = 560;
+    const PWF = 360, PHF = 600;
+    rtCard = new THREE.WebGLRenderTarget(PWC, PHC);
+    rtCard.texture.colorSpace = THREE.SRGBColorSpace;
+    rtFull = new THREE.WebGLRenderTarget(PWF, PHF);
+    rtFull.texture.colorSpace = THREE.SRGBColorSpace;
     const pScene = new THREE.Scene();
     pScene.background = new THREE.Color(0x1b2238);
     pScene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 0.9));
     const kL = new THREE.DirectionalLight(0xffe9c2, 1.55); kL.position.set(2, 4, 3); pScene.add(kL);
     const fL = new THREE.DirectionalLight(0xaaccff, 0.55); fL.position.set(-2.5, 2, 2); pScene.add(fL);
     const rL = new THREE.DirectionalLight(0xffffff, 0.65); rL.position.set(0, 3, -3); pScene.add(rL);
-    const pCam = new THREE.PerspectiveCamera(30, PW / PH, 0.1, 50);
-    pCam.position.set(0, 1.4, 1.95);
-    pCam.lookAt(0, 1.4, 0);
-    const buf = new Uint8Array(PW * PH * 4);
-    const cv = document.createElement('canvas');
-    cv.width = PW; cv.height = PH;
-    const ctx = cv.getContext('2d');
+    const camCard = new THREE.PerspectiveCamera(30, PWC / PHC, 0.1, 50);
+    camCard.position.set(0, 1.4, 1.95);
+    camCard.lookAt(0, 1.4, 0);
+    const camFull = new THREE.PerspectiveCamera(30, PWF / PHF, 0.1, 50);
+    camFull.position.set(0, 1.0, 4.5);
+    camFull.lookAt(0, 0.9, 0);
+    const bufCard = new Uint8Array(PWC * PHC * 4);
+    const bufFull = new Uint8Array(PWF * PHF * 4);
+    const cvCard = document.createElement('canvas');
+    cvCard.width = PWC; cvCard.height = PHC;
+    const ctxCard = cvCard.getContext('2d');
+    const cvFull = document.createElement('canvas');
+    cvFull.width = PWF; cvFull.height = PHF;
+    const ctxFull = cvFull.getContext('2d');
     prevTarget = renderer.getRenderTarget();
+    // Render + readback + Y-flip + dataURL → cache
+    const capture = (rt, cam, buf, cv, ctx, pw, ph, cache, heroId) => {
+      renderer.setRenderTarget(rt);
+      renderer.render(pScene, cam);
+      renderer.readRenderTargetPixels(rt, 0, 0, pw, ph, buf);
+      const imgData = ctx.createImageData(pw, ph);
+      for (let y = 0; y < ph; y++) {
+        const src = (ph - 1 - y) * pw * 4;
+        imgData.data.set(buf.subarray(src, src + pw * 4), y * pw * 4);
+      }
+      ctx.putImageData(imgData, 0, 0);
+      cache.set(heroId, cv.toDataURL('image/png'));
+    };
     for (const h of HEROES) {
       if (!h.available) continue;
       try {
@@ -22428,18 +22455,9 @@ function pregenHeroPortraits() {
           }
         }
         pScene.add(mesh);
-        renderer.setRenderTarget(rt);
-        renderer.render(pScene, pCam);
-        renderer.readRenderTargetPixels(rt, 0, 0, PW, PH, buf);
+        capture(rtCard, camCard, bufCard, cvCard, ctxCard, PWC, PHC, heroPortraitCache, h.id);
+        capture(rtFull, camFull, bufFull, cvFull, ctxFull, PWF, PHF, heroFullPortraitCache, h.id);
         pScene.remove(mesh);
-        // WebGL-buffern är bottom-up → flippa Y in i 2D-canvasen.
-        const imgData = ctx.createImageData(PW, PH);
-        for (let y = 0; y < PH; y++) {
-          const src = (PH - 1 - y) * PW * 4;
-          imgData.data.set(buf.subarray(src, src + PW * 4), y * PW * 4);
-        }
-        ctx.putImageData(imgData, 0, 0);
-        heroPortraitCache.set(h.id, cv.toDataURL('image/png'));
       } catch (eHero) {
         console.warn('[portrait] fail for', h.id, eHero);
       }
@@ -22448,7 +22466,8 @@ function pregenHeroPortraits() {
     console.warn('[portrait] pregen failed', e);
   } finally {
     renderer.setRenderTarget(prevTarget);
-    if (rt) rt.dispose();
+    if (rtCard) rtCard.dispose();
+    if (rtFull) rtFull.dispose();
   }
 }
 
@@ -22591,8 +22610,9 @@ function openHeroDetailPanel(heroId) {
 function mountHeroDetailPreview(heroId) {
   if (!hdPreviewEl) return;
   if (IS_MOBILE_UA) {
-    // Mobil: pre-renderad porträtt (live 3D är avstängd pga iOS 2:a-kontext-krasch)
-    const url = heroPortraitCache.get(heroId);
+    // Mobil: pre-renderad hel-kropps-porträtt (live 3D är avstängd pga iOS 2:a-
+    // kontext-krasch). heroFullPortraitCache fylls av pregenHeroPortraits.
+    const url = heroFullPortraitCache.get(heroId);
     hdPreviewEl.innerHTML = url
       ? `<div class="hd-preview-fallback"><img src="${url}" alt=""></div>`
       : `<div class="hd-preview-fallback">No preview</div>`;

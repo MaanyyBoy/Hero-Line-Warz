@@ -2055,9 +2055,9 @@
       top: max(80px, calc(env(safe-area-inset-top) + 70px));
       bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
       left: max(20px, calc(env(safe-area-inset-left) + 12px));
-      width: 36%;
-      max-width: 360px;
-      min-width: 180px;
+      width: 22%;
+      max-width: 220px;
+      min-width: 160px;
       background: linear-gradient(180deg, rgba(15,25,45,0.55), rgba(5,10,20,0.65));
       border: 2px solid rgba(255,211,74,0.45);
       border-radius: 14px;
@@ -2145,22 +2145,25 @@
       border-color: rgba(255,220,120,0.78);
       font-size: 16px;
     }
-    /* Skill-info-rutan — täcker preview-området (kluster syns för byte) */
+    /* Skill-info-rutan — i mitten mellan preview och kluster, transparent
+       (täcker varken hjälten eller skill-knapparna) (decision 104) */
     #hd-info-box {
       position: fixed;
-      top: max(80px, calc(env(safe-area-inset-top) + 70px));
-      bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
-      left: max(20px, calc(env(safe-area-inset-left) + 12px));
-      right: max(300px, calc(env(safe-area-inset-right) + 290px));
-      max-width: 520px;
+      top: 50%;
+      left: max(240px, calc(env(safe-area-inset-left) + 230px));
+      right: max(295px, calc(env(safe-area-inset-right) + 285px));
+      transform: translateY(-50%);
+      max-height: 80vh;
       overflow-y: auto;
-      background: linear-gradient(150deg, rgba(20,30,52,0.97), rgba(10,16,28,0.98));
+      background: rgba(8,12,22,0.28);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
       border: 2px solid rgba(180,200,255,0.5);
       border-radius: 14px;
       padding: 22px 26px 20px;
       color: #fff;
       z-index: 5;
-      box-shadow: 0 14px 36px rgba(0,0,0,0.75);
+      box-shadow: 0 14px 36px rgba(0,0,0,0.45);
       display: none;
       pointer-events: auto;
     }
@@ -2197,10 +2200,12 @@
     #hd-info-name {
       font: 800 18px/1.2 system-ui, sans-serif;
       color: #ffd86a;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.9);
     }
     #hd-info-desc {
       font: 400 13.5px/1.55 system-ui, sans-serif;
       color: #e0e8ff;
+      text-shadow: 0 1px 5px rgba(0,0,0,0.9);
     }
 
     /* Flytande damage/heal/shield-siffror */
