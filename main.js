@@ -12673,6 +12673,9 @@ function updateNovaEffects(side, dt) {
   }
 }
 
+// Stabilt löpnummer per black hole — route B: black holes broadcastas i
+// arena-state och renderas på joinaren via clientReconcileEntities.
+let _bhIdSeq = 0;
 // Black Hole (E): spawnar black hole vid target. Suger in 3s + explosion vid slut.
 function hostCastBlink(side, ev) {
   if (side.hero.dead || side.skills.e.cd > 0) return;
@@ -12721,6 +12724,7 @@ function hostCastBlink(side, ev) {
     }
   }
   side.blackHoles.push({
+    id: ++_bhIdSeq,
     sphere, ring, twirlMesh, flareMesh,
     x: center.x, z: center.z,
     life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
@@ -14734,7 +14738,7 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
   }
 }
 
-function clientReconcileEntities(sideIdx, key, list, makeMesh) {
+function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
   const seen = new Set();
@@ -14812,6 +14816,17 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh) {
   for (const [id, mesh] of map) {
     if (!seen.has(id)) {
       scene.remove(mesh);
+      // disposeOnRemove: för entiteter med FÄRSKA (ej delade/klonade)
+      // geometrier — frigör GPU-minnet (GC frigör inte GPU-buffrar).
+      if (disposeOnRemove) {
+        mesh.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+            else o.material.dispose();
+          }
+        });
+      }
       map.delete(id);
     }
   }
@@ -21413,6 +21428,27 @@ function applyHeroSnap(side, snap) {
   }
 }
 
+// Klient-mesh för en host-broadcastad black hole (route B). Mörk sfär + lila
+// swirl-ring — matchar host:ens hostCastBlink-visual. Färska geometrier per
+// anrop → säkra att disposa när entiteten tas bort (disposeOnRemove).
+function makeClientBlackHoleMesh() {
+  const grp = new THREE.Group();
+  const sph = new THREE.Mesh(
+    new THREE.SphereGeometry(0.8, 24, 16),
+    new THREE.MeshStandardMaterial({ color: 0x080012, emissive: 0x442288, emissiveIntensity: 0.9, roughness: 0.3, transparent: true, opacity: 0.95 })
+  );
+  sph.position.y = 0.8;
+  grp.add(sph);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(BLACKHOLE_RADIUS - 0.3, BLACKHOLE_RADIUS, 48),
+    new THREE.MeshBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  grp.add(ring);
+  return grp;
+}
+
 // Host: broadcast hela arena-overlay-state (inkl båda heroes) till klienten
 function broadcastArenaState() {
   if (APP.mode !== 'host' || !wsOpen() || !isArenaMp()) return;
@@ -21446,6 +21482,12 @@ function broadcastArenaState() {
     pu: _arrOpt(arenaState.powerUps, p => ({ id: p.id, x: _r2(p.x), z: _r2(p.z), t: p.type })),
     h1: heroSnap(sides[1]),
     h2: heroSnap(sides[2]),
+    // Route B steg 1: skill-effekt-entiteter — black holes. Joinaren renderar
+    // de RIKTIGA via clientReconcileEntities (i st f generisk platshållare).
+    bh: {
+      1: ((sides[1] && sides[1].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
+      2: ((sides[2] && sides[2].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
+    },
   });
 }
 
@@ -21548,6 +21590,12 @@ function applyArenaState(msg) {
   // Hero-snapshots
   applyHeroSnap(sides[1], msg.h1);
   applyHeroSnap(sides[2], msg.h2);
+  // Route B steg 1: rendera host:ens riktiga black holes. disposeOnRemove=true
+  // — makeClientBlackHoleMesh skapar färska geometrier → säkert att disposa.
+  for (const _bhIdx of [1, 2]) {
+    clientReconcileEntities(_bhIdx, 'blackHoles', (msg.bh && msg.bh[_bhIdx]) || [],
+      makeClientBlackHoleMesh, true);
+  }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
     if (arenaState.phase === 'prep') {
@@ -25059,6 +25107,9 @@ function triggerClientVisualAA(side) {
 function triggerClientVisualSkill(side, key) {
   if (!side || !side.mesh || side.hero.dead) return;
   const heroId = side.heroId || 'magiker';
+  // Route B: Gandulfs black hole (E) broadcastas som entitet och renderas via
+  // clientReconcileEntities i arena → skippa generiska synten (annars dubbel).
+  if (heroId === 'magiker' && key === 'e' && APP.mode === 'client' && isArenaMp()) return;
   // Legolas: använd befintliga full client-prediction-funktioner för Q/E/R i
   // ARENA/BOSS MP där host-broadcast saknar entity-listor för vine traps /
   // big arrows. I CLASSIC MP är servern auktoritativ och broadcastar VT/BA
@@ -25749,58 +25800,11 @@ function tickLocalPrediction(dt) {
   }
 }
 
-// TILLFÄLLIGT diagnos-verktyg: FPS (live + lägsta/runda) + draw calls +
-// trianglar. Användaren kör flaggskepp (iPhone 15 Plus) men får 21 FPS i strid
-// → kod-bugg. calls/tris avslöjar om scenen renderar för mycket. Tas bort sen.
-let _leakDbgEl = null;
-let _leakDbgAccum = 0;
-let _leakDbgLastRound = -1;
-let _leakDbgFps = 60;
-let _leakDbgRoundMinFps = 999;
-const _leakDbgHistory = [];
-function updateLeakDebugReadout(dt) {
-  const instFps = dt > 0 ? (1 / dt) : 60;
-  _leakDbgFps += (instFps - _leakDbgFps) * 0.1;          // smoothad live-fps
-  if (instFps < _leakDbgRoundMinFps) _leakDbgRoundMinFps = instFps;
-  _leakDbgAccum += dt;
-  if (_leakDbgAccum < 0.5) return;
-  _leakDbgAccum = 0;
-  if (!_leakDbgEl) {
-    _leakDbgEl = document.createElement('div');
-    _leakDbgEl.style.cssText =
-      'position:fixed;top:2px;left:2px;z-index:200;pointer-events:none;'
-      + 'font:700 12px/1.4 monospace;color:#7fff7f;'
-      + 'background:rgba(0,0,0,0.65);padding:4px 7px;border-radius:4px;white-space:pre;';
-    document.body.appendChild(_leakDbgEl);
-  }
-  const info = (typeof renderer !== 'undefined' && renderer && renderer.info) ? renderer.info : null;
-  // info.render nollställs vid varje render(); här (tidigt i tick) håller den
-  // föregående frames värden — draw calls + trianglar.
-  const callsN = info ? info.render.calls : 0;
-  const trisN = info ? Math.round(info.render.triangles / 1000) : 0;
-  const rn = (typeof arenaState !== 'undefined' && arenaState) ? (arenaState.roundNum || 0) : 0;
-  if (rn > 0 && rn !== _leakDbgLastRound) {
-    if (rn < _leakDbgLastRound) _leakDbgHistory.length = 0;  // ny match → nollställ
-    if (_leakDbgLastRound > 0) {
-      _leakDbgHistory.push({ r: _leakDbgLastRound, minfps: Math.round(_leakDbgRoundMinFps) });
-      if (_leakDbgHistory.length > 8) _leakDbgHistory.shift();
-    }
-    _leakDbgLastRound = rn;
-    _leakDbgRoundMinFps = 999;
-  }
-  let txt = 'LIVE fps:' + Math.round(_leakDbgFps) + ' calls:' + callsN + ' tris:' + trisN + 'k';
-  for (const h of _leakDbgHistory) {
-    txt += '\nR' + h.r + ' min-fps:' + h.minfps;
-  }
-  _leakDbgEl.textContent = txt;
-}
-
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   resetFxPopupBudget();
   tickPerfMeter(dt);
-  updateLeakDebugReadout(dt);
   // Tick lokal optimistic ult-lockout för classic MP-klient (line wars).
   // I solo + arena/boss host körs simulateAll som tickar via buff-loopen
   // — guard:a här så det inte blir dubbel tick (2.5s istället för 5s lockout).
