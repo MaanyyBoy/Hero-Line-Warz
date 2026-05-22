@@ -23193,11 +23193,15 @@ const lobbyBossModeEl = document.getElementById('lobby-boss-mode');
 const lobbyBossHostEl = document.getElementById('lobby-boss-host');
 const lobbyBossJoinEl = document.getElementById('lobby-boss-join');
 const lobbyBossWaitEl = document.getElementById('lobby-boss-wait');
+const lobbyPlayEl = document.getElementById('lobby-play');
+const lobbyComingSoonEl = document.getElementById('lobby-coming-soon');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
+  else if (which === 'play') lobbyPlayEl.classList.add('visible');
+  else if (which === 'coming-soon') lobbyComingSoonEl.classList.add('visible');
   else if (which === 'hosting') lobbyHostingEl.classList.add('visible');
   else if (which === 'joining') lobbyJoiningEl.classList.add('visible');
   else if (which === 'heroes') lobbyHeroesEl.classList.add('visible');
@@ -23214,6 +23218,8 @@ function showLobbyPanel(which) {
   else if (which === 'boss-host') lobbyBossHostEl.classList.add('visible');
   else if (which === 'boss-join') lobbyBossJoinEl.classList.add('visible');
   else if (which === 'boss-wait') lobbyBossWaitEl.classList.add('visible');
+  const _lobbyEl = document.getElementById('lobby');
+  if (_lobbyEl) _lobbyEl.classList.toggle('home-active', which === 'main');
 }
 
 function showLobbyError(msg) {
@@ -24199,6 +24205,22 @@ document.getElementById('btn-solo').addEventListener('click', () => {
 });
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
+// --- Hemskärm 2.0: Play-fönster (3 lägen) + Coming Soon-fönster ---
+const btnPlay = document.getElementById('btn-play');
+if (btnPlay) btnPlay.addEventListener('click', () => showLobbyPanel('play'));
+const btnPlayBack = document.getElementById('btn-play-back');
+if (btnPlayBack) btnPlayBack.addEventListener('click', () => showLobbyPanel('main'));
+const btnComingSoonBack = document.getElementById('btn-coming-soon-back');
+if (btnComingSoonBack) btnComingSoonBack.addEventListener('click', () => showLobbyPanel('main'));
+const comingSoonNameEl = document.getElementById('coming-soon-name');
+function openComingSoon(name) {
+  if (comingSoonNameEl) comingSoonNameEl.textContent = name;
+  showLobbyPanel('coming-soon');
+}
+for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop']]) {
+  const csBtn = document.getElementById(csId);
+  if (csBtn) csBtn.addEventListener('click', () => openComingSoon(csLabel));
+}
 // Per-mode How to Play-knappar. Sticky return-panel så Back-knappen returnerar
 // till rätt sub-meny (line-team / arena-team / boss-mode).
 const _btnHowtoLine = document.getElementById('btn-howto-line');

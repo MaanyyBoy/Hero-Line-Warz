@@ -1188,6 +1188,169 @@
       border-color: rgba(220,150,255,0.75);
     }
     .lobby-btn.mode-btn:hover { transform: translateY(-2px); }
+
+    /* ============================================================
+       HEMSKÄRM 2.0 — bakgrundsbild + hörn-placerade meny-rutor
+       (user-spec 2026-05-22). Påverkar bara lobby-UI:t.
+       ============================================================ */
+    #lobby {
+      background: #0d1424 url('./assets/home-bg.jpg') center center / cover no-repeat;
+    }
+    /* Mörk slöja — lätt på hemskärmen (bilden ska synas), mörkare i undermenyer */
+    #lobby::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: rgba(8,10,20,0.60);
+      pointer-events: none;
+      z-index: 0;
+      transition: background 0.25s ease;
+    }
+    #lobby.home-active::before {
+      background: linear-gradient(to bottom,
+        rgba(8,10,20,0.10) 0%, rgba(8,10,20,0.04) 42%, rgba(8,10,20,0.52) 100%);
+    }
+    #lobby h1 { display: none; }
+    .lobby-panel { position: relative; z-index: 1; }
+
+    /* Hörn-knappar — fixed mot viewporten (exakt i hörnen oavsett #lobby-padding).
+       Ligger i #lobby-main → renderas bara när hemskärmen är synlig. */
+    .home-btn {
+      position: fixed;
+      z-index: 3;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(150deg, rgba(34,46,72,0.94), rgba(15,21,37,0.96));
+      border: 2px solid rgba(150,178,228,0.55);
+      border-radius: 13px;
+      color: #f3f6ff;
+      font: 800 14px/1 system-ui, sans-serif;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 5px 16px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08);
+      -webkit-tap-highlight-color: transparent;
+      transition: transform 0.08s ease;
+    }
+    .home-btn:active { transform: scale(0.94); }
+    /* Skinande aura (Shop + EVENT) */
+    .home-btn.aura {
+      border-color: rgba(255,214,90,0.9);
+      animation: home-aura-pulse 1.9s ease-in-out infinite;
+    }
+    @keyframes home-aura-pulse {
+      0%,100% { box-shadow: 0 5px 16px rgba(0,0,0,0.55), 0 0 9px rgba(255,196,74,0.55); }
+      50%     { box-shadow: 0 5px 16px rgba(0,0,0,0.55), 0 0 22px rgba(255,196,74,1); }
+    }
+    /* Avatar — uppe vänster */
+    #btn-avatar {
+      top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      left: max(14px, calc(env(safe-area-inset-left) + 6px));
+      width: 58px; height: 58px;
+      font-size: 26px;
+      border-radius: 14px;
+    }
+    /* EVENT — uppe höger */
+    #btn-event {
+      top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      right: max(14px, calc(env(safe-area-inset-right) + 6px));
+      height: 50px; padding: 0 22px;
+      font-size: 15px;
+    }
+    /* Nedre vänster rad — Heroes / Skins / Level / Shop */
+    #home-bottom-left {
+      position: fixed;
+      left: max(14px, calc(env(safe-area-inset-left) + 6px));
+      bottom: max(14px, calc(env(safe-area-inset-bottom) + 6px));
+      display: flex; gap: 9px;
+      z-index: 3;
+    }
+    #home-bottom-left .home-btn {
+      position: static;
+      height: 56px;
+      min-width: 92px;
+      padding: 0 14px;
+      font-size: 13px;
+    }
+    /* PLAY — nedre höger, rund, större. Med dekorativ ring-båge i hörnet. */
+    #btn-play {
+      right: max(20px, calc(env(safe-area-inset-right) + 10px));
+      bottom: max(20px, calc(env(safe-area-inset-bottom) + 10px));
+      width: 124px; height: 124px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 38% 32%, #ffc070, #e0612a 72%, #b8431a);
+      border: 4px solid rgba(255,228,178,0.95);
+      color: #fff;
+      font: 900 23px/1 system-ui, sans-serif;
+      letter-spacing: 2.5px;
+      text-shadow: 0 2px 5px rgba(0,0,0,0.55);
+      box-shadow: 0 0 24px rgba(255,140,55,0.65), 0 7px 20px rgba(0,0,0,0.6),
+                  inset 0 -5px 12px rgba(120,40,10,0.55), inset 0 4px 10px rgba(255,255,255,0.35);
+      z-index: 4;
+      animation: home-play-pulse 2.4s ease-in-out infinite;
+    }
+    @keyframes home-play-pulse {
+      0%,100% { box-shadow: 0 0 20px rgba(255,140,55,0.55), 0 7px 20px rgba(0,0,0,0.6), inset 0 -5px 12px rgba(120,40,10,0.55), inset 0 4px 10px rgba(255,255,255,0.35); }
+      50%     { box-shadow: 0 0 40px rgba(255,150,60,0.95), 0 7px 20px rgba(0,0,0,0.6), inset 0 -5px 12px rgba(120,40,10,0.55), inset 0 4px 10px rgba(255,255,255,0.35); }
+    }
+    /* Ring-båge — stor cirkel centrerad i hörnet, bara bågen syns på skärmen */
+    #home-play-arc {
+      position: fixed;
+      right: -196px; bottom: -196px;
+      width: 392px; height: 392px;
+      border-radius: 50%;
+      border: 3px solid rgba(255,206,120,0.55);
+      box-shadow: 0 0 26px rgba(255,150,60,0.35), inset 0 0 34px rgba(255,150,60,0.20);
+      pointer-events: none;
+      z-index: 3;
+    }
+    /* PLAY-fönstret — 3 läges-kort centrerade */
+    #lobby-play.visible { margin: auto 0; }
+    .play-title {
+      font: 900 26px/1 system-ui, sans-serif;
+      color: #ffd86a;
+      letter-spacing: 2px;
+      margin-bottom: 18px;
+      text-shadow: 0 0 16px rgba(255,200,80,0.45);
+    }
+    #play-modes {
+      display: flex; gap: 16px;
+      flex-wrap: wrap; justify-content: center;
+      margin-bottom: 22px;
+    }
+    #play-modes .mode-btn {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      min-width: 0; width: 188px; height: 144px;
+      margin: 0; padding: 0; gap: 8px;
+      font: 800 17px/1.15 system-ui, sans-serif;
+      border-radius: 16px;
+    }
+    /* Coming Soon-fönster */
+    #lobby-coming-soon.visible { margin: auto 0; }
+    .coming-soon-card {
+      background: linear-gradient(150deg, rgba(26,34,56,0.97), rgba(13,18,32,0.98));
+      border: 2px solid rgba(150,178,228,0.5);
+      border-radius: 18px;
+      padding: 38px 46px;
+      text-align: center;
+      box-shadow: 0 16px 44px rgba(0,0,0,0.65);
+      max-width: 420px;
+    }
+    .cs-eyebrow {
+      font: 800 14px/1 system-ui, sans-serif;
+      color: #9fb6da; letter-spacing: 2.5px;
+      text-transform: uppercase;
+    }
+    .cs-big {
+      font: 900 40px/1 system-ui, sans-serif;
+      color: #ffd86a; letter-spacing: 1px;
+      margin: 14px 0 10px;
+      text-shadow: 0 0 20px rgba(255,200,80,0.5);
+    }
+    .cs-sub {
+      font: 400 13px/1.5 system-ui, sans-serif;
+      color: #cdd7ec; opacity: 0.8;
+      margin-bottom: 22px;
+    }
     /* Boss-pick: grid med 5 kort */
     #boss-pick-grid {
       display: grid;
@@ -2723,17 +2886,40 @@
   </style>
 </head>
 <body>
-  <div id="lobby">
+  <div id="lobby" class="home-active">
     <h1>Hellborne Wars</h1>
 
     <div class="lobby-panel visible" id="lobby-main">
-      <button class="lobby-btn mode-btn" id="btn-mode-line">⚔ Line Wars</button>
-      <button class="lobby-btn mode-btn arena" id="btn-mode-arena">🏟 Arena Wars</button>
-      <button class="lobby-btn mode-btn bosswars" id="btn-mode-boss">👹 Boss Wars</button>
+      <button class="home-btn" id="btn-avatar" aria-label="Profile">👤</button>
+      <button class="home-btn aura" id="btn-event">Event</button>
+      <div id="home-bottom-left">
+        <button class="home-btn" id="btn-heroes">Heroes</button>
+        <button class="home-btn" id="btn-skins">Skins</button>
+        <button class="home-btn" id="btn-level">Level</button>
+        <button class="home-btn aura" id="btn-shop">Shop</button>
+      </div>
+      <div id="home-play-arc"></div>
+      <button class="home-btn" id="btn-play">Play</button>
+      <button id="btn-items" style="display:none" aria-hidden="true"></button>
+    </div>
 
-      <div class="lobby-section misc">More</div>
-      <button class="lobby-btn secondary" id="btn-heroes">Heroes</button>
-      <button class="lobby-btn secondary" id="btn-items">Items</button>
+    <div class="lobby-panel" id="lobby-play">
+      <div class="play-title">⚔ Choose Mode</div>
+      <div id="play-modes">
+        <button class="lobby-btn mode-btn" id="btn-mode-line"><span style="font-size:32px">⚔</span><span>Line Wars</span></button>
+        <button class="lobby-btn mode-btn arena" id="btn-mode-arena"><span style="font-size:32px">🏟</span><span>Arena Wars</span></button>
+        <button class="lobby-btn mode-btn bosswars" id="btn-mode-boss"><span style="font-size:32px">👹</span><span>Boss Wars</span></button>
+      </div>
+      <button class="lobby-btn secondary" id="btn-play-back">← Back</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-coming-soon">
+      <div class="coming-soon-card">
+        <div class="cs-eyebrow" id="coming-soon-name">Feature</div>
+        <div class="cs-big">Coming Soon</div>
+        <div class="cs-sub">This feature is still under construction — check back later!</div>
+        <button class="lobby-btn secondary" id="btn-coming-soon-back">← Back</button>
+      </div>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-mode">
