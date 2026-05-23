@@ -209,6 +209,18 @@ const CREEP_VS_CREEP_INTERVAL = 1.5;
 // per range-monster vid spawn. Hero tar damage först vid impact, inte vid cast.
 const MONSTER_PROJ_TIME_BUCKETS = [0.5, 1.0, 1.5];
 const MONSTER_PROJ_Y = 1.0;
+// Projektil-utseende per wave-tier (index 0..4). Klienten ritar olika
+// meshes baserat på 'k' (kind). Bossar har egna kinds (se BOSS_RANGE_AA).
+const MONSTER_PROJ_KIND_PER_TIER = ['arrow', 'axe', 'darkOrb', 'fireball', 'dragonBolt'];
+// Per-boss AA-projektil-config (line wars wave 10/20/30/40/50). Alla bossar är
+// nu range med synliga, tematiska projektil-meshes — gör AA tydligt synlig.
+const BOSS_RANGE_AA = {
+  10: { kind: 'bossAxe',      range: 7.0, interval: 1.5, travel: 0.8 },   // Captain — slänger yxa
+  20: { kind: 'bossSpear',    range: 8.0, interval: 1.6, travel: 1.0 },   // General — blixtspjut
+  30: { kind: 'darkOrb',      range: 7.5, interval: 1.7, travel: 1.1 },   // Warlord — gift-orb (matchar poison-thema)
+  40: { kind: 'bossHellfire', range: 7.5, interval: 1.8, travel: 1.2 },   // Demon Prince — hellfire-orb
+  50: { kind: 'dragonBreath', range: 9.0, interval: 1.6, travel: 1.0 },   // Drakkonungen — eldspjut
+};
 
 // Gandulf-skills (omgjorda)
 // Fire Wave (Q): triangulär cone framför hero. Direkt dmg + 3s DoT.
@@ -1319,6 +1331,9 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
   const projTime = isRange
     ? MONSTER_PROJ_TIME_BUCKETS[state.nextEntityId % MONSTER_PROJ_TIME_BUCKETS.length]
     : 0;
+  // Per-tier projektil-utseende (Goblin→arrow, Ork→axe, Vandöd→darkOrb, Demon→fireball, Drakätt→dragonBolt)
+  const tierIdx = def && def.number ? Math.min(4, Math.floor((def.number - 1) / 10)) : 0;
+  const projKind = isRange ? (MONSTER_PROJ_KIND_PER_TIER[tierIdx] || 'arrow') : null;
   const monster = {
     id: state.nextEntityId++,
     x, z,
@@ -1331,6 +1346,7 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
     attackRange: isRange ? RANGE_MONSTER_RANGE : 1.2,
     attackInterval: isRange ? RANGE_MONSTER_INTERVAL : MONSTER_MELEE_INTERVAL,
     projTime,
+    projKind,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     aac: 0,
@@ -1343,6 +1359,16 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
     monster.skillCds = def.bossDef.skills.map(s => s.cd * 0.4);   // första cast snabbare
     monster.activeCast = null;
     monster.multiCircleQueue = null;   // för multiCircle-skills (sequence av AoE)
+    // Bossar med BOSS_RANGE_AA-entry blir range med projektil-AA istället för melee.
+    // Coolare kind + längre range så bossens AA syns tydligt.
+    const bossAa = BOSS_RANGE_AA[def.number];
+    if (bossAa) {
+      monster.attackType = 'range';
+      monster.attackRange = bossAa.range;
+      monster.attackInterval = bossAa.interval;
+      monster.projTime = bossAa.travel;
+      monster.projKind = bossAa.kind;
+    }
   }
   side.monsters.push(monster);
 }
@@ -1412,9 +1438,9 @@ function updateMonsters(state, side, opp, dt) {
     if (heroVisible && distHero < atkRange && m.atkCd <= 0) {
       m.aac = (m.aac || 0) + 1;          // triggar attack-animation på klient (delta)
       m.ry = Math.atan2(dxh, dzh);       // vänd mot målet vid AA
-      // Range-monster: damage tillämpas vid projektil-impact, INTE direkt.
-      // Bossar är alltid melee i nuläget (skills = telegraph; vanlig AA = nära).
-      if (m.attackType === 'range' && !m.isBoss && !m.isMiniBoss) {
+      // Range-monster (inkl. range-bossar): damage tillämpas vid projektil-impact.
+      // Melee-bossar/mini-bossar/melee-monster: damage direkt.
+      if (m.attackType === 'range') {
         spawnMonsterProjectile(state, side, m);
       } else {
         damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
@@ -1697,6 +1723,13 @@ function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill) {
   if (distSq < halfWidth * halfWidth) damageHero(side, dmg);
 }
 
+// Boss-skill-projektil. Kind per skill — så Captain's throwingAxe ser ut som en
+// stridyxa, Generals spearVolley som blixtspjut etc. Default 'bossDefault' = stor orange orb.
+const BOSS_SKILL_PROJ_KIND = {
+  throwingAxe: 'bossAxe',
+  spearVolley: 'bossSpear',
+  // (resterande boss-skills är inte projectile-kind)
+};
 function spawnBossProjectile(state, side, m, x, z, dx, dz, speed, range, radius, dmg, skill) {
   side.bossProjectiles = side.bossProjectiles || [];
   side.bossProjectiles.push({
@@ -1704,6 +1737,7 @@ function spawnBossProjectile(state, side, m, x, z, dx, dz, speed, range, radius,
     x, z, dx, dz,
     speed, range, traveled: 0,
     radius, dmg, skill,
+    kind: (skill && BOSS_SKILL_PROJ_KIND[skill.id]) || 'bossDefault',
   });
 }
 
@@ -1875,7 +1909,9 @@ function spawnMonsterProjectile(state, side, m) {
     damage: m.damage || MONSTER_MELEE_DAMAGE,
     timer: travel,
     totalTime: travel,
-    kind: 'magic',                       // klient-render: glowing orb (matchar wave-monster-magi)
+    kind: m.projKind || 'magic',         // styr klient-mesh (arrow/fireball/bossSpear/...)
+    isBoss: !!m.isBoss,
+    isMiniBoss: !!m.isMiniBoss,
   });
 }
 
@@ -5245,7 +5281,7 @@ function serializeSide(side) {
         dz: m.activeCast.dirZ != null ? r3(m.activeCast.dirZ) : null,
       } : undefined,
     })),
-    BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })),
+    BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz), kind: p.kind })),
     BPL: arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) })),
     C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, aac: c.aac || 0, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
     F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),

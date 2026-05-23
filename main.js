@@ -7796,15 +7796,27 @@ function spawnBossWarsBoss(side, tier) {
   // Test-mode: nolla damage + skip skills så bossen står still som "display-piece".
   // chasing=false så den inte heller jagar hjälten — bara står där och kan inspekteras.
   const isTestMode = !!(APP.bossWars && APP.bossWars.testMode);
+  // Boss Wars AA-config per tier — alla bossar är range med tematiska,
+  // mer dramatiska projektiler än line wars-bossarna.
+  const BOSSWARS_AA = {
+    1: { kind: 'bw_goblinArrow', range: 8.5, interval: 1.2, travel: 0.7 },   // Goblin Archer
+    2: { kind: 'bw_warlockOrb',  range: 8.0, interval: 1.4, travel: 1.0 },   // Warlock
+    3: { kind: 'bw_alienPlasma', range: 7.5, interval: 1.3, travel: 0.9 },   // No-Face Alien
+    4: { kind: 'bw_demonHeart',  range: 7.0, interval: 1.5, travel: 1.1 },   // Big Alien
+    5: { kind: 'bw_starshard',   range: 9.0, interval: 1.2, travel: 0.8 },   // Alien Soldier
+  };
+  const aaCfg = BOSSWARS_AA[tier] || { kind: 'bossDefault', range: 7.5, interval: 1.4, travel: 1.0 };
   side.monsters.push({
     id: bossId,
     lane: 1,
     hp, maxHp: hp,
     speed: isTestMode ? 0 : bossSpeed,
     damage: isTestMode ? 0 : dmg,
-    attackType: 'melee',
-    attackRange: 2.4,           // bumpad så bossen kan slå utan att klistras in
-    attackInterval: 0.9,        // snabbare AA (1.2 → 0.9s)
+    attackType: 'range',
+    attackRange: aaCfg.range,
+    attackInterval: aaCfg.interval,
+    projTime: aaCfg.travel,
+    projKind: aaCfg.kind,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: !isTestMode,
     isBoss: true, isMiniBoss: false,
@@ -11011,16 +11023,14 @@ function updateMonsters(side, dt) {
         m.mesh.userData.attackTrigger = true;
         m.mesh.rotation.y = Math.atan2(dxh, dzh);
       }
-      // Range-monster: damage tillämpas vid projektil-impact, INTE direkt.
-      // Bossar är alltid melee i nuläget (R skill = telegraph; vanlig AA = nära).
-      if (m.attackType === 'range' && !m.isBoss && !m.isBossWarsBoss) {
+      // Range-monster/range-boss/range-boss-wars: damage vid projektil-impact.
+      // Melee: damage direkt + slash-FX. Boss-melee får extra ground-impact + spark.
+      if (m.attackType === 'range') {
         hostSpawnMonsterProjectile(targetSide, m);
       } else {
         damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
         spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
-        // Boss-AA: extra visuell feedback så animationen syns tydligt.
-        // Ground-impact vid bossens fot + slash vid heroens position.
-        if (m.isBossWarsBoss && m.mesh) {
+        if ((m.isBoss || m.isBossWarsBoss) && m.mesh) {
           spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 2.2, 0xff6644);
           spawnHitSparkFx(targetSide.hero.x, 1.2, targetSide.hero.z, 0xffaa44);
         }
@@ -11301,42 +11311,492 @@ function updateCreepProjectiles(side, dt) {
 // Monster-AA-projektil (range-monster mot DENNA sides hero). Damage tillämpas
 // vid IMPACT (timer = 0), inte vid cast. Olika monster har olika travel-time
 // (m.projTime, 0.5/1.0/1.5s) så hjälten ser olika hot.
+// Projektil-mesh per arketyp/tier. Ingen PointLight (decision 062 — runtime add/remove
+// av lights triggar iOS Safari shader-recompile-storm). Glow görs via emissive +
+// additive halo-sfärer. Alla meshes orienteras via orientToMotion-flagga om relevant.
 function makeMonsterProjectileMesh(kind) {
-  if (kind === 'magic') {
-    const grp = new THREE.Group();
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.30, 14, 10),
-      new THREE.MeshStandardMaterial({ color: 0xff5544, emissive: 0xff3322, emissiveIntensity: 1.8, roughness: 0.35 })
-    );
-    grp.add(core);
-    const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(0.50, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff8866, transparent: true, opacity: 0.30, depthWrite: false })
-    );
-    grp.add(halo);
-    return grp;
-  }
-  // Default: pil (kommer även användas för bossar om de blir range)
   const grp = new THREE.Group();
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.045, 0.045, 0.70, 8),
-    new THREE.MeshStandardMaterial({ color: 0x5a2818, roughness: 0.75 })
-  );
-  shaft.rotation.x = Math.PI / 2;
-  grp.add(shaft);
-  const tip = new THREE.Mesh(
-    new THREE.ConeGeometry(0.08, 0.22, 8),
-    new THREE.MeshStandardMaterial({ color: 0xc4c4cc, metalness: 0.55, roughness: 0.35 })
-  );
-  tip.rotation.x = Math.PI / 2;
-  tip.position.z = 0.42;
-  grp.add(tip);
-  return grp;
+  switch (kind) {
+    case 'magic': {
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.30, 14, 10),
+        new THREE.MeshStandardMaterial({ color: 0xff5544, emissive: 0xff3322, emissiveIntensity: 1.8, roughness: 0.35 })
+      );
+      grp.add(core);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.50, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff8866, transparent: true, opacity: 0.30, depthWrite: false })
+      );
+      grp.add(halo);
+      return grp;
+    }
+    case 'arrow': {
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.045, 0.045, 0.70, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5a2818, roughness: 0.75 })
+      );
+      shaft.rotation.x = Math.PI / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.08, 0.22, 8),
+        new THREE.MeshStandardMaterial({ color: 0xc4c4cc, metalness: 0.55, roughness: 0.35 })
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.42;
+      grp.add(tip);
+      // Tre fjädrar i bakänden
+      const featherMat = new THREE.MeshStandardMaterial({ color: 0xb8b0a8, roughness: 0.9, side: THREE.DoubleSide });
+      for (let i = 0; i < 3; i++) {
+        const ang = (i / 3) * Math.PI * 2;
+        const f = new THREE.Mesh(new THREE.PlaneGeometry(0.10, 0.18), featherMat);
+        f.position.set(Math.cos(ang) * 0.05, Math.sin(ang) * 0.05, -0.30);
+        f.rotation.z = ang;
+        grp.add(f);
+      }
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    case 'axe': {
+      // Roterande stridyxa
+      const handle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.05, 0.60, 8),
+        new THREE.MeshStandardMaterial({ color: 0x3a2010, roughness: 0.8 })
+      );
+      handle.rotation.x = Math.PI / 2;
+      grp.add(handle);
+      const headG = new THREE.BoxGeometry(0.42, 0.28, 0.10);
+      const head = new THREE.Mesh(
+        headG,
+        new THREE.MeshStandardMaterial({ color: 0xb0b0b8, metalness: 0.7, roughness: 0.35, emissive: 0x222222, emissiveIntensity: 0.4 })
+      );
+      head.position.y = 0.05;
+      grp.add(head);
+      grp.userData.spin = 'z';
+      return grp;
+    }
+    case 'darkOrb': {
+      // Mörk lila orb — vandöd-style
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0x3a1a55, emissive: 0x8030c0, emissiveIntensity: 2.0, roughness: 0.4 })
+      );
+      grp.add(core);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xa040ff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // Två mörka swirl-ringar
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xc060ff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+      for (let i = 0; i < 2; i++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.04, 6, 24), ringMat);
+        ring.rotation.x = (i === 0) ? Math.PI / 2.4 : -Math.PI / 2.4;
+        ring.rotation.z = i * 0.7;
+        grp.add(ring);
+      }
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'fireball': {
+      // Demonisk eldklot — orange/röd, större än magic
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.36, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0xff7020, emissive: 0xff3000, emissiveIntensity: 2.4, roughness: 0.4 })
+      );
+      grp.add(core);
+      // Inner ljust hjärta
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.18, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.95 })
+      );
+      grp.add(heart);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.60, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.38, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // Flame-tongues — 4 koner runt om
+      const tongueMat = new THREE.MeshBasicMaterial({ color: 0xff8830, transparent: true, opacity: 0.65, depthWrite: false, blending: THREE.AdditiveBlending });
+      for (let i = 0; i < 4; i++) {
+        const ang = (i / 4) * Math.PI * 2;
+        const t = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.42, 6), tongueMat);
+        t.position.set(Math.cos(ang) * 0.30, Math.sin(ang) * 0.30, 0);
+        t.rotation.z = ang - Math.PI / 2;
+        grp.add(t);
+      }
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'dragonBolt': {
+      // Drakeld-klot — gyllene/orange med spjut-form
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.30, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0xffb030, emissive: 0xff8010, emissiveIntensity: 2.6, roughness: 0.3 })
+      );
+      grp.add(core);
+      // Spjut-spets framtill (i flygriktningen +Z)
+      const spear = new THREE.Mesh(
+        new THREE.ConeGeometry(0.20, 0.55, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffd060, emissive: 0xffa020, emissiveIntensity: 2.0, metalness: 0.4 })
+      );
+      spear.rotation.x = Math.PI / 2;
+      spear.position.z = 0.32;
+      grp.add(spear);
+      // Trail-svans bakåt
+      const tail = new THREE.Mesh(
+        new THREE.ConeGeometry(0.18, 0.55, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      tail.rotation.x = -Math.PI / 2;
+      tail.position.z = -0.35;
+      grp.add(tail);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.50, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffd080, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    case 'bossDefault': {
+      // Fallback för boss-skill-projektiler — stor orange orb med halo
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.50, 16, 12),
+        new THREE.MeshStandardMaterial({ color: 0xff6622, emissive: 0xff3300, emissiveIntensity: 1.8, roughness: 0.4 })
+      );
+      grp.add(core);
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffdd99, transparent: true, opacity: 0.9 })
+      );
+      grp.add(heart);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.80, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.40, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    // ---- Boss-projektiler (line wars wave 10/20/30/40/50) ----
+    case 'bossAxe': {
+      // Captain wave 10 — stor stridyxa, roterar
+      const handle = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 0.85, 8),
+        new THREE.MeshStandardMaterial({ color: 0x4a2818, roughness: 0.85 })
+      );
+      handle.rotation.x = Math.PI / 2;
+      grp.add(handle);
+      const head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.65, 0.42, 0.14),
+        new THREE.MeshStandardMaterial({ color: 0xc0c0c8, metalness: 0.75, roughness: 0.3, emissive: 0x442200, emissiveIntensity: 0.5 })
+      );
+      head.position.y = 0.08;
+      grp.add(head);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.70, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.20, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      grp.userData.spin = 'z';
+      return grp;
+    }
+    case 'bossSpear': {
+      // General wave 20 — blixtspjut, lila/blå
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.07, 0.05, 1.10, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5040a0, emissive: 0x6050d0, emissiveIntensity: 1.4, metalness: 0.5 })
+      );
+      shaft.rotation.x = Math.PI / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.16, 0.40, 8),
+        new THREE.MeshStandardMaterial({ color: 0xa0c0ff, emissive: 0x6080ff, emissiveIntensity: 2.4, metalness: 0.8 })
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.68;
+      grp.add(tip);
+      // Elektrisk halo
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.70, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0x8090ff, transparent: true, opacity: 0.40, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // Zig-zag blixtar runt skaftet
+      const sparkMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false });
+      for (let i = 0; i < 3; i++) {
+        const ang = (i / 3) * Math.PI * 2;
+        const s = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.45), sparkMat);
+        s.position.set(Math.cos(ang) * 0.18, Math.sin(ang) * 0.18, 0);
+        grp.add(s);
+      }
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    case 'bossHellfire': {
+      // Demon Prince wave 40 — stor hellfire-orb, mörk hjärta
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 18, 14),
+        new THREE.MeshStandardMaterial({ color: 0xff4010, emissive: 0xff2000, emissiveIntensity: 2.6, roughness: 0.5 })
+      );
+      grp.add(core);
+      // Svart hjärtkärna
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.25, 14, 10),
+        new THREE.MeshStandardMaterial({ color: 0x1a0000, emissive: 0x440000, emissiveIntensity: 0.8 })
+      );
+      grp.add(heart);
+      // Yttre eldhalo
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.90, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xff6020, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // 6 eldtungor
+      const tongueMat = new THREE.MeshBasicMaterial({ color: 0xff7020, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending });
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2;
+        const t = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.65, 6), tongueMat);
+        t.position.set(Math.cos(ang) * 0.45, Math.sin(ang) * 0.45, 0);
+        t.rotation.z = ang - Math.PI / 2;
+        grp.add(t);
+      }
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'dragonBreath': {
+      // Drakkonungen wave 50 — eldsignal-ström, oval gold-flame
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.50, 18, 14),
+        new THREE.MeshStandardMaterial({ color: 0xffc040, emissive: 0xff9020, emissiveIntensity: 3.0, roughness: 0.3 })
+      );
+      core.scale.set(1, 1, 1.6);
+      grp.add(core);
+      // Vit-het hjärta
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffffdd, transparent: true, opacity: 0.95 })
+      );
+      heart.scale.set(1, 1, 1.6);
+      grp.add(heart);
+      // Stor trail-svans bakåt
+      const tail = new THREE.Mesh(
+        new THREE.ConeGeometry(0.30, 1.10, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      tail.rotation.x = -Math.PI / 2;
+      tail.position.z = -0.55;
+      grp.add(tail);
+      // Spear-tip framåt
+      const spear = new THREE.Mesh(
+        new THREE.ConeGeometry(0.28, 0.60, 10),
+        new THREE.MeshStandardMaterial({ color: 0xffe080, emissive: 0xffb020, emissiveIntensity: 2.6 })
+      );
+      spear.rotation.x = Math.PI / 2;
+      spear.position.z = 0.55;
+      grp.add(spear);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.95, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffc060, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      halo.scale.set(1, 1, 1.6);
+      grp.add(halo);
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    // ---- Boss Wars-projektiler (host-auth, ännu mer dramatiska än line wars) ----
+    case 'bw_goblinArrow': {
+      // Tier 1 Goblin Archer — gift-pil, grön glow
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.07, 0.07, 1.00, 8),
+        new THREE.MeshStandardMaterial({ color: 0x3a4818, emissive: 0x60a020, emissiveIntensity: 0.6 })
+      );
+      shaft.rotation.x = Math.PI / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.18, 0.45, 8),
+        new THREE.MeshStandardMaterial({ color: 0x80ff60, emissive: 0x60c020, emissiveIntensity: 2.4, metalness: 0.5 })
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.62;
+      grp.add(tip);
+      // Gifttvilling-trail
+      const trailMat = new THREE.MeshBasicMaterial({ color: 0x80ff40, transparent: true, opacity: 0.65, depthWrite: false, blending: THREE.AdditiveBlending });
+      for (let i = 0; i < 3; i++) {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(0.10 - i * 0.025, 8, 6), trailMat);
+        s.position.z = -0.30 - i * 0.25;
+        grp.add(s);
+      }
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.55, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0x80ff60, transparent: true, opacity: 0.30, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    case 'bw_warlockOrb': {
+      // Tier 2 Warlock — eterisk lila orb, dubbla swirl-ringar
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.45, 18, 14),
+        new THREE.MeshStandardMaterial({ color: 0x6020a0, emissive: 0xb060ff, emissiveIntensity: 2.6, roughness: 0.3 })
+      );
+      grp.add(core);
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.20, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffccff, transparent: true, opacity: 0.9 })
+      );
+      grp.add(heart);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.85, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xc060ff, transparent: true, opacity: 0.40, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0xe080ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+      const ring1 = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.05, 8, 32), ringMat);
+      ring1.rotation.x = Math.PI / 2.2;
+      grp.add(ring1);
+      const ring2 = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.04, 8, 32), ringMat);
+      ring2.rotation.x = -Math.PI / 2.2;
+      ring2.rotation.y = Math.PI / 4;
+      grp.add(ring2);
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'bw_alienPlasma': {
+      // Tier 3 No-Face Alien — biologisk cyan klot, pulserande
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 18, 14),
+        new THREE.MeshStandardMaterial({ color: 0x20c0a0, emissive: 0x40ffd0, emissiveIntensity: 2.2, roughness: 0.4 })
+      );
+      grp.add(core);
+      // Inner organisk kärna (irregular shape via icosa)
+      const heart = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.22, 0),
+        new THREE.MeshStandardMaterial({ color: 0x80ffe0, emissive: 0xa0ffe8, emissiveIntensity: 1.8 })
+      );
+      grp.add(heart);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.80, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0x40ffc0, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // Tentakel-spurs
+      const spurMat = new THREE.MeshBasicMaterial({ color: 0x60ffd0, transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending });
+      for (let i = 0; i < 5; i++) {
+        const ang = (i / 5) * Math.PI * 2;
+        const s = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.45, 6), spurMat);
+        s.position.set(Math.cos(ang) * 0.42, Math.sin(ang) * 0.42, 0);
+        s.rotation.z = ang - Math.PI / 2;
+        grp.add(s);
+      }
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'bw_demonHeart': {
+      // Tier 4 Big Alien — pulserande röd hellfire med vibrating spike-skal
+      const core = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.55, 1),
+        new THREE.MeshStandardMaterial({ color: 0xc00010, emissive: 0xff2030, emissiveIntensity: 2.8, roughness: 0.6 })
+      );
+      grp.add(core);
+      const heart = new THREE.Mesh(
+        new THREE.SphereGeometry(0.28, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffe080, transparent: true, opacity: 0.95 })
+      );
+      grp.add(heart);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.95, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0xff4030, transparent: true, opacity: 0.50, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // 8 spikar
+      const spikeMat = new THREE.MeshStandardMaterial({ color: 0x801010, emissive: 0xc00010, emissiveIntensity: 1.5 });
+      for (let i = 0; i < 8; i++) {
+        const phi = (i / 8) * Math.PI * 2;
+        const sp = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.32, 6), spikeMat);
+        sp.position.set(Math.cos(phi) * 0.55, Math.sin(phi) * 0.55, 0);
+        sp.rotation.z = phi - Math.PI / 2;
+        grp.add(sp);
+      }
+      grp.userData.spin = 'y';
+      return grp;
+    }
+    case 'bw_starshard': {
+      // Tier 5 Alien Soldier — vit-blå stjärnsplitter, comet-stil
+      const core = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.40, 0),
+        new THREE.MeshStandardMaterial({ color: 0xc0e0ff, emissive: 0xffffff, emissiveIntensity: 2.8, metalness: 0.5 })
+      );
+      grp.add(core);
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.75, 14, 10),
+        new THREE.MeshBasicMaterial({ color: 0x80c0ff, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending })
+      );
+      grp.add(halo);
+      // Comet-trail
+      const trailMat = new THREE.MeshBasicMaterial({ color: 0xa0e0ff, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending });
+      const trail = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.40, 10), trailMat);
+      trail.rotation.x = -Math.PI / 2;
+      trail.position.z = -0.75;
+      grp.add(trail);
+      // Spear-tip
+      const spear = new THREE.Mesh(
+        new THREE.ConeGeometry(0.22, 0.55, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xc0e0ff, emissiveIntensity: 3.0 })
+      );
+      spear.rotation.x = Math.PI / 2;
+      spear.position.z = 0.50;
+      grp.add(spear);
+      grp.userData.orientToMotion = true;
+      return grp;
+    }
+    default: {
+      // Fallback: pil-stil
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.045, 0.045, 0.70, 8),
+        new THREE.MeshStandardMaterial({ color: 0x5a2818, roughness: 0.75 })
+      );
+      shaft.rotation.x = Math.PI / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.08, 0.22, 8),
+        new THREE.MeshStandardMaterial({ color: 0xc4c4cc, metalness: 0.55, roughness: 0.35 })
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.42;
+      grp.add(tip);
+      return grp;
+    }
+  }
+}
+
+// Impact-färg per projektil-kind — matchar mesh-emissive så hit-FX känns sammanhängande.
+function projectileImpactColor(kind) {
+  switch (kind) {
+    case 'arrow': return 0xffd060;
+    case 'magic': return 0xff5544;
+    case 'fireball': return 0xff7020;
+    case 'darkOrb': return 0xa040ff;
+    case 'axe': return 0xc0c0c8;
+    case 'dragonBolt': return 0xffb030;
+    case 'bossAxe': return 0xffcc66;
+    case 'bossSpear': return 0x8090ff;
+    case 'bossHellfire': return 0xff4030;
+    case 'dragonBreath': return 0xffc060;
+    case 'bw_goblinArrow': return 0x80ff60;
+    case 'bw_warlockOrb': return 0xc060ff;
+    case 'bw_alienPlasma': return 0x40ffc0;
+    case 'bw_demonHeart': return 0xff4030;
+    case 'bw_starshard': return 0xa0e0ff;
+    default: return 0xffd060;
+  }
 }
 
 function hostSpawnMonsterProjectile(targetSide, monster) {
   if (!targetSide || !targetSide.monsterProjectiles) return;
-  const kind = monster.attackType === 'range' ? 'magic' : 'arrow';
+  // Use per-monster projKind if set (boss wars / tier-specific). Fallback: magic for range, arrow for melee.
+  const kind = monster.projKind || (monster.attackType === 'range' ? 'magic' : 'arrow');
   const mesh = makeMonsterProjectileMesh(kind);
   const srcX = monster.mesh ? monster.mesh.position.x : monster.x || 0;
   const srcZ = monster.mesh ? monster.mesh.position.z : monster.z || 0;
@@ -11375,19 +11835,39 @@ function updateMonsterProjectiles(side, dt) {
     p.mesh.position.x = nx;
     p.mesh.position.z = nz;
     p.mesh.position.y = MONSTER_PROJ_Y;
-    if (p.kind === 'arrow') {
+    // Orient/spin baserat på mesh.userData-flaggor satta av makeMonsterProjectileMesh.
+    const ud = p.mesh.userData || {};
+    if (ud.orientToMotion) {
       if (dx * dx + dz * dz > 0.0001) {
-        p.mesh.rotation.x = -Math.PI / 2;
+        p.mesh.rotation.x = 0;
         p.mesh.rotation.y = Math.atan2(dx, dz);
       }
+    } else if (ud.spin === 'z') {
+      p.mesh.rotation.z = (p.mesh.rotation.z || 0) + dt * 14;
+    } else if (ud.spin === 'y') {
+      p.mesh.rotation.y = (p.mesh.rotation.y || 0) + dt * 6;
     } else {
-      p.mesh.rotation.y += dt * 6;
+      p.mesh.rotation.y += dt * 6;   // fallback spin
     }
     if (p.timer <= 0) {
       damageHero(side, p.damage);
-      spawnSlashFx(side.hero.x, side.hero.z, p.kind === 'magic' ? 0xff5544 : 0xffd060);
-      spawnHitSparkFx(side.hero.x, 1.2, side.hero.z, p.kind === 'magic' ? 0xff8844 : 0xffaa44);
+      // Impact-FX färgkodad efter projektil-typ
+      const impactColor = projectileImpactColor(p.kind);
+      spawnSlashFx(side.hero.x, side.hero.z, impactColor);
+      spawnHitSparkFx(side.hero.x, 1.2, side.hero.z, impactColor);
+      // Boss/mini-boss-träffar får extra kraftig FX (synligare slag)
+      if (p.isBoss || p.isMiniBoss) {
+        spawnGroundImpact(side.hero.x, side.hero.z, 1.6, impactColor);
+      }
       scene.remove(p.mesh);
+      // Dispose GPU (decision 083: undvik geometri-läcka)
+      p.mesh.traverse(o => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+          else o.material.dispose();
+        }
+      });
       side.monsterProjectiles.splice(i, 1);
     }
   }
@@ -15850,17 +16330,15 @@ function applyRemoteState(state) {
     // AA-animation-trigger: detektera aac-delta per monster och sätt
     // attackTrigger på mesh så animateGltfCharacter spelar attack-clip.
     syncAaCounterTriggers(idx, 'monsters', sData.M);
-    // Boss-projektiler + DoT-pools (line wars boss-skills)
-    clientReconcileEntities(idx, 'bossProjectiles', sData.BP || [], () => {
-      const grp = new THREE.Group();
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(0.45, 14, 10),
-        new THREE.MeshStandardMaterial({ color: 0xff6622, emissive: 0xff3300, emissiveIntensity: 1.4 })
-      );
-      core.position.y = 1.0;
-      grp.add(core);
-      return grp;
-    });
+    // Boss-projektiler + DoT-pools (line wars boss-skills).
+    // 'kind' från server (bossAxe/bossSpear/...). Default bossDefault = stor orange orb.
+    clientReconcileEntities(idx, 'bossProjectiles', sData.BP || [], (e) => {
+      const kind = e.kind || 'bossDefault';
+      const mesh = makeMonsterProjectileMesh(kind);
+      mesh.userData.kind = kind;
+      mesh.position.y = 1.0;
+      return mesh;
+    }, true);
     clientReconcileEntities(idx, 'bossPools', sData.BPL || [], () => {
       const grp = new THREE.Group();
       const ring = new THREE.Mesh(
@@ -15952,9 +16430,11 @@ function applyRemoteState(state) {
     });
     // Monster-AA-projektiler (range-monster mot DENNA sides hero). Damage
     // tillämpas server-side vid impact; klienten visualiserar bara flygsträckan.
+    // 'kind'-fältet från server styr per-arketyp mesh (arrow/magic/fireball/darkOrb/...).
     clientReconcileEntities(idx, 'monsterProjectiles', sData.MR || [], (e) => {
-      const mesh = makeMonsterProjectileMesh(e.kind === 'arrow' ? 'arrow' : 'magic');
-      mesh.userData.orientToMotion = e.kind === 'arrow';
+      const kind = e.kind || 'magic';
+      const mesh = makeMonsterProjectileMesh(kind);
+      mesh.userData.kind = kind;
       return mesh;
     }, true);
     clientReconcileEntities(idx, 'heroCopies', sData.HC || [], (e) => {
@@ -16277,14 +16757,14 @@ function checkMatchEnd() {
 // KAMERA
 // ============================================================
 
-const cameraOffset = new THREE.Vector3(0, 17, 14);
+// Line wars: zoomad ut 10% från tidigare (17,14) → (18.7,15.4)
+const cameraOffset = new THREE.Vector3(0, 17 * 1.10, 14 * 1.10);
 const cameraTarget = new THREE.Vector3();
 
-// Arena-läget får större kamera-distans så hela den dubblade banan syns
-// (30% inzoomad från tidigare 32/26 → 22/18)
-const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 22, 18);
-// Boss Wars: zoomat ut 25% från classic så man ser bossens AoE bättre
-const BOSSWARS_CAMERA_OFFSET = new THREE.Vector3(0, 17 * 1.25, 14 * 1.25);
+// Arena: zoomad in 15% från tidigare (22,18) → (18.7,15.3)
+const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 22 * 0.85, 18 * 0.85);
+// Boss Wars: zoomad in 20% från tidigare (21.25,17.5) → (17,14)
+const BOSSWARS_CAMERA_OFFSET = new THREE.Vector3(0, 17 * 1.25 * 0.80, 14 * 1.25 * 0.80);
 
 // Camera-shake: triggas av stora effekter (orb-död, AoE-explosioner)
 const cameraShake = { magnitude: 0, duration: 0, elapsed: 0 };
@@ -21209,9 +21689,20 @@ function maybeSendClientInput(now) {
 function buildBossWarsSnap() {
   // Hero snapshots för alla 3 sides (alla som existerar)
   const h = {};
+  // Monster-projektiler per side — broadcastas så joinaren ser bossens AA-projektiler.
+  // Endast positioner+kind (damage tillämpas host-side vid impact, ingen sync-need).
+  const mr = {};
   for (const idx of [1, 2, 3]) {
     const s = sides[idx];
     if (s) h[idx] = heroSnap(s);
+    if (s && s.monsterProjectiles && s.monsterProjectiles.length) {
+      mr[idx] = s.monsterProjectiles.map(p => ({
+        id: p.id,
+        x: _r2(p.mesh ? p.mesh.position.x : p.srcX),
+        z: _r2(p.mesh ? p.mesh.position.z : p.srcZ),
+        kind: p.kind,
+      }));
+    }
   }
   // Boss snapshot: hitta isBossWarsBoss-monstret i sides[1].monsters.
   // OBS: bossens position bor på mesh.position, inte på m.x/m.z (som projektiler har).
@@ -21248,7 +21739,7 @@ function buildBossWarsSnap() {
       };
     }
   }
-  return { h, b: boss, t: APP.bossWars && APP.bossWars.tier || 1 };
+  return { h, b: boss, t: APP.bossWars && APP.bossWars.tier || 1, mr };
 }
 
 function broadcastBossWarsState() {
@@ -21267,6 +21758,7 @@ function broadcastBossWarsState() {
     h: snap.h,
     b: snap.b,
     tr: snap.t,
+    mr: snap.mr,                                          // monster-projektiler per side
     ba: !!(APP.bossWars && APP.bossWars.bossActivated),   // boss aktiverad?
     gc: !!(APP.bossWars && APP.bossWars.gateClosed),       // gate stängd?
   });
@@ -21285,6 +21777,20 @@ function applyBossWarsState(msg) {
       const snap = msg.h[idx];
       const s = sides[idx];
       if (s && snap) applyHeroSnap(s, snap);
+    }
+  }
+  // Monster-projektiler per side — boss-AA-projektiler joinaren ska se flyga.
+  // clientReconcileEntities skapar mesh via makeMonsterProjectileMesh(kind).
+  if (msg.mr) {
+    for (const idx of [1, 2, 3]) {
+      const list = msg.mr[idx] || [];
+      clientReconcileEntities(idx, 'monsterProjectiles', list, (e) => {
+        const kind = e.kind || 'magic';
+        const mesh = makeMonsterProjectileMesh(kind);
+        mesh.userData.kind = kind;
+        mesh.position.y = MONSTER_PROJ_Y;
+        return mesh;
+      }, true);
     }
   }
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
@@ -26086,6 +26592,28 @@ function tickAragurnVisuals(dt) {
   }
 }
 
+// Spin/orient-tick för entity-baserade projektil-meshes (clientReconcileEntities-vägen,
+// MR + BP). Snap-grenen sätter bara position; spin (axe/orb/fireball/etc) behöver
+// kontinuerlig rotation per frame. orientToMotion hanteras redan i snap-grenen.
+function tickProjectileEntitySpins(dt) {
+  const keys = ['monsterProjectiles', 'bossProjectiles'];
+  for (const key of keys) {
+    const tier = clientMeshes[key];
+    if (!tier) continue;
+    for (const map of tier.values()) {
+      for (const mesh of map.values()) {
+        const ud = mesh.userData;
+        if (!ud) continue;
+        if (ud.spin === 'z') {
+          mesh.rotation.z = (mesh.rotation.z || 0) + dt * 14;
+        } else if (ud.spin === 'y') {
+          mesh.rotation.y = (mesh.rotation.y || 0) + dt * 6;
+        }
+      }
+    }
+  }
+}
+
 function tickCombatFx(dt) {
   for (let i = combatFx.length - 1; i >= 0; i--) {
     const e = combatFx[i];
@@ -26689,6 +27217,7 @@ function tick() {
   tickDuelOrbVisual(dt);
   tickDuelBigOrbVisual(dt);
   tickCombatFx(dt);
+  tickProjectileEntitySpins(dt);
   tickAragurnVisuals(dt);
   tickBossArenaFlames(dt);
   tickBossArenaCrystals(dt);
