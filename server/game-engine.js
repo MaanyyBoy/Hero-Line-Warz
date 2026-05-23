@@ -205,6 +205,11 @@ const CREEP_VS_CREEP_DAMAGE = 5;
 const CREEP_VS_CREEP_RANGE = 1.5;
 const CREEP_VS_CREEP_INTERVAL = 1.5;
 
+// Monster ranged AA-projektil: travel-time buckets (sek) — picks deterministiskt
+// per range-monster vid spawn. Hero tar damage först vid impact, inte vid cast.
+const MONSTER_PROJ_TIME_BUCKETS = [0.5, 1.0, 1.5];
+const MONSTER_PROJ_Y = 1.0;
+
 // Gandulf-skills (omgjorda)
 // Fire Wave (Q): triangulär cone framför hero. Direkt dmg + 3s DoT.
 const FIREWAVE_LENGTH = 5;                 // halverad räckvidd
@@ -1055,6 +1060,7 @@ function createSide(idx) {
     fireballs: [],
     novaEffects: [],
     creepProjectiles: [],
+    monsterProjectiles: [],
     wave: {
       current: 0,
       active: false,
@@ -1127,7 +1133,7 @@ function spawnMinion(state, side, typeId, lane) {
     speed: def.speed, damage: def.damage, range: def.range, interval: def.interval,
     attackType: def.attackType, aoeRadius: def.aoeRadius || 0,
     cost: def.cost,
-    pathIndex: 0, atkCd: 0,
+    pathIndex: 0, atkCd: 0, aac: 0,
   });
 }
 
@@ -1290,6 +1296,8 @@ function spawnMinibossFromDef(state, side, mb) {
     attackInterval: MONSTER_MELEE_INTERVAL,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    aac: 0,
+    projTime: 0,
     isBoss: false,
     isMiniBoss: true,
     bossName: mb.name,
@@ -1307,6 +1315,10 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
   const isRange = attackType === 'range';
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
   const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
+  // Variera projektil-travel-time per range-monster så hjälten ser olika hot.
+  const projTime = isRange
+    ? MONSTER_PROJ_TIME_BUCKETS[state.nextEntityId % MONSTER_PROJ_TIME_BUCKETS.length]
+    : 0;
   const monster = {
     id: state.nextEntityId++,
     x, z,
@@ -1318,8 +1330,10 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
     attackType: attackType || 'melee',
     attackRange: isRange ? RANGE_MONSTER_RANGE : 1.2,
     attackInterval: isRange ? RANGE_MONSTER_INTERVAL : MONSTER_MELEE_INTERVAL,
+    projTime,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
+    aac: 0,
     isBoss: !!def.isBoss,
   };
   // Boss-skill-state: bossen castar telegraph→execute via tickBossSkillsServer.
@@ -1396,7 +1410,15 @@ function updateMonsters(state, side, opp, dt) {
     const atkRange = m.attackRange || 1.2;
     const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroVisible && distHero < atkRange && m.atkCd <= 0) {
-      damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
+      m.aac = (m.aac || 0) + 1;          // triggar attack-animation på klient (delta)
+      m.ry = Math.atan2(dxh, dzh);       // vänd mot målet vid AA
+      // Range-monster: damage tillämpas vid projektil-impact, INTE direkt.
+      // Bossar är alltid melee i nuläget (skills = telegraph; vanlig AA = nära).
+      if (m.attackType === 'range' && !m.isBoss && !m.isMiniBoss) {
+        spawnMonsterProjectile(state, side, m);
+      } else {
+        damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
+      }
       m.atkCd = atkInterval / (m.aSlowMul || 1);
     }
     if (!m.chasing && opp) {
@@ -1411,6 +1433,7 @@ function updateMonsters(state, side, opp, dt) {
       }
       if (nearest) {
         if (m.atkCd <= 0) {
+          m.aac = (m.aac || 0) + 1;     // triggar attack-animation även mot creeps
           nearest.hp -= CREEP_VS_CREEP_DAMAGE;
           m.atkCd = CREEP_VS_CREEP_INTERVAL / (m.aSlowMul || 1);
           if (nearest.hp <= 0) {
@@ -1532,6 +1555,8 @@ function startBossCastServer(state, side, m, skill) {
     sweepStartAngle: 0,
     tickAccum: 0,
   };
+  // Trigga attack-animation även på skill-cast (boss kanske aldrig är i AA-range)
+  m.aac = (m.aac || 0) + 1;
 }
 
 function bossExecuteSkill(state, side, m, cast) {
@@ -1806,6 +1831,7 @@ function updatePlayerCreeps(state, side, opp, dt) {
       const tx = target.x, tz = target.z;
       c.ry = Math.atan2(tx - c.x, tz - c.z);
       if (c.atkCd <= 0) {
+        c.aac = (c.aac || 0) + 1;     // triggar attack-animation på klient (delta)
         if (c.attackType === 'melee') {
           if (targetType === 'hero') damageHero(opp, c.damage);
           else {
@@ -1834,6 +1860,42 @@ function updatePlayerCreeps(state, side, opp, dt) {
     else if (isCreepPos(nx, c.z)) c.x = nx;
     else if (isCreepPos(c.x, nz)) c.z = nz;
     c.ry = Math.atan2(dirX, dirZ);
+  }
+}
+
+// Monster-AA-projektil: spawnas av range-monster + range-miniboss + range-boss.
+// Damage tillämpas vid IMPACT (timer = 0), inte vid cast. Olika monster har
+// olika travel-time (m.projTime, 0.5/1.0/1.5s) så hjälten ser olika hot.
+function spawnMonsterProjectile(state, side, m) {
+  const travel = m.projTime || 1.0;
+  side.monsterProjectiles.push({
+    id: state.nextEntityId++,
+    x: m.x, y: MONSTER_PROJ_Y, z: m.z,
+    srcX: m.x, srcZ: m.z,
+    damage: m.damage || MONSTER_MELEE_DAMAGE,
+    timer: travel,
+    totalTime: travel,
+    kind: 'magic',                       // klient-render: glowing orb (matchar wave-monster-magi)
+  });
+}
+
+function updateMonsterProjectiles(state, side, dt) {
+  if (!side.monsterProjectiles) return;
+  for (let i = side.monsterProjectiles.length - 1; i >= 0; i--) {
+    const p = side.monsterProjectiles[i];
+    // Hjälte död/borta: projektil försvinner utan damage
+    if (!side.hero || side.hero.dead) { side.monsterProjectiles.splice(i, 1); continue; }
+    p.timer = Math.max(0, p.timer - dt);
+    // Lerp position från src till hjältens nuvarande pos så missilen ser ut
+    // att tracka målet. (Auto-hit — matchar existerande creepProjectile-mönster.)
+    const elapsed = p.totalTime - p.timer;
+    const t = p.totalTime > 0 ? Math.min(1, elapsed / p.totalTime) : 1;
+    p.x = p.srcX + (side.hero.x - p.srcX) * t;
+    p.z = p.srcZ + (side.hero.z - p.srcZ) * t;
+    if (p.timer <= 0) {
+      damageHero(side, p.damage);
+      side.monsterProjectiles.splice(i, 1);
+    }
   }
 }
 
@@ -5041,6 +5103,7 @@ function tickGame(state, dt) {
       if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
     }
     updateCreepProjectiles(state, side, opp, dt);
+    updateMonsterProjectiles(state, side, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
     updateFireballs(state, side, opp, dt);
@@ -5161,6 +5224,7 @@ function serializeSide(side) {
     M: arrOpt(side.monsters, m => ({
       id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
       boss: flag(m.isBoss), mb: flag(m.isMiniBoss), r: flag(m.attackType === 'range'),
+      aac: m.aac || 0,    // AA-counter — klient detekterar delta → attack-animation
       fz: flag((m.frozenTime || 0) > 0), dot: flag((m.dotRemaining || 0) > 0),
       // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
       c: m.activeCast && m.activeCast.skill ? {
@@ -5183,11 +5247,12 @@ function serializeSide(side) {
     })),
     BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })),
     BPL: arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) })),
-    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
+    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, aac: c.aac || 0, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
     F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
     P: arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
     N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
     CP: arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
+    MR: arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
     HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
     HCF: arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
     FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife) })),

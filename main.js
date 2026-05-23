@@ -2147,6 +2147,10 @@ const RANGE_MONSTER_RANGE = 4.5;
 const RANGE_MONSTER_INTERVAL = 1.5;
 const RANGE_MONSTER_SPEED_RATIO = 0.75;
 const RANGE_MONSTER_HP_RATIO = 0.80;
+// Monster ranged AA-projektil: travel-time buckets (sek). Picks deterministiskt
+// per range-monster vid spawn så samma wave har varierad flygtid → olika hot.
+const MONSTER_PROJ_TIME_BUCKETS = [0.5, 1.0, 1.5];
+const MONSTER_PROJ_Y = 1.0;
 
 // ===== BOSS DEFS =====
 // 5 bossar (wave 10,20,30,40,50) med 3 skills var. Skills bygger på primitive-typer
@@ -9572,6 +9576,7 @@ function createSide(idx) {
     fireballs: [],           // Q (Eldklot)
     novaEffects: [],         // F (Frostnova) visuell ring
     creepProjectiles: [],    // pilar/magi från MINA minions (i opp's arena)
+    monsterProjectiles: [],  // pilar/magi från ENEMY wave-monster mot DENNA hero (range-AA)
     heroCopies: [],          // (decision 107) bot-styrda hero-kloner som attackerar DENNA sida
     heroCopyFireballs: [],   // (decision 107) skill-projektiler från hero-kloner
     // Wave-system
@@ -9603,6 +9608,7 @@ function removeSide(side) {
     if (n.isLight) releaseFxLight(n.mesh); else scene.remove(n.mesh);
   }
   for (const cp of side.creepProjectiles) scene.remove(cp.mesh);
+  if (side.monsterProjectiles) for (const mp of side.monsterProjectiles) scene.remove(mp.mesh);
   // Lämna tillbaka ev. lånade pool-ljus från souldrain-FX.
   if (side.soulDrainBeam && side.soulDrainBeam.auraLight) releaseFxLight(side.soulDrainBeam.auraLight);
   if (side.soulExplosions) for (const e of side.soulExplosions) if (e.light) releaseFxLight(e.light);
@@ -9988,6 +9994,7 @@ function hostSpawnMiniBoss(side, waveDef, bossDef, skill) {
     speed: waveDef.monsterSpeed * 0.92,
     damage: Math.round(waveDef.monsterDmg * 1.25),
     attackType: 'melee', attackRange: 1.3, attackInterval: 1.1,
+    projTime: 0,
     pathIndex: 0, atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: false, isMiniBoss: true,
     bossName: bossDef.name + ' Acolyte',
@@ -10030,6 +10037,8 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
   attachHpBar(mesh, def.isBoss ? (bossDef ? bossDef.scale * 0.85 : 2.4) : 1.7);
   mesh.position.set(x, 0, z);
   scene.add(mesh);
+  // Variera projektil-travel-time per range-monster så hjälten ser olika hot.
+  const projTime = isRange ? MONSTER_PROJ_TIME_BUCKETS[nextEntityId % MONSTER_PROJ_TIME_BUCKETS.length] : 0;
   const monster = {
     id: nextEntityId++,
     lane,
@@ -10039,6 +10048,7 @@ function hostSpawnMonsterFromDef(side, lane, def, pos, attackType) {
     attackType: attackType || 'melee',
     attackRange: isRange ? RANGE_MONSTER_RANGE : 1.2,
     attackInterval: isRange ? RANGE_MONSTER_INTERVAL : 1.0,
+    projTime,
     pathIndex: 0,
     atkCd: 0, slowTime: 0, slowMul: 1.0, chasing: false,
     isBoss: !!def.isBoss,
@@ -10995,16 +11005,25 @@ function updateMonsters(side, dt) {
     const mAtkRange = m.attackRange || 1.2;
     const mAtkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     if (heroVisible && distHero < mAtkRange && m.atkCd <= 0) {
-      damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
       m.atkCd = mAtkInterval / (m.aSlowMul || 1);
-      spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
-      // Trigga attack-animation på boss-mesh
-      if (m.mesh) m.mesh.userData.attackTrigger = true;
-      // Boss-AA: extra visuell feedback så animationen syns tydligt.
-      // Ground-impact vid bossens fot + slash vid heroens position.
-      if (m.isBossWarsBoss && m.mesh) {
-        spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 2.2, 0xff6644);
-        spawnHitSparkFx(targetSide.hero.x, 1.2, targetSide.hero.z, 0xffaa44);
+      // Trigga attack-animation på monster/boss-mesh
+      if (m.mesh) {
+        m.mesh.userData.attackTrigger = true;
+        m.mesh.rotation.y = Math.atan2(dxh, dzh);
+      }
+      // Range-monster: damage tillämpas vid projektil-impact, INTE direkt.
+      // Bossar är alltid melee i nuläget (R skill = telegraph; vanlig AA = nära).
+      if (m.attackType === 'range' && !m.isBoss && !m.isBossWarsBoss) {
+        hostSpawnMonsterProjectile(targetSide, m);
+      } else {
+        damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
+        spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
+        // Boss-AA: extra visuell feedback så animationen syns tydligt.
+        // Ground-impact vid bossens fot + slash vid heroens position.
+        if (m.isBossWarsBoss && m.mesh) {
+          spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 2.2, 0xff6644);
+          spawnHitSparkFx(targetSide.hero.x, 1.2, targetSide.hero.z, 0xffaa44);
+        }
       }
       // Räknare för boss-AA — syncas till klienter via b-state så klienter
       // kan trigga visuell attack-animation lokalt (delta-detection).
@@ -11022,6 +11041,7 @@ function updateMonsters(side, dt) {
       }
       if (nearest) {
         if (m.atkCd <= 0) {
+          if (m.mesh) m.mesh.userData.attackTrigger = true;
           nearest.hp -= CREEP_VS_CREEP_DAMAGE;
           m.atkCd = CREEP_VS_CREEP_INTERVAL / (m.aSlowMul || 1);
           if (nearest.hp <= 0) {
@@ -11166,6 +11186,8 @@ function updatePlayerCreeps(side, dt) {
       c.mesh.rotation.y = Math.atan2(tx - c.mesh.position.x, tz - c.mesh.position.z);
 
       if (c.atkCd <= 0) {
+        // Trigga attack-animation på creep-mesh (delta-detect i MP via aac)
+        if (c.mesh) c.mesh.userData.attackTrigger = true;
         if (c.attackType === 'melee') {
           // Direkt skada + slash-fx vid målet
           if (targetType === 'hero') {
@@ -11272,6 +11294,101 @@ function updateCreepProjectiles(side, dt) {
       p.mesh.rotation.y = Math.atan2(dx, dz);
     } else {
       p.mesh.rotation.y += dt * 6;  // mageglob snurrar
+    }
+  }
+}
+
+// Monster-AA-projektil (range-monster mot DENNA sides hero). Damage tillämpas
+// vid IMPACT (timer = 0), inte vid cast. Olika monster har olika travel-time
+// (m.projTime, 0.5/1.0/1.5s) så hjälten ser olika hot.
+function makeMonsterProjectileMesh(kind) {
+  if (kind === 'magic') {
+    const grp = new THREE.Group();
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(0.30, 14, 10),
+      new THREE.MeshStandardMaterial({ color: 0xff5544, emissive: 0xff3322, emissiveIntensity: 1.8, roughness: 0.35 })
+    );
+    grp.add(core);
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.50, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff8866, transparent: true, opacity: 0.30, depthWrite: false })
+    );
+    grp.add(halo);
+    return grp;
+  }
+  // Default: pil (kommer även användas för bossar om de blir range)
+  const grp = new THREE.Group();
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.045, 0.70, 8),
+    new THREE.MeshStandardMaterial({ color: 0x5a2818, roughness: 0.75 })
+  );
+  shaft.rotation.x = Math.PI / 2;
+  grp.add(shaft);
+  const tip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.08, 0.22, 8),
+    new THREE.MeshStandardMaterial({ color: 0xc4c4cc, metalness: 0.55, roughness: 0.35 })
+  );
+  tip.rotation.x = Math.PI / 2;
+  tip.position.z = 0.42;
+  grp.add(tip);
+  return grp;
+}
+
+function hostSpawnMonsterProjectile(targetSide, monster) {
+  if (!targetSide || !targetSide.monsterProjectiles) return;
+  const kind = monster.attackType === 'range' ? 'magic' : 'arrow';
+  const mesh = makeMonsterProjectileMesh(kind);
+  const srcX = monster.mesh ? monster.mesh.position.x : monster.x || 0;
+  const srcZ = monster.mesh ? monster.mesh.position.z : monster.z || 0;
+  mesh.position.set(srcX, MONSTER_PROJ_Y, srcZ);
+  scene.add(mesh);
+  const travel = monster.projTime || 1.0;
+  targetSide.monsterProjectiles.push({
+    id: nextEntityId++,
+    mesh,
+    srcX, srcZ,
+    damage: monster.damage || MONSTER_MELEE_DAMAGE,
+    timer: travel,
+    totalTime: travel,
+    kind,
+    isBoss: !!monster.isBoss,
+    isMiniBoss: !!monster.isMiniBoss,
+  });
+}
+
+function updateMonsterProjectiles(side, dt) {
+  if (!side.monsterProjectiles) return;
+  for (let i = side.monsterProjectiles.length - 1; i >= 0; i--) {
+    const p = side.monsterProjectiles[i];
+    if (!side.hero || side.hero.dead) {
+      scene.remove(p.mesh);
+      side.monsterProjectiles.splice(i, 1);
+      continue;
+    }
+    p.timer = Math.max(0, p.timer - dt);
+    const t = p.totalTime > 0 ? Math.min(1, (p.totalTime - p.timer) / p.totalTime) : 1;
+    const tx = side.hero.x, tz = side.hero.z;
+    const nx = p.srcX + (tx - p.srcX) * t;
+    const nz = p.srcZ + (tz - p.srcZ) * t;
+    const dx = nx - p.mesh.position.x;
+    const dz = nz - p.mesh.position.z;
+    p.mesh.position.x = nx;
+    p.mesh.position.z = nz;
+    p.mesh.position.y = MONSTER_PROJ_Y;
+    if (p.kind === 'arrow') {
+      if (dx * dx + dz * dz > 0.0001) {
+        p.mesh.rotation.x = -Math.PI / 2;
+        p.mesh.rotation.y = Math.atan2(dx, dz);
+      }
+    } else {
+      p.mesh.rotation.y += dt * 6;
+    }
+    if (p.timer <= 0) {
+      damageHero(side, p.damage);
+      spawnSlashFx(side.hero.x, side.hero.z, p.kind === 'magic' ? 0xff5544 : 0xffd060);
+      spawnHitSparkFx(side.hero.x, 1.2, side.hero.z, p.kind === 'magic' ? 0xff8844 : 0xffaa44);
+      scene.remove(p.mesh);
+      side.monsterProjectiles.splice(i, 1);
     }
   }
 }
@@ -14861,6 +14978,7 @@ const clientMeshes = {
   novaEffects: new Map(),
   aragurnBanners: new Map(),
   creepProjectiles: new Map(),
+  monsterProjectiles: new Map(),
   heroCopies: new Map(),
   heroCopyFireballs: new Map(),
   fireWaves: new Map(),
@@ -14882,6 +15000,24 @@ const INTERPOLATED_KEYS = new Set(['monsters', 'playerCreeps', 'heroCopies']);
 // Line wars: server broadcastar boss-skill activeCast i monster-snap (M[i].c).
 // Klient spawnar telegraph-mesh på boss-meshen vid ny cast och rensar vid slut.
 // Heroes ser röd telegraph-zon under telegraph-fasen → kan flytta sig ur den.
+// Delta-detektion på aac-räknare (monster/playerCreep). Server bumpar aac
+// varje AA → klienten sätter attackTrigger på mesh så animateGltfCharacter
+// spelar attack-clip. Lagras i mesh.userData._prevAac så reconnect/respawn
+// inte triggar gamla attacker.
+function syncAaCounterTriggers(sideIdx, key, entityList) {
+  if (!entityList) return;
+  const meshMap = clientMeshes[key] && clientMeshes[key].get(sideIdx);
+  if (!meshMap) return;
+  for (const e of entityList) {
+    const mesh = meshMap.get(e.id);
+    if (!mesh) continue;
+    const prev = mesh.userData._prevAac || 0;
+    const cur = e.aac || 0;
+    if (cur > prev) mesh.userData.attackTrigger = true;
+    mesh.userData._prevAac = cur;
+  }
+}
+
 function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
   if (!monsterList) return;
   const meshMap = clientMeshes.monsters && clientMeshes.monsters.get(sideIdx);
@@ -15261,17 +15397,18 @@ function animateGltfCharacter(mesh, dt, side, type) {
       side._lastSkillCd[k] = cur;
     }
   }
-  // Attack-detektion (monster/boss): flagga sätts av updateMonsters/tickBossSkills
-  if (type === 'monster' && mesh.userData.attackTrigger) {
+  // Attack-detektion (monster/boss/minion): flagga sätts av updateMonsters/
+  // updatePlayerCreeps/tickBossSkills + i MP av syncAaCounterTriggers (aac-delta).
+  if ((type === 'monster' || type === 'minion') && mesh.userData.attackTrigger) {
     attackTrig = true;
     mesh.userData.attackTrigger = false;
   }
 
   if (attackTrig && clips.attack) {
-    // Monster/boss attack-clip håller längre + lite långsammare så slaget syns tydligt
-    const isBossMon = type === 'monster';
-    playGltfAction(mesh, clips.attack, { once: true, fade: 0.08, timeScale: isBossMon ? 1.0 : 1.4 });
-    st.attackTimer = isBossMon ? 0.7 : HERO_ATTACK_DURATION;
+    // Monster/boss/minion attack-clip håller längre + lite långsammare så slaget syns tydligt
+    const isMonOrMin = type === 'monster' || type === 'minion';
+    playGltfAction(mesh, clips.attack, { once: true, fade: 0.08, timeScale: isMonOrMin ? 1.0 : 1.4 });
+    st.attackTimer = isMonOrMin ? 0.7 : HERO_ATTACK_DURATION;
   }
 
   if (st.attackTimer > 0) {
@@ -15710,6 +15847,9 @@ function applyRemoteState(state) {
     // försvinner, rensa telegraph. Heroes kan dodga ut ur damage-zonen under
     // telegraph-fasen.
     syncBossSkillTelegraphsFromSnap(idx, sData.M);
+    // AA-animation-trigger: detektera aac-delta per monster och sätt
+    // attackTrigger på mesh så animateGltfCharacter spelar attack-clip.
+    syncAaCounterTriggers(idx, 'monsters', sData.M);
     // Boss-projektiler + DoT-pools (line wars boss-skills)
     clientReconcileEntities(idx, 'bossProjectiles', sData.BP || [], () => {
       const grp = new THREE.Group();
@@ -15746,6 +15886,7 @@ function applyRemoteState(state) {
       attachHpBar(m, 1.7);
       return m;
     });
+    syncAaCounterTriggers(idx, 'playerCreeps', sData.C);
     clientReconcileEntities(idx, 'fireballs', sData.F || [], () => new THREE.Mesh(
       new THREE.SphereGeometry(0.35, 14, 10),
       new THREE.MeshStandardMaterial({ color: 0xff5a18, emissive: 0xcc2200, emissiveIntensity: 1.0 })
@@ -15809,6 +15950,13 @@ function applyRemoteState(state) {
       grp.userData.orientToMotion = true;
       return grp;
     });
+    // Monster-AA-projektiler (range-monster mot DENNA sides hero). Damage
+    // tillämpas server-side vid impact; klienten visualiserar bara flygsträckan.
+    clientReconcileEntities(idx, 'monsterProjectiles', sData.MR || [], (e) => {
+      const mesh = makeMonsterProjectileMesh(e.kind === 'arrow' ? 'arrow' : 'magic');
+      mesh.userData.orientToMotion = e.kind === 'arrow';
+      return mesh;
+    }, true);
     clientReconcileEntities(idx, 'heroCopies', sData.HC || [], (e) => {
       const m = makeHeroCopyMesh(e.owner || idx, e.heroId || 'magiker');
       attachHpBar(m, 2.0);
@@ -24541,8 +24689,21 @@ function returnToLobby() {
   for (const i of [1, 2, 3, 4]) {
     if (sides[i]) { removeSide(sides[i]); sides[i] = null; }
   }
-  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles']) {
-    for (const m of clientMeshes[key].values()) for (const mesh of m.values()) scene.remove(mesh);
+  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles', 'monsterProjectiles']) {
+    for (const m of clientMeshes[key].values()) for (const mesh of m.values()) {
+      scene.remove(mesh);
+      // monsterProjectiles har färska (ej delade) geometrier — dispose för att
+      // frigöra GPU-buffrar. Övriga keys delar geometri/textur via factory-cache.
+      if (key === 'monsterProjectiles') {
+        mesh.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            if (Array.isArray(o.material)) o.material.forEach(mm => mm && mm.dispose());
+            else o.material.dispose();
+          }
+        });
+      }
+    }
     clientMeshes[key].clear();
   }
   endgameEl.classList.remove('visible');
@@ -25188,6 +25349,7 @@ function simulateAll(dt) {
       updateMonsters(side, dt);
       updatePlayerCreeps(side, dt);
       updateCreepProjectiles(side, dt);
+      updateMonsterProjectiles(side, dt);
       // Decision 107: hero-kopior (clone-knapp + duel-belöning) + deras fireballs.
       updateHeroCopies(side, dt);
       updateHeroCopyFireballs(side, dt);
