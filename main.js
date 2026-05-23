@@ -7786,26 +7786,32 @@ function spawnBossWarsBoss(side, tier) {
     if (o.isMesh) o.castShadow = false;
   });
   scene.add(mesh);
-  const hp = bossInfo.hp;
-  // Bumpad bas-dmg: 28 → 42. Bumpad dmgScale i BOSS_WARS_DEFS (1.5–3.5).
-  const dmg = Math.round(42 * bossInfo.dmgScale);
-  // Speed-skalning per tier — bossar JAGAR nu på riktigt (hero base 5.5–7.0)
-  const tierSpeed = { 1: 3.8, 2: 4.3, 3: 4.7, 4: 5.0, 5: 5.4 };
+  // HP +200% och damage +50% (raid-buff — bossar tål och slår mycket hårdare).
+  const hp = Math.round(bossInfo.hp * 3.0);
+  // Bumpad bas-dmg: 28 → 42 × dmgScale × 1.5 (+50%).
+  const dmg = Math.round(42 * bossInfo.dmgScale * 1.5);
+  // Speed-skalning per tier — bossar JAGAR nu på riktigt (hero base 5.5–7.0).
+  // T2-T4 bumpade men hålls UNDER hero-min (~5.5) så hjältan alltid kan kita.
+  // T1 är range-archer (har inget behov av speed); T5 är redan vid max.
+  const tierSpeed = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };
   const bossSpeed = tierSpeed[tier] || 4.0;
   const bossId = nextEntityId++;
   // Test-mode: nolla damage + skip skills så bossen står still som "display-piece".
   // chasing=false så den inte heller jagar hjälten — bara står där och kan inspekteras.
   const isTestMode = !!(APP.bossWars && APP.bossWars.testMode);
-  // Boss Wars AA-config per tier — alla bossar är range med tematiska,
-  // mer dramatiska projektiler än line wars-bossarna.
+  // Boss Wars AA-config per tier — projektil-meshes per boss + travel-times 0.5-1.0s.
   const BOSSWARS_AA = {
-    1: { kind: 'bw_goblinArrow', range: 8.5, interval: 1.2, travel: 0.7 },   // Goblin Archer
-    2: { kind: 'bw_warlockOrb',  range: 8.0, interval: 1.4, travel: 1.0 },   // Warlock
-    3: { kind: 'bw_alienPlasma', range: 7.5, interval: 1.3, travel: 0.9 },   // No-Face Alien
-    4: { kind: 'bw_demonHeart',  range: 7.0, interval: 1.5, travel: 1.1 },   // Big Alien
-    5: { kind: 'bw_starshard',   range: 9.0, interval: 1.2, travel: 0.8 },   // Alien Soldier
+    1: { kind: 'bw_goblinArrow', range: 8.5, interval: 1.2, travel: 0.6 },   // Goblin Archer
+    2: { kind: 'bw_warlockOrb',  range: 8.0, interval: 1.4, travel: 0.9 },   // Warlock
+    3: { kind: 'bw_alienPlasma', range: 7.5, interval: 1.3, travel: 0.8 },   // No-Face Alien
+    4: { kind: 'bw_demonHeart',  range: 7.0, interval: 1.5, travel: 1.0 },   // Big Alien
+    5: { kind: 'bw_starshard',   range: 9.0, interval: 1.2, travel: 0.7 },   // Alien Soldier
   };
-  const aaCfg = BOSSWARS_AA[tier] || { kind: 'bossDefault', range: 7.5, interval: 1.4, travel: 1.0 };
+  const aaCfg = BOSSWARS_AA[tier] || { kind: 'bossDefault', range: 7.5, interval: 1.4, travel: 0.9 };
+  // Damage reduction per tier (10/15/20/25/30 % base) + +5% per 2 minuter.
+  // Cap 70% så bossen alltid kan dödas (annars: skill-baserad stall).
+  const BOSSWARS_DR_BASE = { 1: 0.10, 2: 0.15, 3: 0.20, 4: 0.25, 5: 0.30 };
+  const drBase = BOSSWARS_DR_BASE[tier] || 0.10;
   side.monsters.push({
     id: bossId,
     lane: 1,
@@ -7832,6 +7838,12 @@ function spawnBossWarsBoss(side, tier) {
     phase2Skills: BOSS_WARS_PHASE2_SKILLS[bossInfo.wave] || null,
     phaseThreshold: bossInfo.phaseThreshold || 0.5,
     phaseTransitionRemaining: 0,   // sek av "fly up + land"-animation (>0 = oattacker-bar)
+    // Damage reduction: base per tier + +5% per 2 minuter sedan spawn. Cap 70%.
+    dmgReductionBase: drBase,
+    dmgReductionStep: 0.05,
+    dmgReductionStepIntervalSec: 120,
+    dmgReductionCap: 0.70,
+    spawnTime: performance.now() / 1000,
     mesh,
   });
   side.bossWarsBossId = bossId;   // för säker check i checkMatchEnd
@@ -10907,14 +10919,14 @@ function updateMonsters(side, dt) {
     // DoT-tick (Fire Wave)
     if ((m.dotRemaining || 0) > 0) {
       m.dotRemaining -= dt;
-      m.hp -= (m.dotPerSec || 0) * dt;
+      damageMonster(m, (m.dotPerSec || 0) * dt);
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
     // Poison-stack-tick
     if ((m.poisonRemaining || 0) > 0 && (m.poisonStacks || 0) > 0) {
       m.poisonRemaining -= dt;
       const s = m.poisonStacks;
-      m.hp -= POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt;
+      damageMonster(m, POISON_BASE_DPS * s * (1 + 0.10 * (s - 1)) * dt);
       if (m.poisonRemaining <= 0) m.poisonStacks = 0;
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
@@ -11022,6 +11034,11 @@ function updateMonsters(side, dt) {
       if (m.mesh) {
         m.mesh.userData.attackTrigger = true;
         m.mesh.rotation.y = Math.atan2(dxh, dzh);
+        // Boss-AA charge-FX (synligare AA). Tier från bossTier eller bossWarsBoss-tier.
+        if (m.isBoss || m.isBossWarsBoss) {
+          const tier = m.bossTier || (m.isBossWarsBoss ? (APP.bossWars && APP.bossWars.tier || 1) : 1);
+          spawnBossAaChargeFx(m.mesh.position.x, m.mesh.position.z, tier);
+        }
       }
       // Range-monster/range-boss/range-boss-wars: damage vid projektil-impact.
       // Melee: damage direkt + slash-FX. Boss-melee får extra ground-impact + spark.
@@ -11285,7 +11302,7 @@ function updateCreepProjectiles(side, dt) {
           const m = opp.monsters[k];
           if (m === p.target) continue;
           if (Math.hypot(m.mesh.position.x - ix, m.mesh.position.z - iz) < p.aoeRadius) {
-            m.hp -= p.damage;
+            damageMonster(m, p.damage);
             if (m.hp <= 0) hostKillMonster(opp, k, side);
           }
         }
@@ -11873,6 +11890,29 @@ function updateMonsterProjectiles(side, dt) {
   }
 }
 
+// Boss Wars damage reduction: base per tier + +5% per 2 min sedan spawn (cap 70%).
+// Övriga monster: ingen reduction (returns 0).
+function computeBossWarsDmgReduction(m) {
+  if (!m || !m.isBossWarsBoss) return 0;
+  const elapsedSec = (performance.now() / 1000) - (m.spawnTime || 0);
+  const steps = Math.floor(elapsedSec / (m.dmgReductionStepIntervalSec || 120));
+  const dr = (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05);
+  return Math.max(0, Math.min(m.dmgReductionCap || 0.70, dr));
+}
+
+// Universal damage-applicator för monster (inkl. boss wars-bossar). Returnerar
+// faktiskt taget skada (efter reduction OCH efter clamp mot kvarvarande HP) —
+// viktigt för lifesteal-beräkningar så ett dödsslag inte ger överskott-heal.
+// Vanliga monster passerar igenom 1:1 (ingen reduction).
+function damageMonster(m, rawDmg) {
+  if (!m || rawDmg <= 0) return 0;
+  const dr = computeBossWarsDmgReduction(m);
+  const dmg = rawDmg * (1 - dr);
+  const actual = Math.min(dmg, Math.max(0, m.hp));
+  m.hp -= dmg;
+  return actual;
+}
+
 function hostKillMonster(side, idx, byPlayerSide) {
   const m = side.monsters[idx];
   if (!m) return;
@@ -12442,7 +12482,7 @@ function updateProjectiles(side, dt) {
           const m = side.monsters[k];
           if (m === p.target) continue;
           if (Math.hypot(m.mesh.position.x - ix, m.mesh.position.z - iz) < PASSIVE_AOE_RADIUS) {
-            m.hp -= p.damage;
+            damageMonster(m, p.damage);
             if (m.hp <= 0) hostKillMonster(side, k, side);
           }
         }
@@ -12556,7 +12596,7 @@ function soloShatter(side, opp, x, z) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (Math.hypot(m.mesh.position.x - x, m.mesh.position.z - z) < SHATTER_RADIUS) {
-      m.hp -= SHATTER_DAMAGE;
+      damageMonster(m, SHATTER_DAMAGE);
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
   }
@@ -12581,8 +12621,7 @@ function soloApplySkillDmgToMonster(side, opp, mIdx, dmg) {
     soloShatter(side, opp, m.mesh.position.x, m.mesh.position.z);
     m.frozenTime = 0;
   }
-  const actual = Math.min(dmg, m.hp);
-  m.hp -= dmg;
+  const actual = damageMonster(m, dmg);
   spawnDamageText(m.mesh, actual, false);
   applySkillLifesteal(side, actual);
   applyRageLifesteal(side, actual);
@@ -12800,7 +12839,7 @@ function hostCastWindPuff(side, ev) {
     if (!inCone(m.mesh.position.x, m.mesh.position.z)) continue;
     const dmg = (m.maxHp || m.hp) * WIND_PUFF_DMG_PCT * skillMul;
     onGandulfSkillHit(side, m);
-    m.hp -= dmg;
+    damageMonster(m, dmg);
     if (m.hp <= 0) hostKillMonster(side, j, side);
     else {
       m.mesh.position.x += dirX * WIND_PUFF_PUSH_DIST;
@@ -13253,7 +13292,7 @@ function updateFireballs(side, dt) {
       const d = Math.hypot(m.mesh.position.x - f.mesh.position.x, m.mesh.position.z - f.mesh.position.z);
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(m);
-        m.hp -= f.damage;
+        damageMonster(m, f.damage);
         if (m.hp <= 0) hostKillMonster(side, j, side);
       }
     }
@@ -13887,7 +13926,7 @@ function updateVineTrapsSolo(side, dt) {
       const dx = m.mesh.position.x - vt.x, dz = m.mesh.position.z - vt.z;
       if (dx * dx + dz * dz < r2) {
         m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
-        m.hp -= vt.dotPerSec * dt;
+        damageMonster(m, vt.dotPerSec * dt);
         if (vt.lvl5Mark && vt.hitMonsterIds) vt.hitMonsterIds.add(m.id);
         if (m.hp <= 0) { hostKillMonster(side, j, side); }
       }
@@ -14084,7 +14123,7 @@ function tickGimluTauntLvl5Client(side, dt) {
       const m = side.monsters[i];
       const ddx = m.mesh.position.x - side.hero.x, ddz = m.mesh.position.z - side.hero.z;
       if (ddx * ddx + ddz * ddz < r2) {
-        m.hp -= dmg;
+        damageMonster(m, dmg);
         if (m.hp <= 0) hostKillMonster(side, i, side);
       }
     }
@@ -14124,7 +14163,7 @@ function flushIronWillReflectLvl5Client(side) {
     const m = side.monsters[i];
     const ddx = m.mesh.position.x - side.hero.x, ddz = m.mesh.position.z - side.hero.z;
     if (ddx * ddx + ddz * ddz < r2) {
-      m.hp -= total;
+      damageMonster(m, total);
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
   }
@@ -14162,7 +14201,7 @@ function updateIronWillSolo(side, dt) {
         const m = side.monsters[i];
         const ddx = m.mesh.position.x - side.hero.x, ddz = m.mesh.position.z - side.hero.z;
         if (ddx * ddx + ddz * ddz < r2) {
-          m.hp -= dmg;
+          damageMonster(m, dmg);
           if (m.hp <= 0) hostKillMonster(side, i, side);
         }
       }
@@ -14307,12 +14346,12 @@ function updateHammersSolo(side, dt) {
       if (h.hit.has(m.id)) continue;
       if (Math.hypot(m.mesh.position.x - h.mesh.position.x, m.mesh.position.z - h.mesh.position.z) < HAMMER_RADIUS) {
         h.hit.add(m.id);
-        m.hp -= dmg;
+        const actual = damageMonster(m, dmg);
         if (h.lvl5Slow) {
           m.slowTime = Math.max(m.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
           m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + actual * HAMMER_LIFESTEAL);
         if (m.hp <= 0) hostKillMonster(side, j, side);
       }
     }
@@ -14768,7 +14807,7 @@ function lingShieldExplode(side) {
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
     if (Math.hypot(m.mesh.position.x - side.hero.x, m.mesh.position.z - side.hero.z) < LING_AOE_RADIUS) {
-      m.hp -= dmg;
+      damageMonster(m, dmg);
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
   }
@@ -15127,7 +15166,7 @@ function tickFearWave(side, dt) {
       m.fearTime -= dt;
       if (m.fearTime <= 0 && prev > 0) {
         const dmg = m.hp * FEAR_HP_DMG_PCT;
-        m.hp -= dmg;
+        damageMonster(m, dmg);
         if (m.hp <= 0) hostKillMonster(side, i, sides[m.fearOwnerIdx] || side);
       }
     }
@@ -15493,7 +15532,14 @@ function syncAaCounterTriggers(sideIdx, key, entityList) {
     if (!mesh) continue;
     const prev = mesh.userData._prevAac || 0;
     const cur = e.aac || 0;
-    if (cur > prev) mesh.userData.attackTrigger = true;
+    if (cur > prev) {
+      mesh.userData.attackTrigger = true;
+      // Boss AA: spawna charge-FX vid fot så animation syns OMEDELBART.
+      // Server skickar tier (1-5) per boss; defaultar till 1 om saknas.
+      if (e.boss) {
+        spawnBossAaChargeFx(mesh.position.x, mesh.position.z, e.tier || 1);
+      }
+    }
     mesh.userData._prevAac = cur;
   }
 }
@@ -18300,7 +18346,7 @@ function applyLaserBeamTick(side) {
     const m = side.monsters[i];
     if (inBeam(m.mesh.position.x, m.mesh.position.z)) {
       const dmg = (m.maxHp || m.hp) * LASER_TICK_DMG_PCT * bossWarsPctScale(m);
-      m.hp -= dmg;
+      damageMonster(m, dmg);
       spawnHitSparkFx(m.mesh.position.x, 1.2, m.mesh.position.z, 0xaaddff);
       if (m.hp <= 0) hostKillMonster(side, i, side);
     }
@@ -18416,7 +18462,7 @@ function tickClientThornPools(side, dt) {
         const m = side.monsters[k];
         if (Math.hypot(m.mesh.position.x - p.x, m.mesh.position.z - p.z) < p.radius) {
           const dmg = (m.maxHp || m.hp) * p.dmgPct;
-          m.hp -= dmg;
+          damageMonster(m, dmg);
           if (m.hp <= 0) hostKillMonster(side, k, side);
         }
       }
@@ -19585,8 +19631,7 @@ function applyRagePulse(side) {
     const d = Math.hypot(m.mesh.position.x - ox, m.mesh.position.z - oz);
     if (d < RAGE_PULSE_RADIUS) {
       const dmg = (m.maxHp || m.hp) * RAGE_PULSE_DMG_PCT * bossWarsPctScale(m);
-      const dealt = Math.min(dmg, m.hp);
-      m.hp -= dmg;
+      const dealt = damageMonster(m, dmg);
       applyRageLifesteal(side, dealt);
       // Ult-damage ger INTE ult-energy
       if (m.hp <= 0) hostKillMonster(side, i, side);
@@ -21845,11 +21890,13 @@ function applyBossWarsState(msg) {
       }
       boss._prevSyncedHp = msg.b.hp;
 
-      // 2) Boss AA-trigger (för attack-animation)
+      // 2) Boss AA-trigger (för attack-animation) + charge-FX för synlighet
       const prevAac = boss._prevSyncedAac || 0;
       const newAac = msg.b.aac || 0;
       if (newAac > prevAac && boss.mesh.userData) {
         boss.mesh.userData.attackTrigger = true;
+        const tier = msg.tr || boss.bossTier || 1;
+        spawnBossAaChargeFx(boss.mesh.position.x, boss.mesh.position.z, tier);
       }
       boss._prevSyncedAac = newAac;
 
@@ -25988,6 +26035,39 @@ function checkIncomeTickNotifications() {
 // ============================================================
 const combatFx = [];
 
+// Boss-AA charge-FX: ring + uppåt-flammor vid bossens fot för att markera AA
+// så animationen syns omedelbart även om mesh:n inte hunnit spela attack-clip.
+// Tier styr färg (1=grön, 2=lila, 3=cyan, 4=röd, 5=vit-blå).
+function spawnBossAaChargeFx(x, z, tier) {
+  const tierColors = { 1: 0x80ff60, 2: 0xc060ff, 3: 0x40ffc0, 4: 0xff4030, 5: 0xa0e0ff };
+  const color = tierColors[tier] || 0xff8844;
+  // Expanderande ring vid bossens fot (visar "laddning")
+  const ringMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.85,
+    side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 1.0, 28), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.10, z);
+  scene.add(ring);
+  combatFx.push({
+    mesh: ring, life: 0.35, maxLife: 0.35, kind: 'aaCharge',
+    scaleStart: 0.8, scaleEnd: 2.2,
+  });
+  // Central glow-puff
+  const puffMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.75,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  });
+  const puff = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 8), puffMat);
+  puff.position.set(x, 0.8, z);
+  scene.add(puff);
+  combatFx.push({
+    mesh: puff, life: 0.3, maxLife: 0.3, kind: 'aaCharge',
+    scaleStart: 1.0, scaleEnd: 2.0,
+  });
+}
+
 function spawnSlashFx(x, z, color = 0xffd060) {
   // Kenney slash-textur ger arc-böjd "sword swing"-form istället för rak rektangel
   if (kenneyTex.size > 0) {
@@ -26678,6 +26758,11 @@ function tickCombatFx(dt) {
       }
       if (e.vy) e.mesh.position.y += e.vy * dt;
       if (e.mesh.material) e.mesh.material.opacity = e.startOpacity * (1 - t);
+    } else if (e.kind === 'aaCharge') {
+      // Boss-AA charge: lerp scale start→end + fade-out
+      const s = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
+      e.mesh.scale.set(s, s, s);
+      if (e.mesh.material) e.mesh.material.opacity = (e.mesh.material.opacity != null ? Math.max(0, 0.85 * (1 - t)) : 0);
     } else if (e.kind === 'kostefoSliderExplosion') {
       // Eld-explosion vid slider-slut: växer + fadar ut, light intensity dimmer.
       // Spara initial-opacity vid första tick så fade-out är linjär mot 0.

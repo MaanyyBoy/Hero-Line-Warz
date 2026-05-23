@@ -212,14 +212,19 @@ const MONSTER_PROJ_Y = 1.0;
 // Projektil-utseende per wave-tier (index 0..4). Klienten ritar olika
 // meshes baserat på 'k' (kind). Bossar har egna kinds (se BOSS_RANGE_AA).
 const MONSTER_PROJ_KIND_PER_TIER = ['arrow', 'axe', 'darkOrb', 'fireball', 'dragonBolt'];
-// Per-boss AA-projektil-config (line wars wave 10/20/30/40/50). Alla bossar är
-// nu range med synliga, tematiska projektil-meshes — gör AA tydligt synlig.
+// Per-boss AA-projektil-config (line wars wave 10/20/30/40/50). Travel-times
+// hålls inom 0.5-1.0s så hjälten ser projektilen komma men kan inte alltid dodga.
+// Wave 40 (Demon Prince) är MELEE med +30% range — undantag i BOSS_MELEE_RANGE.
 const BOSS_RANGE_AA = {
-  10: { kind: 'bossAxe',      range: 7.0, interval: 1.5, travel: 0.8 },   // Captain — slänger yxa
-  20: { kind: 'bossSpear',    range: 8.0, interval: 1.6, travel: 1.0 },   // General — blixtspjut
-  30: { kind: 'darkOrb',      range: 7.5, interval: 1.7, travel: 1.1 },   // Warlord — gift-orb (matchar poison-thema)
-  40: { kind: 'bossHellfire', range: 7.5, interval: 1.8, travel: 1.2 },   // Demon Prince — hellfire-orb
-  50: { kind: 'dragonBreath', range: 9.0, interval: 1.6, travel: 1.0 },   // Drakkonungen — eldspjut
+  10: { kind: 'bossAxe',      range: 7.0, interval: 1.5, travel: 0.6 },   // Captain — slänger yxa
+  20: { kind: 'bossSpear',    range: 8.0, interval: 1.6, travel: 0.8 },   // General — blixtspjut
+  30: { kind: 'darkOrb',      range: 7.5, interval: 1.7, travel: 1.0 },   // Warlord — gift-orb
+  50: { kind: 'dragonBreath', range: 9.0, interval: 1.6, travel: 0.7 },   // Drakkonungen — eldspjut
+};
+// Bossar som är MELEE med override-range (annars defaultas bossar till 1.2m melee).
+// Vanlig boss-melee-range har historiskt varit 2.4m; +30% = 3.12m.
+const BOSS_MELEE_RANGE = {
+  40: 3.1,   // Demon Prince — melee med +30% extended range
 };
 
 // Gandulf-skills (omgjorda)
@@ -1359,6 +1364,7 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
     monster.skillCds = def.bossDef.skills.map(s => s.cd * 0.4);   // första cast snabbare
     monster.activeCast = null;
     monster.multiCircleQueue = null;   // för multiCircle-skills (sequence av AoE)
+    monster.bossTier = Math.max(1, Math.min(5, Math.floor(def.number / 10)));   // 1..5 för klient-FX-färg
     // Bossar med BOSS_RANGE_AA-entry blir range med projektil-AA istället för melee.
     // Coolare kind + längre range så bossens AA syns tydligt.
     const bossAa = BOSS_RANGE_AA[def.number];
@@ -1368,6 +1374,11 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
       monster.attackInterval = bossAa.interval;
       monster.projTime = bossAa.travel;
       monster.projKind = bossAa.kind;
+    }
+    // Melee-bossar med extended range (t.ex. Demon Prince +30%).
+    const meleeOverride = BOSS_MELEE_RANGE[def.number];
+    if (meleeOverride && !bossAa) {
+      monster.attackRange = meleeOverride;
     }
   }
   side.monsters.push(monster);
@@ -5260,6 +5271,7 @@ function serializeSide(side) {
     M: arrOpt(side.monsters, m => ({
       id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
       boss: flag(m.isBoss), mb: flag(m.isMiniBoss), r: flag(m.attackType === 'range'),
+      tier: m.bossTier || undefined,
       aac: m.aac || 0,    // AA-counter — klient detekterar delta → attack-animation
       fz: flag((m.frozenTime || 0) > 0), dot: flag((m.dotRemaining || 0) > 0),
       // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
