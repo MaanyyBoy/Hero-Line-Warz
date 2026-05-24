@@ -16917,6 +16917,27 @@ function updateHud() {
         ? `You destroyed the enemy tower on wave ${side.wave.current}.`
         : `Your tower fell on wave ${side.wave.current}.`;
     }
+    // Decision 112: skicka match-resultat till lokal leaderboard EN gång.
+    // Boss Wars är co-op: använd matchState.gameWon (synkad korrekt för båda joiner+host),
+    // inte den hjälte-sida-baserade `won` som inverteras för joinaren.
+    if (!matchState._lbReported) {
+      matchState._lbReported = true;
+      try {
+        if (APP.gameMode === 'classic') {
+          recordLineWarsResult(won);
+        } else if (APP.gameMode === 'arena1v1') {
+          recordArenaResult(won);
+        } else if (APP.gameMode === 'bosswars' && matchState.gameWon) {
+          // Bara segrar räknas för Boss Wars (progress + tid). Team-namn:
+          // local username + ev. peer-namn (placeholder tills peer-username-system byggts).
+          const tier = (APP.bossWars && APP.bossWars.tier) || 1;
+          const localName = getLocalUsername();
+          const team = [localName, 'Teammate-2', 'Teammate-3'];
+          const dur = matchState._startTime ? Math.round((performance.now() - matchState._startTime) / 1000) : 0;
+          recordBossWarsRun(team, tier, dur);
+        }
+      } catch (_) {}
+    }
     return;
   }
   const opp = sides[3 - APP.localSide];
@@ -24332,10 +24353,16 @@ const lobbyPlayEl = document.getElementById('lobby-play');
 const lobbyComingSoonEl = document.getElementById('lobby-coming-soon');
 const lobbyHeroDetailEl = document.getElementById('lobby-hero-detail');
 function showLobbyPanel(which) {
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl]) {
+  const _lbLeaderboardEl = document.getElementById('lobby-leaderboard');
+  const _lbFriendsEl = document.getElementById('lobby-friends');
+  const _lbProfileEl = document.getElementById('lobby-profile');
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
+  else if (which === 'leaderboard') { if (_lbLeaderboardEl) _lbLeaderboardEl.classList.add('visible'); }
+  else if (which === 'friends') { if (_lbFriendsEl) _lbFriendsEl.classList.add('visible'); }
+  else if (which === 'profile') { if (_lbProfileEl) _lbProfileEl.classList.add('visible'); }
   else if (which === 'play') lobbyPlayEl.classList.add('visible');
   else if (which === 'coming-soon') lobbyComingSoonEl.classList.add('visible');
   else if (which === 'hero-detail') lobbyHeroDetailEl.classList.add('visible');
@@ -25032,6 +25059,10 @@ function startMatch(mode) {
 }
 
 function enterPlayPhase() {
+  // Decision 112: spara match-start-tid för Boss Wars time-tracking + nolla
+  // reporting-flag så nästa match-end registreras igen.
+  matchState._startTime = performance.now();
+  matchState._lbReported = false;
   document.body.classList.add('in-game');
   // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
@@ -25370,10 +25401,353 @@ function openComingSoon(name) {
   if (comingSoonNameEl) comingSoonNameEl.textContent = name;
   showLobbyPanel('coming-soon');
 }
-for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop'], ['btn-friends', 'Friends'], ['btn-mail', 'Mail'], ['btn-leaderboard', 'Leaderboard']]) {
+// Decision 112: btn-friends + btn-leaderboard har egna modaler (se längre ner).
+// btn-mail stannar som "Coming Soon" tills användaren bestämmer mail-funktionalitet.
+for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop'], ['btn-mail', 'Mail']]) {
   const csBtn = document.getElementById(csId);
   if (csBtn) csBtn.addEventListener('click', () => openComingSoon(csLabel));
 }
+
+// ============================================================
+// Decision 112: PLAYER PROFILE + LEADERBOARDS + FRIENDS (localStorage MVP)
+// ============================================================
+// Allt persisteras lokalt i browser tills server-API byggs. Match-resultat
+// uppdaterar lokalt 'leaderboardData.players[username]' så den lokala spelaren
+// alltid ser sin egen progression. Demo-spelare seedas vid första-start så
+// listorna inte ser tomma ut.
+
+const LB_STORAGE_KEY = 'hellborneLeaderboardV1';
+const FRIENDS_STORAGE_KEY = 'hellborneFriendsV1';
+const USERNAME_STORAGE_KEY = 'hellborneUsernameV1';
+
+function getLocalUsername() {
+  let u = null;
+  try { u = localStorage.getItem(USERNAME_STORAGE_KEY); } catch (_) {}
+  if (!u || u.length === 0) {
+    // Prompt en gång; om användaren avbryter, generera "Guest-NNNN"
+    let entered = null;
+    try { entered = window.prompt('Choose a player name (max 20 chars):', ''); } catch (_) {}
+    if (entered) entered = entered.trim().slice(0, 20);
+    u = entered && entered.length > 0 ? entered : ('Guest-' + Math.floor(1000 + Math.random() * 9000));
+    try { localStorage.setItem(USERNAME_STORAGE_KEY, u); } catch (_) {}
+  }
+  return u;
+}
+
+function loadLeaderboardData() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(LB_STORAGE_KEY) || 'null'); } catch (_) {}
+  if (!data || typeof data !== 'object') {
+    // Seed demo-spelare så listorna inte är tomma vid första-start.
+    data = {
+      linewars: {
+        // username → { wins, losses }
+        'Aragorn_99': { wins: 42, losses: 18 },
+        'Frodo': { wins: 31, losses: 22 },
+        'Gimli_HD': { wins: 24, losses: 19 },
+        'Sauron': { wins: 18, losses: 14 },
+      },
+      arena: {
+        'Frodo': { wins: 28, losses: 12 },
+        'Aragorn_99': { wins: 24, losses: 16 },
+        'Legolas_X': { wins: 19, losses: 11 },
+        'Gimli_HD': { wins: 14, losses: 17 },
+      },
+      bosswars: {
+        // Boss Wars är TEAM-baserad: array av runs.
+        // Varje run: { team: [u1,u2,u3], bossTier: 1-5, timeSec, date }
+        runs: [
+          { team: ['Frodo', 'Aragorn_99', 'Gimli_HD'], bossTier: 3, timeSec: 287, date: '2026-05-22' },
+          { team: ['Sauron', 'Legolas_X', 'Frodo'],     bossTier: 2, timeSec: 198, date: '2026-05-20' },
+          { team: ['Aragorn_99', 'Gimli_HD', 'Frodo'],  bossTier: 1, timeSec: 142, date: '2026-05-18' },
+        ],
+      },
+    };
+    try { localStorage.setItem(LB_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+  // Säkerställ struktur
+  if (!data.linewars) data.linewars = {};
+  if (!data.arena) data.arena = {};
+  if (!data.bosswars) data.bosswars = { runs: [] };
+  if (!data.bosswars.runs) data.bosswars.runs = [];
+  return data;
+}
+
+function saveLeaderboardData(data) {
+  try { localStorage.setItem(LB_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+}
+
+function loadFriendsData() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(FRIENDS_STORAGE_KEY) || 'null'); } catch (_) {}
+  if (!data || !Array.isArray(data.friends)) {
+    // Seed med några demo-vänner — online-status genereras vid render-tid (random ish).
+    data = { friends: ['Aragorn_99', 'Frodo', 'Gimli_HD'] };
+    try { localStorage.setItem(FRIENDS_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+  return data;
+}
+
+function saveFriendsData(data) {
+  try { localStorage.setItem(FRIENDS_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+}
+
+// Online-status är psuedo-randomiserad utifrån username (deterministisk per
+// session så samma vän inte hoppar mellan online/offline mellan render-anrop).
+const _friendOnlineCache = new Map();
+function isFriendOnline(username) {
+  if (_friendOnlineCache.has(username)) return _friendOnlineCache.get(username);
+  // Hash username → boolean (60% online för demo-känsla)
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) hash = ((hash << 5) - hash + username.charCodeAt(i)) | 0;
+  const isOnline = (Math.abs(hash) % 10) < 6;
+  _friendOnlineCache.set(username, isOnline);
+  return isOnline;
+}
+
+// ---------- Submit match-resultat (kallas från match-end-flow) ----------
+function recordLineWarsResult(won) {
+  const u = getLocalUsername();
+  const d = loadLeaderboardData();
+  const e = d.linewars[u] || { wins: 0, losses: 0 };
+  if (won) e.wins++; else e.losses++;
+  d.linewars[u] = e;
+  saveLeaderboardData(d);
+}
+function recordArenaResult(won) {
+  const u = getLocalUsername();
+  const d = loadLeaderboardData();
+  const e = d.arena[u] || { wins: 0, losses: 0 };
+  if (won) e.wins++; else e.losses++;
+  d.arena[u] = e;
+  saveLeaderboardData(d);
+}
+function recordBossWarsRun(team, bossTier, timeSec) {
+  const d = loadLeaderboardData();
+  d.bosswars.runs.push({
+    team: (team || []).slice(0, 3),
+    bossTier: bossTier || 1,
+    timeSec: Math.round(timeSec || 0),
+    date: new Date().toISOString().slice(0, 10),
+  });
+  saveLeaderboardData(d);
+}
+
+// ---------- Rating-beräkning ----------
+function ratingFromWL(wins, losses) {
+  // Enkel formel: 1000 + 25 × (wins - losses) + bonus för win-rate (om >10 games).
+  const games = wins + losses;
+  if (games === 0) return 1000;
+  const wr = wins / games;
+  const wrBonus = games >= 10 ? Math.round((wr - 0.5) * 200) : 0;
+  return 1000 + 25 * (wins - losses) + wrBonus;
+}
+
+// ---------- Leaderboard-render ----------
+let _currentLbTab = 'linewars';
+function renderLeaderboard(tab) {
+  _currentLbTab = tab || 'linewars';
+  // Update tab-active state
+  document.querySelectorAll('.lb-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === _currentLbTab));
+  const body = document.getElementById('lb-body');
+  if (!body) return;
+  const d = loadLeaderboardData();
+  body.innerHTML = '';
+  if (_currentLbTab === 'linewars' || _currentLbTab === 'arena') {
+    const tbl = d[_currentLbTab];
+    const rows = Object.keys(tbl).map(name => ({
+      name, wins: tbl[name].wins || 0, losses: tbl[name].losses || 0,
+      rating: ratingFromWL(tbl[name].wins || 0, tbl[name].losses || 0),
+    }));
+    rows.sort((a, b) => b.rating - a.rating);
+    if (rows.length === 0) {
+      body.innerHTML = '<div class="lb-empty">No games played yet. Be the first!</div>';
+      return;
+    }
+    rows.forEach((r, i) => {
+      const row = document.createElement('div');
+      row.className = 'lb-row';
+      row.innerHTML = `
+        <div class="lb-rank">#${i + 1}</div>
+        <div class="lb-name" data-name="${escapeHtml(r.name)}">${escapeHtml(r.name)}</div>
+        <div class="lb-stat">${r.wins}W / ${r.losses}L</div>
+        <div class="lb-stat" style="color:#ffd86a">${r.rating}</div>
+      `;
+      row.querySelector('.lb-name').addEventListener('click', () => openProfile(r.name, 'leaderboard'));
+      body.appendChild(row);
+    });
+  } else if (_currentLbTab === 'bosswars') {
+    // Boss Wars: team-runs. Sortera på bossTier DESC, sedan timeSec ASC (snabbare = bättre).
+    const runs = (d.bosswars.runs || []).slice();
+    runs.sort((a, b) => (b.bossTier - a.bossTier) || (a.timeSec - b.timeSec));
+    if (runs.length === 0) {
+      body.innerHTML = '<div class="lb-empty">No boss runs recorded yet.</div>';
+      return;
+    }
+    const BOSS_NAMES = { 1: 'Captain', 2: 'General', 3: 'Warlord', 4: 'Demon Prince', 5: 'Drakkonungen' };
+    runs.forEach((run, i) => {
+      const row = document.createElement('div');
+      row.className = 'lb-row';
+      const team = (run.team || []).map(n =>
+        `<span class="lb-name" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`
+      ).join('');
+      row.innerHTML = `
+        <div class="lb-rank">#${i + 1}</div>
+        <div class="lb-team">${team}</div>
+        <div class="lb-stat">T${run.bossTier} ${BOSS_NAMES[run.bossTier] || '?'}</div>
+        <div class="lb-stat" style="color:#ffd86a">${formatTime(run.timeSec)}</div>
+      `;
+      row.querySelectorAll('.lb-name').forEach(el => el.addEventListener('click', () => openProfile(el.dataset.name, 'leaderboard')));
+      body.appendChild(row);
+    });
+  }
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- Spectate-profil (klick på spelare) ----------
+let _profileReturnPanel = 'leaderboard';
+function openProfile(username, returnPanel) {
+  if (returnPanel) _profileReturnPanel = returnPanel;
+  const nameEl = document.getElementById('profile-name');
+  const statsEl = document.getElementById('profile-stats');
+  if (!nameEl || !statsEl) return;
+  nameEl.textContent = username;
+  const d = loadLeaderboardData();
+  const lw = d.linewars[username] || { wins: 0, losses: 0 };
+  const ar = d.arena[username] || { wins: 0, losses: 0 };
+  // Boss Wars: hitta unika tiers spelaren dödat (utan att avslöja teammates per progress-vy)
+  const tiersCleared = new Set();
+  (d.bosswars.runs || []).forEach(r => {
+    if ((r.team || []).includes(username)) tiersCleared.add(r.bossTier);
+  });
+  const total = 5;
+  statsEl.innerHTML = `
+    <div class="ps-section">
+      <div class="ps-label">Line Wars</div>
+      <div>Wins: <span class="ps-value">${lw.wins}</span> · Losses: <span class="ps-value">${lw.losses}</span> · Rating: <span class="ps-value">${ratingFromWL(lw.wins, lw.losses)}</span></div>
+    </div>
+    <div class="ps-section">
+      <div class="ps-label">Arena</div>
+      <div>Wins: <span class="ps-value">${ar.wins}</span> · Losses: <span class="ps-value">${ar.losses}</span> · Rating: <span class="ps-value">${ratingFromWL(ar.wins, ar.losses)}</span></div>
+    </div>
+    <div class="ps-section">
+      <div class="ps-label">Boss Wars Progress</div>
+      <div>Bosses cleared: <span class="ps-value">${tiersCleared.size}/${total}</span></div>
+    </div>
+  `;
+  showLobbyPanel('profile');
+}
+
+// ---------- Friends-render + filter ----------
+function renderFriends() {
+  const body = document.getElementById('friends-body');
+  if (!body) return;
+  const fd = loadFriendsData();
+  const showOnline = document.getElementById('filter-online') && document.getElementById('filter-online').checked;
+  const showOffline = document.getElementById('filter-offline') && document.getElementById('filter-offline').checked;
+  // Om ingen är bockad → visa alla. Annars: visa bara de bockade kategorierna.
+  const anyChecked = showOnline || showOffline;
+  body.innerHTML = '';
+  const friends = (fd.friends || []).slice().sort();
+  const visible = friends.filter(name => {
+    const online = isFriendOnline(name);
+    if (!anyChecked) return true;
+    return (online && showOnline) || (!online && showOffline);
+  });
+  if (visible.length === 0) {
+    body.innerHTML = friends.length === 0
+      ? '<div class="lb-empty">No friends yet. Add some above!</div>'
+      : '<div class="lb-empty">No friends match the current filter.</div>';
+    return;
+  }
+  // Två sektioner: Online först, Offline efter (om relevanta)
+  const sections = [
+    { label: 'Online', members: visible.filter(n => isFriendOnline(n)), cls: 'online' },
+    { label: 'Offline', members: visible.filter(n => !isFriendOnline(n)), cls: 'offline' },
+  ];
+  for (const s of sections) {
+    if (s.members.length === 0) continue;
+    const head = document.createElement('div');
+    head.style.cssText = 'color:#9fb6da;font:700 11px/1 system-ui;letter-spacing:1.5px;text-transform:uppercase;padding:10px 8px 6px;';
+    head.textContent = `${s.label} (${s.members.length})`;
+    body.appendChild(head);
+    for (const name of s.members) {
+      const row = document.createElement('div');
+      row.className = 'friend-row ' + s.cls;
+      row.innerHTML = `
+        <div class="friend-status"></div>
+        <div class="friend-name">${escapeHtml(name)}</div>
+        <button class="friend-remove" data-name="${escapeHtml(name)}">Remove</button>
+      `;
+      row.querySelector('.friend-name').addEventListener('click', () => openProfile(name, 'friends'));
+      row.querySelector('.friend-remove').addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        removeFriend(name);
+      });
+      body.appendChild(row);
+    }
+  }
+}
+
+function addFriend() {
+  const input = document.getElementById('friend-add-input');
+  if (!input) return;
+  const name = (input.value || '').trim().slice(0, 20);
+  if (!name) return;
+  const fd = loadFriendsData();
+  if (fd.friends.indexOf(name) >= 0) { input.value = ''; return; }
+  fd.friends.push(name);
+  saveFriendsData(fd);
+  input.value = '';
+  renderFriends();
+}
+
+function removeFriend(name) {
+  const fd = loadFriendsData();
+  const i = fd.friends.indexOf(name);
+  if (i >= 0) {
+    fd.friends.splice(i, 1);
+    saveFriendsData(fd);
+    renderFriends();
+  }
+}
+
+// ---------- Wire upp knappar ----------
+const _btnLb = document.getElementById('btn-leaderboard');
+if (_btnLb) _btnLb.addEventListener('click', () => {
+  renderLeaderboard(_currentLbTab);
+  showLobbyPanel('leaderboard');
+});
+const _btnLbBack = document.getElementById('btn-leaderboard-back');
+if (_btnLbBack) _btnLbBack.addEventListener('click', () => showLobbyPanel('main'));
+document.querySelectorAll('.lb-tab').forEach(b => {
+  b.addEventListener('click', () => renderLeaderboard(b.dataset.tab));
+});
+const _btnProfileBack = document.getElementById('btn-profile-back');
+if (_btnProfileBack) _btnProfileBack.addEventListener('click', () => showLobbyPanel(_profileReturnPanel || 'leaderboard'));
+
+const _btnFr = document.getElementById('btn-friends');
+if (_btnFr) _btnFr.addEventListener('click', () => {
+  renderFriends();
+  showLobbyPanel('friends');
+});
+const _btnFrBack = document.getElementById('btn-friends-back');
+if (_btnFrBack) _btnFrBack.addEventListener('click', () => showLobbyPanel('main'));
+const _btnFrAdd = document.getElementById('btn-friend-add');
+if (_btnFrAdd) _btnFrAdd.addEventListener('click', addFriend);
+const _frAddInput = document.getElementById('friend-add-input');
+if (_frAddInput) _frAddInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') addFriend(); });
+const _filterOnline = document.getElementById('filter-online');
+if (_filterOnline) _filterOnline.addEventListener('change', renderFriends);
+const _filterOffline = document.getElementById('filter-offline');
+if (_filterOffline) _filterOffline.addEventListener('change', renderFriends);
 // Per-mode How to Play-knappar. Sticky return-panel så Back-knappen returnerar
 // till rätt sub-meny (line-team / arena-team / boss-mode).
 const _btnHowtoLine = document.getElementById('btn-howto-line');

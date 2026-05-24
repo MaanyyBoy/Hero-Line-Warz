@@ -1253,9 +1253,34 @@
       font-size: 26px;
       border-radius: 14px;
     }
+    /* Mail — bredvid avatar till höger, kuvert-ikon (samma höjd som avatar) */
+    #btn-mail {
+      top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      left: max(80px, calc(env(safe-area-inset-left) + 72px));   /* 14 + 58 + 8 = 80 */
+      width: 58px; height: 58px;
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      color: #d9e2f5;
+    }
+    /* Friends — direkt under avatar, dubbla storleken (höjd) */
+    #btn-friends {
+      top: max(80px, calc(env(safe-area-inset-top) + 72px));    /* under avatar (14 + 58 + 8) */
+      left: max(14px, calc(env(safe-area-inset-left) + 6px));
+      width: 116px;        /* dubbel bredd */
+      height: 58px;        /* matchar avatar-höjd */
+      font-size: 15px;
+      border-radius: 14px;
+    }
     /* EVENT — uppe höger */
     #btn-event {
       top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      right: max(14px, calc(env(safe-area-inset-right) + 6px));
+      height: 50px; padding: 0 22px;
+      font-size: 15px;
+    }
+    /* Leaderboard — direkt under EVENT, samma textstorlek + padding */
+    #btn-leaderboard {
+      top: max(72px, calc(env(safe-area-inset-top) + 64px));    /* 14 + 50 + 8 = 72 */
       right: max(14px, calc(env(safe-area-inset-right) + 6px));
       height: 50px; padding: 0 22px;
       font-size: 15px;
@@ -1300,38 +1325,8 @@
       0%,100% { box-shadow: inset 0 0 14px rgba(255,196,74,0.25); }
       50%     { box-shadow: inset 0 0 30px rgba(255,196,74,0.6); }
     }
-    /* Vänster sido-meny — liten vertikal rektangel, 3 sammansatta segment */
-    #home-side-dock {
-      position: fixed;
-      box-sizing: border-box;
-      left: max(14px, calc(env(safe-area-inset-left) + 6px));
-      top: max(80px, calc(env(safe-area-inset-top) + 72px));
-      width: 104px;
-      display: flex;
-      flex-direction: column;
-      z-index: 3;
-      border: 2px solid rgba(150,178,228,0.50);
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.5);
-    }
-    #home-side-dock .home-btn {
-      position: static;
-      box-sizing: border-box;
-      width: 100%;
-      height: 34px;
-      min-width: 0;
-      padding: 0;
-      border: none;
-      border-radius: 0;
-      box-shadow: none;
-      font-size: 10px;
-      letter-spacing: 0.6px;
-    }
-    #home-side-dock .home-btn + .home-btn {
-      border-top: 1.5px solid rgba(170,190,230,0.28);
-    }
-    #home-side-dock .home-btn:active { transform: none; background: rgba(44,56,86,0.5); }
+    /* #home-side-dock borttagen: Friends/Mail/Leaderboard är nu fristående knappar
+       (decision 112). CSS-block raderat. */
     /* PLAY — nedre höger, rund, större. Med dekorativ ring-båge i hörnet. */
     #btn-play {
       right: max(20px, calc(env(safe-area-inset-right) + 10px));
@@ -1403,6 +1398,165 @@
       color: #cdd7ec; opacity: 0.8;
       margin-bottom: 22px;
     }
+    /* Leaderboard + Friends + Profile-paneler (decision 112) */
+    #lobby-leaderboard.visible, #lobby-friends.visible, #lobby-profile.visible {
+      margin: auto 0;
+      flex-direction: column;
+      width: min(560px, 94vw);
+      max-height: 88vh;
+    }
+    .lb-header {
+      width: 100%;
+      background: linear-gradient(150deg, rgba(26,34,56,0.97), rgba(13,18,32,0.98));
+      border: 2px solid rgba(150,178,228,0.5);
+      border-radius: 16px 16px 0 0;
+      padding: 18px 22px 14px;
+      box-sizing: border-box;
+    }
+    .lb-title {
+      font: 800 22px/1 system-ui, sans-serif;
+      color: #ffd86a; letter-spacing: 1px;
+      margin-bottom: 14px;
+    }
+    .lb-tabs { display: flex; gap: 6px; }
+    .lb-tab {
+      flex: 1;
+      background: rgba(44,56,86,0.6);
+      border: 1.5px solid rgba(150,178,228,0.35);
+      color: #cdd7ec;
+      font: 700 13px/1 system-ui, sans-serif;
+      padding: 10px 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+    }
+    .lb-tab.active {
+      background: rgba(80,110,170,0.85);
+      border-color: rgba(220,230,255,0.7);
+      color: #fff;
+      box-shadow: inset 0 0 8px rgba(120,160,220,0.4);
+    }
+    .lb-body, .friends-body {
+      width: 100%;
+      background: rgba(13,18,32,0.92);
+      border: 2px solid rgba(150,178,228,0.5);
+      border-top: none;
+      border-radius: 0 0 16px 16px;
+      padding: 14px 22px;
+      box-sizing: border-box;
+      max-height: 60vh;
+      overflow-y: auto;
+      color: #d9e2f5;
+    }
+    .lb-row, .friend-row {
+      display: flex;
+      align-items: center;
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(150,178,228,0.15);
+      gap: 10px;
+      font: 600 13px/1.2 system-ui, sans-serif;
+    }
+    .lb-row:last-child, .friend-row:last-child { border-bottom: none; }
+    .lb-rank {
+      font: 800 16px/1 system-ui, sans-serif;
+      color: #ffd86a; width: 32px; text-align: center;
+    }
+    .lb-name { flex: 1; cursor: pointer; }
+    .lb-name:hover { color: #ffd86a; }
+    .lb-stat { color: #9fb6da; font-weight: 700; }
+    .lb-team {
+      display: flex; flex-wrap: wrap; gap: 6px; flex: 1;
+    }
+    .lb-team .lb-name { cursor: pointer; padding: 2px 6px; background: rgba(60,80,120,0.4); border-radius: 4px; flex: 0; }
+    .lb-empty {
+      text-align: center; padding: 40px 20px;
+      color: #9fb6da; font-style: italic;
+    }
+    .friends-add-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .friends-add-row input {
+      flex: 1; background: rgba(13,18,32,0.7);
+      border: 1.5px solid rgba(150,178,228,0.4);
+      border-radius: 8px;
+      color: #d9e2f5;
+      padding: 0 12px;
+      font: 600 13px/36px system-ui, sans-serif;
+      height: 36px;
+    }
+    .friends-filter-row { display: flex; gap: 12px; }
+    .filter-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      cursor: pointer;
+      font: 600 12px/1 system-ui, sans-serif;
+      color: #cdd7ec;
+    }
+    .filter-pill input { display: none; }
+    .filter-dot {
+      width: 14px; height: 14px;
+      border: 2px solid rgba(150,178,228,0.6);
+      border-radius: 50%;
+      background: transparent;
+      transition: background 0.15s;
+    }
+    .filter-pill input:checked + .filter-dot {
+      background: #6ad36a;
+      border-color: #b6ffb6;
+      box-shadow: 0 0 6px rgba(106,211,106,0.6);
+    }
+    .friend-row .friend-status {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+    .friend-row.online .friend-status { background: #6ad36a; box-shadow: 0 0 4px rgba(106,211,106,0.7); }
+    .friend-row.offline .friend-status { background: #777; }
+    .friend-row .friend-name { flex: 1; }
+    .friend-row .friend-remove {
+      background: rgba(180,60,60,0.6);
+      border: 1px solid rgba(255,120,120,0.5);
+      color: #fff;
+      font: 700 10px/1 system-ui, sans-serif;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    /* Spectate profile */
+    .profile-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 22px;
+      background: linear-gradient(150deg, rgba(26,34,56,0.97), rgba(13,18,32,0.98));
+      border: 2px solid rgba(150,178,228,0.5);
+      border-radius: 16px 16px 0 0;
+      width: 100%; box-sizing: border-box;
+    }
+    .profile-avatar {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: rgba(80,110,170,0.6);
+      border: 2px solid rgba(220,230,255,0.5);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+    }
+    .profile-name {
+      font: 800 22px/1 system-ui, sans-serif;
+      color: #ffd86a; letter-spacing: 0.5px;
+    }
+    .profile-stats {
+      width: 100%;
+      background: rgba(13,18,32,0.92);
+      border: 2px solid rgba(150,178,228,0.5);
+      border-top: none;
+      border-radius: 0 0 16px 16px;
+      padding: 18px 22px;
+      box-sizing: border-box;
+      color: #d9e2f5;
+      font: 600 14px/1.7 system-ui, sans-serif;
+    }
+    .profile-stats .ps-section { margin-bottom: 14px; }
+    .profile-stats .ps-section:last-child { margin-bottom: 0; }
+    .profile-stats .ps-label {
+      color: #9fb6da; font-size: 12px; letter-spacing: 1px;
+      text-transform: uppercase; margin-bottom: 4px;
+    }
+    .profile-stats .ps-value { color: #ffd86a; font-weight: 800; }
     /* Boss-pick: grid med 5 kort */
     #boss-pick-grid {
       display: grid;
@@ -3187,12 +3341,15 @@
 
     <div class="lobby-panel visible" id="lobby-main">
       <button class="home-btn" id="btn-avatar" aria-label="Profile">👤</button>
-      <div id="home-side-dock">
-        <button class="home-btn" id="btn-friends">Friends</button>
-        <button class="home-btn" id="btn-mail">Mail</button>
-        <button class="home-btn" id="btn-leaderboard">Leaderboard</button>
-      </div>
+      <button class="home-btn" id="btn-friends">Friends</button>
+      <button class="home-btn" id="btn-mail" aria-label="Mail">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="5" width="19" height="14" rx="2"/>
+          <path d="M2.5 7 L12 13 L21.5 7"/>
+        </svg>
+      </button>
       <button class="home-btn aura" id="btn-event">Event</button>
+      <button class="home-btn" id="btn-leaderboard">Leaderboard</button>
       <div id="home-dock">
         <button class="home-btn" id="btn-heroes">Heroes</button>
         <button class="home-btn" id="btn-skins">Skins</button>
@@ -3220,6 +3377,47 @@
         <div class="cs-sub">This feature is still under construction — check back later!</div>
         <button class="lobby-btn secondary" id="btn-coming-soon-back">← Back</button>
       </div>
+    </div>
+
+    <!-- Leaderboard-panel: 3 tabs (Line Wars / Arena / Boss Wars) -->
+    <div class="lobby-panel" id="lobby-leaderboard">
+      <div class="lb-header">
+        <div class="lb-title">🏆 Leaderboard</div>
+        <div class="lb-tabs">
+          <button class="lb-tab active" data-tab="linewars">Line Wars</button>
+          <button class="lb-tab" data-tab="arena">Arena</button>
+          <button class="lb-tab" data-tab="bosswars">Boss Wars</button>
+        </div>
+      </div>
+      <div class="lb-body" id="lb-body"></div>
+      <button class="lobby-btn secondary" id="btn-leaderboard-back" style="margin-top: 12px;">← Back</button>
+    </div>
+
+    <!-- Spectate profile-panel (klick på spelare i leaderboard) -->
+    <div class="lobby-panel" id="lobby-profile">
+      <div class="profile-header">
+        <div class="profile-avatar">👤</div>
+        <div class="profile-name" id="profile-name">Player</div>
+      </div>
+      <div class="profile-stats" id="profile-stats"></div>
+      <button class="lobby-btn secondary" id="btn-profile-back" style="margin-top: 12px;">← Back</button>
+    </div>
+
+    <!-- Friends-panel: add + filter + listor -->
+    <div class="lobby-panel" id="lobby-friends">
+      <div class="lb-header">
+        <div class="lb-title">👥 Friends</div>
+        <div class="friends-add-row">
+          <input type="text" id="friend-add-input" placeholder="Friend username..." maxlength="20">
+          <button class="lobby-btn" id="btn-friend-add" style="padding: 0 16px; height: 36px;">+ Add</button>
+        </div>
+        <div class="friends-filter-row">
+          <label class="filter-pill"><input type="checkbox" id="filter-online"><span class="filter-dot"></span>Show online</label>
+          <label class="filter-pill"><input type="checkbox" id="filter-offline"><span class="filter-dot"></span>Show offline</label>
+        </div>
+      </div>
+      <div class="friends-body" id="friends-body"></div>
+      <button class="lobby-btn secondary" id="btn-friends-back" style="margin-top: 12px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-mode">
