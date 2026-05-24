@@ -15990,10 +15990,12 @@ function animateGltfCharacter(mesh, dt, side, type) {
   // → applyMovement early-return:ar → meshen fryser 1-3 frames → vel dippar
   // kortvarigt mot 0. Utan debounce flippar clip:en run→walk/idle→run = en
   // synlig animations-pop på karaktären. lowVelTime mäter hur länge vel
-  // varit låg; en kort dipp (< 0.15 s) räknas fortfarande som "springer".
-  if (vel > 4.0) st.lowVelTime = 0;
+  // varit låg; bumpad threshold + debounce-tid (2.5 m/s + 350ms) gör att
+  // hjälten håller run-clip även när server-snap-stagger eller wave-spike
+  // skapar kort frame-paus där position-delta dippar (decision 080 fix v2).
+  if (vel > 2.5) st.lowVelTime = 0;
   else st.lowVelTime = (st.lowVelTime || 0) + dt;
-  const running = vel > 4.0 || st.lowVelTime < 0.15;
+  const running = vel > 2.5 || st.lowVelTime < 0.35;
   if (running && clips.run) {
     playGltfAction(mesh, clips.run);
   } else if (vel > 0.4 && clips.walk) {
