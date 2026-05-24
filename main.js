@@ -2118,10 +2118,10 @@ const HERO_ATTACK_INTERVAL = 1.0;
 // Per-hero baseline stats (matchar server/game-engine.js HERO_DEFS).
 const HERO_DEFS = {
   magiker: { name: 'Gandulf', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
-  legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 6.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },
+  legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 9.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },   // AA-range +50% (6.0 → 9.0)
   gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Aragurn', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
-  kostefo: { name: 'Kostefo', baseHp: 95,  baseDmg: 5, attackRange: 4.5, attackInterval: 0.9, baseMoveSpeed: 6.2 },
+  kostefo: { name: 'Kostefo', baseHp: 95,  baseDmg: 5, attackRange: 5.4, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range +20% (4.5 → 5.4)
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -2520,7 +2520,7 @@ const SOULDRAIN_BREAK_RANGE = 12.0;  // bryt-range under channel
 const SOULDRAIN_EXPLOSION_RADIUS = 3.5;
 const SOULDRAIN_EXPLOSION_DMG_PCT = 0.50;   // 50% av damage dealt
 const SOULDRAIN_PARTICLE_INTERVAL = 0.06;   // sek mellan soul-puffs längs beamen
-const FIREWAVE_LENGTH = 5;
+const FIREWAVE_LENGTH = 6.5;            // Q cast-range +30% (5.0 → 6.5), matchar server
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;
 const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
@@ -2529,7 +2529,7 @@ const FIREWAVE_EFFECT_LIFE = 0.6;
 const NOVA_RADIUS = 3.8 * 1.3 * 0.8;       // +30% → -20% = 4.94 → 3.95
 const NOVA_DAMAGE = 10;
 const NOVA_FREEZE_TIME = 2.0;
-const NOVA_CAST_DISTANCE = 6 * 1.3 * 0.8;  // +30% → -20% = 7.8 → 6.24
+const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8), matchar server
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
 const BLACKHOLE_RADIUS = 3.5 * 1.3 * 0.8;       // +30% → -20% = 4.55 → 3.64
@@ -2537,7 +2537,7 @@ const BLACKHOLE_PULL_SPEED = 2.5;
 const BLACKHOLE_DURATION = 3.0;
 const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
 const BLACKHOLE_EXPLOSION_DMG = 30;
-const BLACKHOLE_CAST_DISTANCE = 8 * 1.3 * 0.8;  // +30% → -20% = 10.4 → 8.32
+const BLACKHOLE_CAST_DISTANCE = 10.4;      // E cast-range +30% (8.0 → 10.4), matchar server
 // Legolus
 const VINE_TRAP_RADIUS = 3.0 * 1.3 * 0.8;        // +30% → -20% = 3.9 → 3.12
 const VINE_TRAP_DURATION = 3.0;
@@ -18820,8 +18820,9 @@ function makeKostefoCompanionMesh() {
 const _K_GOOSEWAVE_DURATION = 3.0;
 const _K_GOOSEWAVE_TICK = 0.5;
 const _K_GOOSEWAVE_DMG_PCT = 0.05;
-const _K_GOOSEWAVE_WIDTH = 3.6;
-const _K_GOOSEWAVE_LENGTH = 6.5;
+// Fyrkant + 40% större (var 3.6×6.5 rektangel). Sida = 6.5 × 1.4 = 9.1.
+const _K_GOOSEWAVE_WIDTH = 9.1;
+const _K_GOOSEWAVE_LENGTH = 9.1;
 const _K_GOOSEWAVE_OFFSET = 4.0;
 const _K_GOOSEWAVE_CD = 8.0;
 const _K_SLIDER_RANGE = 6.0;
@@ -18909,6 +18910,12 @@ function hostCastKostefoJointSlider(side, ev) {
   mesh.position.set(side.hero.x, 1.4, side.hero.z);
   mesh.rotation.y = Math.atan2(dx, dz);
   scene.add(mesh);
+  // Homing: om hero har AA-target locked, slider jagar target. Annars fri aim.
+  let homingTargetType = null, homingTargetId = 0;
+  if (side.aaActive && side.targetId) {
+    homingTargetType = side.targetType;
+    homingTargetId = side.targetId;
+  }
   side.kostefoSliders = side.kostefoSliders || [];
   side.kostefoSliders.push({
     id: (side._kostefoNextId = (side._kostefoNextId || 1) + 1),
@@ -18919,6 +18926,7 @@ function hostCastKostefoJointSlider(side, ev) {
     hitMon: [], hitCreep: [], hitOppHero: false,
     mesh,                          // lokal mesh-ref
     lvl5Tp: !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX),
+    homingTargetType, homingTargetId,
   });
   spawnSkillCastFx(side.hero.x, side.hero.z, 0xddaa44, 1.2);
 }
@@ -19121,6 +19129,33 @@ function tickClientKostefoSliders(side, dt) {
   const hitR2 = _K_SLIDER_RADIUS * _K_SLIDER_RADIUS;
   for (let i = side.kostefoSliders.length - 1; i >= 0; i--) {
     const s = side.kostefoSliders[i];
+    // Homing: justera dx/dz mot target's nuvarande pos om target lever.
+    // Vid death/försvunnen target fortsätter slider rakt fram.
+    if (s.homingTargetType) {
+      let tx = null, tz = null;
+      if (s.homingTargetType === 'monster' && s.homingTargetId) {
+        const m = (side.monsters || []).find(x => x.id === s.homingTargetId);
+        if (m && m.hp > 0 && m.mesh) { tx = m.mesh.position.x; tz = m.mesh.position.z; }
+      } else if (s.homingTargetType === 'creep' && s.homingTargetId && opp) {
+        const c = (opp.playerCreeps || []).find(x => x.id === s.homingTargetId);
+        if (c && c.hp > 0 && c.mesh) { tx = c.mesh.position.x; tz = c.mesh.position.z; }
+      } else if (s.homingTargetType === 'hero' && opp && !opp.hero.dead) {
+        tx = opp.hero.x; tz = opp.hero.z;
+      }
+      if (tx !== null) {
+        const tdx = tx - s.x, tdz = tz - s.z;
+        const td = Math.hypot(tdx, tdz);
+        if (td > 0.05) {
+          const ndx = tdx / td, ndz = tdz / td;
+          // 35% drag mot target normaliserat vid 30 Hz — frame-rate-oberoende.
+          const turnRate = Math.min(1, 0.35 * dt * 30);
+          const newDx = s.dx + (ndx - s.dx) * turnRate;
+          const newDz = s.dz + (ndz - s.dz) * turnRate;
+          const nl = Math.hypot(newDx, newDz);
+          if (nl > 0.01) { s.dx = newDx / nl; s.dz = newDz / nl; }
+        }
+      }
+    }
     const step = _K_SLIDER_SPEED * dt;
     s.x += s.dx * step;
     s.z += s.dz * step;
@@ -19685,7 +19720,7 @@ function applyRageLifesteal(side, dmgDealt) {
 
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
-const WHIRLWIND_RADIUS = 3.0;
+const WHIRLWIND_RADIUS = 3.6;   // +20% (3.0 → 3.6), matchar server
 const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;

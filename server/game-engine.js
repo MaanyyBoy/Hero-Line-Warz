@@ -31,7 +31,7 @@ const HERO_DEFS = {
     name: 'Legolus',
     baseHp: 85,           // glass-cannon
     baseDmg: 6,           // mer per AA
-    attackRange: 6.0,     // längre räckvidd än Gandulf (4.0)
+    attackRange: 9.0,     // AA-range +50% (6.0 → 9.0) — bågskytt på avstånd
     attackInterval: 0.7,  // snabbare AA än Gandulf (1.0)
     baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
   },
@@ -51,7 +51,7 @@ const HERO_DEFS = {
     name: 'Kostefo',
     baseHp: 95,           // medium HP
     baseDmg: 5,           // medium dmg
-    attackRange: 4.5,     // medel-räckvidd
+    attackRange: 5.4,     // AA-range +20% (4.5 → 5.4)
     attackInterval: 0.9,  // något snabbare
     baseMoveSpeed: 6.2,
   },
@@ -229,7 +229,7 @@ const BOSS_MELEE_RANGE = {
 
 // Gandulf-skills (omgjorda)
 // Fire Wave (Q): triangulär cone framför hero. Direkt dmg + 3s DoT.
-const FIREWAVE_LENGTH = 5;                 // halverad räckvidd
+const FIREWAVE_LENGTH = 6.5;               // Q cast-range +30% (5.0 → 6.5)
 const FIREWAVE_HALF_ANGLE = Math.PI / 4;   // 45° → 90° total cone
 const FIREWAVE_DIRECT_DMG = 18;
 const FIREWAVE_DOT_DPS = 6;
@@ -239,7 +239,7 @@ const FIREWAVE_EFFECT_LIFE = 0.6;          // hur länge cone-mesh visas på kli
 const NOVA_RADIUS = 3.8;
 const NOVA_DAMAGE = 10;
 const NOVA_FREEZE_TIME = 2.0;
-const NOVA_CAST_DISTANCE = 6;              // drag-räckvidd
+const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8)
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
 // Legolus-skills
@@ -266,9 +266,10 @@ const POISON_BASE_DPS = 5;         // per stack baseline
 const KOSTEFO_GOOSEWAVE_DURATION = 3.0;
 const KOSTEFO_GOOSEWAVE_TICK = 0.5;
 const KOSTEFO_GOOSEWAVE_DMG_PCT = 0.05;
-const KOSTEFO_GOOSEWAVE_WIDTH = 3.6;     // bred wave
-const KOSTEFO_GOOSEWAVE_LENGTH = 6.5;    // räckvidd framåt
-const KOSTEFO_GOOSEWAVE_OFFSET = 4.0;    // offset från hero (zon-bakkant 0.75m framför hero, framkant 7.25m)
+// Fyrkantig hit-zon (var rektangulär 3.6×6.5). Sida = 6.5 × 1.4 = 9.1 → +40% på max-dim.
+const KOSTEFO_GOOSEWAVE_WIDTH = 9.1;     // fyrkant (matchar length)
+const KOSTEFO_GOOSEWAVE_LENGTH = 9.1;    // räckvidd framåt
+const KOSTEFO_GOOSEWAVE_OFFSET = 4.0;    // offset från hero (bibehållen)
 const KOSTEFO_GOOSEWAVE_CD = 8.0;
 // F: Joint Slider — piercing projectile, 6m, explosion DoT + slow vid slutet
 const KOSTEFO_SLIDER_RANGE = 6.0;
@@ -349,7 +350,7 @@ const BLACKHOLE_PULL_SPEED = 2.5;
 const BLACKHOLE_DURATION = 3.0;
 const BLACKHOLE_EXPLOSION_RADIUS = 4.0;
 const BLACKHOLE_EXPLOSION_DMG = 30;
-const BLACKHOLE_CAST_DISTANCE = 8;
+const BLACKHOLE_CAST_DISTANCE = 10.4;      // E cast-range +30% (8.0 → 10.4)
 // Bakåtkompabilitet med tidigare konstanter (används av hero-copy etc)
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
 const ELDKLOT_RANGE = FIREWAVE_LENGTH;
@@ -3429,7 +3430,7 @@ function updateSoulDrain(state, side, opp, dt) {
 // ============================================================
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
-const WHIRLWIND_RADIUS = 3.0;
+const WHIRLWIND_RADIUS = 3.6;              // +20% (3.0 → 3.6)
 const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
 const WHIRLWIND_HEAL_PCT = 0.10;     // Aragurn healar 10% av all damage done från whirlwind
 
@@ -3859,6 +3860,14 @@ function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
+  // Homing: om hero har AA-target locked, slider jagar det target. Annars fri aim
+  // (befintlig fri-cast beteende). Snapshot:as vid cast — om target dör mid-flight
+  // fortsätter slider rakt fram i senaste kända riktning.
+  let homingTargetType = null, homingTargetId = 0;
+  if (side.aaActive && side.targetId) {
+    homingTargetType = side.targetType;
+    homingTargetId = side.targetId;
+  }
   side.kostefoSliders.push({
     id: state.nextEntityId++,
     x: side.hero.x, z: side.hero.z,
@@ -3869,6 +3878,7 @@ function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
     hitCreep: [],        // creep-ids redan piercede
     hitOppHero: false,
     lvl5Tp: !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX),
+    homingTargetType, homingTargetId,
   });
 }
 
@@ -4018,6 +4028,33 @@ function tickKostefoSliders(state, side, opp, dt) {
   const hitR2 = KOSTEFO_SLIDER_RADIUS * KOSTEFO_SLIDER_RADIUS;
   for (let i = side.kostefoSliders.length - 1; i >= 0; i--) {
     const s = side.kostefoSliders[i];
+    // Homing: justera dx/dz mot target's nuvarande position med smooth turn-rate.
+    // Om target dog/försvann fortsätter slider rakt fram i senaste kända riktning.
+    if (s.homingTargetType) {
+      let tx = null, tz = null;
+      if (s.homingTargetType === 'monster' && s.homingTargetId) {
+        const m = side.monsters.find(x => x.id === s.homingTargetId);
+        if (m && m.hp > 0) { tx = m.x; tz = m.z; }
+      } else if (s.homingTargetType === 'creep' && s.homingTargetId && opp) {
+        const c = opp.playerCreeps.find(x => x.id === s.homingTargetId);
+        if (c && c.hp > 0) { tx = c.x; tz = c.z; }
+      } else if (s.homingTargetType === 'hero' && opp && !opp.hero.dead) {
+        tx = opp.hero.x; tz = opp.hero.z;
+      }
+      if (tx !== null) {
+        const tdx = tx - s.x, tdz = tz - s.z;
+        const td = Math.hypot(tdx, tdz);
+        if (td > 0.05) {
+          // 35% drag per frame mot target = smooth curving turn
+          const ndx = tdx / td, ndz = tdz / td;
+          const turnRate = 0.35;
+          const newDx = s.dx + (ndx - s.dx) * turnRate;
+          const newDz = s.dz + (ndz - s.dz) * turnRate;
+          const nl = Math.hypot(newDx, newDz);
+          if (nl > 0.01) { s.dx = newDx / nl; s.dz = newDz / nl; }
+        }
+      }
+    }
     const step = stepSpeed * dt;
     s.x += s.dx * step;
     s.z += s.dz * step;
