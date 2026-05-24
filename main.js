@@ -17067,19 +17067,47 @@ let _perfLastUpdateMs = 0;
 let _lastHudMs = 0;   // throttle-tracker för HUD-textuppdateringar
 let _heavyTickAccum = 0;   // ackumulator för 30 Hz throttle av tickAllHpBars + animateAllCharacters
 const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
+// Spike-diagnostik (decision 114): tracking av max-frame-tid i rullande fönster.
+// Loggar console-spike när frame > _spikeWarnMs så vi kan korrelera med vad
+// som hände i spelet vid spike-tidpunkten. Visar också max-ms de senaste 5 sek
+// on-screen (för användaren utan att öppna devtools).
+let _spikeMaxMs5s = 0;
+let _spikeMaxAt = 0;
+const _spikeWarnMs = 30;   // > 30ms = synlig hicka (< 30 fps)
+let _frameTickCount = 0;
+let _lastFrameTime = 0;
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
   // Lägg dagens dt (sekunder) i rullande fönster av ~60 frames
   _perfFrames.push(dt);
   if (_perfFrames.length > 60) _perfFrames.shift();
   const nowMs = performance.now();
+  _frameTickCount++;
+  const frameMs = dt * 1000;
+  // Spike-logger: console-warn när frame > tröskel + kontext om vad som körts
+  if (frameMs > _spikeWarnMs) {
+    const ctx = `tick=${_frameTickCount} fps=${(1000/frameMs).toFixed(0)} ` +
+                `mode=${APP.mode}/${APP.gameMode} ` +
+                `side=${APP.localSide}`;
+    console.warn(`[SPIKE] ${frameMs.toFixed(1)}ms ${ctx}`);
+  }
+  // Rullande max över 5 sek
+  if (frameMs > _spikeMaxMs5s) {
+    _spikeMaxMs5s = frameMs;
+    _spikeMaxAt = nowMs;
+  }
+  if (nowMs - _spikeMaxAt > 5000) {
+    _spikeMaxMs5s = frameMs;
+    _spikeMaxAt = nowMs;
+  }
   if (nowMs - _perfLastUpdateMs < 250) return;
   _perfLastUpdateMs = nowMs;
   const sum = _perfFrames.reduce((s, v) => s + v, 0);
   const avg = sum / Math.max(1, _perfFrames.length);
   const ms = avg * 1000;
   const fps = avg > 0 ? (1 / avg) : 0;
-  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1);
+  // Visa avg + max5s om mätaren har plats
+  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1) + ` (max ${_spikeMaxMs5s.toFixed(0)})`;
   if (perfFpsEl) perfFpsEl.textContent = Math.round(fps);
   // Bar-fill: 100% när vi når 60 fps (16.67ms), skalar ner när frame-time växer
   if (perfBarFillEl) {
