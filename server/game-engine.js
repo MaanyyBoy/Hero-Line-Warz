@@ -20,7 +20,7 @@ const PROJECTILE_SPEED = 18;
 // Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
 const HERO_DEFS = {
   magiker: {
-    name: 'Gandulf',
+    name: 'Zorythar',
     baseHp: 100,
     baseDmg: 5,
     attackRange: 4.0,
