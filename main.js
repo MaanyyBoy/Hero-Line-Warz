@@ -17287,48 +17287,58 @@ function updateLevelUI(side) {
 // ============================================================
 
 // Aim-line — Group med fyllning + bred glow, tydligare än tidigare smala plan
+// renderOrder=999 + depthTest=false: garantera synlighet ovanpå arena-floor/lane
 const aimLine = new THREE.Group();
 const aimLineCore = new THREE.Mesh(
   new THREE.PlaneGeometry(ELDKLOT_RANGE, 1.0),
-  new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimLine.add(aimLineCore);
 const aimLineGlow = new THREE.Mesh(
   new THREE.PlaneGeometry(ELDKLOT_RANGE, 1.8),
-  new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimLine.add(aimLineGlow);
 aimLine.rotation.x = -Math.PI / 2;
 aimLine.visible = false;
+aimLine.renderOrder = 999;
+aimLine.traverse(o => { if (o.isMesh) o.renderOrder = 999; });
 scene.add(aimLine);
 
 const aimDot = new THREE.Mesh(
   new THREE.CircleGeometry(0.9, 24),
-  new THREE.MeshBasicMaterial({ color: 0xaa88ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0xaa88ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimDot.rotation.x = -Math.PI / 2;
 aimDot.visible = false;
+aimDot.renderOrder = 999;
 scene.add(aimDot);
 
 // Generic AoE-aim-ring (skalas + tintas per skill) — Group med fyllning + tjock kant
+// renderOrder=999 + depthTest=false så ringen ALLTID renderas ovanpå mark/props/skuggor.
+// Tidigare dolde arena-floor + boss-arena-flat-surfaces aim-cirkeln (transparent +
+// depthWrite false utan depthTest false = render-order-beroende; floor renderades
+// efter och täckte den).
 const aimCircle = new THREE.Group();
 const aimCircleFill = new THREE.Mesh(
   new THREE.CircleGeometry(1.0, 40),
-  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimCircle.add(aimCircleFill);
 const aimCircleRing = new THREE.Mesh(
   new THREE.RingGeometry(0.86, 1.0, 48),
-  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimCircle.add(aimCircleRing);
 const aimCircleInner = new THREE.Mesh(
   new THREE.RingGeometry(0.75, 0.86, 48),
-  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+  new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
 );
 aimCircle.add(aimCircleInner);
 aimCircle.rotation.x = -Math.PI / 2;
 aimCircle.visible = false;
+aimCircle.renderOrder = 999;
+aimCircle.traverse(o => { if (o.isMesh) o.renderOrder = 999; });
 scene.add(aimCircle);
 
 // Target-ring under låst fiende — pulserar lätt
