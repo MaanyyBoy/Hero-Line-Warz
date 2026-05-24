@@ -15688,6 +15688,21 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
   for (const [id, mesh] of map) {
     if (!seen.has(id)) {
       scene.remove(mesh);
+      // Cleanup eventuell boss-telegraph-mesh (scene-add:ad separat, inte
+      // child av boss-mesh) som hänger på userData._bossTelegraph. Krävs när
+      // boss dör mitt under skill-cast — annars stannar röda cirkeln kvar.
+      if (mesh.userData && mesh.userData._bossTelegraph) {
+        const tg = mesh.userData._bossTelegraph;
+        scene.remove(tg);
+        tg.traverse?.(o => {
+          if (o.geometry) o.geometry.dispose?.();
+          if (o.material) {
+            if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+            else o.material.dispose?.();
+          }
+        });
+        mesh.userData._bossTelegraph = null;
+      }
       // disposeOnRemove: för entiteter med FÄRSKA (ej delade/klonade)
       // geometrier — frigör GPU-minnet (GC frigör inte GPU-buffrar).
       if (disposeOnRemove) {
