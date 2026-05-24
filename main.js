@@ -25143,7 +25143,7 @@ function enterPlayPhase() {
   if (heroPickEl) heroPickEl.classList.add('hidden');
   // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
   // i solo tickas den lokalt via simulateAll/tick.
-  duelState.timer = 300;
+  duelState.timer = 60;   // TEMP-TEST: var 300 (5 min) — återställ efter arena-bugg-test
   duelState.count = 0;
   duelState.active = false;
   duelState.matchTimer = 0;
