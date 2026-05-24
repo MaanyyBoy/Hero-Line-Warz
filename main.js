@@ -15592,6 +15592,16 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
   }
 }
 
+// Klient-side mesh-spawn-stagger: skinned GLTF-meshes (monster/creep) tar
+// 5-15 ms per clone. Vid wave-start spawnar servern 30 monster nästan
+// samtidigt → klienten gör 30 mesh-clones i samma frame = 150-450 ms spike
+// = synlig hicka. Decision 113: cap N nya mesh per frame; resten plockas
+// upp nästa snap (entiteten finns kvar i server-state). seen.add() körs
+// fortfarande så removal-loopen inte rensar den.
+let _meshSpawnsThisFrame = 0;
+const MAX_MESH_SPAWNS_PER_FRAME = 5;
+const STAGGER_KEYS = new Set(['monsters', 'playerCreeps']);
+
 function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
@@ -15599,12 +15609,20 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
   const interpolate = INTERPOLATED_KEYS.has(key);
   // Sec-precision now för velocity-tracking. En läsning per anrop räcker.
   const _nowSec = interpolate ? (performance.now() / 1000) : 0;
+  const shouldStagger = STAGGER_KEYS.has(key);
   for (const e of list) {
     seen.add(e.id);
     let mesh = map.get(e.id);
     const fresh = !mesh;
     if (fresh) {
+      // Stagga klient-side mesh-spawn för tunga GLTF-clones (monster/creep)
+      // så wave-start inte ger 150-450 ms frame-spike. Entiteten plockas
+      // upp i nästa state-snap (33 ms vid 30 Hz) om vi nådde cap denna frame.
+      if (shouldStagger && _meshSpawnsThisFrame >= MAX_MESH_SPAWNS_PER_FRAME) {
+        continue;
+      }
       mesh = makeMesh(e);
+      if (shouldStagger) _meshSpawnsThisFrame++;
       scene.add(mesh);
       map.set(e.id, mesh);
       // Initial snap
@@ -27607,6 +27625,8 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   resetFxPopupBudget();
+  // Decision 113: reset mesh-spawn-budget för wave-start-stutter-fix
+  _meshSpawnsThisFrame = 0;
   tickPerfMeter(dt);
   // Tick lokal optimistic ult-lockout för classic MP-klient (line wars).
   // I solo + arena/boss host körs simulateAll som tickar via buff-loopen
