@@ -2611,6 +2611,13 @@ function inSideBase(idx, x, z) {
   const [zMin, zMax] = SIDE_CFG[idx].baseZRange;
   return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
 }
+// Duel-arena (classic line wars) — matchar server-konstanter ARENA_CX/CZ/RADIUS.
+// Hjältarna teleporteras till denna cirkulära stenarena under duel-fasen.
+const DUEL_ARENA_CX = 0;
+const DUEL_ARENA_CZ = 35;
+const DUEL_ARENA_RADIUS = 14.4;
+const DUEL_ARENA_FLOOR_Y = 0.32;   // y-höjd på inre golv (visuell platform)
+
 function isHeroWalkable(idx, x, z) {
   // Arena: hero rör sig fritt inom arena-bounds men inte genom cover-props
   if (APP.gameMode === 'arena1v1') {
@@ -2622,6 +2629,13 @@ function isHeroWalkable(idx, x, z) {
   // Boss Wars: cirkulär platform, fri rörelse inom radius
   if (APP.gameMode === 'bosswars') {
     return isBossWarsPos(x, z);
+  }
+  // Classic line wars duel-fas: hjältar är teleporterade till stenarenan på (0, 35).
+  // Server clampar mot ARENA_RADIUS — klient-prediction måste matcha annars
+  // bail:ar applyMovement varje frame (lanes/base är inte walkable z=35) → hopp.
+  if (duelState && duelState.active) {
+    const dx = x - DUEL_ARENA_CX, dz = z - DUEL_ARENA_CZ;
+    return (dx * dx + dz * dz) < (DUEL_ARENA_RADIUS - HERO_R) * (DUEL_ARENA_RADIUS - HERO_R);
   }
   const cfg = SIDE_CFG[idx];
   const dx = x - cfg.tower.x, dz = z - cfg.tower.z;
@@ -17412,9 +17426,12 @@ function updateAimIndicators() {
     }
     return p;
   }
+  // Aim-y: duel-arenans inre golv är y=0.32 (se buildDuelArena). Höj aim-mesh
+  // 0.05 ovan så den syns över golvet — annars dolt av platforms-mesh.
+  const aimY = (duelState && duelState.active) ? (DUEL_ARENA_FLOOR_Y + 0.05) : 0.07;
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
-    aimCircle.position.set(x, 0.07, z);
+    aimCircle.position.set(x, aimY, z);
     // Pulsande skala för synlighet
     const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
     aimCircle.scale.set(radius * pulse, radius * pulse, 1);
@@ -17422,7 +17439,7 @@ function updateAimIndicators() {
   }
   function showLine(dirX, dirZ, length) {
     aimLine.visible = true;
-    aimLine.position.set(side.hero.x + dirX * (length / 2), 0.07, side.hero.z + dirZ * (length / 2));
+    aimLine.position.set(side.hero.x + dirX * (length / 2), aimY, side.hero.z + dirZ * (length / 2));
     aimLine.rotation.y = -Math.atan2(dirZ, dirX);
     // Skala längden + lite pulserande bredd
     const pulse = 1 + 0.10 * Math.sin(performance.now() * 0.009);
@@ -27723,6 +27740,20 @@ function tick() {
     maybeSendClientInput(now);
     tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
+  }
+  // Classic line wars duel-fas: hjältarnas fötter sjunker under stenarenans golv
+  // (golv y=0.32, hero default y=0). Lyft alla hjälte-meshes till golvet under
+  // hela duel-fasen. Gäller alla mode (solo, host, joinare) eftersom alla har
+  // duelState.active synkroniserad från server-state. Återställ till y=0 när
+  // duel slutar — annars blir mesh kvar uppe i luften efter respawn på lane.
+  if (APP.gameMode === 'classic') {
+    const targetY = (duelState && duelState.active) ? DUEL_ARENA_FLOOR_Y : 0;
+    for (const idx of [1, 2]) {
+      const s = sides[idx];
+      if (s && s.mesh) {
+        s.mesh.position.y = targetY;
+      }
+    }
   }
   // Arena MP host broadcastar state till klienten — fast 30 Hz-kadens via
   // tids-ackumulator (steg 2 av MP-lagg-planen). Tidigare kollades
