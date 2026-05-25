@@ -17426,14 +17426,13 @@ function updateAimIndicators() {
     }
     return p;
   }
-  // Aim-y: duel-arenans inre golv är y=0.32 (se buildDuelArena). Höj aim-mesh
-  // 0.20 ovan (= y 0.52) så den syns tydligt över golvet — duelState.active
-  // räcker inte alltid som proxy (sync-fas-glapp), så även hero.z > 30 räknas
-  // som "i duel-arenan". 0.05-marginalen visade sig för liten (cirkeln dolts
-  // ändå av golv-mesh i vissa kameravinklar).
+  // Aim-y: duel-arenans inre golv är y=0.32 (se buildDuelArena). Bumpat till
+  // y=1.0 (= 0.68 ovan golvet) för aggressiv marginal — depthTest:false +
+  // renderOrder=999 räcker INTE alltid; vissa transparenta golv-mesher sorterar
+  // över aim. Hellre lite hög ring än osynlig ring. Utanför duel: y=0.07 oförändrat.
   const _inDuelArena = (duelState && duelState.active) ||
                        (side && side.hero && side.hero.z > 30);
-  const aimY = _inDuelArena ? (DUEL_ARENA_FLOOR_Y + 0.20) : 0.07;
+  const aimY = _inDuelArena ? 1.0 : 0.07;
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
     aimCircle.position.set(x, aimY, z);
