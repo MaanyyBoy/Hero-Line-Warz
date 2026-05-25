@@ -17427,8 +17427,13 @@ function updateAimIndicators() {
     return p;
   }
   // Aim-y: duel-arenans inre golv är y=0.32 (se buildDuelArena). Höj aim-mesh
-  // 0.05 ovan så den syns över golvet — annars dolt av platforms-mesh.
-  const aimY = (duelState && duelState.active) ? (DUEL_ARENA_FLOOR_Y + 0.05) : 0.07;
+  // 0.20 ovan (= y 0.52) så den syns tydligt över golvet — duelState.active
+  // räcker inte alltid som proxy (sync-fas-glapp), så även hero.z > 30 räknas
+  // som "i duel-arenan". 0.05-marginalen visade sig för liten (cirkeln dolts
+  // ändå av golv-mesh i vissa kameravinklar).
+  const _inDuelArena = (duelState && duelState.active) ||
+                       (side && side.hero && side.hero.z > 30);
+  const aimY = _inDuelArena ? (DUEL_ARENA_FLOOR_Y + 0.20) : 0.07;
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
     aimCircle.position.set(x, aimY, z);
@@ -27741,20 +27746,6 @@ function tick() {
     tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
   }
-  // Classic line wars duel-fas: hjältarnas fötter sjunker under stenarenans golv
-  // (golv y=0.32, hero default y=0). Lyft alla hjälte-meshes till golvet under
-  // hela duel-fasen. Gäller alla mode (solo, host, joinare) eftersom alla har
-  // duelState.active synkroniserad från server-state. Återställ till y=0 när
-  // duel slutar — annars blir mesh kvar uppe i luften efter respawn på lane.
-  if (APP.gameMode === 'classic') {
-    const targetY = (duelState && duelState.active) ? DUEL_ARENA_FLOOR_Y : 0;
-    for (const idx of [1, 2]) {
-      const s = sides[idx];
-      if (s && s.mesh) {
-        s.mesh.position.y = targetY;
-      }
-    }
-  }
   // Arena MP host broadcastar state till klienten — fast 30 Hz-kadens via
   // tids-ackumulator (steg 2 av MP-lagg-planen). Tidigare kollades
   // (now - lastStateSent > intervall) en gång per rAF-frame; 33 ms är ingen
@@ -27858,6 +27849,22 @@ function tick() {
   // Shadow Volley: toggle hero-mesh-visibility för invis-Legolus. Måste ske
   // EFTER applyHeroSnap (som sätter visible = !dead) och FÖRE render.
   for (const side of activeSides()) updateLegolusInvisVisibility(side);
+
+  // Classic line wars duel-fas: hjältarnas fötter sjunker under stenarenans
+  // golv (golv y=0.32). Lyft hero-meshes till golvet ETER alla animation-
+  // och mixer-uppdateringar (tickMixers/animateAllCharacters/animateCharacter
+  // overrider position.y med bobb-värden) — kör därför precis före render.
+  // Per-hero detection: duelState.active ELLER hero.z > 30 (i duel-arena-zonen).
+  // hero.z-check garanterar lyft även om duelState sync-flagga halkar efter.
+  // Y-värde 0.40 (= golv 0.32 + 0.08 marginal för mesh-pivot vs fot-bone-offset).
+  if (APP.gameMode === 'classic') {
+    for (const _di of [1, 2]) {
+      const _ds = sides[_di];
+      if (!_ds || !_ds.mesh) continue;
+      const _inDuel = (duelState && duelState.active) || (_ds.hero && _ds.hero.z > 30);
+      _ds.mesh.position.y = _inDuel ? (DUEL_ARENA_FLOOR_Y + 0.08) : 0;
+    }
+  }
 
   // FPS-cap (mobil): rendera bara om tillräckligt lång tid passerat sedan
   // förra renderade framen. Logik + input ovanför har redan körts denna frame.
