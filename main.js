@@ -17392,6 +17392,14 @@ function updateAimIndicators() {
   aimLine.visible = false;
   aimDot.visible = false;
   aimCircle.visible = false;
+  // DIAGNOS-LOGG (TEMP): logga varje gång en skill-key är aktiv så vi ser
+  // om updateAimIndicators ens kommer förbi tidig return. Logga endast vid
+  // state-CHANGE för att inte spam:a console.
+  const _logKey = `${aimState.key}|${aimState.active ? 1 : 0}|${duelState.active ? 1 : 0}`;
+  if (_logKey !== updateAimIndicators._lastLog) {
+    updateAimIndicators._lastLog = _logKey;
+    console.log(`[AIM] state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} hero.z=${side && side.hero ? side.hero.z.toFixed(1) : 'n/a'}`);
+  }
   if (!side || !aimState.key || !aimState.active) return;
 
   const w = screenToWorld(aimState.dx, aimState.dz);
@@ -17440,6 +17448,11 @@ function updateAimIndicators() {
     const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
     aimCircle.scale.set(radius * pulse, radius * pulse, 1);
     aimCircle.traverse(o => { if (o.material && o.material.color) o.material.color.setHex(color); });
+    // DIAGNOS-LOGG (TEMP)
+    if (!showCircle._lastLogPos || Math.abs(showCircle._lastLogPos.x - x) > 0.5 || Math.abs(showCircle._lastLogPos.z - z) > 0.5) {
+      showCircle._lastLogPos = { x, z };
+      console.log(`[AIM] showCircle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} visible=${aimCircle.visible} renderOrder=${aimCircle.renderOrder} parent=${aimCircle.parent ? 'scene' : 'NULL'}`);
+    }
   }
   function showLine(dirX, dirZ, length) {
     aimLine.visible = true;
@@ -17448,6 +17461,11 @@ function updateAimIndicators() {
     // Skala längden + lite pulserande bredd
     const pulse = 1 + 0.10 * Math.sin(performance.now() * 0.009);
     aimLine.scale.set(length / ELDKLOT_RANGE, pulse, 1);
+    // DIAGNOS-LOGG (TEMP)
+    if (!showLine._lastLogPos || Math.abs(showLine._lastLogPos.x - aimLine.position.x) > 0.5) {
+      showLine._lastLogPos = { x: aimLine.position.x };
+      console.log(`[AIM] showLine x=${aimLine.position.x.toFixed(1)} y=${aimY.toFixed(2)} z=${aimLine.position.z.toFixed(1)} len=${length.toFixed(1)} visible=${aimLine.visible} parent=${aimLine.parent ? 'scene' : 'NULL'}`);
+    }
   }
 
   const heroId = side.heroId || 'magiker';
