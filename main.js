@@ -17477,11 +17477,33 @@ function updateAimIndicators() {
     // Pulsande skala för synlighet
     const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
     aimCircle.scale.set(radius * pulse, radius * pulse, 1);
-    aimCircle.traverse(o => { if (o.material && o.material.color) o.material.color.setHex(color); });
+    // DIAGNOS-TEST (TEMP): i duel tvinga skrikande magenta + full opacity för
+    // att se OM cirkeln syns alls. Om syns → opacity/färg-blandning med floor.
+    // Om inte syns → djupare problem (frustum/clipping/scale).
+    const _diagDuelColor = _inDuelArena ? 0xff00ff : color;
+    aimCircle.traverse(o => {
+      if (o.material) {
+        // Spara original-opacity en gång så vi kan återställa utanför duel.
+        if (o.material.userData._aimOrigOp === undefined) {
+          o.material.userData._aimOrigOp = o.material.opacity;
+          o.material.userData._aimOrigTrans = o.material.transparent;
+        }
+        if (o.material.color) o.material.color.setHex(_diagDuelColor);
+        if (_inDuelArena) {
+          o.material.opacity = 1.0;
+          o.material.transparent = false;
+        } else {
+          o.material.opacity = o.material.userData._aimOrigOp;
+          o.material.transparent = o.material.userData._aimOrigTrans;
+        }
+      }
+    });
     // DIAGNOS-OVERLAY (TEMP)
-    if (!showCircle._lastLogPos || Math.abs(showCircle._lastLogPos.x - x) > 0.5 || Math.abs(showCircle._lastLogPos.z - z) > 0.5) {
+    if (_inDuelArena && (!showCircle._lastLogPos || Math.abs(showCircle._lastLogPos.x - x) > 0.5 || Math.abs(showCircle._lastLogPos.z - z) > 0.5)) {
       showCircle._lastLogPos = { x, z };
-      _aimDebugLog(`Circle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} parent=${aimCircle.parent ? 'scene' : 'NULL'}`);
+      const _firstFill = aimCircle.children && aimCircle.children[0];
+      const _op = _firstFill && _firstFill.material ? _firstFill.material.opacity : '?';
+      _aimDebugLog(`Circle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} vis=${aimCircle.visible} sx=${aimCircle.scale.x.toFixed(1)} op=${_op}`);
     }
   }
   function showLine(dirX, dirZ, length) {
