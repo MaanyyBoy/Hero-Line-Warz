@@ -17092,6 +17092,24 @@ let _spikeMaxAt = 0;
 const _spikeWarnMs = 30;   // > 30ms = synlig hicka (< 30 fps)
 let _frameTickCount = 0;
 let _lastFrameTime = 0;
+// DIAGNOS-OVERLAY (TEMP): on-screen spike-logg (mobile devtools otillgängliga).
+// Visar senaste 6 spike-events uppe till höger. Tas bort när Fas 1-profilering
+// (line wars lagg) är klar — tillsammans med console-warn-loggen.
+let _spikeOverlayEl = null;
+const _spikeOverlayLines = [];
+function _spikeOverlayLog(msg) {
+  _spikeOverlayLines.push(msg);
+  if (_spikeOverlayLines.length > 6) _spikeOverlayLines.shift();
+  if (!_spikeOverlayEl) {
+    _spikeOverlayEl = document.createElement('div');
+    _spikeOverlayEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));right:8px;' +
+      'background:rgba(0,0,0,0.82);color:#ff8866;font:700 11px/1.35 monospace;' +
+      'padding:8px 10px;border:2px solid #663;border-radius:6px;z-index:99999;' +
+      'pointer-events:none;max-width:42vw;white-space:pre;overflow:hidden;';
+    document.body.appendChild(_spikeOverlayEl);
+  }
+  _spikeOverlayEl.textContent = '[SPIKES]\n' + _spikeOverlayLines.join('\n');
+}
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
   // Lägg dagens dt (sekunder) i rullande fönster av ~60 frames
@@ -17106,6 +17124,9 @@ function tickPerfMeter(dt) {
                 `mode=${APP.mode}/${APP.gameMode} ` +
                 `side=${APP.localSide}`;
     console.warn(`[SPIKE] ${frameMs.toFixed(1)}ms ${ctx}`);
+    // DIAGNOS-OVERLAY (TEMP): mobil-devtools omöjliga under spel. Visa senaste
+    // 6 spikar uppe i mitten med ms + tick + ev. wave-nr så vi kan korrelera.
+    _spikeOverlayLog(`${frameMs.toFixed(0)}ms t=${_frameTickCount} ${APP.gameMode || APP.mode}`);
   }
   // Rullande max över 5 sek
   if (frameMs > _spikeMaxMs5s) {
