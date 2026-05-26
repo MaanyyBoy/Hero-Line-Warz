@@ -15615,13 +15615,6 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
 let _meshSpawnsThisFrame = 0;
 const MAX_MESH_SPAWNS_PER_FRAME = 5;
 const STAGGER_KEYS = new Set(['monsters', 'playerCreeps']);
-// Spawn-rate-räknare: hur många mesh som spawnats senaste sekunden (klient).
-// Exponeras i spike-overlayn så vi ser om wave-start eller MP-join genererar
-// en spawn-storm. Deklareras här (före clientReconcileEntities) för att undvika TDZ.
-let _meshSpawnsThisSec = 0;
-let _meshSpawnsSecBucket = 0;
-let _meshSpawnsLastSecCount = 0;
-
 function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
@@ -15643,7 +15636,6 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
       }
       mesh = makeMesh(e);
       if (shouldStagger) _meshSpawnsThisFrame++;
-      _meshSpawnsThisSec++;
       scene.add(mesh);
       map.set(e.id, mesh);
       // Initial snap
@@ -17090,105 +17082,19 @@ let _perfLastUpdateMs = 0;
 let _lastHudMs = 0;   // throttle-tracker för HUD-textuppdateringar
 let _heavyTickAccum = 0;   // ackumulator för 30 Hz throttle av tickAllHpBars + animateAllCharacters
 const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
-// Spike-diagnostik (decision 114): tracking av max-frame-tid i rullande fönster.
-// Loggar console-spike när frame > _spikeWarnMs så vi kan korrelera med vad
-// som hände i spelet vid spike-tidpunkten. Visar också max-ms de senaste 5 sek
-// on-screen (för användaren utan att öppna devtools).
-let _spikeMaxMs5s = 0;
-let _spikeMaxAt = 0;
-const _spikeWarnMs = 30;   // > 30ms = synlig hicka (< 30 fps)
-let _frameTickCount = 0;
-let _lastFrameTime = 0;
-// DIAGNOS-OVERLAY (TEMP): on-screen spike-logg (mobile devtools otillgängliga).
-// Visar senaste 6 spike-events uppe till höger. Tas bort när Fas 1-profilering
-// (line wars lagg) är klar — tillsammans med console-warn-loggen.
-let _spikeOverlayEl = null;
-const _spikeOverlayLines = [];
-let _spikeOverlayInfoLine = '';   // bottenrad med renderer.info (uppdateras 2 Hz)
-let _spikeOverlayLastInfoMs = 0;
-// _meshSpawnsThisSec / _meshSpawnsSecBucket / _meshSpawnsLastSecCount
-// deklareras tidigare i filen (intill _meshSpawnsThisFrame) så de är hoistade
-// innan clientReconcileEntities använder dem.
-function _ensureSpikeOverlay() {
-  if (_spikeOverlayEl) return;
-  _spikeOverlayEl = document.createElement('div');
-  _spikeOverlayEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));right:8px;' +
-    'background:rgba(0,0,0,0.82);color:#ff8866;font:700 11px/1.35 monospace;' +
-    'padding:8px 10px;border:2px solid #663;border-radius:6px;z-index:99999;' +
-    'pointer-events:none;max-width:42vw;white-space:pre;overflow:hidden;';
-  document.body.appendChild(_spikeOverlayEl);
-}
-function _renderSpikeOverlay() {
-  if (!_spikeOverlayEl) return;
-  const head = _spikeOverlayLines.length ? ('[SPIKES]\n' + _spikeOverlayLines.join('\n')) : '[SPIKES] (none)';
-  _spikeOverlayEl.textContent = head + (_spikeOverlayInfoLine ? '\n' + _spikeOverlayInfoLine : '');
-}
-function _spikeOverlayLog(msg) {
-  _spikeOverlayLines.push(msg);
-  if (_spikeOverlayLines.length > 6) _spikeOverlayLines.shift();
-  _ensureSpikeOverlay();
-  _renderSpikeOverlay();
-}
-function _spikeOverlayUpdateInfo() {
-  if (typeof renderer === 'undefined' || !renderer || !renderer.info) return;
-  const info = renderer.info;
-  const memG = info.memory ? info.memory.geometries : '?';
-  const memT = info.memory ? info.memory.textures : '?';
-  const progN = info.programs ? info.programs.length : '?';
-  const calls = info.render ? info.render.calls : '?';
-  const tris = info.render ? info.render.triangles : '?';
-  // Spawn-rate (mesh/sek senaste sekunden) — bucket-baserad nollställning.
-  const nowMs = performance.now();
-  if (nowMs - _meshSpawnsSecBucket > 1000) {
-    _meshSpawnsLastSecCount = _meshSpawnsThisSec;
-    _meshSpawnsThisSec = 0;
-    _meshSpawnsSecBucket = nowMs;
-  }
-  _spikeOverlayInfoLine = `pg=${progN} g=${memG} t=${memT} c=${calls} tri=${(typeof tris === 'number' ? (tris >= 10000 ? (tris/1000).toFixed(0)+'k' : tris) : tris)}\nspawn/s=${_meshSpawnsLastSecCount}`;
-  _ensureSpikeOverlay();
-  _renderSpikeOverlay();
-}
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
   // Lägg dagens dt (sekunder) i rullande fönster av ~60 frames
   _perfFrames.push(dt);
   if (_perfFrames.length > 60) _perfFrames.shift();
   const nowMs = performance.now();
-  _frameTickCount++;
-  const frameMs = dt * 1000;
-  // Spike-logger: console-warn när frame > tröskel + kontext om vad som körts
-  if (frameMs > _spikeWarnMs) {
-    const ctx = `tick=${_frameTickCount} fps=${(1000/frameMs).toFixed(0)} ` +
-                `mode=${APP.mode}/${APP.gameMode} ` +
-                `side=${APP.localSide}`;
-    console.warn(`[SPIKE] ${frameMs.toFixed(1)}ms ${ctx}`);
-    // DIAGNOS-OVERLAY (TEMP): mobil-devtools omöjliga under spel. Visa senaste
-    // 6 spikar uppe i mitten med ms + tick + ev. wave-nr så vi kan korrelera.
-    _spikeOverlayLog(`${frameMs.toFixed(0)}ms t=${_frameTickCount} ${APP.gameMode || APP.mode}`);
-  }
-  // Rullande max över 5 sek
-  if (frameMs > _spikeMaxMs5s) {
-    _spikeMaxMs5s = frameMs;
-    _spikeMaxAt = nowMs;
-  }
-  if (nowMs - _spikeMaxAt > 5000) {
-    _spikeMaxMs5s = frameMs;
-    _spikeMaxAt = nowMs;
-  }
   if (nowMs - _perfLastUpdateMs < 250) return;
   _perfLastUpdateMs = nowMs;
-  // DIAGNOS-OVERLAY (TEMP): uppdatera renderer.info-rad 2 Hz (cheap field reads,
-  // shader-compile-cache + draw-call-bloat blir synligt över tid).
-  if (nowMs - _spikeOverlayLastInfoMs > 500) {
-    _spikeOverlayLastInfoMs = nowMs;
-    _spikeOverlayUpdateInfo();
-  }
   const sum = _perfFrames.reduce((s, v) => s + v, 0);
   const avg = sum / Math.max(1, _perfFrames.length);
   const ms = avg * 1000;
   const fps = avg > 0 ? (1 / avg) : 0;
-  // Visa avg + max5s om mätaren har plats
-  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1) + ` (max ${_spikeMaxMs5s.toFixed(0)})`;
+  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1);
   if (perfFpsEl) perfFpsEl.textContent = Math.round(fps);
   // Bar-fill: 100% när vi når 60 fps (16.67ms), skalar ner när frame-time växer
   if (perfBarFillEl) {
@@ -25229,7 +25135,7 @@ function enterPlayPhase() {
   if (heroPickEl) heroPickEl.classList.add('hidden');
   // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
   // i solo tickas den lokalt via simulateAll/tick.
-  duelState.timer = 60;   // TEMP-TEST: var 300 (5 min) — återställ efter arena-bugg-test
+  duelState.timer = 300;   // 5 min mellan dueler (MP får detta från servern)
   duelState.count = 0;
   duelState.active = false;
   duelState.matchTimer = 0;
