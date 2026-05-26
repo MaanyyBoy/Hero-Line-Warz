@@ -1194,11 +1194,12 @@
        (user-spec 2026-05-22). Påverkar bara lobby-UI:t.
        ============================================================ */
     #lobby {
-      background: #0d1424 url('./assets/home-bg.jpg') center center / cover no-repeat;
+      background: #0d1424 url('./assets/Home-bg.webp') center center / cover no-repeat;
     }
-    /* Heroes-skärmen — egen bakgrundsbild */
+    /* Heroes-skärmen ärver Home-bg från #lobby tills vi får en egen bild.
+       Override behållen som no-op-regel ifall vi vill återinföra heroes-bg senare. */
     #lobby.heroes-active {
-      background: #0d1424 url('./assets/heroes-bg.jpg') center center / cover no-repeat;
+      background: #0d1424 url('./assets/Home-bg.webp') center center / cover no-repeat;
     }
     /* Mörk slöja — lätt på hemskärmen (bilden ska synas), mörkare i undermenyer */
     #lobby::before {
@@ -3284,7 +3285,7 @@
     /* Asset-loading-screen (visas innan lobbyn) */
     #asset-loading {
       position: fixed; inset: 0;
-      background: linear-gradient(to bottom, rgba(6,9,17,0) 42%, rgba(6,9,17,0.92) 100%), url('./assets/home-bg.jpg') center center / cover no-repeat #08111e;
+      background: linear-gradient(to bottom, rgba(6,9,17,0) 42%, rgba(6,9,17,0.92) 100%), url('./assets/Loading-bg.webp') center center / cover no-repeat #08111e;
       color: #fff;
       display: flex; align-items: center; justify-content: flex-end;
       flex-direction: column;
