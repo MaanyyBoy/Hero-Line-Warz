@@ -17408,49 +17408,11 @@ function updateTargetIndicator() {
   targetRing.visible = true;
 }
 
-// DIAGNOS-OVERLAY (TEMP): on-screen-logg eftersom mobile devtools är omöjliga
-// att kopiera ur samtidigt som man håller skill-knappen. Skapa div uppe till
-// vänster med senaste 8 [AIM]-loggar. Tas bort tillsammans med _aimDebugLog-
-// anropen när aim-cirkel-diagnosen är klar.
-let _aimDebugEl = null;
-const _aimDebugLines = [];
-function _aimDebugLog(msg) {
-  _aimDebugLines.push(msg);
-  if (_aimDebugLines.length > 8) _aimDebugLines.shift();
-  if (!_aimDebugEl) {
-    _aimDebugEl = document.createElement('div');
-    _aimDebugEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));left:50%;transform:translateX(-50%);' +
-      'background:rgba(0,0,0,0.82);color:#7fff7f;font:600 11px/1.35 monospace;' +
-      'padding:8px 10px;border:2px solid #444;border-radius:6px;z-index:99999;' +
-      'pointer-events:none;max-width:90vw;white-space:pre;overflow:hidden;';
-    document.body.appendChild(_aimDebugEl);
-  }
-  _aimDebugEl.textContent = '[AIM-DEBUG]\n' + _aimDebugLines.join('\n');
-}
-
 function updateAimIndicators() {
   const side = sides[APP.localSide];
   aimLine.visible = false;
   aimDot.visible = false;
   aimCircle.visible = false;
-  // DIAGNOS-OVERLAY (TEMP): on-screen-logg eftersom mobile devtools omöjliga
-  // att kopiera ur samtidigt som man håller skill-knappen. Gatas på duel-flaggan
-  // eller hero z>30 (= duel-arenan) så overlayn inte syns på home/lobby/lane-spel.
-  const _inDuelForLog = (duelState && duelState.active) ||
-                        (side && side.hero && side.hero.z > 30);
-  if (_inDuelForLog) {
-    const _logKey = `${aimState.key}|${aimState.active ? 1 : 0}|${duelState.active ? 1 : 0}`;
-    if (_logKey !== updateAimIndicators._lastLog) {
-      updateAimIndicators._lastLog = _logKey;
-      _aimDebugLog(`state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} z=${side && side.hero ? side.hero.z.toFixed(1) : '?'}`);
-    }
-  } else if (_aimDebugEl) {
-    // Utanför duel: dölj overlayn om den råkar finnas (t.ex. efter duel slutat).
-    _aimDebugEl.style.display = 'none';
-  }
-  if (_inDuelForLog && _aimDebugEl) {
-    _aimDebugEl.style.display = '';
-  }
   if (!side || !aimState.key || !aimState.active) return;
 
   const w = screenToWorld(aimState.dx, aimState.dz);
@@ -17498,34 +17460,7 @@ function updateAimIndicators() {
     // Pulsande skala för synlighet
     const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
     aimCircle.scale.set(radius * pulse, radius * pulse, 1);
-    // DIAGNOS-TEST (TEMP): i duel tvinga skrikande magenta + full opacity för
-    // att se OM cirkeln syns alls. Om syns → opacity/färg-blandning med floor.
-    // Om inte syns → djupare problem (frustum/clipping/scale).
-    const _diagDuelColor = _inDuelArena ? 0xff00ff : color;
-    aimCircle.traverse(o => {
-      if (o.material) {
-        // Spara original-opacity en gång så vi kan återställa utanför duel.
-        if (o.material.userData._aimOrigOp === undefined) {
-          o.material.userData._aimOrigOp = o.material.opacity;
-          o.material.userData._aimOrigTrans = o.material.transparent;
-        }
-        if (o.material.color) o.material.color.setHex(_diagDuelColor);
-        if (_inDuelArena) {
-          o.material.opacity = 1.0;
-          o.material.transparent = false;
-        } else {
-          o.material.opacity = o.material.userData._aimOrigOp;
-          o.material.transparent = o.material.userData._aimOrigTrans;
-        }
-      }
-    });
-    // DIAGNOS-OVERLAY (TEMP)
-    if (_inDuelArena && (!showCircle._lastLogPos || Math.abs(showCircle._lastLogPos.x - x) > 0.5 || Math.abs(showCircle._lastLogPos.z - z) > 0.5)) {
-      showCircle._lastLogPos = { x, z };
-      const _firstFill = aimCircle.children && aimCircle.children[0];
-      const _op = _firstFill && _firstFill.material ? _firstFill.material.opacity : '?';
-      _aimDebugLog(`Circle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} vis=${aimCircle.visible} sx=${aimCircle.scale.x.toFixed(1)} op=${_op}`);
-    }
+    aimCircle.traverse(o => { if (o.material && o.material.color) o.material.color.setHex(color); });
   }
   function showLine(dirX, dirZ, length) {
     aimLine.visible = true;
@@ -17534,11 +17469,6 @@ function updateAimIndicators() {
     // Skala längden + lite pulserande bredd
     const pulse = 1 + 0.10 * Math.sin(performance.now() * 0.009);
     aimLine.scale.set(length / ELDKLOT_RANGE, pulse, 1);
-    // DIAGNOS-OVERLAY (TEMP)
-    if (!showLine._lastLogPos || Math.abs(showLine._lastLogPos.x - aimLine.position.x) > 0.5) {
-      showLine._lastLogPos = { x: aimLine.position.x };
-      _aimDebugLog(`Line x=${aimLine.position.x.toFixed(1)} y=${aimY.toFixed(2)} z=${aimLine.position.z.toFixed(1)} len=${length.toFixed(1)} parent=${aimLine.parent ? 'scene' : 'NULL'}`);
-    }
   }
 
   const heroId = side.heroId || 'magiker';
