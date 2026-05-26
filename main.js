@@ -17413,11 +17413,22 @@ function updateAimIndicators() {
   aimDot.visible = false;
   aimCircle.visible = false;
   // DIAGNOS-OVERLAY (TEMP): on-screen-logg eftersom mobile devtools omöjliga
-  // att kopiera ur samtidigt som man håller skill-knappen.
-  const _logKey = `${aimState.key}|${aimState.active ? 1 : 0}|${duelState.active ? 1 : 0}`;
-  if (_logKey !== updateAimIndicators._lastLog) {
-    updateAimIndicators._lastLog = _logKey;
-    _aimDebugLog(`state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} z=${side && side.hero ? side.hero.z.toFixed(1) : '?'}`);
+  // att kopiera ur samtidigt som man håller skill-knappen. Gatas på duel-flaggan
+  // eller hero z>30 (= duel-arenan) så overlayn inte syns på home/lobby/lane-spel.
+  const _inDuelForLog = (duelState && duelState.active) ||
+                        (side && side.hero && side.hero.z > 30);
+  if (_inDuelForLog) {
+    const _logKey = `${aimState.key}|${aimState.active ? 1 : 0}|${duelState.active ? 1 : 0}`;
+    if (_logKey !== updateAimIndicators._lastLog) {
+      updateAimIndicators._lastLog = _logKey;
+      _aimDebugLog(`state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} z=${side && side.hero ? side.hero.z.toFixed(1) : '?'}`);
+    }
+  } else if (_aimDebugEl) {
+    // Utanför duel: dölj overlayn om den råkar finnas (t.ex. efter duel slutat).
+    _aimDebugEl.style.display = 'none';
+  }
+  if (_inDuelForLog && _aimDebugEl) {
+    _aimDebugEl.style.display = '';
   }
   if (!side || !aimState.key || !aimState.active) return;
 
