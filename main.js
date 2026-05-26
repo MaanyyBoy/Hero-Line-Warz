@@ -15615,6 +15615,12 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
 let _meshSpawnsThisFrame = 0;
 const MAX_MESH_SPAWNS_PER_FRAME = 5;
 const STAGGER_KEYS = new Set(['monsters', 'playerCreeps']);
+// Spawn-rate-räknare: hur många mesh som spawnats senaste sekunden (klient).
+// Exponeras i spike-overlayn så vi ser om wave-start eller MP-join genererar
+// en spawn-storm. Deklareras här (före clientReconcileEntities) för att undvika TDZ.
+let _meshSpawnsThisSec = 0;
+let _meshSpawnsSecBucket = 0;
+let _meshSpawnsLastSecCount = 0;
 
 function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
@@ -15637,6 +15643,7 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
       }
       mesh = makeMesh(e);
       if (shouldStagger) _meshSpawnsThisFrame++;
+      _meshSpawnsThisSec++;
       scene.add(mesh);
       map.set(e.id, mesh);
       // Initial snap
@@ -17099,6 +17106,9 @@ let _spikeOverlayEl = null;
 const _spikeOverlayLines = [];
 let _spikeOverlayInfoLine = '';   // bottenrad med renderer.info (uppdateras 2 Hz)
 let _spikeOverlayLastInfoMs = 0;
+// _meshSpawnsThisSec / _meshSpawnsSecBucket / _meshSpawnsLastSecCount
+// deklareras tidigare i filen (intill _meshSpawnsThisFrame) så de är hoistade
+// innan clientReconcileEntities använder dem.
 function _ensureSpikeOverlay() {
   if (_spikeOverlayEl) return;
   _spikeOverlayEl = document.createElement('div');
@@ -17127,7 +17137,14 @@ function _spikeOverlayUpdateInfo() {
   const progN = info.programs ? info.programs.length : '?';
   const calls = info.render ? info.render.calls : '?';
   const tris = info.render ? info.render.triangles : '?';
-  _spikeOverlayInfoLine = `pg=${progN} g=${memG} t=${memT} c=${calls} tri=${(typeof tris === 'number' ? (tris >= 10000 ? (tris/1000).toFixed(0)+'k' : tris) : tris)}`;
+  // Spawn-rate (mesh/sek senaste sekunden) — bucket-baserad nollställning.
+  const nowMs = performance.now();
+  if (nowMs - _meshSpawnsSecBucket > 1000) {
+    _meshSpawnsLastSecCount = _meshSpawnsThisSec;
+    _meshSpawnsThisSec = 0;
+    _meshSpawnsSecBucket = nowMs;
+  }
+  _spikeOverlayInfoLine = `pg=${progN} g=${memG} t=${memT} c=${calls} tri=${(typeof tris === 'number' ? (tris >= 10000 ? (tris/1000).toFixed(0)+'k' : tris) : tris)}\nspawn/s=${_meshSpawnsLastSecCount}`;
   _ensureSpikeOverlay();
   _renderSpikeOverlay();
 }
