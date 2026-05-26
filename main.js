@@ -17097,18 +17097,39 @@ let _lastFrameTime = 0;
 // (line wars lagg) är klar — tillsammans med console-warn-loggen.
 let _spikeOverlayEl = null;
 const _spikeOverlayLines = [];
+let _spikeOverlayInfoLine = '';   // bottenrad med renderer.info (uppdateras 2 Hz)
+let _spikeOverlayLastInfoMs = 0;
+function _ensureSpikeOverlay() {
+  if (_spikeOverlayEl) return;
+  _spikeOverlayEl = document.createElement('div');
+  _spikeOverlayEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));right:8px;' +
+    'background:rgba(0,0,0,0.82);color:#ff8866;font:700 11px/1.35 monospace;' +
+    'padding:8px 10px;border:2px solid #663;border-radius:6px;z-index:99999;' +
+    'pointer-events:none;max-width:42vw;white-space:pre;overflow:hidden;';
+  document.body.appendChild(_spikeOverlayEl);
+}
+function _renderSpikeOverlay() {
+  if (!_spikeOverlayEl) return;
+  const head = _spikeOverlayLines.length ? ('[SPIKES]\n' + _spikeOverlayLines.join('\n')) : '[SPIKES] (none)';
+  _spikeOverlayEl.textContent = head + (_spikeOverlayInfoLine ? '\n' + _spikeOverlayInfoLine : '');
+}
 function _spikeOverlayLog(msg) {
   _spikeOverlayLines.push(msg);
   if (_spikeOverlayLines.length > 6) _spikeOverlayLines.shift();
-  if (!_spikeOverlayEl) {
-    _spikeOverlayEl = document.createElement('div');
-    _spikeOverlayEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));right:8px;' +
-      'background:rgba(0,0,0,0.82);color:#ff8866;font:700 11px/1.35 monospace;' +
-      'padding:8px 10px;border:2px solid #663;border-radius:6px;z-index:99999;' +
-      'pointer-events:none;max-width:42vw;white-space:pre;overflow:hidden;';
-    document.body.appendChild(_spikeOverlayEl);
-  }
-  _spikeOverlayEl.textContent = '[SPIKES]\n' + _spikeOverlayLines.join('\n');
+  _ensureSpikeOverlay();
+  _renderSpikeOverlay();
+}
+function _spikeOverlayUpdateInfo() {
+  if (typeof renderer === 'undefined' || !renderer || !renderer.info) return;
+  const info = renderer.info;
+  const memG = info.memory ? info.memory.geometries : '?';
+  const memT = info.memory ? info.memory.textures : '?';
+  const progN = info.programs ? info.programs.length : '?';
+  const calls = info.render ? info.render.calls : '?';
+  const tris = info.render ? info.render.triangles : '?';
+  _spikeOverlayInfoLine = `pg=${progN} g=${memG} t=${memT} c=${calls} tri=${(typeof tris === 'number' ? (tris >= 10000 ? (tris/1000).toFixed(0)+'k' : tris) : tris)}`;
+  _ensureSpikeOverlay();
+  _renderSpikeOverlay();
 }
 function tickPerfMeter(dt) {
   if (!perfMeterEl) return;
@@ -17139,6 +17160,12 @@ function tickPerfMeter(dt) {
   }
   if (nowMs - _perfLastUpdateMs < 250) return;
   _perfLastUpdateMs = nowMs;
+  // DIAGNOS-OVERLAY (TEMP): uppdatera renderer.info-rad 2 Hz (cheap field reads,
+  // shader-compile-cache + draw-call-bloat blir synligt över tid).
+  if (nowMs - _spikeOverlayLastInfoMs > 500) {
+    _spikeOverlayLastInfoMs = nowMs;
+    _spikeOverlayUpdateInfo();
+  }
   const sum = _perfFrames.reduce((s, v) => s + v, 0);
   const avg = sum / Math.max(1, _perfFrames.length);
   const ms = avg * 1000;
