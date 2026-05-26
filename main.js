@@ -885,30 +885,38 @@ function makeGrassLaneTexture(seed = 1) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
 
-  // 1) Gräs-bas — MÖRK grön gradient + tonvariation
+  // 1) Gräs-bas — mörkblå gradient (user-onskemal 2026-05-26)
   const grassGrad = ctx.createLinearGradient(0, 0, 0, H);
-  grassGrad.addColorStop(0, '#1f3d18');
-  grassGrad.addColorStop(0.5, '#284d20');
-  grassGrad.addColorStop(1, '#1f3d18');
+  grassGrad.addColorStop(0, '#1a2f4a');
+  grassGrad.addColorStop(0.5, '#243f60');
+  grassGrad.addColorStop(1, '#1a2f4a');
   ctx.fillStyle = grassGrad;
   ctx.fillRect(0, 0, W, H);
-  // Stora fläckar i avvikande gröna toner (alla mörka)
+  // Stora fläckar i avvikande blåtoner
   for (let i = 0; i < 80; i++) {
     const x = rnd() * W, y = rnd() * H;
     const r = 20 + rnd() * 55;
     const lighter = rnd() < 0.5;
     ctx.fillStyle = lighter
-      ? `rgba(70, 110, 45, ${0.10 + rnd() * 0.12})`
-      : `rgba(20, 40, 12, ${0.14 + rnd() * 0.16})`;
+      ? `rgba(70, 110, 160, ${0.10 + rnd() * 0.12})`
+      : `rgba(18, 35, 70, ${0.14 + rnd() * 0.16})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  // Gräs-noise (många små prickar för textur)
+  // Bas-noise (många små prickar för textur) — blå nyans
   for (let i = 0; i < 8000; i++) {
     const x = rnd() * W, y = rnd() * H;
     const a = 0.05 + rnd() * 0.12;
-    const tone = rnd() < 0.55 ? '55, 90, 35' : '18, 35, 10';
+    const tone = rnd() < 0.55 ? '50, 90, 140' : '15, 30, 65';
     ctx.fillStyle = `rgba(${tone}, ${a})`;
     ctx.fillRect(x, y, 1 + rnd() * 1.4, 1 + rnd() * 1.4);
+  }
+  // Vita "skiftande" prickar — frosty highlights spridda över gräset
+  // för att ge gräset liv (user-onskemal 2026-05-26)
+  for (let i = 0; i < 320; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const a = 0.18 + rnd() * 0.28;
+    ctx.fillStyle = `rgba(235, 240, 250, ${a})`;
+    ctx.fillRect(x, y, 1 + rnd() * 1.6, 1 + rnd() * 1.6);
   }
 
   // 2) Stenstig — cobblestone-band genom mitten med lätt vågig kant
@@ -975,9 +983,9 @@ function makeGrassLaneTexture(seed = 1) {
       ctx.beginPath();
       ctx.ellipse(cx + rx * 0.25, cy + ry * 0.45, rx * 0.85, ry * 0.30, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Mossa-fläck på vissa stenar
+      // Mossa-fläck på vissa stenar (blå-grön ton för att matcha nytt gräs)
       if (rnd() < 0.20) {
-        ctx.fillStyle = `rgba(80, 120, 50, ${0.25 + rnd() * 0.20})`;
+        ctx.fillStyle = `rgba(60, 100, 130, ${0.25 + rnd() * 0.20})`;
         ctx.beginPath();
         ctx.ellipse(cx + (rnd() - 0.5) * rx, cy + (rnd() - 0.5) * ry, rx * 0.35, ry * 0.25, rnd() * Math.PI, 0, Math.PI * 2);
         ctx.fill();
@@ -1004,8 +1012,9 @@ function makeGrassLaneTexture(seed = 1) {
       const by = y + (rnd() - 0.5) * 3;
       const len = 4 + rnd() * 6;
       const sway = (rnd() - 0.5) * 1.8;
-      const green = 110 + Math.floor(rnd() * 70);
-      ctx.strokeStyle = `rgb(${50 + Math.floor(rnd()*30)}, ${green}, ${40 + Math.floor(rnd()*25)})`;
+      // Blade-färg: blå-tonade gräs-blad (matchar gräs-basen)
+      const blue = 130 + Math.floor(rnd() * 80);
+      ctx.strokeStyle = `rgb(${40 + Math.floor(rnd()*30)}, ${70 + Math.floor(rnd()*40)}, ${blue})`;
       ctx.lineWidth = 1 + rnd();
       ctx.beginPath();
       ctx.moveTo(bx, by);
@@ -1131,35 +1140,43 @@ function makeGrassBaseFloorTexture(seed = 11) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
 
-  // Mörk grön bas (samma palett som lanen)
+  // Mörkblå bas — ljusare än lane-blå så bas-platformen syns tydligare
+  // (user-onskemal 2026-05-26: bas-golvet ska vara LJUSARE).
   const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * 0.55);
-  grad.addColorStop(0, '#284d20');
-  grad.addColorStop(0.6, '#1f3d18');
-  grad.addColorStop(1, '#1a3414');
+  grad.addColorStop(0, '#3a5278');
+  grad.addColorStop(0.6, '#2a4060');
+  grad.addColorStop(1, '#22324a');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
-  // Större fläckar i avvikande gröna toner
+  // Större fläckar i avvikande blåtoner
   for (let i = 0; i < 70; i++) {
     const x = rnd() * W, y = rnd() * H;
     const r = 25 + rnd() * 60;
     const lighter = rnd() < 0.5;
     ctx.fillStyle = lighter
-      ? `rgba(70, 110, 45, ${0.10 + rnd() * 0.12})`
-      : `rgba(20, 40, 12, ${0.12 + rnd() * 0.16})`;
+      ? `rgba(100, 140, 190, ${0.10 + rnd() * 0.12})`
+      : `rgba(20, 40, 80, ${0.12 + rnd() * 0.16})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
 
-  // Gräs-noise
+  // Bas-noise — blå nyans
   for (let i = 0; i < 6000; i++) {
     const x = rnd() * W, y = rnd() * H;
     const a = 0.04 + rnd() * 0.10;
-    const tone = rnd() < 0.55 ? '55, 90, 35' : '18, 35, 10';
+    const tone = rnd() < 0.55 ? '70, 110, 160' : '15, 30, 65';
     ctx.fillStyle = `rgba(${tone}, ${a})`;
     ctx.fillRect(x, y, 1 + rnd() * 1.4, 1 + rnd() * 1.4);
   }
+  // Vita "skiftande" prickar (matchar lane-gräset)
+  for (let i = 0; i < 180; i++) {
+    const x = rnd() * W, y = rnd() * H;
+    const a = 0.20 + rnd() * 0.30;
+    ctx.fillStyle = `rgba(235, 240, 250, ${a})`;
+    ctx.fillRect(x, y, 1 + rnd() * 1.6, 1 + rnd() * 1.6);
+  }
 
-  // Gräs-tofsar utspridda
+  // Gräs-tofsar utspridda (blå-tonade matchar lanen)
   for (let i = 0; i < 90; i++) {
     const cx = rnd() * W, cy = rnd() * H;
     const blades = 4 + Math.floor(rnd() * 5);
@@ -1168,8 +1185,8 @@ function makeGrassBaseFloorTexture(seed = 11) {
       const by = cy + (rnd() - 0.5) * 3;
       const len = 3 + rnd() * 5;
       const sway = (rnd() - 0.5) * 1.6;
-      const green = 100 + Math.floor(rnd() * 70);
-      ctx.strokeStyle = `rgb(${45 + Math.floor(rnd()*30)}, ${green}, ${35 + Math.floor(rnd()*20)})`;
+      const blue = 130 + Math.floor(rnd() * 80);
+      ctx.strokeStyle = `rgb(${40 + Math.floor(rnd()*30)}, ${70 + Math.floor(rnd()*40)}, ${blue})`;
       ctx.lineWidth = 1 + rnd();
       ctx.beginPath();
       ctx.moveTo(bx, by);
@@ -1401,7 +1418,7 @@ const TEXTURES = {
   grassBaseFloor: (seed) => makeGrassBaseFloorTexture(seed),
   trailFade: (seed) => makeTrailFadeTexture(seed),
   elvenStone: (seed) => makeElvenStoneTexture(seed),
-  stoneWall: () => makeNoiseTexture([90, 84, 75], 0.18, { repeatX: 8, repeatY: 1.2, speckColor: [50, 45, 40] }),
+  stoneWall: () => makeNoiseTexture([175, 185, 200], 0.16, { repeatX: 8, repeatY: 1.2, speckColor: [140, 155, 175] }),
   stoneTower: () => makeNoiseTexture([135, 130, 120], 0.14, { repeatX: 3, repeatY: 2, speckColor: [180, 175, 165] }),
 };
 
@@ -1917,12 +1934,15 @@ const TEXTURES = {
   // Hemisphere: himmel ovanifrån + jord-bounce nedifrån. Decision 046:
   // intensity 0.45→0.65 + varmare jordbounce 0x3a2b1a→0x4a3a25 så bas-zoner
   // (där sun-shadows från tornen + ytterväggar gör marken mörkare) lyfts.
-  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a3a25, 0.65);
+  // 2026-05-26: bumpad intensity 0.65 → 0.95 (user-onskemal "allt ljusare") +
+  // svalare ground-bounce 0x4a3a25 → 0x4a5878 for att matcha blå gräs-palett.
+  const hemi = new THREE.HemisphereLight(0xc4dcff, 0x4a5878, 0.95);
   hemi.position.set(0, 50, 0);
   scene.add(hemi);
 
   // Sol: varm directional med skuggor — primärt nyckel-ljus från fram-höger
-  const sun = new THREE.DirectionalLight(0xfff1d6, 1.55);
+  // 2026-05-26: 1.55 → 1.85 for ljusare scen
+  const sun = new THREE.DirectionalLight(0xfff1d6, 1.85);
   sun.position.set(18, 28, 14);
   sun.castShadow = true;
   // 1024 istället för 2048: 4× mindre GPU-minne (4 MB → 16 MB), märkbart
@@ -1949,8 +1969,8 @@ const TEXTURES = {
   scene.add(rim);
 
   // Fyll-ljus från motsatt sida (mjukar upp skugg-skuggorna utan att kasta nya).
-  // Decision 046: 0.35→0.50 — extra fill för base-zoner.
-  const fill = new THREE.DirectionalLight(0xffd9a8, 0.50);
+  // 2026-05-26: 0.50 → 0.75 for ljusare scen (user-onskemal).
+  const fill = new THREE.DirectionalLight(0xffd9a8, 0.75);
   fill.position.set(-18, 14, 10);
   scene.add(fill);
 
@@ -17337,6 +17357,37 @@ targetRing.rotation.x = -Math.PI / 2;
 targetRing.visible = false;
 scene.add(targetRing);
 
+// AA-range-cirkel: visas runt local-hero nar AA-knappen ar aktiv. Visar exakt
+// hur lang racker auto-attack racker (user-onskemal 2026-05-26). Bas-radie 1
+// skalas dynamiskt till side.attackRange varje frame. Gra transparent so den
+// inte stor men ar synlig.
+const aaRangeRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.97, 1.00, 64),
+  new THREE.MeshBasicMaterial({
+    color: 0xc0c8d0, transparent: true, opacity: 0.55,
+    side: THREE.DoubleSide, depthWrite: false, depthTest: false,
+  })
+);
+aaRangeRing.rotation.x = -Math.PI / 2;
+aaRangeRing.visible = false;
+aaRangeRing.renderOrder = 998;
+scene.add(aaRangeRing);
+
+function updateAaRangeIndicator() {
+  const side = sides[APP.localSide];
+  if (!side || !side.aaActive || !side.hero || side.hero.dead) {
+    aaRangeRing.visible = false;
+    return;
+  }
+  const range = (side.attackRange != null ? side.attackRange : (side.hero.attackRange || 4));
+  if (!range || range <= 0) { aaRangeRing.visible = false; return; }
+  aaRangeRing.visible = true;
+  // Y-offset matchar duel-arena om hjälten är i duelen (golv y=0.32), annars 0.05
+  const _inDuelArena = (duelState && duelState.active) || (side.hero.z > 30);
+  aaRangeRing.position.set(side.hero.x, _inDuelArena ? 0.95 : 0.05, side.hero.z);
+  aaRangeRing.scale.set(range, range, 1);
+}
+
 function updateTargetIndicator() {
   const side = sides[APP.localSide];
   if (!side || !side.aaActive || !side.targetId) {
@@ -27833,6 +27884,7 @@ function tick() {
   updateSkillButtonStyles();
   updateAimIndicators();
   updateTargetIndicator();
+  updateAaRangeIndicator();
   updateShop();
   updateInventoryDisplay();
   updateCamera(dt);
