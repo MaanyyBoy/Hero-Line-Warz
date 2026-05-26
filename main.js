@@ -157,7 +157,7 @@ const CHARACTER_ASSETS = {
   zyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Wizard.gltf',
   nyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Elf.gltf',
   kryx_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Viking_Male.gltf',
-  elar_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Knight_Golden_Male.gltf',
+  elar_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Knight_Male.gltf',
   kostef_qt: 'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Witch.gltf',
   // Mixamo (legacy, decision 034) — behållna för rollback. gandulf_mx används
   // ALLTID som mixamo_boss anim-pool källa (decision 047) — får INTE tas bort.
@@ -3096,7 +3096,7 @@ const HERO_GLTF_SCALE = {
   // Quaternius-hjältar: halverat från Mixamo-värden (för stora visuellt).
   magiker: { x: 0.72, y: 0.72, z: 0.72 },
   legolas: { x: 0.72, y: 0.72, z: 0.72 },
-  gimlu:   { x: 0.66, y: 0.66, z: 0.66 },
+  gimlu:   { x: 0.759, y: 0.759, z: 0.759 },   // Kryx +15% (anv-onskemal)
   aragurn: { x: 0.87, y: 0.87, z: 0.87 },
   kostefo: { x: 0.72, y: 0.72, z: 0.72 },
 };
@@ -18875,18 +18875,41 @@ function makeKostefoCloudMesh() {
   return grp;
 }
 
-// Companion-mesh: STOR svävande cigarett som följer Kostef(scale 2.5 så den
-// syns tydligt över hero-mesh-höjden). Joint lyft till y=2.0. Decision 045:
-// withLight:true för att behålla cherry-glöd — Companion adderas EN GÅNG per
-// match (vid hero-spawn), inte vid skill-cast → shader-recompile är acceptabel
-// engångskostnad.
+// Companion-mesh: gron mystisk ORB som flyger vid Kostefs sida (anvandar-onskemal
+// 2026-05-26 — bytte fran cigarett-joint till orb). Pulserande inre sfar med
+// rotation-ring + soft halo. PointLight bibehallen for cherry-effekt eftersom
+// companion adderas EN GANG per match (inte per skill-cast).
 function makeKostefoCompanionMesh() {
   const grp = new THREE.Group();
-  const joint = makeKostefoJointMesh(2.5, { withLight: true });
-  joint.position.y = 2.0;
-  joint.rotation.z = -0.25;
-  grp.add(joint);
-  // Bas-shadow-disc på marken (visuell anchor)
+  // Inre kristall-orb (gron emissive)
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0x88ff88, emissive: 0x55ff55, emissiveIntensity: 1.6,
+    metalness: 0.2, roughness: 0.35,
+  });
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.35, 1), coreMat);
+  core.position.y = 2.0;
+  core.castShadow = false;
+  grp.add(core);
+  // Yttre roterande ring (slinger som halv-aura)
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xaaffaa, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.04, 8, 32), ringMat);
+  ring.position.y = 2.0;
+  ring.rotation.x = Math.PI / 2;
+  grp.add(ring);
+  // Mjuk gron halo
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(0.85, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0x66ff66, transparent: true, opacity: 0.18, depthWrite: false })
+  );
+  halo.position.y = 2.0;
+  grp.add(halo);
+  // PointLight for cherry-glow (engangskostnad vid match-start, samma som tidigare)
+  const light = new THREE.PointLight(0x66ff66, 0.9, 4.5, 2);
+  light.position.y = 2.0;
+  grp.add(light);
+  // Bas-shadow-disc pa marken (visuell anchor)
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.45, 16),
     new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.40, side: THREE.DoubleSide, depthWrite: false })
@@ -18894,15 +18917,12 @@ function makeKostefoCompanionMesh() {
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = 0.02;
   grp.add(shadow);
-  // Liten glow-aura runt joint så companion sticker ut
-  const aura = new THREE.Mesh(
-    new THREE.SphereGeometry(0.95, 14, 10),
-    new THREE.MeshBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.25, depthWrite: false })
-  );
-  aura.position.y = 2.0;
-  grp.add(aura);
   grp.userData.companionMesh = true;
-  grp.userData.companionJoint = joint;
+  grp.userData.companionCore = core;
+  grp.userData.companionRing = ring;
+  grp.userData.companionHalo = halo;
+  // companionJoint-aliaset bibehallet for bakkompatibilitet med tickClientKostefoCompanion
+  grp.userData.companionJoint = core;
   return grp;
 }
 
