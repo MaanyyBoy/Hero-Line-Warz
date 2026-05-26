@@ -2117,8 +2117,8 @@ const HERO_ATTACK_INTERVAL = 1.0;
 
 // Per-hero baseline stats (matchar server/game-engine.js HERO_DEFS).
 const HERO_DEFS = {
-  magiker: { name: 'Zorythar', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
-  legolas: { name: 'Legolus', baseHp: 85,  baseDmg: 6, attackRange: 9.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },   // AA-range +50% (6.0 → 9.0)
+  magiker: { name: 'Zyro', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
+  legolas: { name: 'Nyro', baseHp: 85,  baseDmg: 6, attackRange: 9.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },   // AA-range +50% (6.0 → 9.0)
   gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Aragurn', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
   kostefo: { name: 'Kostefo', baseHp: 95,  baseDmg: 5, attackRange: 5.4, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range +20% (4.5 → 5.4)
@@ -23031,8 +23031,8 @@ function tickDuelBigOrbVisual(dt) {
 }
 
 const HEROES = [
-  { id: 'magiker',   name: 'Zorythar',    role: 'Mage',         initial: 'Z',   available: true  },
-  { id: 'legolas',   name: 'Legolus',     role: 'Archer',       initial: 'L',   available: true  },
+  { id: 'magiker',   name: 'Zyro',    role: 'Mage',         initial: 'Z',   available: true  },
+  { id: 'legolas',   name: 'Nyro',     role: 'Archer',       initial: 'L',   available: true  },
   { id: 'gimlu',     name: 'Gimlu',       role: 'Tank',         initial: 'Gi',  available: true  },
   { id: 'aragurn',   name: 'Aragurn',     role: 'Warrior',      initial: 'Ar',  available: true  },
   { id: 'kostefo',   name: 'Kostefo',     role: 'Smoke-Mage',   initial: 'K',   available: true  },
@@ -23047,11 +23047,11 @@ const HEROES = [
 const HERO_INFO = {
   magiker: {
     skills: {
-      q: { name: 'Wind Puff', icon: '💨', desc: 'Sends a wind blast in a cone in front of Zorythar (5.5 m × 90°). Deals 20% of max HP to all enemies hit, pushes them back 3 meters in the wind direction, and applies a debuff (4s) that makes them take +20% more damage from all subsequent damage. Drag-aim sets direction.' },
+      q: { name: 'Wind Puff', icon: '💨', desc: 'Sends a wind blast in a cone in front of Zyro (5.5 m × 90°). Deals 20% of max HP to all enemies hit, pushes them back 3 meters in the wind direction, and applies a debuff (4s) that makes them take +20% more damage from all subsequent damage. Drag-aim sets direction.' },
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE explosion (3.8 m radius) at the target or drag position. Damages and freezes enemies for 2 seconds. If a frozen enemy is hit by another skill the ice shatters and sends out shards that damage nearby enemies.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawns a black hole at the target/drag position that lasts 3 seconds. Pulls enemies toward the center and ticks 3% of their max HP per second while they remain inside. At the end it explodes in AoE damage (4 m radius).' },
     },
-    passive: { name: 'Soul Mark', icon: '✦', desc: 'Hit the SAME target with 3 DIFFERENT skills within 3 seconds and the target gets a mark that ticks 5% of its current HP per second for 3 seconds (DoT) — and heals Zorythar 10% of his max HP per second for the entire mark duration. Combine Wind Puff + Frost Nova + Black Hole for max sustain.' },
+    passive: { name: 'Soul Mark', icon: '✦', desc: 'Hit the SAME target with 3 DIFFERENT skills within 3 seconds and the target gets a mark that ticks 5% of its current HP per second for 3 seconds (DoT) — and heals Zyro 10% of his max HP per second for the entire mark duration. Combine Wind Puff + Frost Nova + Black Hole for max sustain.' },
     ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Fires a continuous laser beam straight ahead for 3 seconds (60 m range, narrow). The beam ticks every 0.5s for 15% of target max HP per tick — total 90% maxHP over the full duration. Hits all enemies, bosses, enemy hero and arena orb in the beam\'s path. While the beam is active: 90% damage reduction on the Mage, CC-immune (cannot be frozen/stunned/taunted) and free to move.' },
   },
   legolas: {
@@ -23959,7 +23959,7 @@ function renderHowtoArena() {
     },
     {
       icon: 'heroes', title: 'Heroes & skills',
-      html: `<p>All 4 heroes (Zorythar, Legolus, Gimlu, Aragurn) available. See the Heroes tab for full skill descriptions. Ultimates have a <strong>5s lockout</strong> after cast — can't be spammed.</p><ul><li>Skill casts have a per-cast cap on ult gain (max 10% regardless of targets).</li><li>Drag-aim gives exact landing position (mag = drag fraction of max range).</li></ul>`
+      html: `<p>All 4 heroes (Zyro, Legolus, Gimlu, Aragurn) available. See the Heroes tab for full skill descriptions. Ultimates have a <strong>5s lockout</strong> after cast — can't be spammed.</p><ul><li>Skill casts have a per-cast cap on ult gain (max 10% regardless of targets).</li><li>Drag-aim gives exact landing position (mag = drag fraction of max range).</li></ul>`
     },
     {
       icon: 'goal', title: 'How to win',
