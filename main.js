@@ -20,7 +20,7 @@ scene.fog = new THREE.Fog(0x14202c, 30, 75);
 // sätta dess uniforms (färg/intensitet/distans/position) och "lämnar
 // tillbaka" genom att nolla intensiteten — light-count ändras aldrig.
 // Storlek 5: i 1v1 är som mest ~3-4 ljus-bärande FX vid liv samtidigt
-// (souldrain-explosion, frost-nova, Kostefo-slider, souldrain-aura), så
+// (souldrain-explosion, frost-nova, Kostef-slider, souldrain-aura), så
 // steal-pathen nedan nås i praktiken aldrig under normal spel.
 const FX_LIGHT_POOL_SIZE = 5;
 const fxLightPool = [];
@@ -136,10 +136,17 @@ if (window.visualViewport) {
 
 const ASSET_BASE = './assets/';
 const CHARACTER_ASSETS = {
-  // Heroes (Mixamo, decision 034 — ersätter KayKit Adventurers för hjältar).
-  // Animationerna är embedded i varje GLB med våra namn-konventioner:
-  // Idle / Walking / Running / 1H_Slash / 2H_Slash / Magic_Attack / Bow_Attack /
-  // Spellcast / Hit_Reaction / Dive / Death.
+  // Heroes (Quaternius Ultimate Animated Character Pack, CC0). Lägre poly-count
+  // (~1000-1500 tris/karaktär vs Mixamo 5000-15000) för bättre mobil-perf.
+  // Embedded clips: Idle / Walk / Run / Punch / SwordSlash / Shoot_OneHanded /
+  // Death / Jump / SitDown / Walk_Carry / Run_Carry. Alla 51 karaktärer i pack:et
+  // delar samma rig — blandbara fritt.
+  zyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Wizard.gltf',
+  nyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Elf.gltf',
+  kryx_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Viking_Male.gltf',
+  elar_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Knight_Golden_Male.gltf',
+  kostef_qt: 'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Witch.gltf',
+  // Mixamo (legacy, decision 034) — behållna för rollback om Quaternius inte fungerar.
   gandulf_mx:  'heroes/mixamo/gandulf.glb',
   legolus_mx:  'heroes/mixamo/legolus.glb',
   gimlu_mx:    'heroes/mixamo/gimlu.glb',
@@ -2119,9 +2126,9 @@ const HERO_ATTACK_INTERVAL = 1.0;
 const HERO_DEFS = {
   magiker: { name: 'Zyro', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
   legolas: { name: 'Nyro', baseHp: 85,  baseDmg: 6, attackRange: 9.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },   // AA-range +50% (6.0 → 9.0)
-  gimlu:   { name: 'Gimlu',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
-  aragurn: { name: 'Aragurn', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
-  kostefo: { name: 'Kostefo', baseHp: 95,  baseDmg: 5, attackRange: 5.4, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range +20% (4.5 → 5.4)
+  gimlu:   { name: 'Kryx',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
+  aragurn: { name: 'Elar', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
+  kostefo: { name: 'Kostef', baseHp: 95,  baseDmg: 5, attackRange: 5.4, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range +20% (4.5 → 5.4)
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
@@ -2570,7 +2577,7 @@ const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
 const HAMMER_LIFESTEAL = 0.15;
 const HAMMER_RETURN_DMG_MUL = 0.5;
-// Gimlu passive (Stalwart Resolve)
+// Kryx passive (Stalwart Resolve)
 const GIMLU_PASSIVE_TIER1_HP = 0.80;
 const GIMLU_PASSIVE_TIER1_DR = 0.10;       // var 0.20 — nerf 50%
 const GIMLU_PASSIVE_TIER2_HP = 0.60;
@@ -3072,18 +3079,20 @@ function makeHeroCopyMesh(ownerSideIdx, heroId) {
   return grp;
 }
 
-// Hero-mesh-dispatcher per heroId — GLTF-laddat från Mixamo (decision 034).
+// Hero-mesh-dispatcher per heroId — GLTF-laddat från Quaternius Ultimate
+// Animated Character Pack (CC0). Lägre poly (~1000-1500 tris) än Mixamo för
+// bättre mobil-perf. Mixamo-keys (xxx_mx) finns kvar i CHARACTER_ASSETS för rollback.
 const HERO_GLTF_MAP = {
-  magiker: 'gandulf_mx',
-  legolas: 'legolus_mx',
-  gimlu:   'gimlu_mx',
-  aragurn: 'aragurn_mx',
-  kostefo: 'kostefos_mx',
+  magiker: 'zyro_qt',     // Wizard
+  legolas: 'nyro_qt',     // Elf
+  gimlu:   'kryx_qt',     // Viking_Male
+  aragurn: 'elar_qt',     // Knight_Golden_Male
+  kostefo: 'kostef_qt',   // Witch
 };
 // Per-hero scale: {x,y,z}. Mixamo-modeller är vanligen i meter-skala efter
 // Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
 const HERO_GLTF_SCALE = {
-  // Decision 042: Gandulf/Legolus/Aragurn/Kostefos +20% storlek (Gimlu oförändrad).
+  // Decision 042: Gandulf/Legolus/Aragurn/Kostef +20% storlek (Kryx oförändrad).
   // Senare: ytterligare +20% på alla 5 (× 1.2).
   magiker: { x: 1.44, y: 1.44, z: 1.44 },
   legolas: { x: 1.44, y: 1.44, z: 1.44 },
@@ -3092,14 +3101,14 @@ const HERO_GLTF_SCALE = {
   kostefo: { x: 1.44, y: 1.44, z: 1.44 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
-// Mappar fight-stilen till rätt Mixamo-clip vi exporterat i hero-GLB:n.
-// Fallback i getCachedClipNames letar bredare om denna saknas på rigg:en.
+// Quaternius-clip-namn: Idle/Walk/Run/Punch/SwordSlash/Shoot_OneHanded/Death/Jump.
+// findClipName matchar substring case-insensitivt så fallback hittar nära match.
 const HERO_ATTACK_CLIP = {
-  magiker: 'Magic_Attack',   // 2H magic cast
-  legolas: 'Bow_Attack',     // standing aim recoil
-  gimlu:   '2H_Slash',       // great sword slash (närmast hammer-anim)
-  aragurn: '1H_Slash',       // sword slash
-  kostefo: 'Spellcast',      // long cast
+  magiker: 'Punch',             // Wizard har ingen magic-clip — punch som närmast cast
+  legolas: 'Shoot_OneHanded',   // Elf med båg-shoot
+  gimlu:   'SwordSlash',        // Viking_Male svingar svärd
+  aragurn: 'SwordSlash',        // Knight_Golden_Male svärd
+  kostefo: 'Punch',             // Witch — punch som cast-substitut
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -3148,7 +3157,7 @@ function makeHeroMesh(idx, heroId) {
   return grp;
 }
 
-// (makeAragurnSword borttagen — decision 101; Mixamo-Aragurn har eget svärd.)
+// (makeAragurnSword borttagen — decision 101; Mixamo-Elar har eget svärd.)
 
 // ---- GLTF-animations-hjälpare ----
 function findClipName(actions, ...substrs) {
@@ -3439,7 +3448,7 @@ function makeGandulfMesh(idx) {
   return grp;
 }
 
-// Legolus — hooded ranger-assassin. Mörka skogsfärger, hood som skuggar ansiktet,
+// Nyro— hooded ranger-assassin. Mörka skogsfärger, hood som skuggar ansiktet,
 // rygg-cape, dolkar i bältet, koger + båge. Hunter-assassin vibe.
 function makeLegolasMesh(idx) {
   const cfg = SIDE_CFG[idx];
@@ -3644,7 +3653,7 @@ function makeLegolasMesh(idx) {
   return grp;
 }
 
-// Gimlu — STOR stout dvärg. Bredare och tyngre än andra heroes, massivt
+// Kryx— STOR stout dvärg. Bredare och tyngre än andra heroes, massivt
 // flätat skägg, hornhjälm, plåtrustning, krigshammare med rune-glow.
 function makeGimluMesh(idx) {
   const cfg = SIDE_CFG[idx];
@@ -9535,12 +9544,12 @@ function createSide(idx) {
     ironWillExplosions: [],
     legolusAaCounter: 0,
     legolusSplitPending: false,
-    // Shadow Volley (Legolus ult) state — solo/arena/boss tickas lokalt,
+    // Shadow Volley (Nyro ult) state — solo/arena/boss tickas lokalt,
     // line wars synkas via snap (lInv/lAa/TP).
     legolusInvisRemaining: 0,
     legolusUltAaPending: false,
     thornPoolsLocal: [],
-    // Kostefo state — synkas helt via line-wars-server-snap. Solo/arena ej stödd.
+    // Kostefstate — synkas helt via line-wars-server-snap. Solo/arena ej stödd.
     kostefoCloudRemaining: 0,
     kostefoUltRemaining: 0,
     kostefoCompanion: null,
@@ -9577,15 +9586,15 @@ function createSide(idx) {
     rageTickAccum: 0,           // Gimlu: 0.5s pulse-timer
     legolusUltBuff: 0,          // Legolas: sek kvar med +30% AS efter teleport
     // Aragurn-state
-    whirlwindRemaining: 0,      // Aragurn Q: sek kvar med spin (CC-immun + MS-buff + tick-skada)
+    whirlwindRemaining: 0,      // ElarQ: sek kvar med spin (CC-immun + MS-buff + tick-skada)
     whirlwindTickAccum: 0,
-    aragurnLeap: null,          // Aragurn E: { remaining, startX, startZ, targetX, targetZ }
-    aragurnShoutBuff: 0,        // Aragurn F-buff på sig själv (bara DR): sek kvar
-    aragurnAllyShoutBuff: 0,    // Aragurn F-buff på allierad: sek kvar (DR + MS)
+    aragurnLeap: null,          // ElarE: { remaining, startX, startZ, targetX, targetZ }
+    aragurnShoutBuff: 0,        // ElarF-buff på sig själv (bara DR): sek kvar
+    aragurnAllyShoutBuff: 0,    // ElarF-buff på allierad: sek kvar (DR + MS)
     aragurnShoutDebuff: 0,      // Mottagar-buff "tar 20% mer skada" sek kvar (sätts på fiende)
     aragurnShoutHealRemaining: 0,  // HoT-timer från War Shout (2s)
     aragurnShoutHealPct: 0,        // 0.10 för Aragurn, 0.05 för allierad
-    berserkRemaining: 0,        // Aragurn R: sek kvar (–50% AS, +150% AA dmg, cleave)
+    berserkRemaining: 0,        // ElarR: sek kvar (–50% AS, +150% AA dmg, cleave)
     berserkSwordMesh: null,     // Klient-visual: dubblat svärd + glow
     // Resurser
     gold: 0,
@@ -11020,7 +11029,7 @@ function updateMonsters(side, dt) {
       continue;
     }
 
-    // Aggro mot hjälten. Legolus i Shadow Volley-invis ses ej av fiender —
+    // Aggro mot hjälten. Nyro i Shadow Volley-invis ses ej av fiender —
     // aggro/atk skippas (gäller Boss Wars-boss också, han tappar lock).
     const dxh = heroX - m.mesh.position.x;
     const dzh = heroZ - m.mesh.position.z;
@@ -12007,7 +12016,7 @@ function killHero(side) {
     removeSoulDrainBeam(side);
     side.soulDrain = null;
   }
-  // Aragurn ult: rensa svärds-aura + reset scale
+  // Elar ult: rensa svärds-aura + reset scale
   if (side.berserkRemaining > 0) {
     side.berserkRemaining = 0;
     if (side.mesh) side.mesh.scale.set(1, 1, 1);
@@ -12019,7 +12028,7 @@ function killHero(side) {
     scene.remove(side.berserkSwordMesh);
     side.berserkSwordMesh = null;
   }
-  // Aragurn leap: avbryt + rensa indikator
+  // Elar leap: avbryt + rensa indikator
   if (side.aragurnLeap) {
     if (side.aragurnLeap.indicator) {
       if (side.aragurnLeap.indicator.material) side.aragurnLeap.indicator.material.dispose();
@@ -12062,7 +12071,7 @@ function respawnHero(side) {
   // Shadow Volley state: rensa invis + aaPending så hero inte är osynlig på respawn
   side.legolusInvisRemaining = 0;
   side.legolusUltAaPending = false;
-  // Lvl-5 cleanup: nolla Gimlu taunt-state + iron-will reflect-queue så
+  // Lvl-5 cleanup: nolla Kryx taunt-state + iron-will reflect-queue så
   // respawn-hp-hopp inte triggar falsk lvl5-explosion (mirror av server).
   side.titansTauntRemaining = 0;
   side.tauntLvl5 = false;
@@ -12071,13 +12080,13 @@ function respawnHero(side) {
   if (side.ironWillReflectQueue) side.ironWillReflectQueue.length = 0;
   side.ironWillRemaining = 0;
   side.ironWillStored = 0;
-  // Aragurn banner-aura — rensa vid respawn
+  // Elar banner-aura — rensa vid respawn
   if (side.aragurnBanners) {
     for (const b of side.aragurnBanners) if (b.mesh) scene.remove(b.mesh);
     side.aragurnBanners.length = 0;
   }
   side.inAragurnBanner = false;
-  // Kostefo lvl5: rensa tp-marker + decoy-kloner
+  // Kosteflvl5: rensa tp-marker + decoy-kloner
   side.kostefoSliderTpMarker = null;
   if (side.kostefoClones) {
     for (const k of side.kostefoClones) if (k.mesh) scene.remove(k.mesh);
@@ -12220,7 +12229,7 @@ function maintainTargetLock(side) {
 function updateHeroAttack(side, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
-  // Aragurn leap: ingen AA. Whirlwind blockerar AA UTOM vid skill-lvl 5 (kan AA medan spinnar).
+  // Elar leap: ingen AA. Whirlwind blockerar AA UTOM vid skill-lvl 5 (kan AA medan spinnar).
   if (side.aragurnLeap) return;
   if ((side.whirlwindRemaining || 0) > 0 && !(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX)) return;
   const target = maintainTargetLock(side);
@@ -12274,7 +12283,7 @@ function updateHeroAttack(side, dt) {
   if (splitNow) side.legolusSplitPending = false;
   // Talent: Phantom Dash — lifesteal 20% → 50% när dash-buffed
   const dashLs = arenaHasTalent(side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL;
-  // Aragurn passive (Last Stand) + berserk AA dmg multiplier
+  // Elar passive (Last Stand) + berserk AA dmg multiplier
   const aragurnPassive = aragurnPassiveMul(side);
   const berserkActive = (side.berserkRemaining || 0) > 0;
   const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
@@ -12285,7 +12294,7 @@ function updateHeroAttack(side, dt) {
   const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
   const aaLifesteal = dashBuffed ? dashLs : berserkLs;
   // Shadow Volley empowered AA: dmg = 25% target's maxHp + stun + thorn pool vid hit.
-  // Revealar Legolus direkt vid spawn av pilen.
+  // Revealar Nyro direkt vid spawn av pilen.
   const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
   if (ultAaNow) {
     const tEnt = target.entity;
@@ -12303,7 +12312,7 @@ function updateHeroAttack(side, dt) {
     appliesPoison: splitNow,
     legolusUltAa: ultAaNow,
   });
-  // Aragurn Berserk: 100% cleave — varje AA träffar ALLA fiender inom AA-range
+  // ElarBerserk: 100% cleave — varje AA träffar ALLA fiender inom AA-range
   // (utöver huvudtarget). Extra projektiler spawnar mot var och en.
   if (berserkActive && side.heroId === 'aragurn') {
     const opp2 = sides[3 - side.idx];
@@ -12386,9 +12395,9 @@ function updateHeroAttack(side, dt) {
   const ultAsMul = (side.legolusUltBuff || 0) > 0 ? (1 + LEGOLUS_ULT_AS_BONUS) : 1;
   // Legolas Hunter's Focus (F-buff): +30% AS under buff-duration
   const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
-  // Aragurn berserk-buff: -50% AS (interval * 2)
+  // Elar berserk-buff: -50% AS (interval * 2)
   const berserkAsMul = (side.berserkRemaining || 0) > 0 ? BERSERK_AS_MUL : 1;
-  // Aragurn banner-aura (Hero Leap lvl5): +10% AS
+  // Elar banner-aura (Hero Leap lvl5): +10% AS
   const bannerAsMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * focusAsMul * berserkAsMul * bannerAsMul);
@@ -12483,7 +12492,7 @@ function updateProjectiles(side, dt) {
       if ((side.aaLifestealPct || 0) > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + _dmgApplied * side.aaLifestealPct);
       }
-      // Legolus dash-buffed AA: 20% lifesteal + reset E-cd om kill
+      // Nyro dash-buffed AA: 20% lifesteal + reset E-cd om kill
       if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
       }
@@ -13727,7 +13736,7 @@ function updateBlackHolesSolo(side, dt) {
   }
 }
 
-// === Legolus skills (solo) ===
+// === Nyro skills (solo) ===
 function hostCastLegolusVineTrap(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
@@ -13986,7 +13995,7 @@ function updateVineTrapsSolo(side, dt) {
   }
 }
 
-// === Gimlu skills (solo) ===
+// === Kryx skills (solo) ===
 function hostCastGimluTaunt(side) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
@@ -13995,7 +14004,7 @@ function hostCastGimluTaunt(side) {
   side.tauntHealAccum = 0;
   side._tauntHpPrev = side.hero.hp;
   side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
-  // Kenney-FX: stor shockwave-burst runt Gimlu vid skrik + 6 sparks splash:ar
+  // Kenney-FX: stor shockwave-burst runt Kryx vid skrik + 6 sparks splash:ar
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
       texName: 'circle_03', x: side.hero.x, y: 0.1, z: side.hero.z,
@@ -14080,7 +14089,7 @@ function hostCastGimluIronWill(side) {
   attachIronWillAura(side);
 }
 
-// Persistent defensiv aura runt Gimlu under Iron Will. Mesh följer hero,
+// Persistent defensiv aura runt Kryx under Iron Will. Mesh följer hero,
 // disposas vid expiry (i tickIronWillAura).
 function attachIronWillAura(side) {
   if (!side.mesh || kenneyTex.size === 0) return;
@@ -14949,17 +14958,17 @@ function damageHero(side, amount, isCrit = false) {
   const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
   // Magiker laser-ult: 90% DR
   const laserMul = side.laserBeam ? LASER_DR_MUL : 1;
-  // Gimlu rage-ult: 50% DR
+  // Kryx rage-ult: 50% DR
   const rageMul = (side.rageRemaining || 0) > 0 ? RAGE_DR_MUL : 1;
-  // Aragurn Shout-buff på self/ally: 20% DR
+  // ElarShout-buff på self/ally: 20% DR
   const shoutDrSelf = (side.aragurnShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
   const shoutDrAlly = (side.aragurnAllyShoutBuff || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
   // Legolas i sin egen Vine Trap: -20% damage taken
   const legolusTrapDr = side.legolusInOwnTrap ? 0.80 : 1;
-  // Aragurn Whirlwind CC-immun (samma som rage — soak alla CC) — DR-wise samma som vanlig
-  // Mottagar-debuff från Aragurn Shout: target tar +20% mer skada
+  // ElarWhirlwind CC-immun (samma som rage — soak alla CC) — DR-wise samma som vanlig
+  // Mottagar-debuff från ElarShout: target tar +20% mer skada
   const shoutDebuffMul = (side.aragurnShoutDebuff || 0) > 0 ? (1 + SHOUT_DEBUFF_DMG_TAKEN) : 1;
-  // Aragurn banner-aura (Hero Leap lvl5): -20% incoming dmg
+  // Elar banner-aura (Hero Leap lvl5): -20% incoming dmg
   const bannerDrMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
   let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * legolusTrapDr * shoutDebuffMul * bannerDrMul;
   // Ling & Lang shield absorberar FÖRST (passiv tier-10). Vid kollaps: AoE-explosion.
@@ -14994,13 +15003,13 @@ function damageHero(side, amount, isCrit = false) {
   }
   if ((side.ironWillRemaining || 0) > 0) {
     side.ironWillStored = (side.ironWillStored || 0) + final;
-    // Lvl 5: queue 30% damage-reflect (AoE runt Gimlu vid nästa tick)
+    // Lvl 5: queue 30% damage-reflect (AoE runt Kryx vid nästa tick)
     if (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX && final > 0) {
       side.ironWillReflectQueue = side.ironWillReflectQueue || [];
       side.ironWillReflectQueue.push(final * GIMLU_LVL5_IW_REFLECT_PCT);
     }
   }
-  // Gimlu tank-mekanik: 5% av damage taken som ult-gain (cap 2% per hit).
+  // Kryx tank-mekanik: 5% av damage taken som ult-gain (cap 2% per hit).
   // Kompenserar långsam AA-frekvens + single-target skills.
   if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
     gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
@@ -15218,7 +15227,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.heroFearTime || 0) > 0) return;
   // Frusen/rotad av motspelaren (Frostnova / Vine Trap): kan inte röra sig
   if ((side.hero.frozenTime || 0) > 0) return;
-  // Tauntad av Gimlu: tappar kontroll — auto-walk till Gimlu och kan inte ändra
+  // Tauntad av Gimlu: tappar kontroll — auto-walk till Kryx och kan inte ändra
   // riktning. Existing applyEvent-block stoppar skills, maintainTargetLock tvingar
   // AA på taunter. Här override:as joystick-input med auto-walk.
   if ((side.hero.tauntedTime || 0) > 0 && side.hero.tauntedBy) {
@@ -15250,17 +15259,17 @@ function applyMovement(side, joyX, joyZ, dt) {
   }
   // Ice-block post-exit self-buff: +50% MS
   const iceMsBuff = (side.iceBlockMsBuff || 0) > 0 ? 0.5 : 0;
-  // Aragurn whirlwind: +20% MS
+  // Elar whirlwind: +20% MS
   const whirlMs = (side.whirlwindRemaining || 0) > 0 ? WHIRLWIND_MS_BUFF : 0;
-  // Aragurn allierad shout-buff: +20% MS (gäller bara allierade, INTE Aragurn själv)
+  // Elar allierad shout-buff: +20% MS (gäller bara allierade, INTE Elar själv)
   const allyShoutMs = (side.aragurnAllyShoutBuff || 0) > 0 ? SHOUT_BUFF_MS : 0;
   // Ice-block applicerad slow från motspelaren
   const slowMul = (side.heroSlowMul || 1);
-  // Shadow Volley (Legolus ult): +20% movespeed under invis
+  // Shadow Volley (Nyro ult): +20% movespeed under invis
   const invisMs = (side.legolusInvisRemaining || 0) > 0 ? LEGOLUS_INVIS_SPEED_BONUS : 0;
   // Arena power-up speed-buff: +30% MS i 8s efter pickup
   const arenaSpeedMs = (side.arenaSpeedBuff || 0) > 0 ? ARENA_POWERUP_SPEED_BOOST : 0;
-  // Lvl-5 MS-buffs (Gandulf Wind Puff, Gimlu Hammer, Aragurn banner m.fl.) —
+  // Lvl-5 MS-buffs (Gandulf Wind Puff, KryxHammer, Elar banner m.fl.) —
   // multipliceras separat (matchar serverns multiplicative MS-chain).
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
   const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
@@ -15300,7 +15309,7 @@ function applyEvent(side, ev) {
   const taunted = (side.hero.tauntedTime || 0) > 0;
   // Magiker laser-ult: kan inte göra AA eller andra skills
   const laserLocked = !!side.laserBeam;
-  // Aragurn whirlwind + leap: kan inte göra AA eller andra skills under
+  // Elar whirlwind + leap: kan inte göra AA eller andra skills under
   const whirlLocked = (side.whirlwindRemaining || 0) > 0;
   const leapLocked = !!side.aragurnLeap;
   if (ev.type === 'aa') {
@@ -15328,7 +15337,7 @@ function applyEvent(side, ev) {
     return;
   }
   if (ev.type === 'skill') {
-    // Aragurn Q (whirlwind) och E (leap) blockerar ALLA andra skills, men user-cast ult
+    // ElarQ (whirlwind) och E (leap) blockerar ALLA andra skills, men user-cast ult
     // (R) tillåts under leap-flygning eftersom det vore frustrerande att blockas helt.
     // Whirlwind blockerar dock allt utom när whirl själv expirerat.
     if (side.hero.dead || channelLocked || feared || frozen || laserLocked || taunted) return;
@@ -15375,7 +15384,7 @@ function applyEvent(side, ev) {
       side.skillDmgMul = _prevSkillDmgMul * _lvlMul;
     }
     try {
-      // Kostefo: i Arena/Solo körs klient-side hostCastKostefo*-funktioner.
+      // Kostef: i Arena/Solo körs klient-side hostCastKostefo*-funktioner.
       // I classic-MP är server auktoritativ — events skickas till server och
       // simulering körs där. Detect classic-MP via isClassicMpForKostefo nedan.
       if (ev.key === 'r') {
@@ -15988,7 +15997,7 @@ function animateGltfCharacter(mesh, dt, side, type) {
     return; // håll kvar attack-clipet
   }
 
-  // Aragurn whirlwind: kör attack-clip i loop istället för run/walk så det ser ut
+  // Elar whirlwind: kör attack-clip i loop istället för run/walk så det ser ut
   // som en kontinuerlig snurr-svingning, oavsett om han springer eller står stilla.
   if (side && side.heroId === 'aragurn' && (side.whirlwindRemaining || 0) > 0) {
     if (clips.attack) {
@@ -16331,14 +16340,14 @@ function applyRemoteState(state) {
     side.level = sData.lv || 1;
     side.xp = sData.xp || 0;
     side.xpToNext = sData.xpN || 0;
-    // Legolus buff-status
+    // Nyro buff-status
     side.legolusBuffRemaining = sData.lbuf || 0;
     side.legolusDashBuffPending = !!sData.ldash;
     // Shadow Volley ult-state (invis-timer + empowered-AA-flagga). Klient
     // sätter hero-mesh-opacity nedan baserat på lInv.
     side.legolusInvisRemaining = sData.lInv || 0;
     side.legolusUltAaPending = !!sData.lAa;
-    // Kostefo state (cloud-timer + stationär cast-pos, ult-joints, companion, goose-waves, sliders)
+    // Kostefstate (cloud-timer + stationär cast-pos, ult-joints, companion, goose-waves, sliders)
     side.kostefoCloudRemaining = sData.kCloud || 0;
     side.kostefoCloudX = sData.kCloudX || 0;
     side.kostefoCloudZ = sData.kCloudZ || 0;
@@ -16347,7 +16356,7 @@ function applyRemoteState(state) {
     side.kostefoUltJoints = sData.kJoints || [];
     side.kostefoGooseWaves = sData.kGW || [];
     side.kostefoSliders = sData.kSL || [];
-    // Gimlu buff-status
+    // Kryx buff-status
     side.titansTauntRemaining = sData.taunt || 0;
     side.ironWillRemaining = sData.iw || 0;
     side.ironWillStored = sData.iwS || 0;
@@ -16360,7 +16369,7 @@ function applyRemoteState(state) {
     side.gimluHammerMsRem = sData.ghMs || 0;
     side.inAragurnBanner = !!sData.inAbn;
     // Banner-entiteter reconcileras via separat path nedan (clientReconcileEntities)
-    // Kostefo lvl-5 state
+    // Kosteflvl-5 state
     side.kostefoSliderTpMarker = sData.kSTp ? { x: sData.kSTp.x, z: sData.kSTp.z, remaining: sData.kSTp.rem } : null;
     side.kostefoCloudRadiusMul = sData.kCrM || 1;
     side.shield = sData.shld || 0;
@@ -16577,7 +16586,7 @@ function applyRemoteState(state) {
       grp.userData.bhRing = ring;
       return grp;
     });
-    // Vine Trap-zoner (Legolus Q)
+    // Vine Trap-zoner (NyroQ)
     clientReconcileEntities(idx, 'vineTraps', sData.VT || [], () => {
       const grp = new THREE.Group();
       const ring = new THREE.Mesh(
@@ -16605,7 +16614,7 @@ function applyRemoteState(state) {
       const m = vtMap.get(vt.id);
       if (m && m.userData.vtRing) m.userData.vtRing.material.opacity = 0.65 * vt.life;
     }
-    // Shadow Volley thorn pools (Legolus ult): grön disc med torn-spikes, AoE-ring.
+    // Shadow Volley thorn pools (Nyro ult): grön disc med torn-spikes, AoE-ring.
     clientReconcileEntities(idx, 'thornPools', sData.TP || [], (e) => {
       const grp = new THREE.Group();
       const r = (e && e.r) || 2.5;
@@ -16646,7 +16655,7 @@ function applyRemoteState(state) {
         if (m.userData.tpInner) m.userData.tpInner.material.opacity = 0.45 * tp.life;
       }
     }
-    // Kostefo Joint Sliders — stor flygande cigarett som piercar. När en slider
+    // KostefJoint Sliders — stor flygande cigarett som piercar. När en slider
     // försvinner från snap (= träffat maxRange), trigga eld-explosion på senaste pos.
     {
       const prevSL = side._prevKostefoSliders || new Map();
@@ -16659,7 +16668,7 @@ function applyRemoteState(state) {
       side._prevKostefoSliders = newSL;
     }
     clientReconcileEntities(idx, 'kostefoSliders', sData.kSL || [], () => makeKostefoSliderMesh());
-    // Kostefo Goose-Waves — bred AoE-zon med springande gröna gäss-figurer.
+    // KostefGoose-Waves — bred AoE-zon med springande gröna gäss-figurer.
     clientReconcileEntities(idx, 'kostefoGooseWaves', sData.kGW || [], (e) => makeKostefoGooseWaveMesh(e));
     const gwMap = clientMeshes.kostefoGooseWaves && clientMeshes.kostefoGooseWaves.get(idx);
     if (gwMap && sData.kGW) for (const gw of sData.kGW) {
@@ -16685,7 +16694,7 @@ function applyRemoteState(state) {
         }
       }
     }
-    // Gimlu Hammers
+    // KryxHammers
     clientReconcileEntities(idx, 'hammers', sData.HM || [], () => {
       const grp = new THREE.Group();
       const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 }));
@@ -18248,7 +18257,7 @@ const ULT_GAIN_SKILL_HIT = 5;
 const ULT_GAIN_AA_HIT = 3;
 const ULT_GAIN_SKILL_CAST_CAP = 10;     // Max gain per skill-cast (AoE-fix)
 const ULT_LOCKOUT_AFTER_CAST = 5.0;     // Sek ingen gain efter ult-cast
-const GIMLU_ULT_GAIN_ON_DMG_PCT = 0.05; // Gimlu tank-mekanik: 5% av damage taken
+const GIMLU_ULT_GAIN_ON_DMG_PCT = 0.05; // Kryx tank-mekanik: 5% av damage taken
 const GIMLU_ULT_GAIN_PER_HIT_CAP = 2;   // Max 2% per damage-instance
 
 function gainUltEnergy(side, amount) {
@@ -18589,7 +18598,7 @@ function tickClientLegolusInvis(side, dt) {
 // Decision 045: `withLight` är default false så Q/F-cast aldrig adderar nya
 // PointLights till scenen. Att lägga till PointLights triggar Three.js
 // shader-recompile för ALLA MeshStandardMaterial — det är källan till
-// "lag vid Kostefo-cast". Companion-mesh (en gång per match) får
+// "lag vid Kostef-cast". Companion-mesh (en gång per match) får
 // `withLight: true` för bevarad cherry-glöd; per-cast meshes kör emissive-only.
 function makeKostefoJointMesh(scale = 1, opts) {
   const withLight = !!(opts && opts.withLight);
@@ -18792,7 +18801,7 @@ function makeKostefoGooseWaveMesh(e) {
 
 // Cannabis Cloud — stationär dim-area (radie 5m, +25% från 4m per user-spec).
 // Genomskinlig dim-effekt (mer subtil opacity = ser ut som riktig dimma istället
-// för tjock smoke). Cloud läggs på marken där Kostefo castade.
+// för tjock smoke). Cloud läggs på marken där Kostefcastade.
 function makeKostefoCloudMesh() {
   const grp = new THREE.Group();
   const layers = [];
@@ -18866,7 +18875,7 @@ function makeKostefoCloudMesh() {
   return grp;
 }
 
-// Companion-mesh: STOR svävande cigarett som följer Kostefo (scale 2.5 så den
+// Companion-mesh: STOR svävande cigarett som följer Kostef(scale 2.5 så den
 // syns tydligt över hero-mesh-höjden). Joint lyft till y=2.0. Decision 045:
 // withLight:true för att behålla cherry-glöd — Companion adderas EN GÅNG per
 // match (vid hero-spawn), inte vid skill-cast → shader-recompile är acceptabel
@@ -19066,13 +19075,13 @@ function hostCastKostefoCannabisCloud(side) {
   }
 }
 
-// Lvl-5: spawn Kostefo-decoy-klon. Visuell mesh som springer åt slumpmässig
+// Lvl-5: spawn Kostef-decoy-klon. Visuell mesh som springer åt slumpmässig
 // riktning i 5s. Decoy-effekt — gör inget skadeinteragerat på klient.
 function spawnKostefoCloneClient(side) {
   const ang = Math.random() * Math.PI * 2;
   const dx = Math.cos(ang), dz = Math.sin(ang);
   // Kopia av hero-meshen i miniature/simplified form — använder en basic cylinder
-  // (full skinning för decoy är för dyrt). Färg matchar Kostefo:s gröna palett.
+  // (full skinning för decoy är för dyrt). Färg matchar Kostef:s gröna palett.
   const grp = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.CylinderGeometry(0.35, 0.42, 1.7, 10),
@@ -19116,7 +19125,7 @@ function tickKostefoClonesLvl5Client(side, dt) {
   }
 }
 
-// R (Ult): Joint Avengers — 8 orbit-joints i 5s. AA-kopia mot Kostefos target.
+// R (Ult): Joint Avengers — 8 orbit-joints i 5s. AA-kopia mot Kostef target.
 function hostCastKostefoJointAvengers(side) {
   if (side.hero.dead) return;
   if ((side.ultEnergy || 0) < ULT_ENERGY_MAX) return;
@@ -19328,7 +19337,7 @@ function tickClientKostefoCloud(side, dt) {
   }
 }
 
-// Tick Joint Avengers — 8 joints orbit + AA mot Kostefos AA-target.
+// Tick Joint Avengers — 8 joints orbit + AA mot Kostef AA-target.
 function tickClientKostefoUltJoints(side, dt) {
   if ((side.kostefoUltRemaining || 0) <= 0) return;
   side.kostefoUltRemaining -= dt;
@@ -19353,7 +19362,7 @@ function tickClientKostefoUltJoints(side, dt) {
   }
 }
 
-// Smoke Companion (passive): följer Kostefo + AA-kopia 25% dmg + 100% heal.
+// Smoke Companion (passive): följer Kostef+ AA-kopia 25% dmg + 100% heal.
 function tickClientKostefoCompanion(side, dt) {
   if (side.heroId !== 'kostefo' || side.hero.dead) {
     side.kostefoCompanion = null;
@@ -19384,7 +19393,7 @@ function tickClientKostefoCompanion(side, dt) {
   comp.attackCd = _K_COMPANION_AA_INTERVAL;
 }
 
-// Samlad Kostefo client-side tick — anropas en gång per side per frame.
+// Samlad Kostefclient-side tick — anropas en gång per side per frame.
 function tickClientKostefoSkills(side, dt) {
   if (side.heroId !== 'kostefo') return;
   tickClientKostefoGooseWaves(side, dt);
@@ -19396,7 +19405,7 @@ function tickClientKostefoSkills(side, dt) {
   tickKostefoClonesLvl5Client(side, dt);
 }
 
-// Per-side tracking av Kostefo-meshes som följer hero-state (companion, cloud,
+// Per-side tracking av Kostef-meshes som följer hero-state (companion, cloud,
 // ult-joints). Inte hanterade via clientReconcileEntities (ej entity-listor).
 const kostefoMeshTrack = {
   companions: new Map(),  // sideIdx → mesh
@@ -19404,7 +19413,7 @@ const kostefoMeshTrack = {
   joints: new Map(),      // sideIdx → mesh[] (8 joints orbit)
 };
 
-// Anropas per frame från main game-loop (efter applySideData) — synkar Kostefo-
+// Anropas per frame från main game-loop (efter applySideData) — synkar Kostef-
 // state-meshes mot side-state. Spawnar/tar bort baserat på flaggor/timers.
 function updateKostefoMeshes(dt) {
   for (const idx of [1, 2, 3, 4]) {
@@ -19428,7 +19437,7 @@ function updateKostefoMeshes(dt) {
       const k = 1 - Math.pow(0.5, dt / 0.10);
       comp.position.x += (t.x - comp.position.x) * k;
       comp.position.z += (t.z - comp.position.z) * k;
-      // Riktar companion mot Kostefos AA-target (eller facing om ingen target).
+      // Riktar companion mot Kostef AA-target (eller facing om ingen target).
       // side.targetX/Z innehåller hero's nuvarande target-pos från snap.
       let targetRy = t.ry;
       if (side.aaActive && (side.targetX || side.targetZ)) {
@@ -19705,7 +19714,7 @@ function onLegolasUltHit(side, hit, arr) {
   triggerCameraShake(0.35, 0.4);
 }
 
-// === Gimlu ult: Rage ===
+// === Kryx ult: Rage ===
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
 const RAGE_PULSE_RADIUS = 4.5;
@@ -19819,7 +19828,7 @@ const SHOUT_SLOW_MUL = 0.80;                // 20% slow
 const SHOUT_ALLY_BUFF_DURATION = 4.0;
 const SHOUT_BUFF_DR = 0.20;                 // 20% damage reduction
 const SHOUT_BUFF_MS = 0.20;                 // 20% movement speed (bara allierade)
-const SHOUT_BUFF_RADIUS = 6.0;              // cirkel runt Aragurn för buff (skild från damage-konen)
+const SHOUT_BUFF_RADIUS = 6.0;              // cirkel runt Elar för buff (skild från damage-konen)
 const SHOUT_HEAL_DURATION = 2.0;            // HoT i sek
 const SHOUT_HEAL_SELF_PCT = 0.10;           // Aragurn: 10% maxHP / sek
 const SHOUT_HEAL_ALLY_PCT = 0.05;           // ally: 5% maxHP / sek
@@ -19959,7 +19968,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   const halfAng = SHOUT_HALF_ANGLE * (rangeMul > 1 ? 1.15 : 1);
   // Visuell kon-flash + ljudvågringar
   spawnConeFlash(side.hero.x, side.hero.z, dirX, dirZ, length, halfAng, 0xffe399);
-  // Visuell buff-cirkel runt Aragurn (separat från damage-konen)
+  // Visuell buff-cirkel runt Elar (separat från damage-konen)
   spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
   triggerCameraShake(0.18, 0.20);
   // Kenney shout-burst framåt + ground-scorch i cone
@@ -19989,7 +19998,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   side.aragurnShoutBuff = SHOUT_ALLY_BUFF_DURATION;
   side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
   side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
-  // Lvl 5: pull targets halvvägs mot Aragurn + 1s stun på hit
+  // Lvl 5: pull targets halvvägs mot Elar+ 1s stun på hit
   const isLvl5 = !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX);
   const pullTowardMesh = (mesh) => {
     if (!isLvl5 || !mesh) return;
@@ -20048,7 +20057,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
       }
     }
   }
-  // Allierade hjältar inom CIRKEL runt Aragurn (inte cone) får buff + HoT
+  // Allierade hjältar inom CIRKEL runt Elar (inte cone) får buff + HoT
   if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
     const team = arenaTeamMates(arenaTeamOf(side.idx)) || [];
     for (const aidx of team) {
@@ -21529,7 +21538,7 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
   }
-  // Gimlu E är "teleport till hammar" om hammaren är ute — bypassar cd
+  // KryxE är "teleport till hammar" om hammaren är ute — bypassar cd
   const isGimluE = side.heroId === 'gimlu' && key === 'e';
   // Legolas E lvl 5: 2 stacks med separata CDs — tillåt cast om någon stack är klar
   const isLegolasELvl5 = (side.heroId === 'legolas' && key === 'e'
@@ -22286,11 +22295,11 @@ function heroSnap(side) {
     // Arena power-up buffs (undefined när inaktiva)
     asp: _nzr2(side.arenaSpeedBuff),
     adm: _nzr2(side.arenaDamageBuff),
-    // Aragurn whirlwind-state — joinaren behöver det för spinn-animationen.
+    // Elar whirlwind-state — joinaren behöver det för spinn-animationen.
     wwr: _nzr2(side.whirlwindRemaining),
-    // Aragurn leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
+    // Elar leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
     lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME), tx: _r2(side.aragurnLeap.targetX), tz: _r2(side.aragurnLeap.targetZ) } : undefined,
-    // Kostefo — companion + cannabis-moln (updateKostefoMeshes renderar dem).
+    // Kostef— companion + cannabis-moln (updateKostefoMeshes renderar dem).
     kComp: side.kostefoCompanion ? { x: _r2(side.kostefoCompanion.x), z: _r2(side.kostefoCompanion.z), ry: _r3(side.kostefoCompanion.ry || 0) } : undefined,
     kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: _r2(side.kostefoCloudRemaining), x: _r2(side.kostefoCloudX), z: _r2(side.kostefoCloudZ), rm: _r2(side.kostefoCloudRadiusMul || 1) } : undefined,
     // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
@@ -22421,13 +22430,13 @@ function applyHeroSnap(side, snap) {
   // Arena power-up buffs — undefined i snap → 0 (inaktiv)
   side.arenaSpeedBuff = snap.asp || 0;
   side.arenaDamageBuff = snap.adm || 0;
-  // Aragurn whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
+  // Elar whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
   // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
   side.whirlwindRemaining = snap.wwr || 0;
   if (side.mesh) side.mesh.userData._whirl = (snap.wwr || 0) > 0;
-  // Aragurn leap — tickAragurnVisuals renderar y-bågen från {active, u}.
+  // Elar leap — tickAragurnVisuals renderar y-bågen från {active, u}.
   side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u, tx: snap.lp.tx, tz: snap.lp.tz } : null;
-  // Kostefo companion + cannabis-moln — updateKostefoMeshes renderar från detta.
+  // Kostefcompanion + cannabis-moln — updateKostefoMeshes renderar från detta.
   side.kostefoCompanion = snap.kComp ? { x: snap.kComp.x, z: snap.kComp.z, ry: snap.kComp.ry } : null;
   if (snap.kCl) {
     side.kostefoCloudRemaining = snap.kCl.r;
@@ -22589,7 +22598,7 @@ function spawnLeapIndicator(x, z) {
   combatFx.push({ mesh: ring, life: LEAP_TRAVEL_TIME, maxLife: LEAP_TRAVEL_TIME, kind: 'leapMark' });
 }
 
-// Rök-puffar för Kostefos cannabis-moln (route B) — joinaren spawnar dem på
+// Rök-puffar för Kostef cannabis-moln (route B) — joinaren spawnar dem på
 // E-cast. Engångs-burst (molnets gameplay ligger kvar längre än pufrarna).
 function spawnKostefoCloudSmoke(x, z) {
   if (kenneyTex.size === 0) return;
@@ -22667,7 +22676,7 @@ function broadcastArenaState() {
       1: ((sides[1] && sides[1].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
       2: ((sides[2] && sides[2].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
     },
-    // Route B: Kostefo — goose-waves (Q) + sliders (F). Entiteterna har redan id.
+    // Route B: Kostef— goose-waves (Q) + sliders (F). Entiteterna har redan id.
     kg: {
       1: ((sides[1] && sides[1].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
       2: ((sides[2] && sides[2].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
@@ -23033,9 +23042,9 @@ function tickDuelBigOrbVisual(dt) {
 const HEROES = [
   { id: 'magiker',   name: 'Zyro',    role: 'Mage',         initial: 'Z',   available: true  },
   { id: 'legolas',   name: 'Nyro',     role: 'Archer',       initial: 'L',   available: true  },
-  { id: 'gimlu',     name: 'Gimlu',       role: 'Tank',         initial: 'Gi',  available: true  },
-  { id: 'aragurn',   name: 'Aragurn',     role: 'Warrior',      initial: 'Ar',  available: true  },
-  { id: 'kostefo',   name: 'Kostefo',     role: 'Smoke-Mage',   initial: 'K',   available: true  },
+  { id: 'gimlu',     name: 'Kryx',       role: 'Tank',         initial: 'Gi',  available: true  },
+  { id: 'aragurn',   name: 'Elar',     role: 'Warrior',      initial: 'Ar',  available: true  },
+  { id: 'kostefo',   name: 'Kostef',     role: 'Smoke-Mage',   initial: 'K',   available: true  },
   { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-7',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-8',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -23056,39 +23065,39 @@ const HERO_INFO = {
   },
   legolas: {
     skills: {
-      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Fires an arrow into the air that rains arrows over a zone for 3 seconds. No direct damage — only DoT and roots enemies in place. If Legolus stands in his own trap he gets 20% damage reduction and heals 5% of his max HP per second as long as he stays inside.' },
+      q: { name: 'Vine Trap Rain', icon: '🌿', desc: 'Fires an arrow into the air that rains arrows over a zone for 3 seconds. No direct damage — only DoT and roots enemies in place. If Nyro stands in his own trap he gets 20% damage reduction and heals 5% of his max HP per second as long as he stays inside.' },
       f: { name: 'Hunter\'s Focus', icon: '🎯', desc: '5-second self buff: +10% auto-attack damage, +10% crit chance, +30% crit damage, +30% attack speed.' },
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Quick dash forward (4 m). 6s cooldown. The next auto-attack is a guaranteed crit + 20% lifesteal. If the buffed AA kills the enemy, the dash cooldown resets so you can chain.' },
     },
     passive: { name: 'Toxic Volley', icon: '☣', desc: 'Every 3rd auto-attack splits: main target + the 2 nearest extra enemies within 6 m. All 3 hits apply a poison stack that ticks damage for 4 seconds. Stacks refresh duration. Damage per second = 5 × stacks × (1 + 10% × (stacks − 1)), so each stack does 10% more damage than the previous.' },
-    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Legolus becomes invisible to all enemies and opponents for 5 seconds, gains +20% movement speed and his next auto-attack becomes empowered: double range, deals 25% of the target\'s max HP as direct damage, stuns the target + all enemies within 2.5 m for 1.5 seconds and leaves a thorn pool under the target that ticks 5% of max HP in AoE damage every 0.5 seconds for 3 seconds (total 30% maxHP). Legolus reveals as soon as he fires the arrow or after 5 seconds. Skill damage that hits him during invis deals damage but does NOT reveal his position.' },
+    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Nyro becomes invisible to all enemies and opponents for 5 seconds, gains +20% movement speed and his next auto-attack becomes empowered: double range, deals 25% of the target\'s max HP as direct damage, stuns the target + all enemies within 2.5 m for 1.5 seconds and leaves a thorn pool under the target that ticks 5% of max HP in AoE damage every 0.5 seconds for 3 seconds (total 30% maxHP). Nyro reveals as soon as he fires the arrow or after 5 seconds. Skill damage that hits him during invis deals damage but does NOT reveal his position.' },
   },
   gimlu: {
     skills: {
-      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'A roar that taunts all enemies within 5.5 m for 3 seconds — they are forced to attack Gimlu (auto-attack only, no skills). During the buff Gimlu gains 30% damage reduction, heals 20% of all damage he takes and 10% of maxHP per half second.' },
-      f: { name: 'Iron Will', icon: '🛡', desc: '3-second activation window. All damage Gimlu takes is stored in a gauge. At the end he explodes in AoE (6 m radius) and deals damage equal to the stored amount to all enemies around.' },
-      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Throws the hammer in a straight line (9 m) and it returns. Full damage on the way out, half damage on the way back. Gimlu heals 15% of damage done. Press E again while the hammer is out to swap places with it (teleport).' },
+      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'A roar that taunts all enemies within 5.5 m for 3 seconds — they are forced to attack Kryx (auto-attack only, no skills). During the buff Kryx gains 30% damage reduction, heals 20% of all damage he takes and 10% of maxHP per half second.' },
+      f: { name: 'Iron Will', icon: '🛡', desc: '3-second activation window. All damage Kryx takes is stored in a gauge. At the end he explodes in AoE (6 m radius) and deals damage equal to the stored amount to all enemies around.' },
+      e: { name: 'Hammer Throw', icon: '🔨', desc: 'Throws the hammer in a straight line (9 m) and it returns. Full damage on the way out, half damage on the way back. Kryx heals 15% of damage done. Press E again while the hammer is out to swap places with it (teleport).' },
     },
-    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Layered defensive passive that triggers at different HP thresholds:\n• Below 80% HP: 10% damage reduction (always on).\n• Below 60% HP: + 2.5% of maxHP regen per second (in addition to DR from tier 1).\n• Below 40% HP: + 10% more damage reduction (20% total) and every 6th incoming damage instance is fully blocked.\n\nBonus: Gimlu builds ult energy by tanking damage (5% of damage taken, max 2% per hit).' },
-    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 seconds of rage: Gimlu grows to double size, becomes CC-immune (no one can freeze, taunt, fear or slow him) and gains 50% damage reduction. Every 0.5s he pulses an AoE wave around him (4.5 m radius) dealing 3.5% of target max HP — total 35% max HP over 5s (10 pulses). 20% of all damage Gimlu deals heals him. The pulses hit monsters, creeps, bosses, the enemy hero and the arena orb.' },
+    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Layered defensive passive that triggers at different HP thresholds:\n• Below 80% HP: 10% damage reduction (always on).\n• Below 60% HP: + 2.5% of maxHP regen per second (in addition to DR from tier 1).\n• Below 40% HP: + 10% more damage reduction (20% total) and every 6th incoming damage instance is fully blocked.\n\nBonus: Kryx builds ult energy by tanking damage (5% of damage taken, max 2% per hit).' },
+    ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 seconds of rage: Kryx grows to double size, becomes CC-immune (no one can freeze, taunt, fear or slow him) and gains 50% damage reduction. Every 0.5s he pulses an AoE wave around him (4.5 m radius) dealing 3.5% of target max HP — total 35% max HP over 5s (10 pulses). 20% of all damage Kryx deals heals him. The pulses hit monsters, creeps, bosses, the enemy hero and the arena orb.' },
   },
   aragurn: {
     skills: {
-      q: { name: 'Whirlwind', icon: '🌀', desc: 'Aragurn spins with his sword extended for 3 seconds and damages all enemies within 3m — 7.5% of their max HP per 0.5s. Heals Aragurn 10% of all damage done by the whirlwind. CC-immune (clears all CC except stun), +20% MS. Cannot AA or cast other skills during the spin. Cooldown starts ONLY when the spin ends.' },
-      f: { name: 'War Shout', icon: '📣', desc: 'TWO separate zones: CONE in front of Aragurn (8m × 120°) deals 15% max-HP damage + 20% slow (3s) + 20% more damage taken (4s, vs heroes). CIRCLE around Aragurn (6m) buffs allied heroes: +20% damage reduction + +20% movement speed (4s) + HoT (5% maxHP/s for 2s). Aragurn himself: damage reduction buff + HoT (10% maxHP/s for 2s) only.' },
-      e: { name: 'Hero Leap', icon: '🦘', desc: 'Jump in an arc to a ground-targeted point (drag-aim controls landing). Walkability-clamped so the hero doesn\'t land in walls/towers. AoE landing (4.5m radius). Enemies hit: 20% max-HP damage + stunned for 1 second. Aragurn heals 25% of lost HP per enemy hit.' },
+      q: { name: 'Whirlwind', icon: '🌀', desc: 'Elar spins with his sword extended for 3 seconds and damages all enemies within 3m — 7.5% of their max HP per 0.5s. Heals Elar 10% of all damage done by the whirlwind. CC-immune (clears all CC except stun), +20% MS. Cannot AA or cast other skills during the spin. Cooldown starts ONLY when the spin ends.' },
+      f: { name: 'War Shout', icon: '📣', desc: 'TWO separate zones: CONE in front of Elar (8m × 120°) deals 15% max-HP damage + 20% slow (3s) + 20% more damage taken (4s, vs heroes). CIRCLE around Elar (6m) buffs allied heroes: +20% damage reduction + +20% movement speed (4s) + HoT (5% maxHP/s for 2s). Elar himself: damage reduction buff + HoT (10% maxHP/s for 2s) only.' },
+      e: { name: 'Hero Leap', icon: '🦘', desc: 'Jump in an arc to a ground-targeted point (drag-aim controls landing). Walkability-clamped so the hero doesn\'t land in walls/towers. AoE landing (4.5m radius). Enemies hit: 20% max-HP damage + stunned for 1 second. Elar heals 25% of lost HP per enemy hit.' },
     },
     passive: { name: 'War Veteran', icon: '🛡', desc: 'TWO-part passive:\n• Lifesteal: 0.5% lifesteal per 1% HP loss on all damage he deals (skill + AA). At 50% HP = 25% lifesteal, at 1% HP = ~50% lifesteal.\n• Damage Reduction based on nearby enemies (5m radius): 1 enemy = 20% DR, each additional enemy = +5% DR (max 40% at 5+ enemies). Scales for group fights.' },
-    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 seconds of berserk form: Aragurn grows slightly larger, his sword doubles in size and gains a glowing aura. +150% AA damage, 100% cleave/splash (every AA hits ALL enemies within AA range), and 25% lifesteal on all AA damage. No attack speed nerf — full DPS burst.' },
+    ult: { name: 'Berserk Form', icon: '⚔', desc: '5 seconds of berserk form: Elar grows slightly larger, his sword doubles in size and gains a glowing aura. +150% AA damage, 100% cleave/splash (every AA hits ALL enemies within AA range), and 25% lifesteal on all AA damage. No attack speed nerf — full DPS burst.' },
   },
   kostefo: {
     skills: {
-      q: { name: 'Joint Attack', icon: '🦢', desc: 'Summons a stampede of geese that charge in a wide zone (3.6 m × 6.5 m) in front of Kostefo. The zone is active for 3 seconds and ticks AoE DoT: 5% of target max HP per 0.5 seconds (total 6 ticks = 30% maxHP if an enemy stays in the zone the whole time). Drag-aim controls direction, tap throws in facing direction.' },
+      q: { name: 'Joint Attack', icon: '🦢', desc: 'Summons a stampede of geese that charge in a wide zone (3.6 m × 6.5 m) in front of Kostef. The zone is active for 3 seconds and ticks AoE DoT: 5% of target max HP per 0.5 seconds (total 6 ticks = 30% maxHP if an enemy stays in the zone the whole time). Drag-aim controls direction, tap throws in facing direction.' },
       f: { name: 'Joint Slider', icon: '🌿', desc: 'Throws a glowing cannabis joint in a straight line (6 m) that pierces through all targets. Direct damage on pierce: 15% of target max HP. At the end of the range the joint explodes in AoE (2.5 m radius) and applies: 30% movement slow for 2 seconds + DoT (15% max HP/sec for 2 seconds, total 30% max HP).' },
-      e: { name: 'Cannabis Cloud', icon: '💨', desc: 'Kostefo blows out a thick green smoke around himself (4 m radius). All enemies inside are stunned for 1 second. The smoke lasts 4 seconds and ticks 5% of current HP/0.5s on enemies inside. On cast Kostefo instantly heals 25% of maxHP. While in the smoke: +20% movement speed, +20% attack speed, and Kostefo becomes invisible to enemies (but sees and targets them normally).' },
+      e: { name: 'Cannabis Cloud', icon: '💨', desc: 'Kostef blows out a thick green smoke around himself (4 m radius). All enemies inside are stunned for 1 second. The smoke lasts 4 seconds and ticks 5% of current HP/0.5s on enemies inside. On cast Kostef instantly heals 25% of maxHP. While in the smoke: +20% movement speed, +20% attack speed, and Kostef becomes invisible to enemies (but sees and targets them normally).' },
     },
-    passive: { name: 'Smoke Companion', icon: '🌫', desc: 'A green-glowing companion follows Kostefo everywhere. The companion copies Kostefo\'s auto-attack but only deals 25% of Kostefo\'s AA damage. All damage the companion deals heals Kostefo for the same amount (100% lifesteal flow via the companion).' },
-    ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summons 8 cannabis joints that orbit Kostefo for 5 seconds. Each joint copies Kostefo\'s AA and deals 10% of his AA damage. 50% of all damage from the joints heals Kostefo (strong sustain burst). With 8 joints ticking AA = burst DPS + heal rush.' },
+    passive: { name: 'Smoke Companion', icon: '🌫', desc: 'A green-glowing companion follows Kostef everywhere. The companion copies Kostef\'s auto-attack but only deals 25% of Kostef\'s AA damage. All damage the companion deals heals Kostef for the same amount (100% lifesteal flow via the companion).' },
+    ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summons 8 cannabis joints that orbit Kostef for 5 seconds. Each joint copies Kostef\'s AA and deals 10% of his AA damage. 50% of all damage from the joints heals Kostef (strong sustain burst). With 8 joints ticking AA = burst DPS + heal rush.' },
   },
 };
 
@@ -23291,7 +23300,7 @@ function showHeroPreview(containerEl, heroId) {
 
 // Mål-höjd för preview-rutan (canvas-fit). Camera FOV 32° på distans 3.6m ger
 // ~2.07m vertikal area; vi vill att hjälten fyller ~85% = 1.76m. Auto-fit:ar
-// alla heroes till samma visuella storlek så Gimlu (HERO_GLTF_SCALE 1.1 + större
+// alla heroes till samma visuella storlek så Kryx (HERO_GLTF_SCALE 1.1 + större
 // Mixamo-mesh) inte spiller utanför rutan. HERO_GLTF_SCALE används fortsatt
 // in-match för "tank-känsla" — bara preview-rutan auto-normaliseras.
 const HERO_PREVIEW_TARGET_HEIGHT = 1.76;
@@ -23963,7 +23972,7 @@ function renderHowtoArena() {
     },
     {
       icon: 'goal', title: 'How to win',
-      html: `<p>Kill the opponent <strong>3 times</strong> (Best of 5). Skill combos and positioning decide the round. Save your ult for the right moment — 5s lockout after cast.</p><p><strong>2v2 mode:</strong> the team with the most living heroes at round end wins. Allied shout buff (Aragurn F) gives DR + MS + HoT to teammate.</p>`
+      html: `<p>Kill the opponent <strong>3 times</strong> (Best of 5). Skill combos and positioning decide the round. Save your ult for the right moment — 5s lockout after cast.</p><p><strong>2v2 mode:</strong> the team with the most living heroes at round end wins. Allied shout buff (Elar F) gives DR + MS + HoT to teammate.</p>`
     },
   ];
   howtoContent.innerHTML = sections.map(s => `
@@ -26356,7 +26365,7 @@ function simulateAll(dt) {
         const tauntHealMul = arenaHasTalent(side, 'g_taunt_heal') ? 1.5 : 1.0;
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * tauntHealMul * dt);
       }
-      // Gimlu Stalwart Resolve regen: 5%/s när <60% HP
+      // KryxStalwart Resolve regen: 5%/s när <60% HP
       if (side.heroId === 'gimlu' && side.hero.hp < side.hero.maxHp) {
         const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
         if (ratio < GIMLU_PASSIVE_TIER2_HP) {
@@ -26403,9 +26412,9 @@ function simulateAll(dt) {
       side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
       if (side.gandulfBuffRemaining === 0) side.gandulfBuffStacks = 0;
     }
-    // Gimlu taunt-tick + lvl5 heal-tracker + explosion-at-end (solo + arena)
+    // Kryx taunt-tick + lvl5 heal-tracker + explosion-at-end (solo + arena)
     tickGimluTauntLvl5Client(side, dt);
-    // Lvl-5 max-skill bonus-buffs (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
+    // Lvl-5 max-skill bonus-buffs (Gandulf Wind Puff MS, KryxHammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
     flushIronWillReflectLvl5Client(side);
@@ -26429,7 +26438,7 @@ function simulateAll(dt) {
     if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
     tickUltimates(side, dt);
     tickBigArrows(side, dt);
-    // Shadow Volley (Legolus ult) tick: invis-timer + thorn pools (solo/arena/boss).
+    // Shadow Volley (Nyro ult) tick: invis-timer + thorn pools (solo/arena/boss).
     // I classic MP är server auktoritativ — invis-flagga + TP-pools synkas via snap;
     // dessa client-side ticks är no-op då (state.legolusInvisRemaining nollställs av snap).
     tickClientLegolusInvis(side, dt);
@@ -26895,7 +26904,7 @@ function triggerClientVisualAA(side) {
   const colors = { magiker: 0x88aaff, legolas: 0xaadd77, gimlu: 0xffcc55, aragurn: 0xeeeeee };
   const color = colors[heroId] || 0xffdc66;
   // Hjälte-specifik projektil-mesh (samma factory som host:ens riktiga
-  // AA-projektil) — Legolas pil, Magiker frostbolt, Aragurn klinga, Gimlu
+  // AA-projektil) — Legolas pil, Magiker frostbolt, Elar klinga, Gimlu
   // hammare. Tidigare en generisk sfär oavsett hjälte. makeHeroAaProjectileMesh
   // är ljus-fri sedan decision 062 → ingen shader-rekompilering per AA.
   const proj = makeHeroAaProjectileMesh(heroId, false, false);
@@ -26940,7 +26949,7 @@ function triggerClientVisualSkill(side, key) {
     spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
     return;
   }
-  // Route B: Kostefo — Q (goose-wave) + F (slider) broadcastas som entiteter
+  // Route B: Kostef— Q (goose-wave) + F (slider) broadcastas som entiteter
   // (skippa generiska synten); E (cannabis-moln) → spawna rök-pufrarna.
   if (heroId === 'kostefo' && APP.mode === 'client' && isArenaMp()) {
     if (key === 'q' || key === 'f') return;
@@ -27402,15 +27411,15 @@ function collectBuffs(side) {
   if ((side.gandulfBuffStacks || 0) > 0 && (side.gandulfBuffRemaining || 0) > 0) {
     list.push({ icon: '✦', color: '#b58cff', t: side.gandulfBuffRemaining, label: 'x' + side.gandulfBuffStacks });
   }
-  // Legolus aim-buff
+  // Nyro aim-buff
   if ((side.legolusBuffRemaining || 0) > 0) {
     list.push({ icon: '🎯', color: '#ddff55', t: side.legolusBuffRemaining });
   }
-  // Gimlu Titan's Taunt
+  // KryxTitan's Taunt
   if ((side.titansTauntRemaining || 0) > 0) {
     list.push({ icon: '📢', color: '#ffaa55', t: side.titansTauntRemaining });
   }
-  // Gimlu Iron Will
+  // KryxIron Will
   if ((side.ironWillRemaining || 0) > 0) {
     list.push({ icon: '🔥', color: '#ff7733', t: side.ironWillRemaining });
   }
@@ -27782,7 +27791,7 @@ function tick() {
   tickAragurnVisuals(dt);
   tickBossArenaFlames(dt);
   tickBossArenaCrystals(dt);
-  // Kostefo state-meshes (companion + cloud + ult-joints) — körs i alla lägen
+  // Kostefstate-meshes (companion + cloud + ult-joints) — körs i alla lägen
   // (även Line Wars MP där simulateAll inte körs). Synkas mot side-state från snap.
   updateKostefoMeshes(dt);
   // Arena power-up pickups — reconcileas mot arenaState.powerUps (host-auth state).
@@ -27851,7 +27860,7 @@ function tick() {
   requestAnimationFrame(tick);
 }
 
-// Toggle visibility för Legolus under Shadow Volley-invis. För casteren själv:
+// Toggle visibility för Nyro under Shadow Volley-invis. För casteren själv:
 // behåll synlig (HUD-indikator visar invis-status). För motståndare/observatörer:
 // dölj mesh helt. Anropas en gång per frame innan render.
 function updateLegolusInvisVisibility(side) {

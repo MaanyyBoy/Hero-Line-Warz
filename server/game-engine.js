@@ -20,7 +20,7 @@ const PROJECTILE_SPEED = 18;
 // Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
 const HERO_DEFS = {
   magiker: {
-    name: 'Zorythar',
+    name: 'Zyro',
     baseHp: 100,
     baseDmg: 5,
     attackRange: 4.0,
@@ -28,7 +28,7 @@ const HERO_DEFS = {
     baseMoveSpeed: 6.0,
   },
   legolas: {
-    name: 'Legolus',
+    name: 'Nyro',
     baseHp: 85,           // glass-cannon
     baseDmg: 6,           // mer per AA
     attackRange: 9.0,     // AA-range +50% (6.0 → 9.0) — bågskytt på avstånd
@@ -36,7 +36,7 @@ const HERO_DEFS = {
     baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
   },
   gimlu: {
-    name: 'Gimlu',
+    name: 'Kryx',
     baseHp: 140,          // tank
     baseDmg: 7,           // hård träff
     attackRange: 2.5,     // melee-räckvidd
@@ -44,11 +44,11 @@ const HERO_DEFS = {
     baseMoveSpeed: 5.0,   // långsam
   },
   aragurn: {
-    name: 'Aragurn',
+    name: 'Elar',
     baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5,
   },
   kostefo: {
-    name: 'Kostefo',
+    name: 'Kostef',
     baseHp: 95,           // medium HP
     baseDmg: 5,           // medium dmg
     attackRange: 5.4,     // AA-range +20% (4.5 → 5.4)
