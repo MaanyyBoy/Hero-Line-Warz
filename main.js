@@ -2587,11 +2587,19 @@ const GIMLU_PASSIVE_TIER3_HP = 0.40;
 const GIMLU_PASSIVE_TIER3_DR = 0.10;       // var 0.20 — nerf 50%
 const GIMLU_PASSIVE_IMMUNE_EVERY = 6;      // var 3 — nerf 50% (hälften så ofta immun)
 // Gandulf passive
+// Zyro passive (Arcane Convergence v2 — 2026-05-26 user-redesign) — speglar
+// server-konstanter. Per skill-hit: +1 stack (cap 3). Refreshar 3s timer +
+// adderar shield. Stack ger +15% skill-dmg + +10% MS (3s). Shield 10% maxHP
+// per stack (cap 30%) tills shield-HP konsumerats.
 const GANDULF_BUFF_DURATION = 3.0;
-const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;
-const GANDULF_SHIELD_PER_HIT_PCT = 0.05;
-const GANDULF_SHIELD_HITS = 3;
-const GANDULF_SHIELD_PCT = 0.30;
+const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.15;
+const GANDULF_BUFF_MS_PER_STACK = 0.10;
+const GANDULF_SHIELD_PER_STACK = 0.10;
+const GANDULF_MAX_STACKS = 3;
+// Legacy-konstanter (Soul Mark) — no-op, undvik TDZ vid hot-reload av gamla referenser.
+const GANDULF_SHIELD_PER_HIT_PCT = 0;
+const GANDULF_SHIELD_HITS = 999;
+const GANDULF_SHIELD_PCT = 0;
 // Bakåtkompabilitet
 const ELDKLOT_SPEED = 16;
 const ELDKLOT_DAMAGE = FIREWAVE_DIRECT_DMG;
@@ -14864,52 +14872,32 @@ function gandulfCdrMul(side) {
   // Kvar för bakåtkompabilitet — passive ger inte längre CDR
   return 1;
 }
-// Gandulf passive — Soul Mark: 3 OLIKA skills på samma target inom 3s → target
-// får DoT (5% current HP/sek i 3s) som även healar Gandulf 10% max HP/sek.
-// Ersätter tidigare shield-mekanik (5% per hit + 30% vid 3 hits).
-const GANDULF_MARK_DURATION = 3.0;
-const GANDULF_MARK_WINDOW = 3.0;
-const GANDULF_MARK_DOT_PCT = 0.05;
-const GANDULF_MARK_HEAL_PCT = 0.10;
+// Zyro passive — speglar server-mekaniken. Soul Mark borttagen.
+// Legacy-konstanter no-op (TDZ-skydd vid hot-reload).
+const GANDULF_MARK_DURATION = 0;
+const GANDULF_MARK_WINDOW = 0;
+const GANDULF_MARK_DOT_PCT = 0;
+const GANDULF_MARK_HEAL_PCT = 0;
 
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
-  side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
+  const prevStacks = side.gandulfBuffStacks || 0;
+  side.gandulfBuffStacks = Math.min(GANDULF_MAX_STACKS, prevStacks + 1);
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
-  // Mark-tracking: 3 OLIKA skills på samma target inom 3s → applicera DoT/heal
-  if (target && typeof target === 'object' && target.id != null) {
-    const skillKey = side._currentSkillKey;
-    if (!skillKey) return;
-    const now = performance.now() / 1000;
-    if (!side._gandulfHits) side._gandulfHits = new Map();
-    let hits = side._gandulfHits.get(target.id);
-    if (!hits) { hits = []; side._gandulfHits.set(target.id, hits); }
-    const cutoff = now - GANDULF_MARK_WINDOW;
-    for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t < cutoff) hits.splice(i, 1);
-    if (hits.some(h => h.skill === skillKey)) return;
-    hits.push({ skill: skillKey, t: now });
-    if (hits.length >= 3) {
-      target.gandulfMarkRemaining = GANDULF_MARK_DURATION;
-      target.gandulfMarkCasterSideIdx = side.idx;
-      side._gandulfHits.delete(target.id);
+  if (side.gandulfBuffStacks > prevStacks && !side.hero.dead) {
+    const stackCap = side.hero.maxHp * GANDULF_SHIELD_PER_STACK * GANDULF_MAX_STACKS;
+    const oldShield = side.shield || 0;
+    if (oldShield < stackCap) {
+      const add = side.hero.maxHp * GANDULF_SHIELD_PER_STACK;
+      side.shield = Math.min(stackCap, oldShield + add);
     }
   }
 }
 
-// Tick Soul Mark DoT på target. DoT skadar 5% current HP/sek + healar caster 10% maxHP/sek.
-// Anropas från solo monster/creep update-loopar.
+// Soul Mark-DoT borttagen 2026-05-26 (ersatt av shield + MS-passive). Nollställer
+// legacy-mark-state om någon target fortfarande har det (från före patchen).
 function tickGandulfMarkClient(target, dt) {
-  if (!target || !target.gandulfMarkRemaining || target.gandulfMarkRemaining <= 0) return;
-  if ((target.hp || 0) <= 0) { target.gandulfMarkRemaining = 0; return; }
-  target.gandulfMarkRemaining -= dt;
-  const dotDmg = target.hp * GANDULF_MARK_DOT_PCT * dt;
-  target.hp -= dotDmg;
-  const caster = sides[target.gandulfMarkCasterSideIdx];
-  if (caster && !caster.hero.dead) {
-    const heal = caster.hero.maxHp * GANDULF_MARK_HEAL_PCT * dt;
-    caster.hero.hp = Math.min(caster.hero.maxHp, caster.hero.hp + heal);
-  }
-  if (target.gandulfMarkRemaining <= 0) {
+  if (target) {
     target.gandulfMarkRemaining = 0;
     target.gandulfMarkCasterSideIdx = 0;
   }
@@ -15274,7 +15262,10 @@ function applyMovement(side, joyX, joyZ, dt) {
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
   const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
   const bannerMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_MS_BONUS) : 1;
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * wpMul * hammerMul * bannerMul * slowMul;
+  // Zyro passive: +10% MS per stack (max 30%) under buff-duration.
+  const zyroPassiveMs = (side.heroId === 'magiker' && (side.gandulfBuffRemaining || 0) > 0)
+    ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -23080,7 +23071,7 @@ const HERO_INFO = {
       f: { name: 'Frost Nova', icon: '❄', desc: 'AoE explosion (3.8 m radius) at the target or drag position. Damages and freezes enemies for 2 seconds. If a frozen enemy is hit by another skill the ice shatters and sends out shards that damage nearby enemies.' },
       e: { name: 'Black Hole', icon: '⚫', desc: 'Spawns a black hole at the target/drag position that lasts 3 seconds. Pulls enemies toward the center and ticks 3% of their max HP per second while they remain inside. At the end it explodes in AoE damage (4 m radius).' },
     },
-    passive: { name: 'Soul Mark', icon: '✦', desc: 'Hit the SAME target with 3 DIFFERENT skills within 3 seconds and the target gets a mark that ticks 5% of its current HP per second for 3 seconds (DoT) — and heals Zyro 10% of his max HP per second for the entire mark duration. Combine Wind Puff + Frost Nova + Black Hole for max sustain.' },
+    passive: { name: 'Arcane Convergence', icon: '✦', desc: 'Each skill hit grants a stack (max 3). Each stack: +15% skill damage and +10% movement speed for 3 seconds, plus a 10% maxHP shield. The 3-second buff refreshes on every skill hit. The shield persists until destroyed by incoming damage. At 3 stacks: +45% skill damage, +30% movement speed, and a 30% maxHP shield.' },
     ult: { name: 'Arcane Beam', icon: '⚡', desc: 'Fires a continuous laser beam straight ahead for 3 seconds (60 m range, narrow). The beam ticks every 0.5s for 15% of target max HP per tick — total 90% maxHP over the full duration. Hits all enemies, bosses, enemy hero and arena orb in the beam\'s path. While the beam is active: 90% damage reduction on the Mage, CC-immune (cannot be frozen/stunned/taunted) and free to move.' },
   },
   legolas: {

@@ -338,12 +338,20 @@ const GIMLU_PASSIVE_TIER2_REGEN = 0.025;
 const GIMLU_PASSIVE_TIER3_HP = 0.40;   // <40% → +10% mer DR (var 20% — nerf 50%) + var 6:e dmg immun (var 3:e)
 const GIMLU_PASSIVE_TIER3_DR = 0.10;
 const GIMLU_PASSIVE_IMMUNE_EVERY = 6;
-// Gandulf passive (Arcane Convergence)
+// Zyro passive (Arcane Convergence v2 — 2026-05-26 user-redesign)
+// Per skill-hit: +1 stack (cap 3). Refreshar timer + adderar shield.
+// Stack ger: +15% skill-dmg + +10% MS i 3s. Shield 10% maxHP per stack
+// (cap 30%) - persistent tills shield-HP konsumerats av damage.
 const GANDULF_BUFF_DURATION = 3.0;
-const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.05;  // 5% skill-dmg per enemy hit (3s)
-const GANDULF_SHIELD_PER_HIT_PCT = 0.05;        // +5% maxHP shield per enemy hit
-const GANDULF_SHIELD_HITS = 3;
-const GANDULF_SHIELD_PCT = 0.30;                // 30% av maxHP
+const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.15;  // 15% skill-dmg per stack
+const GANDULF_BUFF_MS_PER_STACK = 0.10;         // 10% movement speed per stack
+const GANDULF_SHIELD_PER_STACK = 0.10;          // 10% maxHP shield per stack
+const GANDULF_MAX_STACKS = 3;                   // cap stacks
+// Legacy-konstanter (Soul Mark) — INTE LÄNGRE ANVÄNDA i nya passive-mekaniken,
+// men behållna här för att undvika TDZ om gammal kod refererar dem under hot-reload.
+const GANDULF_SHIELD_PER_HIT_PCT = 0;
+const GANDULF_SHIELD_HITS = 999;
+const GANDULF_SHIELD_PCT = 0;
 // Black Hole (E): target-AoE pull + explosion vid slutet
 const BLACKHOLE_RADIUS = 3.5;
 const BLACKHOLE_PULL_SPEED = 2.5;
@@ -807,55 +815,37 @@ function gandulfCdrMul(side) {
   // Kvar för bakåtkompabilitet — passive ger inte längre CDR
   return 1;
 }
-// Gandulf passive — Soul Mark: 3 OLIKA skills på samma target inom 3s → target
-// får DoT (5% current HP/sek i 3s) som även healar Gandulf 10% max HP/sek.
-// Ersätter tidigare shield-mekanik (5% per hit + 30% vid 3 hits).
-const GANDULF_MARK_DURATION = 3.0;
-const GANDULF_MARK_WINDOW = 3.0;
-const GANDULF_MARK_DOT_PCT = 0.05;    // 5% current HP/sek
-const GANDULF_MARK_HEAL_PCT = 0.10;   // 10% Gandulfs max HP/sek
+// Soul Mark borttagen 2026-05-26 (ersatt av shield + MS-passive). Konstanter
+// kvar med no-op-värden för bakåt-kompatibilitet om gammal kod refererar dem.
+const GANDULF_MARK_DURATION = 0;
+const GANDULF_MARK_WINDOW = 0;
+const GANDULF_MARK_DOT_PCT = 0;
+const GANDULF_MARK_HEAL_PCT = 0;
 
 function onGandulfSkillHit(side, target) {
   if (side.heroId !== 'magiker') return;
-  side.gandulfBuffStacks = (side.gandulfBuffStacks || 0) + 1;
+  // Stack-cap till 3. Varje hit refreshar timer + adderar shield (persistent).
+  const prevStacks = side.gandulfBuffStacks || 0;
+  side.gandulfBuffStacks = Math.min(GANDULF_MAX_STACKS, prevStacks + 1);
   side.gandulfBuffRemaining = GANDULF_BUFF_DURATION;
-  // Mark-tracking: registrera vilken skill som träffade target. Vid 3 olika
-  // skills inom 3s → applicera DoT/heal-mark.
-  if (target && typeof target === 'object' && target.id != null) {
-    const skillKey = side._currentSkillKey;
-    if (!skillKey) return;
-    const now = Date.now() / 1000;
-    if (!side._gandulfHits) side._gandulfHits = new Map();
-    let hits = side._gandulfHits.get(target.id);
-    if (!hits) { hits = []; side._gandulfHits.set(target.id, hits); }
-    // Rensa entries äldre än 3s
-    const cutoff = now - GANDULF_MARK_WINDOW;
-    for (let i = hits.length - 1; i >= 0; i--) if (hits[i].t < cutoff) hits.splice(i, 1);
-    // Skippa om denna skill redan registrerad i fönstret
-    if (hits.some(h => h.skill === skillKey)) return;
-    hits.push({ skill: skillKey, t: now });
-    if (hits.length >= 3) {
-      target.gandulfMarkRemaining = GANDULF_MARK_DURATION;
-      target.gandulfMarkCasterSideIdx = side.idx;
-      side._gandulfHits.delete(target.id);
+  // Shield-tillägg: 10% maxHP per stack OM stacks ökade. Använd side.shield (generic
+  // shield-state — duel-orb-reward delar samma field). Cap PASSIVE-bidraget vid
+  // stacks × 10% maxHP, men om side.shield redan är högre (duel-orb-reward) bevaras det.
+  if (side.gandulfBuffStacks > prevStacks && !side.hero.dead) {
+    const stackCap = side.hero.maxHp * GANDULF_SHIELD_PER_STACK * GANDULF_MAX_STACKS;
+    const oldShield = side.shield || 0;
+    if (oldShield < stackCap) {
+      const add = side.hero.maxHp * GANDULF_SHIELD_PER_STACK;
+      side.shield = Math.min(stackCap, oldShield + add);
     }
   }
 }
 
-// Tick Soul Mark DoT på monster/creep/opp.hero. Anropas från update-loopar.
-// DoT skadar 5% current HP/sek, healar caster 10% max HP/sek.
+// Soul Mark-DoT borttagen 2026-05-26 — ny passive (shield + MS + skill-dmg)
+// ersätter mark-mekaniken. Nollställer ev. legacy-mark-state på targets från
+// FÖRE patchen så ingen mark-timer fastnar (bug-hunter-fynd).
 function tickGandulfMark(state, target, dt) {
-  if (!target || !target.gandulfMarkRemaining || target.gandulfMarkRemaining <= 0) return;
-  if ((target.hp || 0) <= 0) { target.gandulfMarkRemaining = 0; return; }
-  target.gandulfMarkRemaining -= dt;
-  const dotDmg = target.hp * GANDULF_MARK_DOT_PCT * dt;
-  target.hp -= dotDmg;
-  const caster = state.sides[target.gandulfMarkCasterSideIdx];
-  if (caster && !caster.hero.dead) {
-    const heal = caster.hero.maxHp * GANDULF_MARK_HEAL_PCT * dt;
-    caster.hero.hp = Math.min(caster.hero.maxHp, caster.hero.hp + heal);
-  }
-  if (target.gandulfMarkRemaining <= 0) {
+  if (target) {
     target.gandulfMarkRemaining = 0;
     target.gandulfMarkCasterSideIdx = 0;
   }
@@ -4390,8 +4380,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
   const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
   const bannerMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_MS_BONUS) : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * strength * dt;
+  // Zyro passive: +10% MS per stack (max 30%) under buff-duration.
+  const zyroPassiveMs = (side.heroId === 'magiker' && (side.gandulfBuffRemaining || 0) > 0)
+    ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
