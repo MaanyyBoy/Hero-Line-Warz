@@ -136,6 +136,19 @@ if (window.visualViewport) {
 
 const ASSET_BASE = './assets/';
 const CHARACTER_ASSETS = {
+  // Wave-monster per tier (decision 048) FÖRST — kritiska för line wars
+  // gameplay. Laddas i batch 1 så de garanterat finns i loadedCharacters innan
+  // matchstart, även om senare assets failar/timeout:ar på mobil-OOM.
+  wave_t1: 'enemies/quaternius_monsters/Orc.gltf',         // Soldiers
+  wave_t2: 'enemies/quaternius_monsters/Ninja.gltf',       // Knights
+  wave_t3: 'enemies/quaternius_monsters/Tribal.gltf',      // Berserkers
+  wave_t4: 'enemies/quaternius_monsters/BlueDemon.gltf',   // Demons
+  wave_t5: 'enemies/quaternius_monsters/Dino.gltf',        // Drakätt
+  // Skeletons (minions, mini-bossar)
+  skel_warrior: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Warrior.glb',
+  skel_mage:    'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Mage.glb',
+  skel_rogue:   'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Rogue.glb',
+  skel_minion:  'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Minion.glb',
   // Heroes (Quaternius Ultimate Animated Character Pack, CC0). Lägre poly-count
   // (~1000-1500 tris/karaktär vs Mixamo 5000-15000) för bättre mobil-perf.
   // Embedded clips: Idle / Walk / Run / Punch / SwordSlash / Shoot_OneHanded /
@@ -146,7 +159,8 @@ const CHARACTER_ASSETS = {
   kryx_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Viking_Male.gltf',
   elar_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Knight_Golden_Male.gltf',
   kostef_qt: 'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Witch.gltf',
-  // Mixamo (legacy, decision 034) — behållna för rollback om Quaternius inte fungerar.
+  // Mixamo (legacy, decision 034) — behållna för rollback. gandulf_mx används
+  // ALLTID som mixamo_boss anim-pool källa (decision 047) — får INTE tas bort.
   gandulf_mx:  'heroes/mixamo/gandulf.glb',
   legolus_mx:  'heroes/mixamo/legolus.glb',
   gimlu_mx:    'heroes/mixamo/gimlu.glb',
@@ -165,25 +179,12 @@ const CHARACTER_ASSETS = {
   alien_boss:       'enemies/mixamo_bosses/alien.glb',
   elk_head_boss:    'enemies/mixamo_bosses/elk_head.glb',
   undead_boss:      'enemies/mixamo_bosses/undead_assassin.glb',
-  // Wave-monster per tier (decision 048) — Quaternius Ultimate Monsters
-  // ersätter KayKit Skeleton för wave 1-49 minions. Embedded animationer
-  // (Idle, Walk, Attack, Death). 5 monster för 5 tiers.
-  wave_t1: 'enemies/quaternius_monsters/Orc.gltf',         // Soldiers
-  wave_t2: 'enemies/quaternius_monsters/Ninja.gltf',       // Knights
-  wave_t3: 'enemies/quaternius_monsters/Tribal.gltf',      // Berserkers
-  wave_t4: 'enemies/quaternius_monsters/BlueDemon.gltf',   // Demons
-  wave_t5: 'enemies/quaternius_monsters/Dino.gltf',        // Drakätt
   // Boss-Wars-bossar (decision 048) — Mixamo, T-pose only, anim:er från shared pool.
   bosswars_1: 'enemies/Boss wars/bosswars_1.glb',    // Goblin Archer
   bosswars_2: 'enemies/Boss wars/bosswars_2.glb',    // Warlock Female
   bosswars_3: 'enemies/Boss wars/bosswars_3.glb',    // No-Face Alien
   bosswars_4: 'enemies/Boss wars/bosswars_4.glb',    // Big Alien
   bosswars_5: 'enemies/Boss wars/bosswars_5.glb',    // Alien Soldier
-  // Skeletons (wave-monster + minions)
-  skel_warrior: 'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Warrior.glb',
-  skel_mage:    'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Mage.glb',
-  skel_rogue:   'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Rogue.glb',
-  skel_minion:  'enemies/KayKit_Skeletons_1.1_FREE/KayKit_Skeletons_1.1_FREE/characters/gltf/Skeleton_Minion.glb',
 };
 // Mobil-OOM-fix: dessa ~75 MB character-GLB:er laddas INTE i den initiala
 // preloaden — bara i de lägen som faktiskt behöver dem. Wave-bossar (wave
@@ -3092,13 +3093,12 @@ const HERO_GLTF_MAP = {
 // Per-hero scale: {x,y,z}. Mixamo-modeller är vanligen i meter-skala efter
 // Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
 const HERO_GLTF_SCALE = {
-  // Decision 042: Gandulf/Legolus/Aragurn/Kostef +20% storlek (Kryx oförändrad).
-  // Senare: ytterligare +20% på alla 5 (× 1.2).
-  magiker: { x: 1.44, y: 1.44, z: 1.44 },
-  legolas: { x: 1.44, y: 1.44, z: 1.44 },
-  gimlu:   { x: 1.32, y: 1.32, z: 1.32 },     // tank-känsla, 1.1 × 1.2
-  aragurn: { x: 1.7388, y: 1.7388, z: 1.7388 },  // 1.26 × 1.2, decision 101: ×1.15
-  kostefo: { x: 1.44, y: 1.44, z: 1.44 },
+  // Quaternius-hjältar: halverat från Mixamo-värden (för stora visuellt).
+  magiker: { x: 0.72, y: 0.72, z: 0.72 },
+  legolas: { x: 0.72, y: 0.72, z: 0.72 },
+  gimlu:   { x: 0.66, y: 0.66, z: 0.66 },
+  aragurn: { x: 0.87, y: 0.87, z: 0.87 },
+  kostefo: { x: 0.72, y: 0.72, z: 0.72 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
 // Quaternius-clip-namn: Idle/Walk/Run/Punch/SwordSlash/Shoot_OneHanded/Death/Jump.
