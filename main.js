@@ -17387,18 +17387,37 @@ function updateTargetIndicator() {
   targetRing.visible = true;
 }
 
+// DIAGNOS-OVERLAY (TEMP): on-screen-logg eftersom mobile devtools är omöjliga
+// att kopiera ur samtidigt som man håller skill-knappen. Skapa div uppe till
+// vänster med senaste 8 [AIM]-loggar. Tas bort tillsammans med _aimDebugLog-
+// anropen när aim-cirkel-diagnosen är klar.
+let _aimDebugEl = null;
+const _aimDebugLines = [];
+function _aimDebugLog(msg) {
+  _aimDebugLines.push(msg);
+  if (_aimDebugLines.length > 8) _aimDebugLines.shift();
+  if (!_aimDebugEl) {
+    _aimDebugEl = document.createElement('div');
+    _aimDebugEl.style.cssText = 'position:fixed;top:max(80px,calc(env(safe-area-inset-top) + 72px));left:50%;transform:translateX(-50%);' +
+      'background:rgba(0,0,0,0.82);color:#7fff7f;font:600 11px/1.35 monospace;' +
+      'padding:8px 10px;border:2px solid #444;border-radius:6px;z-index:99999;' +
+      'pointer-events:none;max-width:90vw;white-space:pre;overflow:hidden;';
+    document.body.appendChild(_aimDebugEl);
+  }
+  _aimDebugEl.textContent = '[AIM-DEBUG]\n' + _aimDebugLines.join('\n');
+}
+
 function updateAimIndicators() {
   const side = sides[APP.localSide];
   aimLine.visible = false;
   aimDot.visible = false;
   aimCircle.visible = false;
-  // DIAGNOS-LOGG (TEMP): logga varje gång en skill-key är aktiv så vi ser
-  // om updateAimIndicators ens kommer förbi tidig return. Logga endast vid
-  // state-CHANGE för att inte spam:a console.
+  // DIAGNOS-OVERLAY (TEMP): on-screen-logg eftersom mobile devtools omöjliga
+  // att kopiera ur samtidigt som man håller skill-knappen.
   const _logKey = `${aimState.key}|${aimState.active ? 1 : 0}|${duelState.active ? 1 : 0}`;
   if (_logKey !== updateAimIndicators._lastLog) {
     updateAimIndicators._lastLog = _logKey;
-    console.log(`[AIM] state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} hero.z=${side && side.hero ? side.hero.z.toFixed(1) : 'n/a'}`);
+    _aimDebugLog(`state: key=${aimState.key} active=${aimState.active} duel=${duelState.active} z=${side && side.hero ? side.hero.z.toFixed(1) : '?'}`);
   }
   if (!side || !aimState.key || !aimState.active) return;
 
@@ -17448,10 +17467,10 @@ function updateAimIndicators() {
     const pulse = 1 + 0.06 * Math.sin(performance.now() * 0.008);
     aimCircle.scale.set(radius * pulse, radius * pulse, 1);
     aimCircle.traverse(o => { if (o.material && o.material.color) o.material.color.setHex(color); });
-    // DIAGNOS-LOGG (TEMP)
+    // DIAGNOS-OVERLAY (TEMP)
     if (!showCircle._lastLogPos || Math.abs(showCircle._lastLogPos.x - x) > 0.5 || Math.abs(showCircle._lastLogPos.z - z) > 0.5) {
       showCircle._lastLogPos = { x, z };
-      console.log(`[AIM] showCircle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} visible=${aimCircle.visible} renderOrder=${aimCircle.renderOrder} parent=${aimCircle.parent ? 'scene' : 'NULL'}`);
+      _aimDebugLog(`Circle x=${x.toFixed(1)} y=${aimY.toFixed(2)} z=${z.toFixed(1)} r=${radius.toFixed(1)} parent=${aimCircle.parent ? 'scene' : 'NULL'}`);
     }
   }
   function showLine(dirX, dirZ, length) {
@@ -17461,10 +17480,10 @@ function updateAimIndicators() {
     // Skala längden + lite pulserande bredd
     const pulse = 1 + 0.10 * Math.sin(performance.now() * 0.009);
     aimLine.scale.set(length / ELDKLOT_RANGE, pulse, 1);
-    // DIAGNOS-LOGG (TEMP)
+    // DIAGNOS-OVERLAY (TEMP)
     if (!showLine._lastLogPos || Math.abs(showLine._lastLogPos.x - aimLine.position.x) > 0.5) {
       showLine._lastLogPos = { x: aimLine.position.x };
-      console.log(`[AIM] showLine x=${aimLine.position.x.toFixed(1)} y=${aimY.toFixed(2)} z=${aimLine.position.z.toFixed(1)} len=${length.toFixed(1)} visible=${aimLine.visible} parent=${aimLine.parent ? 'scene' : 'NULL'}`);
+      _aimDebugLog(`Line x=${aimLine.position.x.toFixed(1)} y=${aimY.toFixed(2)} z=${aimLine.position.z.toFixed(1)} len=${length.toFixed(1)} parent=${aimLine.parent ? 'scene' : 'NULL'}`);
     }
   }
 
