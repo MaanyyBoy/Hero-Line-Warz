@@ -24532,6 +24532,9 @@ function showLobbyPanel(which) {
   if (_lobbyEl) {
     _lobbyEl.classList.toggle('home-active', which === 'main');
     _lobbyEl.classList.toggle('heroes-active', which === 'heroes' || which === 'hero-detail');
+    // Event-sidan får egen bakgrundsbild. Klassen sätts av openComingSoon('Event')
+    // efter detta anrop; rensar den vid alla andra panel-byten.
+    if (which !== 'coming-soon') _lobbyEl.classList.remove('event-active');
   }
 }
 
@@ -25546,6 +25549,10 @@ const comingSoonNameEl = document.getElementById('coming-soon-name');
 function openComingSoon(name) {
   if (comingSoonNameEl) comingSoonNameEl.textContent = name;
   showLobbyPanel('coming-soon');
+  // Event-sidan får egen bakgrundsbild (Event-bg.webp); andra coming-soon-
+  // kategorier behåller default Home-bg.
+  const _lobbyEl = document.getElementById('lobby');
+  if (_lobbyEl) _lobbyEl.classList.toggle('event-active', name === 'Event');
 }
 // Decision 112: btn-friends + btn-leaderboard har egna modaler (se längre ner).
 // btn-mail stannar som "Coming Soon" tills användaren bestämmer mail-funktionalitet.
