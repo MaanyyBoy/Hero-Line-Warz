@@ -1140,12 +1140,12 @@ function makeGrassBaseFloorTexture(seed = 11) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
 
-  // Mörkblå bas — ljusare än lane-blå så bas-platformen syns tydligare
-  // (user-onskemal 2026-05-26: bas-golvet ska vara LJUSARE).
+  // Bas — ljusbla med mild radial-gradient. User-onskemal 2026-05-26 (iter 2):
+  // tonad nyans mellan center och kant istallet for tydlig oval skugga.
   const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * 0.55);
-  grad.addColorStop(0, '#3a5278');
-  grad.addColorStop(0.6, '#2a4060');
-  grad.addColorStop(1, '#22324a');
+  grad.addColorStop(0, '#3e5680');
+  grad.addColorStop(0.6, '#3a5278');
+  grad.addColorStop(1, '#345070');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
@@ -12085,6 +12085,9 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   side.hero.x = cfg.heroSpawn.x;
   side.hero.z = cfg.heroSpawn.z;
+  // Reset klient-side AA-toggle-flagga vid respawn (local-hero) sa cirkel-
+  // visningen kommer i synk med server-aaActive efter death.
+  if (side.idx === APP.localSide) APP._aaWanted = false;
   // Y-fix: boss-wars platform är på y=0.42, andra modes på y=0
   const heroY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
   side.mesh.position.set(side.hero.x, heroY, side.hero.z);
@@ -17375,7 +17378,10 @@ scene.add(aaRangeRing);
 
 function updateAaRangeIndicator() {
   const side = sides[APP.localSide];
-  if (!side || !side.aaActive || !side.hero || side.hero.dead) {
+  // Visa cirkeln om _aaWanted ar true ELLER aaActive ar true (server kan ha
+  // triggat aa via auto-target utan att klient-toggle var på).
+  const wanted = !!(APP._aaWanted || (side && side.aaActive));
+  if (!side || !wanted || !side.hero || side.hero.dead) {
     aaRangeRing.visible = false;
     return;
   }
@@ -18165,7 +18171,11 @@ function triggerAA() {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
-  sendOrApplyEvent({ type: 'aa' });
+  // Toggle klient-side "AA on/off" sa AA-range-cirkeln syns oavsett om
+  // en fiende finns i range. Server fattar fortfarande aaActive utifran
+  // target-tillgang — _aaWanted styr bara visualindikatorn.
+  APP._aaWanted = !APP._aaWanted;
+  sendOrApplyEvent({ type: APP._aaWanted ? 'aa' : 'aa-cancel' });
 }
 
 const joyState = {
