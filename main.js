@@ -6116,16 +6116,10 @@ function buildBossArenaArchitecture(tier, map) {
     }
   }
   // T4: en enda skarp ljusstråle ner i arena-mitten — lyser upp striden trots
-  // mörkret. EN PointLight läggs (engångskostnad vid scene-build, OK — samma
-  // grepp som korridor-ljuset; undviker dynamiska light-recompiles).
-  if (isT4Abyss) {
-    const beam = makeArenaLightBeam();
-    beam.position.set(BOSSWARS_CX, 0, BOSSWARS_CZ);
-    bossWarsSceneGroup.add(beam);
-    const beamLight = new THREE.PointLight(0xffe6f0, 5.0, 30, 2);
-    beamLight.position.set(BOSSWARS_CX, 11, BOSSWARS_CZ);
-    bossWarsSceneGroup.add(beamLight);
-  }
+  // T4 Demon Prince: borttagen central ljusstrale + PointLight (anv-onskemal
+  // 2026-05-27 - kanste oonskat ljus skinade ner pa bossen). Arenan ar nu
+  // morkare i mitten - om for morkt aterstaller vi via build/git log.
+  // if (isT4Abyss) { ...  makeArenaLightBeam() + PointLight ... }
   // T5: raka trä-bjälkar mellan alla pelar-toppar (octagonal arkitrav) + en
   // hängande lykta per bjälke. Lugn, symmetrisk, värdig dojo-arkitektur.
   if (isT5Dojo) {
