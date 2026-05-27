@@ -1255,13 +1255,88 @@
       0%,100% { box-shadow: 0 5px 16px rgba(0,0,0,0.55), 0 0 9px rgba(255,196,74,0.55); }
       50%     { box-shadow: 0 5px 16px rgba(0,0,0,0.55), 0 0 22px rgba(255,196,74,1); }
     }
-    /* Avatar — uppe vänster */
+    /* Avatar — uppe vänster (klick öppnar avatar-picker) */
     #btn-avatar {
       top: max(14px, calc(env(safe-area-inset-top) + 6px));
       left: max(14px, calc(env(safe-area-inset-left) + 6px));
       width: 58px; height: 58px;
       font-size: 26px;
       border-radius: 14px;
+      padding: 0;
+      overflow: hidden;
+    }
+    #btn-avatar svg { width: 100%; height: 100%; display: block; }
+
+    /* Avatar-picker modal (10 presets) */
+    #avatar-picker {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 20px;
+    }
+    #avatar-picker.visible { display: flex; }
+    #avatar-picker-card {
+      background: linear-gradient(135deg, #1f1432, #14101e);
+      border: 1px solid rgba(140,180,255,0.35);
+      border-radius: 18px;
+      padding: 24px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+      position: relative;
+    }
+    #avatar-picker h3 {
+      margin: 0 0 6px;
+      font: 700 22px/1.2 system-ui, sans-serif;
+      color: #ffd86a;
+      letter-spacing: 0.5px;
+      text-align: center;
+    }
+    #avatar-picker .sub {
+      margin: 0 0 18px;
+      font: 500 13px/1.4 system-ui, sans-serif;
+      color: #b8c0d0;
+      text-align: center;
+    }
+    #avatar-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+    .avatar-opt {
+      width: 100%;
+      aspect-ratio: 1;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-radius: 14px;
+      cursor: pointer;
+      overflow: hidden;
+      padding: 0;
+      background: transparent;
+      transition: transform 0.08s, border-color 0.12s, box-shadow 0.12s;
+    }
+    .avatar-opt:hover { border-color: rgba(255,216,106,0.6); transform: scale(1.04); }
+    .avatar-opt.selected {
+      border-color: #ffd86a;
+      box-shadow: 0 0 16px rgba(255,216,106,0.8);
+    }
+    .avatar-opt svg { width: 100%; height: 100%; display: block; }
+    #avatar-picker-close {
+      position: absolute;
+      top: 10px; right: 10px;
+      width: 32px; height: 32px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 16px;
+      color: #fff;
+      font: 600 16px/1 system-ui, sans-serif;
+      cursor: pointer;
+    }
+    @media (max-width: 480px) {
+      #avatar-picker-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
     }
     /* Mail — bredvid avatar till höger, kuvert-ikon (samma höjd som avatar) */
     #btn-mail {
@@ -3405,7 +3480,7 @@
     <h1>Hellborne Wars</h1>
 
     <div class="lobby-panel visible" id="lobby-main">
-      <button class="home-btn" id="btn-avatar" aria-label="Profile">👤</button>
+      <button class="home-btn" id="btn-avatar" aria-label="Profile"></button>
       <button class="home-btn" id="btn-friends">Friends</button>
       <button class="home-btn" id="btn-mail" aria-label="Mail">
         <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4061,6 +4136,16 @@
     <div class="al-spinner"></div>
     <div class="al-title">Preparing heroes</div>
     <div class="al-bar"><div id="al-bar-fill"></div></div>
+  </div>
+
+  <!-- Avatar-picker (10 presets) — visas när man klickar btn-avatar -->
+  <div id="avatar-picker">
+    <div id="avatar-picker-card">
+      <button id="avatar-picker-close" aria-label="Close">✕</button>
+      <h3>Choose your avatar</h3>
+      <p class="sub">Tap an avatar to set it as your profile picture.</p>
+      <div id="avatar-picker-grid"></div>
+    </div>
   </div>
 
   <!-- Flytande damage/heal/shield-siffror som spawnar ovanför targets -->

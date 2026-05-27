@@ -25557,10 +25557,102 @@ function openComingSoon(name) {
 // Decision 112: btn-friends + btn-leaderboard har egna modaler (se längre ner).
 // btn-mail stannar som "Coming Soon" tills användaren bestämmer mail-funktionalitet.
 // btn-event, btn-shop hanteras längre ner (egna sidor 2026-05-26).
-for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-avatar', 'Profile'], ['btn-mail', 'Mail']]) {
+// btn-avatar hanteras av avatar-picker-blocket ovan.
+for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-mail', 'Mail']]) {
   const csBtn = document.getElementById(csId);
   if (csBtn) csBtn.addEventListener('click', () => openComingSoon(csLabel));
 }
+
+// ============================================================
+// Avatar-picker: 10 presets, localStorage-persistent. Tap btn-avatar →
+// modal med grid. Tap valt avatar → spara + render på knappen + stäng.
+// Presets är geometriska SVG:er (bakgrunds-gradient + central emoji-symbol).
+// Anvanderen kan byta ut presets senare (avatarSvgPresets-array).
+// ============================================================
+const AVATAR_STORAGE_KEY = 'hellborneAvatarV1';
+const AVATAR_PRESETS = [
+  { bg: ['#b8860b', '#3a280a'], emoji: '🗡', name: 'Warrior' },
+  { bg: ['#3a5fb8', '#10183a'], emoji: '🧙', name: 'Mage' },
+  { bg: ['#3a8a4a', '#0a2a14'], emoji: '🏹', name: 'Ranger' },
+  { bg: ['#7a4ab8', '#1a0a35'], emoji: '🛡', name: 'Paladin' },
+  { bg: ['#b83a3a', '#350a0a'], emoji: '🪓', name: 'Barbarian' },
+  { bg: ['#d06a98', '#3a1228'], emoji: '✨', name: 'Healer' },
+  { bg: ['#252535', '#08080f'], emoji: '🌙', name: 'Rogue' },
+  { bg: ['#4ac8d0', '#0a3035'], emoji: '❄', name: 'Frost' },
+  { bg: ['#e08a3a', '#3a1808'], emoji: '🔥', name: 'Pyro' },
+  { bg: ['#b8b8c0', '#2a2a35'], emoji: '⚔', name: 'Knight' },
+];
+function makeAvatarSvg(idx, prefix) {
+  const p = AVATAR_PRESETS[idx % AVATAR_PRESETS.length];
+  // Unikt gradient-id per (kontext, idx) — annars kolliderar btn-avatar:s
+  // gradient med picker-grid:ens gradients (SVG-id är globala i dokumentet).
+  const gid = (prefix || 'ag') + idx;
+  return (
+    '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">' +
+      '<defs><radialGradient id="' + gid + '" cx="50%" cy="40%">' +
+        '<stop offset="0%" stop-color="' + p.bg[0] + '"/>' +
+        '<stop offset="100%" stop-color="' + p.bg[1] + '"/>' +
+      '</radialGradient></defs>' +
+      '<rect width="100" height="100" fill="url(#' + gid + ')"/>' +
+      '<text x="50" y="68" font-size="56" text-anchor="middle" font-family="system-ui">' + p.emoji + '</text>' +
+    '</svg>'
+  );
+}
+function getAvatarIdx() {
+  let idx = -1;
+  try { idx = parseInt(localStorage.getItem(AVATAR_STORAGE_KEY), 10); } catch (_) {}
+  if (!Number.isFinite(idx) || idx < 0 || idx >= AVATAR_PRESETS.length) {
+    idx = Math.floor(Math.random() * AVATAR_PRESETS.length);
+    try { localStorage.setItem(AVATAR_STORAGE_KEY, String(idx)); } catch (_) {}
+  }
+  return idx;
+}
+function setAvatarIdx(idx) {
+  idx = Math.max(0, Math.min(AVATAR_PRESETS.length - 1, idx | 0));
+  try { localStorage.setItem(AVATAR_STORAGE_KEY, String(idx)); } catch (_) {}
+  renderAvatarOnButton();
+}
+function renderAvatarOnButton() {
+  const btn = document.getElementById('btn-avatar');
+  if (!btn) return;
+  btn.innerHTML = makeAvatarSvg(getAvatarIdx(), 'btn_');
+}
+function openAvatarPicker() {
+  const picker = document.getElementById('avatar-picker');
+  const grid = document.getElementById('avatar-picker-grid');
+  if (!picker || !grid) return;
+  const current = getAvatarIdx();
+  grid.innerHTML = '';
+  for (let i = 0; i < AVATAR_PRESETS.length; i++) {
+    const btn = document.createElement('button');
+    btn.className = 'avatar-opt' + (i === current ? ' selected' : '');
+    btn.innerHTML = makeAvatarSvg(i, 'pk_');
+    btn.title = AVATAR_PRESETS[i].name;
+    btn.addEventListener('click', () => {
+      setAvatarIdx(i);
+      closeAvatarPicker();
+    });
+    grid.appendChild(btn);
+  }
+  picker.classList.add('visible');
+}
+function closeAvatarPicker() {
+  const picker = document.getElementById('avatar-picker');
+  if (picker) picker.classList.remove('visible');
+}
+// Hooks: btn-avatar → openAvatarPicker, close-knapp + backdrop-klick → close
+(function _wireAvatarPicker() {
+  const btn = document.getElementById('btn-avatar');
+  if (btn) btn.addEventListener('click', openAvatarPicker);
+  const closeBtn = document.getElementById('avatar-picker-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeAvatarPicker);
+  const picker = document.getElementById('avatar-picker');
+  if (picker) picker.addEventListener('click', (e) => {
+    if (e.target === picker) closeAvatarPicker();   // backdrop = stäng
+  });
+  // Initial render på knappen
+  try { renderAvatarOnButton(); } catch (_) {}
+})();
 
 // Currency-plus-knappar → öppna shop med rätt sektion förvald.
 // openShop() definieras i shop-page-blocket längre ner. Eftersom JS hoistar
