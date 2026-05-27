@@ -25228,6 +25228,11 @@ function enterPlayPhase() {
   // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
   document.body.classList.toggle('arena-mode', APP.gameMode === 'arena1v1');
+  // Boss-Wars-mode body-class — gomma duel-timer/income/tower-HP, visa
+  // gold bara under prep, lyfta boss-HP-bar (user-onskemal 2026-05-27).
+  document.body.classList.toggle('bosswars-mode', APP.gameMode === 'bosswars');
+  // Saker att vid prep ar bw-fighting EJ satt (sats nar APP.bossWars.started=true).
+  document.body.classList.remove('bw-fighting');
   if (heroPickEl) heroPickEl.classList.add('hidden');
   // Skydd: force-stang avatar-picker om den var oppen av nagot misstag
   // (event-bubbling efter hero-pick-confirm har triggat den i singleplayer).
@@ -25393,6 +25398,9 @@ function enterPlayPhase() {
     }
     // Markera match som startad — först nu får checkMatchEnd avgöra utgång
     APP.bossWars.started = true;
+    // Boss-fight aktiv → byt body-class fran prep till fight (CSS doljer
+    // gold-display + andra UI).
+    document.body.classList.add('bw-fighting');
     // Boss inaktiv tills alla aktiva heroes är inne i boss-rummet. Då stängs gaten.
     APP.bossWars.bossActivated = false;
     APP.bossWars.gateClosed = false;
@@ -25493,6 +25501,8 @@ function returnToLobby() {
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
   document.body.classList.remove('arena-mode');
+  document.body.classList.remove('bosswars-mode');
+  document.body.classList.remove('bw-fighting');
   // Avbryt hero-pick om aktiv
   if (heroPickEl) heroPickEl.classList.add('hidden');
   if (heroPickState.timerHandle) {

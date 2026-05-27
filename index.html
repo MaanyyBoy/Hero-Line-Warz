@@ -50,6 +50,18 @@
     body.arena-mode #gold-display,
     body.arena-mode #wave-display { display: none !important; }
 
+    /* Boss Wars (user-onskemal 2026-05-27):
+       - Inga torn → dölj tower-HP-stack
+       - Ingen creep-economy under fight → dölj income-display helt + wave-display
+       - Ingen duel → dölj duel-info/banner
+       - Gold-display visas BARA under prep (innan bw-fighting body-class) */
+    body.bosswars-mode #tower-hp-stack,
+    body.bosswars-mode #income-display,
+    body.bosswars-mode #wave-display,
+    body.bosswars-mode #duel-info,
+    body.bosswars-mode #duel-banner { display: none !important; }
+    body.bw-fighting #gold-display { display: none !important; }
+
     /* Power-up buff-HUD: chips top-left under hero-HP-bar.
        Synlig endast i arena-mode + när minst en buff aktiv. */
     #arena-buff-hud {
@@ -1006,10 +1018,11 @@
     #perf-meter.bad { color: #ff7766; border-color: rgba(255,120,90,0.6); }
     #perf-meter.bad #perf-bar-fill { background: linear-gradient(90deg, #ff4422 0%, #ff7766 100%); }
 
-    /* Boss HP-bar (top center i boss wars). Synlig under hela boss-fighten. */
+    /* Boss HP-bar (top center i boss wars). Synlig under hela boss-fighten.
+       User-onskemal 2026-05-27: HOGST UPP pa skarmen (top 54 → top 4). */
     #boss-hp-wrap {
       position: fixed;
-      top: max(54px, calc(env(safe-area-inset-top) + 54px));
+      top: max(4px, calc(env(safe-area-inset-top) + 4px));
       left: 50%;
       transform: translateX(-50%);
       width: min(560px, 70vw);
