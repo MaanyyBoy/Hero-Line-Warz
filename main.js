@@ -17192,8 +17192,15 @@ const PERF_MEASURE_STORAGE_KEY = 'hellbornePerfMeasureV1';
 const PERF_MEASURE_DURATION_MS = 30000;
 const PERF_MEASURE_LONG_DURATION_MS = 120000;
 const PERF_MEASURE_GEO_SAMPLE_INTERVAL_MS = 10000;   // var 10:e sek i long-mode
-const PERF_MEASURE_TRIGGER_ZONE = 60;                // px från top-right corner
-const PERF_MEASURE_TRIGGER_WINDOW_MS = 1200;          // debounce-fönster (1200ms)
+const PERF_MEASURE_TRIGGER_WINDOW_MS = 700;          // 3 taps måste falla inom denna
+// Två separata trigger-zoner:
+//   NORMAL (30s): top-right 60×60 px (x: w-60..w, y: 0..60)
+//   LONG (120s, geo-snapshots): top-left x:60-120, y:0-60 (60×60, fri-yta
+//   mellan kugghjul x:8-52 och top-row centrerad x:130+ på 360px-skärm).
+const PERF_MEASURE_NORMAL_ZONE_W = 60;
+const PERF_MEASURE_LONG_ZONE_X_MIN = 60;
+const PERF_MEASURE_LONG_ZONE_X_MAX = 120;
+const PERF_MEASURE_ZONE_Y_MAX = 60;
 const _perfMeasure = {
   active: false,
   startMs: 0,
@@ -17208,11 +17215,11 @@ const _perfMeasure = {
   geoSnapshots: [],                    // [{ tSec, geo, tex, calls, fps }]
   nextGeoSampleMs: 0,
 };
-// Trigger-state — debounce: vänta hela TRIGGER_WINDOW_MS innan beslut.
-// 3 taps = 30s normal. 5+ taps = 120s long (med geo-snapshots).
-let _pmTapCount = 0;
-let _pmFirstTapMs = 0;
-let _pmDebounceTimer = 0;
+// Oberoende tap-counters per zon (ingen debounce, ingen pill — direkt 3-tap-trigger).
+let _pmNormalTapCount = 0;
+let _pmNormalFirstTapMs = 0;
+let _pmLongTapCount = 0;
+let _pmLongFirstTapMs = 0;
 
 function pmCollectFrame(frameMs) {
   // Anropas per frame från tick() — bara om active.
@@ -17436,87 +17443,45 @@ function pmHideOverlay() {
   if (el) el.remove();
 }
 
-// Trigger med debounce (top-right 60×60 px). Vänta hela TRIGGER_WINDOW_MS
-// innan beslut: 3 taps = 30s, 5+ taps = 120s long med geo-snapshots. Liten
-// "väntar..."-pill visar att tap:en registrerades så användaren inte triggar
-// fler av misstag.
+// Trigger: trippel-tap 700ms-fönster per zon (oberoende counters).
+// Top-right 60×60: 3 taps → 30s normal.
+// Top-left x:60-120 y:<60: 3 taps → 120s long med geo-snapshots.
 function pmHandleTap(x, y) {
   if (_perfMeasure.active) return;
+  if (y > PERF_MEASURE_ZONE_Y_MAX) return;   // Båda zoner är top-row
   const w = window.innerWidth;
-  if (x < w - PERF_MEASURE_TRIGGER_ZONE || y > PERF_MEASURE_TRIGGER_ZONE) {
-    // Utanför zonen — utforska INTE tap-state (annars resetar debounce mid-flow)
-    return;
-  }
+  const inNormalZone = (x >= w - PERF_MEASURE_NORMAL_ZONE_W);
+  const inLongZone = (x >= PERF_MEASURE_LONG_ZONE_X_MIN && x <= PERF_MEASURE_LONG_ZONE_X_MAX);
+  if (!inNormalZone && !inLongZone) return;
+
   const now = performance.now();
-  if (_pmTapCount === 0) {
-    _pmTapCount = 1;
-    _pmFirstTapMs = now;
-    pmShowDebouncePill();
-    if (_pmDebounceTimer) clearTimeout(_pmDebounceTimer);
-    _pmDebounceTimer = setTimeout(pmDecideMode, PERF_MEASURE_TRIGGER_WINDOW_MS);
-    return;
+  if (inNormalZone) {
+    if (_pmNormalTapCount === 0 || now - _pmNormalFirstTapMs > PERF_MEASURE_TRIGGER_WINDOW_MS) {
+      _pmNormalTapCount = 1;
+      _pmNormalFirstTapMs = now;
+      return;
+    }
+    _pmNormalTapCount++;
+    if (_pmNormalTapCount >= 3) {
+      _pmNormalTapCount = 0;
+      let prev = null;
+      try { prev = JSON.parse(localStorage.getItem(PERF_MEASURE_STORAGE_KEY) || 'null'); } catch (_) {}
+      if (prev) pmShowOverlay(prev);
+      else pmStart(PERF_MEASURE_DURATION_MS, false);
+    }
+  } else if (inLongZone) {
+    if (_pmLongTapCount === 0 || now - _pmLongFirstTapMs > PERF_MEASURE_TRIGGER_WINDOW_MS) {
+      _pmLongTapCount = 1;
+      _pmLongFirstTapMs = now;
+      return;
+    }
+    _pmLongTapCount++;
+    if (_pmLongTapCount >= 3) {
+      _pmLongTapCount = 0;
+      // Long-mode kor DIREKT (snapshot-data ar narsklev intent, skippa overlay)
+      pmStart(PERF_MEASURE_LONG_DURATION_MS, true);
+    }
   }
-  if (now - _pmFirstTapMs <= PERF_MEASURE_TRIGGER_WINDOW_MS) {
-    _pmTapCount++;
-    pmUpdateDebouncePill();
-  } else {
-    // Race: timern har inte hunnit fira än men vi ar bortom 1200ms-fonstret.
-    // Avbryt pending timer + nollställ count + pill. Nästa tap startar ett nytt fönster.
-    if (_pmDebounceTimer) { clearTimeout(_pmDebounceTimer); _pmDebounceTimer = 0; }
-    _pmTapCount = 0;
-    pmRemoveDebouncePill();
-  }
-}
-function pmDecideMode() {
-  pmRemoveDebouncePill();
-  const count = _pmTapCount;
-  _pmTapCount = 0;
-  _pmDebounceTimer = 0;
-  if (_perfMeasure.active) return;
-  let prev = null;
-  try { prev = JSON.parse(localStorage.getItem(PERF_MEASURE_STORAGE_KEY) || 'null'); } catch (_) {}
-  if (count >= 5) {
-    // Long-mode: kör DIREKT (skip overlay-visning av tidigare resultat —
-    // användaren har redan signalerat tydlig intent med 5 taps).
-    pmStart(PERF_MEASURE_LONG_DURATION_MS, true);
-  } else if (count >= 3) {
-    // Normal-mode: visa tidigare resultat om finns, annars starta.
-    if (prev) pmShowOverlay(prev);
-    else pmStart(PERF_MEASURE_DURATION_MS, false);
-  }
-  // < 3 taps = ignorera helt
-}
-function pmShowDebouncePill() {
-  pmRemoveDebouncePill();
-  const el = document.createElement('div');
-  el.id = 'pm-debounce-pill';
-  el.style.cssText = 'position:fixed;top:max(6px,env(safe-area-inset-top));' +
-    'right:max(70px,calc(env(safe-area-inset-right) + 70px));' +
-    'background:rgba(0,0,0,0.82);border:1px solid rgba(140,210,255,0.6);' +
-    'border-radius:8px;padding:4px 9px;color:#aee0ff;' +
-    'font:700 11px/1 system-ui,sans-serif;letter-spacing:0.4px;z-index:9999;' +
-    'pointer-events:none;';
-  el.textContent = '⏱ 1/3';
-  document.body.appendChild(el);
-}
-function pmUpdateDebouncePill() {
-  const el = document.getElementById('pm-debounce-pill');
-  if (!el) return;
-  if (_pmTapCount >= 5) {
-    el.textContent = '⏱ ' + _pmTapCount + ' → LONG';
-    el.style.color = '#ffd86a';
-    el.style.borderColor = 'rgba(255,216,106,0.7)';
-  } else if (_pmTapCount >= 3) {
-    el.textContent = '⏱ ' + _pmTapCount + '/3+';
-    el.style.color = '#7fff7f';
-    el.style.borderColor = 'rgba(127,255,127,0.7)';
-  } else {
-    el.textContent = '⏱ ' + _pmTapCount + '/3';
-  }
-}
-function pmRemoveDebouncePill() {
-  const el = document.getElementById('pm-debounce-pill');
-  if (el) el.remove();
 }
 // Global touch/click-listener (passive — påverkar inte spel).
 document.addEventListener('touchstart', (e) => {
