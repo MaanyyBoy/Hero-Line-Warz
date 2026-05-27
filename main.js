@@ -17114,6 +17114,8 @@ let _lastHudMs = 0;   // throttle-tracker för HUD-textuppdateringar
 let _heavyTickAccum = 0;   // ackumulator för 30 Hz throttle av tickAllHpBars + animateAllCharacters
 const PERF_FRAME_BUDGET_MS = 1000 / 60;   // 16.67 ms = 60 fps target
 function tickPerfMeter(dt) {
+  // Perf-measure collector: bara en boolean-check per frame när inaktiv.
+  if (_perfMeasure.active) pmCollectFrame(dt * 1000);
   if (!perfMeterEl) return;
   // Lägg dagens dt (sekunder) i rullande fönster av ~60 frames
   _perfFrames.push(dt);
@@ -17137,6 +17139,249 @@ function tickPerfMeter(dt) {
   if (ms > 33) perfMeterEl.classList.add('bad');         // < 30 fps
   else if (ms > 20) perfMeterEl.classList.add('warn');   // < 50 fps
 }
+
+// ============================================================
+// PERF-MEASURE: dolt mätsystem för mobil (2026-05-27 user-task).
+// Trigger: trippel-tap top-right (60×60 px) inom 700 ms.
+// Mätfönster: 30 sek. Samlar frame-tid + draw calls per frame.
+// Resultat: center-screen overlay med avg FPS, 1% low, draw calls,
+// triangles, geometries, textures, programs. Sparas i localStorage.
+// Mid-left indikator under mätning ("REC 24s").
+// PERF: när !_perfMeasure.active = bara en boolean-check per frame.
+// ============================================================
+const PERF_MEASURE_STORAGE_KEY = 'hellbornePerfMeasureV1';
+const PERF_MEASURE_DURATION_MS = 30000;
+const PERF_MEASURE_TRIGGER_ZONE = 60;           // px från top-right corner
+const PERF_MEASURE_TRIGGER_WINDOW_MS = 700;     // 3 taps måste falla inom denna
+const _perfMeasure = {
+  active: false,
+  startMs: 0,
+  frameMs: [],          // array av frame-times i ms
+  drawCalls: [],        // array av render.calls per frame
+  triangles: [],        // array av render.triangles per frame
+  geometries: 0,        // sista mätta värde
+  textures: 0,
+  programs: 0,
+};
+// Trigger-state
+let _pmTapCount = 0;
+let _pmFirstTapMs = 0;
+
+function pmCollectFrame(frameMs) {
+  // Anropas per frame från tick() — bara om active.
+  _perfMeasure.frameMs.push(frameMs);
+  if (renderer && renderer.info) {
+    if (renderer.info.render) {
+      _perfMeasure.drawCalls.push(renderer.info.render.calls || 0);
+      _perfMeasure.triangles.push(renderer.info.render.triangles || 0);
+    }
+    if (renderer.info.memory) {
+      _perfMeasure.geometries = renderer.info.memory.geometries || 0;
+      _perfMeasure.textures = renderer.info.memory.textures || 0;
+    }
+    if (renderer.info.programs) {
+      _perfMeasure.programs = renderer.info.programs.length || 0;
+    }
+  }
+  // Uppdatera countdown-indikator
+  const elapsed = performance.now() - _perfMeasure.startMs;
+  const left = Math.max(0, Math.ceil((PERF_MEASURE_DURATION_MS - elapsed) / 1000));
+  const indEl = document.getElementById('pm-indicator');
+  if (indEl) indEl.querySelector('.pm-count').textContent = 'REC ' + left + 's';
+  // Klar?
+  if (elapsed >= PERF_MEASURE_DURATION_MS) pmFinish();
+}
+
+function pmAvg(arr) {
+  if (!arr.length) return 0;
+  let s = 0;
+  for (const v of arr) s += v;
+  return s / arr.length;
+}
+function pmOnePctLow(arr) {
+  if (!arr.length) return 0;
+  // 1% low = medelvärdet av de 1% sämsta (= högsta frame-times).
+  const sorted = arr.slice().sort((a, b) => b - a);   // descending
+  const n = Math.max(1, Math.floor(arr.length * 0.01));
+  let s = 0;
+  for (let i = 0; i < n; i++) s += sorted[i];
+  const avgWorst = s / n;
+  return 1000 / avgWorst;   // → FPS
+}
+
+function pmFinish() {
+  if (!_perfMeasure.active) return;
+  _perfMeasure.active = false;
+  // Beräkna resultat
+  const avgFrameMs = pmAvg(_perfMeasure.frameMs);
+  const avgFps = avgFrameMs > 0 ? 1000 / avgFrameMs : 0;
+  const onePctLowFps = pmOnePctLow(_perfMeasure.frameMs);
+  const avgCalls = Math.round(pmAvg(_perfMeasure.drawCalls));
+  const avgTris = Math.round(pmAvg(_perfMeasure.triangles));
+  const result = {
+    when: new Date().toISOString(),
+    duration: Math.round(_perfMeasure.frameMs.length),
+    avgFps: Math.round(avgFps * 10) / 10,
+    onePctLowFps: Math.round(onePctLowFps * 10) / 10,
+    avgCalls,
+    avgTris,
+    geometries: _perfMeasure.geometries,
+    textures: _perfMeasure.textures,
+    programs: _perfMeasure.programs,
+    mode: APP.mode + '/' + (APP.gameMode || '?'),
+  };
+  try { localStorage.setItem(PERF_MEASURE_STORAGE_KEY, JSON.stringify(result)); } catch (_) {}
+  pmRemoveIndicator();
+  pmShowOverlay(result);
+  // Rensa data så nästa mätning börjar fresh
+  _perfMeasure.frameMs.length = 0;
+  _perfMeasure.drawCalls.length = 0;
+  _perfMeasure.triangles.length = 0;
+}
+
+function pmStart() {
+  if (_perfMeasure.active) return;
+  _perfMeasure.active = true;
+  _perfMeasure.startMs = performance.now();
+  _perfMeasure.frameMs.length = 0;
+  _perfMeasure.drawCalls.length = 0;
+  _perfMeasure.triangles.length = 0;
+  pmHideOverlay();
+  pmAddIndicator();
+}
+
+function pmAddIndicator() {
+  if (document.getElementById('pm-indicator')) return;
+  const el = document.createElement('div');
+  el.id = 'pm-indicator';
+  el.style.cssText = 'position:fixed;left:6px;top:50%;transform:translateY(-50%);' +
+    'display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.78);' +
+    'border:1px solid rgba(255,90,90,0.65);border-radius:8px;padding:4px 8px;' +
+    'z-index:9999;pointer-events:none;font:700 11px/1 system-ui,sans-serif;' +
+    'color:#ff7a7a;letter-spacing:0.4px;';
+  el.innerHTML =
+    '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;' +
+    'background:#ff3838;box-shadow:0 0 6px rgba(255,80,80,0.85);animation:pm-blink 1s ease-in-out infinite;"></span>' +
+    '<span class="pm-count">REC 30s</span>';
+  // Blink-keyframes (en gång)
+  if (!document.getElementById('pm-blink-style')) {
+    const s = document.createElement('style');
+    s.id = 'pm-blink-style';
+    s.textContent = '@keyframes pm-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }';
+    document.head.appendChild(s);
+  }
+  document.body.appendChild(el);
+}
+function pmRemoveIndicator() {
+  const el = document.getElementById('pm-indicator');
+  if (el) el.remove();
+}
+
+function pmShowOverlay(result) {
+  pmHideOverlay();
+  const wrap = document.createElement('div');
+  wrap.id = 'pm-overlay';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);' +
+    'display:flex;align-items:center;justify-content:center;z-index:99999;padding:16px;';
+  const fpsColor = result.avgFps >= 50 ? '#7fff7f' : result.avgFps >= 30 ? '#ffcc55' : '#ff7766';
+  const lowColor = result.onePctLowFps >= 30 ? '#7fff7f' : result.onePctLowFps >= 20 ? '#ffcc55' : '#ff7766';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:linear-gradient(135deg,#1f1432,#14101e);' +
+    'border:1px solid rgba(140,180,255,0.45);border-radius:16px;padding:22px 22px 18px;' +
+    'max-width:480px;width:100%;color:#fff;font:600 14px/1.4 system-ui,sans-serif;' +
+    'box-shadow:0 12px 40px rgba(0,0,0,0.7);position:relative;';
+  card.innerHTML =
+    '<button id="pm-close" style="position:absolute;top:10px;right:10px;width:36px;height:36px;' +
+      'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:18px;' +
+      'color:#fff;font:700 18px/1 system-ui;cursor:pointer;">✕</button>' +
+    '<h3 style="margin:0 0 14px;font:800 20px/1.2 system-ui;color:#ffd86a;text-align:center;letter-spacing:0.8px;">' +
+      '⏱ Performance Result</h3>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">' +
+      '<div style="background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;text-align:center;">' +
+        '<div style="font:500 11px/1 system-ui;color:#98a0b0;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">AVG FPS</div>' +
+        '<div style="font:800 28px/1 system-ui;color:' + fpsColor + ';">' + result.avgFps.toFixed(1) + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;text-align:center;">' +
+        '<div style="font:500 11px/1 system-ui;color:#98a0b0;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">1% LOW FPS</div>' +
+        '<div style="font:800 28px/1 system-ui;color:' + lowColor + ';">' + result.onePctLowFps.toFixed(1) + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font:600 13px/1.3 system-ui;">' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Draw Calls</div>' +
+        '<div style="font-size:18px;color:#aee0ff;margin-top:2px;">' + result.avgCalls + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Triangles</div>' +
+        '<div style="font-size:18px;color:#aee0ff;margin-top:2px;">' + (result.avgTris >= 1000 ? (result.avgTris / 1000).toFixed(1) + 'k' : result.avgTris) + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Programs</div>' +
+        '<div style="font-size:18px;color:#aee0ff;margin-top:2px;">' + result.programs + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Geometries</div>' +
+        '<div style="font-size:18px;color:#aee0ff;margin-top:2px;">' + result.geometries + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Textures</div>' +
+        '<div style="font-size:18px;color:#aee0ff;margin-top:2px;">' + result.textures + '</div>' +
+      '</div>' +
+      '<div style="background:rgba(0,0,0,0.3);border-radius:8px;padding:8px;text-align:center;">' +
+        '<div style="color:#98a0b0;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;">Mode</div>' +
+        '<div style="font-size:13px;color:#aee0ff;margin-top:4px;">' + result.mode + '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div style="margin-top:14px;display:flex;gap:8px;">' +
+      '<button id="pm-rerun" style="flex:1;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
+        'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run new measurement</button>' +
+    '</div>' +
+    '<div style="margin-top:8px;font:500 10px/1.3 system-ui;color:#98a0b0;text-align:center;">' +
+      'Frames sampled: ' + result.duration + ' · ' + result.when.replace('T', ' ').replace(/\..+/, '') +
+    '</div>';
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+  document.getElementById('pm-close').addEventListener('click', pmHideOverlay);
+  document.getElementById('pm-rerun').addEventListener('click', () => { pmHideOverlay(); pmStart(); });
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) pmHideOverlay(); });
+}
+function pmHideOverlay() {
+  const el = document.getElementById('pm-overlay');
+  if (el) el.remove();
+}
+
+// Trigger: trippel-tap top-right 60×60 px inom 700 ms.
+function pmHandleTap(x, y) {
+  const w = window.innerWidth;
+  if (x < w - PERF_MEASURE_TRIGGER_ZONE || y > PERF_MEASURE_TRIGGER_ZONE) {
+    // Utanför zonen — resetar räknaren
+    _pmTapCount = 0;
+    return;
+  }
+  const now = performance.now();
+  if (_pmTapCount === 0 || now - _pmFirstTapMs > PERF_MEASURE_TRIGGER_WINDOW_MS) {
+    _pmTapCount = 1;
+    _pmFirstTapMs = now;
+    return;
+  }
+  _pmTapCount++;
+  if (_pmTapCount >= 3) {
+    _pmTapCount = 0;
+    // Visa senaste resultat om finns + Rerun-knapp; annars starta direkt.
+    let prev = null;
+    try { prev = JSON.parse(localStorage.getItem(PERF_MEASURE_STORAGE_KEY) || 'null'); } catch (_) {}
+    if (prev && !_perfMeasure.active) pmShowOverlay(prev);
+    else if (!_perfMeasure.active) pmStart();
+  }
+}
+// Global touch/click-listener (passive — påverkar inte spel).
+document.addEventListener('touchstart', (e) => {
+  if (!e.touches || !e.touches[0]) return;
+  pmHandleTap(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: true, capture: true });
+document.addEventListener('click', (e) => {
+  pmHandleTap(e.clientX, e.clientY);
+}, { capture: true });
 
 // Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
 const bossHpWrapEl = document.getElementById('boss-hp-wrap');
