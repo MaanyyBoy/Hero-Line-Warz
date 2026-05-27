@@ -25649,6 +25649,10 @@ function closeAvatarPicker() {
   const picker = document.getElementById('avatar-picker');
   if (picker) picker.classList.remove('visible');
 }
+// Exponera openAvatarPicker pa window sa onclick-attribut i HTML kan kalla
+// den (modul-scope ar annars otillgangligt fran inline onclick).
+try { window.openAvatarPicker = openAvatarPicker; } catch (_) {}
+
 // Hooks: btn-avatar → openAvatarPicker, close-knapp + backdrop-klick → close
 (function _wireAvatarPicker() {
   const btn = document.getElementById('btn-avatar');
