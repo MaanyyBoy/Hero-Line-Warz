@@ -180,11 +180,14 @@ const CHARACTER_ASSETS = {
   elk_head_boss:    'enemies/mixamo_bosses/elk_head.glb',
   undead_boss:      'enemies/mixamo_bosses/undead_assassin.glb',
   // Boss-Wars-bossar (decision 048) — Mixamo, T-pose only, anim:er från shared pool.
-  bosswars_1: 'enemies/Boss wars/bosswars_1.glb',    // Goblin Archer
-  bosswars_2: 'enemies/Boss wars/bosswars_2.glb',    // Warlock Female
-  bosswars_3: 'enemies/Boss wars/bosswars_3.glb',    // No-Face Alien
-  bosswars_4: 'enemies/Boss wars/bosswars_4.glb',    // Big Alien
-  bosswars_5: 'enemies/Boss wars/bosswars_5.glb',    // Alien Soldier
+  // Boss Wars-bossar (2026-05-27): bytt fran Mixamo till Quaternius Ultimate
+  // Animated Monsters Pack (Big-mapp) — CC0 cartoon-stil som matchar hjaltarna.
+  // Old Mixamo-paths kvar pa disk for rollback.
+  bosswars_1: 'enemies/Ultimate animated monsters pack/Big/glTF/Cactoro.gltf',       // T1 Captain (forest)
+  bosswars_2: 'enemies/Ultimate animated monsters pack/Big/glTF/MushroomKing.gltf',  // T2 General (sanctum)
+  bosswars_3: 'enemies/Ultimate animated monsters pack/Big/glTF/Yeti.gltf',          // T3 Warlord (lab)
+  bosswars_4: 'enemies/Ultimate animated monsters pack/Big/glTF/Demon.gltf',         // T4 Demon Prince (hive)
+  bosswars_5: 'enemies/Ultimate animated monsters pack/Big/glTF/Dino.gltf',          // T5 Dragon King (volcano)
 };
 // Mobil-OOM-fix: dessa ~75 MB character-GLB:er laddas INTE i den initiala
 // preloaden — bara i de lägen som faktiskt behöver dem. Wave-bossar (wave
@@ -3946,13 +3949,14 @@ const BOSS_SCALE = {
   alien_boss:      4.2,
   elk_head_boss:   3.7,
   undead_boss:     3.5,
-  // Boss-Wars-tiers (decision 048). Decision 100: alla -30% (user-begäran)
-  // — tidigare 4.5/3.8/6.0/6.6/4.6.
-  bosswars_1: 3.15,  // Captain
-  bosswars_2: 2.66,  // General
-  bosswars_3: 4.2,   // Warlord
-  bosswars_4: 4.62,  // Demon Prince
-  bosswars_5: 3.22,  // Dragon King
+  // Boss-Wars-tiers (Quaternius monsters 2026-05-27, halverat fran Mixamo-
+  // varden eftersom Quaternius-meshes redan ar storre i mesh-units).
+  // Anvanderen kommer rapportera om for stor/liten per boss.
+  bosswars_1: 1.6,   // Cactoro (Captain)
+  bosswars_2: 1.3,   // MushroomKing (General)
+  bosswars_3: 2.1,   // Yeti (Warlord)
+  bosswars_4: 2.3,   // Demon (Demon Prince)
+  bosswars_5: 1.6,   // Dino (Dragon King)
 };
 
 // Decision 048: Quaternius wave-monster per tier ersätter KayKit-skeleton.
@@ -3980,7 +3984,10 @@ function makeMonsterMesh(bossAssetKey, tierAssetKey) {
   let charName, animGroup, scaleVal;
   if (bossAssetKey) {
     charName = bossAssetKey;
-    animGroup = 'mixamo_boss';
+    // Wave-bossar (parasite/gun_zombie/etc) ar Mixamo, delar mixamo_boss anim-pool.
+    // Boss-Wars-bossar (bosswars_X) ar nu Quaternius (2026-05-27), har egna
+    // embedded clips — anvand quaternius_boss-tag (tom pool = bara embedded).
+    animGroup = bossAssetKey.startsWith('bosswars_') ? 'quaternius_boss' : 'mixamo_boss';
     scaleVal = BOSS_SCALE[bossAssetKey] || 1.15;
   } else if (tierAssetKey) {
     charName = tierAssetKey;
