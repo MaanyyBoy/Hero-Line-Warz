@@ -1267,6 +1267,183 @@
     }
     #btn-avatar svg { width: 100%; height: 100%; display: block; }
 
+    /* Event-panel (lobby-event) */
+    #lobby-event {
+      padding: 18px 16px 24px;
+      max-width: 720px;
+      width: 100%;
+      max-height: 92vh;
+      overflow-y: auto;
+    }
+    #lobby-event .evt-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    #lobby-event .evt-title {
+      flex: 1;
+      font: 800 24px/1.2 system-ui, sans-serif;
+      color: #ffd86a;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      text-align: center;
+    }
+    #lobby-event #btn-event-calendar {
+      width: 46px; height: 46px;
+      padding: 0; background: rgba(40,30,15,0.85);
+      border: 1px solid rgba(255,210,120,0.55);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: transform 0.08s, box-shadow 0.12s;
+    }
+    #lobby-event #btn-event-calendar:hover { transform: scale(1.05); box-shadow: 0 0 12px rgba(255,216,106,0.6); }
+    #lobby-event .evt-section-title {
+      font: 700 14px/1.2 system-ui, sans-serif;
+      color: #b8c0d0;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin: 12px 0 8px;
+      padding-left: 4px;
+    }
+    .evt-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: linear-gradient(135deg, rgba(60,40,90,0.7), rgba(20,15,40,0.85));
+      border: 1px solid rgba(140,180,255,0.35);
+      border-radius: 14px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: transform 0.08s, border-color 0.12s, box-shadow 0.12s;
+      color: #fff;
+      text-align: left;
+      width: 100%;
+    }
+    .evt-card:hover { transform: translateX(2px); border-color: rgba(255,216,106,0.7); box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+    .evt-card .evt-icon { font-size: 36px; flex-shrink: 0; }
+    .evt-card .evt-info { flex: 1; min-width: 0; }
+    .evt-card .evt-name { font: 800 16px/1.2 system-ui, sans-serif; color: #ffd86a; }
+    .evt-card .evt-desc { font: 500 12px/1.3 system-ui, sans-serif; color: #b8c0d0; margin-top: 3px; }
+    .evt-card .evt-time { font: 700 13px/1 system-ui, sans-serif; color: #aef0aa; text-align: right; flex-shrink: 0; }
+    .evt-card .evt-time.short { color: #ff9a4a; }
+    .evt-upcoming-hint {
+      font: 500 13px/1.4 system-ui, sans-serif;
+      color: #98a0b0;
+      text-align: center;
+      padding: 14px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 10px;
+    }
+
+    /* Event-detail modal (leaderboard + prizes) */
+    #event-detail, #event-calendar {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.78);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 220;
+      padding: 16px;
+    }
+    #event-detail.visible, #event-calendar.visible { display: flex; }
+    #event-detail-card, #event-calendar-card {
+      background: linear-gradient(135deg, #1f1432, #14101e);
+      border: 1px solid rgba(140,180,255,0.35);
+      border-radius: 18px;
+      padding: 22px;
+      max-width: 560px;
+      width: 100%;
+      max-height: 88vh;
+      overflow-y: auto;
+      position: relative;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    }
+    #event-detail h3, #event-calendar h3 {
+      margin: 0 0 6px;
+      font: 800 22px/1.2 system-ui, sans-serif;
+      color: #ffd86a;
+      text-align: center;
+    }
+    #event-detail .sub {
+      margin: 0 0 16px;
+      font: 500 13px/1.4 system-ui, sans-serif;
+      color: #b8c0d0;
+      text-align: center;
+    }
+    .evt-detail-tabs {
+      display: flex; gap: 6px; margin-bottom: 14px;
+      background: rgba(0,0,0,0.3); padding: 4px; border-radius: 10px;
+    }
+    .evt-tab {
+      flex: 1; padding: 8px 10px;
+      background: transparent; border: 0; color: #b8c0d0;
+      font: 700 13px/1 system-ui, sans-serif;
+      cursor: pointer; border-radius: 8px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .evt-tab.active { background: rgba(255,216,106,0.85); color: #2a1808; }
+    #event-detail-body { font: 500 13px/1.4 system-ui, sans-serif; color: #d8e0f0; }
+    .lb-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .lb-row:last-child { border-bottom: 0; }
+    .lb-rank { width: 32px; font: 800 14px/1 system-ui, sans-serif; color: #b8c0d0; }
+    .lb-rank.gold { color: #ffd86a; }
+    .lb-rank.silver { color: #d8e0f0; }
+    .lb-rank.bronze { color: #d09060; }
+    .lb-player { flex: 1; font: 700 14px/1 system-ui, sans-serif; color: #fff; }
+    .lb-score { font: 800 14px/1 system-ui, sans-serif; color: #aef0aa; }
+    .prize-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 10px;
+      margin-bottom: 6px;
+    }
+    .prize-rank { font: 800 14px/1 system-ui, sans-serif; color: #ffd86a; min-width: 64px; }
+    .prize-rewards { flex: 1; font: 600 13px/1.3 system-ui, sans-serif; color: #d8e0f0; }
+    #event-detail-close, #event-calendar-close, #avatar-picker-close {
+      position: absolute;
+      top: 10px; right: 10px;
+      width: 32px; height: 32px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 16px;
+      color: #fff;
+      font: 600 16px/1 system-ui, sans-serif;
+      cursor: pointer;
+    }
+
+    /* Calendar grid (30 dagar) */
+    #event-calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 6px;
+    }
+    .cal-day {
+      aspect-ratio: 1;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      padding: 4px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px;
+      font: 500 11px/1 system-ui, sans-serif;
+      color: #b8c0d0;
+      position: relative;
+    }
+    .cal-day .cal-d-num { font: 800 16px/1 system-ui, sans-serif; color: #fff; }
+    .cal-day.has-event {
+      background: linear-gradient(135deg, rgba(120,80,180,0.55), rgba(50,30,90,0.65));
+      border-color: rgba(255,216,106,0.6);
+      cursor: pointer;
+    }
+    .cal-day.has-event .cal-d-num { color: #ffd86a; }
+    .cal-day.has-event .cal-d-icon { font-size: 14px; }
+
     /* Avatar-picker modal (10 presets) */
     #avatar-picker {
       position: fixed;
@@ -3528,6 +3705,55 @@
         <div class="cs-big">Coming Soon</div>
         <div class="cs-sub">This feature is still under construction — check back later!</div>
         <button class="lobby-btn secondary" id="btn-coming-soon-back">← Back</button>
+      </div>
+    </div>
+
+    <!-- EVENT-panel: aktiva events + kalender-knapp för upcoming events -->
+    <div class="lobby-panel" id="lobby-event">
+      <div class="evt-header">
+        <button class="lobby-btn secondary" id="btn-event-back">← Back</button>
+        <div class="evt-title">🎉 Events</div>
+        <button id="btn-event-calendar" aria-label="Calendar">
+          <svg viewBox="0 0 24 24" width="26" height="26" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="5" width="18" height="16" rx="2" fill="#5a8dd0" stroke="#a8c8f0" stroke-width="1.4"/>
+            <rect x="3" y="5" width="18" height="4" fill="#e85a5a"/>
+            <line x1="8" y1="3" x2="8" y2="7" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+            <line x1="16" y1="3" x2="16" y2="7" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="8" cy="13" r="1.5" fill="#fff"/>
+            <circle cx="12" cy="13" r="1.5" fill="#ffd86a"/>
+            <circle cx="16" cy="13" r="1.5" fill="#fff"/>
+            <circle cx="8" cy="17" r="1.5" fill="#fff"/>
+            <circle cx="12" cy="17" r="1.5" fill="#fff"/>
+            <circle cx="16" cy="17" r="1.5" fill="#aef0aa"/>
+          </svg>
+        </button>
+      </div>
+      <div class="evt-section-title">Active Events</div>
+      <div id="evt-active-list"></div>
+      <div class="evt-section-title">Upcoming</div>
+      <div class="evt-upcoming-hint">Tap the calendar above for the full 30-day schedule.</div>
+    </div>
+
+    <!-- Event-detail modal (klick på aktivt event → leaderboard + prizes) -->
+    <div id="event-detail">
+      <div id="event-detail-card">
+        <button id="event-detail-close" aria-label="Close">✕</button>
+        <h3 id="event-detail-name">Event</h3>
+        <p id="event-detail-desc" class="sub"></p>
+        <div class="evt-detail-tabs">
+          <button class="evt-tab active" data-tab="lb">Leaderboard</button>
+          <button class="evt-tab" data-tab="prizes">Prizes</button>
+        </div>
+        <div id="event-detail-body"></div>
+      </div>
+    </div>
+
+    <!-- Calendar modal (klick på kalender-symbolen) -->
+    <div id="event-calendar">
+      <div id="event-calendar-card">
+        <button id="event-calendar-close" aria-label="Close">✕</button>
+        <h3>Event Calendar — Next 30 Days</h3>
+        <div id="event-calendar-grid"></div>
       </div>
     </div>
 

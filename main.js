@@ -24502,10 +24502,12 @@ function showLobbyPanel(which) {
   const _lbLeaderboardEl = document.getElementById('lobby-leaderboard');
   const _lbFriendsEl = document.getElementById('lobby-friends');
   const _lbProfileEl = document.getElementById('lobby-profile');
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl]) {
+  const _lbEventEl = document.getElementById('lobby-event');
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
+  else if (which === 'event') { if (_lbEventEl) _lbEventEl.classList.add('visible'); }
   else if (which === 'leaderboard') { if (_lbLeaderboardEl) _lbLeaderboardEl.classList.add('visible'); }
   else if (which === 'friends') { if (_lbFriendsEl) _lbFriendsEl.classList.add('visible'); }
   else if (which === 'profile') { if (_lbProfileEl) _lbProfileEl.classList.add('visible'); }
@@ -24532,9 +24534,8 @@ function showLobbyPanel(which) {
   if (_lobbyEl) {
     _lobbyEl.classList.toggle('home-active', which === 'main');
     _lobbyEl.classList.toggle('heroes-active', which === 'heroes' || which === 'hero-detail');
-    // Event-sidan får egen bakgrundsbild. Klassen sätts av openComingSoon('Event')
-    // efter detta anrop; rensar den vid alla andra panel-byten.
-    if (which !== 'coming-soon') _lobbyEl.classList.remove('event-active');
+    // Event-sidan får egen bakgrundsbild (Event-bg.webp).
+    _lobbyEl.classList.toggle('event-active', which === 'event');
   }
 }
 
@@ -25549,10 +25550,6 @@ const comingSoonNameEl = document.getElementById('coming-soon-name');
 function openComingSoon(name) {
   if (comingSoonNameEl) comingSoonNameEl.textContent = name;
   showLobbyPanel('coming-soon');
-  // Event-sidan får egen bakgrundsbild (Event-bg.webp); andra coming-soon-
-  // kategorier behåller default Home-bg.
-  const _lobbyEl = document.getElementById('lobby');
-  if (_lobbyEl) _lobbyEl.classList.toggle('event-active', name === 'Event');
 }
 // Decision 112: btn-friends + btn-leaderboard har egna modaler (se längre ner).
 // btn-mail stannar som "Coming Soon" tills användaren bestämmer mail-funktionalitet.
@@ -25667,10 +25664,225 @@ if (_currDiamondPlus) _currDiamondPlus.addEventListener('click', (e) => { e.stop
 function openShop(section) {
   openComingSoon('Shop — ' + (section || 'Heroes'));
 }
-// Event-stub (riktig event-sida byggs i nästa commit).
-function openEvent() {
-  openComingSoon('Event');
+// ============================================================
+// EVENT-sida (2026-05-27): aktiva events + kalender + leaderboard + prizes.
+// localStorage-MVP — användaren har inte server än, så events/leaderboards är
+// mock-data hardcodade i MOCK_EVENTS_*. När backend byggs ersätts MOCK_*
+// med fetch() från API.
+// ============================================================
+const MOCK_EVENTS_ACTIVE = [
+  {
+    id: 'wew',
+    name: 'Weekend Warlord',
+    icon: '⚔',
+    desc: 'Earn the most kills in Line Wars matches this weekend.',
+    hoursLeft: 38,
+    leaderboard: [
+      { name: 'DragonSlayer99', score: 14820 },
+      { name: 'MageQueen', score: 12410 },
+      { name: 'NyroFan', score: 11055 },
+      { name: 'TankItUp', score: 9870 },
+      { name: 'KostefKing', score: 8420 },
+      { name: 'ZyroPro', score: 7960 },
+      { name: 'ElarBlade', score: 7350 },
+      { name: 'KryxRage', score: 6890 },
+      { name: 'ShadowOne', score: 6210 },
+      { name: 'PixelHunter', score: 5780 },
+    ],
+  },
+  {
+    id: 'aga',
+    name: 'Arena Glory',
+    icon: '🏆',
+    desc: 'Climb the Arena W/L rating ladder. Top 200 earn cosmetic rewards.',
+    hoursLeft: 122,
+    leaderboard: [
+      { name: 'BlinkMaster', score: 1842 },
+      { name: 'GhostStep', score: 1720 },
+      { name: 'NeonAce', score: 1655 },
+      { name: 'Striker_X', score: 1591 },
+      { name: 'SilentBlow', score: 1530 },
+      { name: 'ZyroPro', score: 1488 },
+      { name: 'VoidMage', score: 1432 },
+      { name: 'CrimsonFox', score: 1376 },
+      { name: 'OrbitGuard', score: 1318 },
+      { name: 'NyroFan', score: 1256 },
+    ],
+  },
+  {
+    id: 'bhu',
+    name: 'Boss Hunter',
+    icon: '🐉',
+    desc: 'Clear Boss Wars tiers as fast as possible. Time-trial leaderboard.',
+    hoursLeft: 74,
+    leaderboard: [
+      { name: 'SpeedRunner', score: 285 },
+      { name: 'BossKiller', score: 312 },
+      { name: 'TeamAlpha', score: 340 },
+      { name: 'DragonSlayer99', score: 358 },
+      { name: 'RagingTrio', score: 374 },
+      { name: 'KostefKing', score: 396 },
+      { name: 'KryxRage', score: 412 },
+      { name: 'ElarBlade', score: 432 },
+      { name: 'TankItUp', score: 455 },
+      { name: 'WispBlade', score: 478 },
+    ],
+  },
+];
+const MOCK_EVENTS_UPCOMING = [
+  { id: 'mf',  name: 'Mage Festival', icon: '🧙', startInDays: 4, durationDays: 3 },
+  { id: 'tm',  name: 'Tank Madness', icon: '🛡', startInDays: 9, durationDays: 5 },
+  { id: 'tk',  name: 'Triple Kill Event', icon: '💥', startInDays: 14, durationDays: 2 },
+  { id: 'dft', name: 'Duel Fest', icon: '⚔', startInDays: 18, durationDays: 4 },
+  { id: 'cqd', name: 'Conquest Days', icon: '👑', startInDays: 22, durationDays: 7 },
+  { id: 'ffl', name: 'Frost Flames League', icon: '❄', startInDays: 28, durationDays: 3 },
+];
+const PRIZE_TIERS = [
+  { range: '1st',     gold: 5000, diamonds: 500, extra: 'Legendary Skin' },
+  { range: '2nd',     gold: 3000, diamonds: 300, extra: 'Epic Skin' },
+  { range: '3rd',     gold: 2000, diamonds: 200, extra: 'Rare Skin' },
+  { range: '4-10',    gold: 1000, diamonds: 100, extra: 'Avatar Frame' },
+  { range: '11-50',   gold: 500,  diamonds: 50,  extra: 'Title' },
+  { range: '51-200',  gold: 250,  diamonds: 25,  extra: '' },
+  { range: '201-500', gold: 100,  diamonds: 10,  extra: '' },
+];
+
+function fmtTimeLeft(hours) {
+  if (hours <= 0) return 'ENDED';
+  if (hours < 24) return hours + 'h left';
+  const d = Math.floor(hours / 24);
+  const h = hours % 24;
+  return d + 'd' + (h > 0 ? ' ' + h + 'h' : '') + ' left';
 }
+function renderEventPage() {
+  const activeList = document.getElementById('evt-active-list');
+  if (!activeList) return;
+  activeList.innerHTML = '';
+  for (const evt of MOCK_EVENTS_ACTIVE) {
+    const card = document.createElement('button');
+    card.className = 'evt-card';
+    const timeClass = evt.hoursLeft < 24 ? ' short' : '';
+    card.innerHTML =
+      '<div class="evt-icon">' + evt.icon + '</div>' +
+      '<div class="evt-info">' +
+        '<div class="evt-name">' + evt.name + '</div>' +
+        '<div class="evt-desc">' + evt.desc + '</div>' +
+      '</div>' +
+      '<div class="evt-time' + timeClass + '">' + fmtTimeLeft(evt.hoursLeft) + '</div>';
+    card.addEventListener('click', () => openEventDetail(evt));
+    activeList.appendChild(card);
+  }
+}
+let _evtDetailActiveTab = 'lb';
+let _evtDetailData = null;   // håller hela event-objektet (active eller upcoming) tab-switch
+function openEventDetail(evt) {
+  const m = document.getElementById('event-detail');
+  const nameEl = document.getElementById('event-detail-name');
+  const descEl = document.getElementById('event-detail-desc');
+  if (!m) return;
+  if (nameEl) nameEl.textContent = evt.icon + ' ' + evt.name;
+  if (descEl) descEl.textContent = evt.desc;
+  _evtDetailData = evt;
+  _evtDetailActiveTab = 'lb';
+  renderEventDetailBody(evt);
+  m.classList.add('visible');
+}
+function renderEventDetailBody(evt) {
+  const body = document.getElementById('event-detail-body');
+  const tabBtns = document.querySelectorAll('#event-detail .evt-tab');
+  tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === _evtDetailActiveTab));
+  if (!body) return;
+  if (_evtDetailActiveTab === 'lb') {
+    body.innerHTML = (evt.leaderboard || []).slice(0, 10).map((p, i) => {
+      const rankCls = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+      return '<div class="lb-row">' +
+        '<div class="lb-rank ' + rankCls + '">#' + (i + 1) + '</div>' +
+        '<div class="lb-player">' + p.name + '</div>' +
+        '<div class="lb-score">' + p.score.toLocaleString() + '</div>' +
+      '</div>';
+    }).join('');
+  } else {
+    body.innerHTML = PRIZE_TIERS.map(t => {
+      const parts = [];
+      if (t.gold) parts.push('💰 ' + t.gold.toLocaleString());
+      if (t.diamonds) parts.push('💎 ' + t.diamonds);
+      if (t.extra) parts.push('+ ' + t.extra);
+      return '<div class="prize-row">' +
+        '<div class="prize-rank">' + t.range + '</div>' +
+        '<div class="prize-rewards">' + parts.join(' · ') + '</div>' +
+      '</div>';
+    }).join('');
+  }
+}
+function closeEventDetail() {
+  const m = document.getElementById('event-detail');
+  if (m) m.classList.remove('visible');
+}
+function openEventCalendar() {
+  const m = document.getElementById('event-calendar');
+  const grid = document.getElementById('event-calendar-grid');
+  if (!m || !grid) return;
+  grid.innerHTML = '';
+  const today = new Date();
+  for (let d = 0; d < 30; d++) {
+    const date = new Date(today);
+    date.setDate(today.getDate() + d);
+    const day = date.getDate();
+    const evt = MOCK_EVENTS_UPCOMING.find(e =>
+      d >= e.startInDays && d < e.startInDays + e.durationDays);
+    const cell = document.createElement('div');
+    cell.className = 'cal-day' + (evt ? ' has-event' : '');
+    cell.innerHTML =
+      '<div class="cal-d-num">' + day + '</div>' +
+      (evt ? '<div class="cal-d-icon">' + evt.icon + '</div>' : '');
+    if (evt) {
+      cell.title = evt.name + ' (' + evt.durationDays + 'd)';
+      cell.addEventListener('click', () => {
+        // Visa upcoming-event som "preview" i samma modal som aktiva events
+        openEventDetail({
+          id: evt.id, name: evt.name, icon: evt.icon,
+          desc: 'Starts in ' + evt.startInDays + ' day' + (evt.startInDays === 1 ? '' : 's') +
+                ' · runs for ' + evt.durationDays + ' days.',
+          hoursLeft: evt.startInDays * 24,
+          leaderboard: [],
+        });
+      });
+    }
+    grid.appendChild(cell);
+  }
+  m.classList.add('visible');
+}
+function closeEventCalendar() {
+  const m = document.getElementById('event-calendar');
+  if (m) m.classList.remove('visible');
+}
+function openEvent() {
+  showLobbyPanel('event');
+  renderEventPage();
+}
+
+// Hooks (IIFE för säker init)
+(function _wireEventPage() {
+  const backBtn = document.getElementById('btn-event-back');
+  if (backBtn) backBtn.addEventListener('click', () => showLobbyPanel('main'));
+  const calBtn = document.getElementById('btn-event-calendar');
+  if (calBtn) calBtn.addEventListener('click', openEventCalendar);
+  const closeDet = document.getElementById('event-detail-close');
+  if (closeDet) closeDet.addEventListener('click', closeEventDetail);
+  const detMod = document.getElementById('event-detail');
+  if (detMod) detMod.addEventListener('click', (e) => { if (e.target === detMod) closeEventDetail(); });
+  const closeCal = document.getElementById('event-calendar-close');
+  if (closeCal) closeCal.addEventListener('click', closeEventCalendar);
+  const calMod = document.getElementById('event-calendar');
+  if (calMod) calMod.addEventListener('click', (e) => { if (e.target === calMod) closeEventCalendar(); });
+  // Tab-switching i event-detail — använder _evtDetailData direkt (även för
+  // upcoming-events öppnade via kalender)
+  const tabBtns = document.querySelectorAll('#event-detail .evt-tab');
+  tabBtns.forEach(b => b.addEventListener('click', () => {
+    _evtDetailActiveTab = b.dataset.tab;
+    if (_evtDetailData) renderEventDetailBody(_evtDetailData);
+  }));
+})();
 
 // btn-shop + btn-event hooks (flyttade ut ur coming-soon-loopen ovan så de
 // kan pekas mot egna sidor när dessa byggs).
