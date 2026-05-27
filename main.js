@@ -7334,10 +7334,11 @@ function buildBossWarsScene() {
   bossWarsSceneGroup.userData.builtForTier = tier;
   const map = BOSSWARS_MAPS[tier] || BOSSWARS_MAPS[1];
   const r = BOSSWARS_RADIUS;
-  // Detaljerad theme-specifik canvas-textur (1024×1024 för rik detalj).
-  // drawBossArenaFloor ritar bas + tier-unika mönster.
+  // Theme-specifik canvas-textur — 512×512 (anvanderens shadow/VRAM-task
+  // 2026-05-27: 1024→512 sparar ~8 MB VRAM per scene-build, knappt synlig
+  // skillnad vid spel-zoom). Anisotropy 4 (var 16) räcker for top-down-vinkel.
   const floorCanvas = document.createElement('canvas');
-  const TEX_SIZE = 1024;
+  const TEX_SIZE = 512;
   floorCanvas.width = floorCanvas.height = TEX_SIZE;
   const fctx = floorCanvas.getContext('2d');
   drawBossArenaFloor(fctx, TEX_SIZE, tier, map);
@@ -7347,7 +7348,7 @@ function buildBossWarsScene() {
   floorTex.colorSpace = THREE.SRGBColorSpace;
   floorTex.magFilter = THREE.LinearFilter;
   floorTex.minFilter = THREE.LinearMipmapLinearFilter;
-  floorTex.anisotropy = 16;
+  floorTex.anisotropy = 4;
   // T1-T5 — separate emissive-map för pattern-glow utan dynamisk ljuskälla.
   // T1: gröna runor. T2: lila pentagram. T3: cyan-grönt hexagon-rutnät.
   // T4: röda/magenta energilinjer. T5: bärnstens-cirkelmönster.
@@ -7385,7 +7386,7 @@ function buildBossWarsScene() {
     floorEmissiveTex.colorSpace = THREE.NoColorSpace;   // emissiveMap är inte sRGB
     floorEmissiveTex.magFilter = THREE.LinearFilter;
     floorEmissiveTex.minFilter = THREE.LinearMipmapLinearFilter;
-    floorEmissiveTex.anisotropy = 16;
+    floorEmissiveTex.anisotropy = 4;   // 16→4 (2026-05-27 VRAM-task)
   }
   // Underliggande cylinder för "tjocklek" — samma färg som edge så det inte stick ut.
   // Alla tier använder samma cirkulära platform så walkability är konsistent
