@@ -7516,14 +7516,16 @@ function makeBossWarsTorch(flameColor) {
     new THREE.MeshStandardMaterial({ color: 0x3a3028, roughness: 0.95 })
   );
   base.position.y = 0.25;
-  base.castShadow = true;
+  // Korridor-fackel ar dekoration → castShadow:false (anvanderens shadow-task
+  // 2026-05-27, low-priority objekt). receiveShadow lamnas default (false).
+  base.castShadow = false;
   grp.add(base);
   const pole = new THREE.Mesh(
     new THREE.CylinderGeometry(0.08, 0.10, 1.7, 6),
     new THREE.MeshStandardMaterial({ color: 0x4a3018, roughness: 0.9 })
   );
   pole.position.y = 1.35;
-  pole.castShadow = true;
+  pole.castShadow = false;
   grp.add(pole);
   const bowl = new THREE.Mesh(
     new THREE.CylinderGeometry(0.24, 0.16, 0.18, 10),
@@ -7584,10 +7586,14 @@ function buildBossArenaProps(map) {
     const mesh = makeArenaProp(p.type);
     if (!mesh) continue;
     // Strippa per-prop PointLights — för många = shader-recompile-bomb.
+    // PLUS castShadow=false på alla mesh-children (anvanderens shadow-task
+    // 2026-05-27): boss-arena-props ar low-priority, lyfter inte spelarens
+    // upplevelse, sparar shadow-pass-kostnad.
     mesh.traverse(o => {
       if (o.isLight) {
         if (o.parent) o.parent.remove(o);
       }
+      if (o.isMesh) o.castShadow = false;
     });
     mesh.position.set(BOSSWARS_CX + p.x, 0, BOSSWARS_CZ + p.z);
     mesh.rotation.y = p.rot || 0;
