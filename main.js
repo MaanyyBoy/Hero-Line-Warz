@@ -24503,11 +24503,13 @@ function showLobbyPanel(which) {
   const _lbFriendsEl = document.getElementById('lobby-friends');
   const _lbProfileEl = document.getElementById('lobby-profile');
   const _lbEventEl = document.getElementById('lobby-event');
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl]) {
+  const _lbShopEl = document.getElementById('lobby-shop');
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl, _lbShopEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
   else if (which === 'event') { if (_lbEventEl) _lbEventEl.classList.add('visible'); }
+  else if (which === 'shop') { if (_lbShopEl) _lbShopEl.classList.add('visible'); }
   else if (which === 'leaderboard') { if (_lbLeaderboardEl) _lbLeaderboardEl.classList.add('visible'); }
   else if (which === 'friends') { if (_lbFriendsEl) _lbFriendsEl.classList.add('visible'); }
   else if (which === 'profile') { if (_lbProfileEl) _lbProfileEl.classList.add('visible'); }
@@ -24536,6 +24538,8 @@ function showLobbyPanel(which) {
     _lobbyEl.classList.toggle('heroes-active', which === 'heroes' || which === 'hero-detail');
     // Event-sidan får egen bakgrundsbild (Event-bg.webp).
     _lobbyEl.classList.toggle('event-active', which === 'event');
+    // Shop-active gör att #home-currency visas (top-display) på shop-sidan.
+    _lobbyEl.classList.toggle('shop-active', which === 'shop');
   }
 }
 
@@ -25659,11 +25663,133 @@ const _currDiamondPlus = document.getElementById('curr-diamond-plus');
 if (_currGoldPlus) _currGoldPlus.addEventListener('click', (e) => { e.stopPropagation(); openShop('gold'); });
 if (_currDiamondPlus) _currDiamondPlus.addEventListener('click', (e) => { e.stopPropagation(); openShop('diamonds'); });
 
-// Shop-stub (riktig shop-sida byggs i nästa commit). Tillfälligt: öppna
-// coming-soon med 'Shop'-titel + förvald sektion i argumentet.
-function openShop(section) {
-  openComingSoon('Shop — ' + (section || 'Heroes'));
+// ============================================================
+// SHOP-sida (2026-05-27): sidebar med 5 kategorier + currency top-display.
+// localStorage-MVP — items är mock-data hardcodade i SHOP_ITEMS. När backend
+// byggs ersätts MOCK_* med fetch() från server.
+// ============================================================
+const SHOP_ITEMS = {
+  heroes: [
+    { id: 'h_aurelia',  name: 'Aurelia',  icon: '🦸‍♀', sub: 'Sword maiden',     cost: 5000, currency: 'diamonds' },
+    { id: 'h_volker',   name: 'Volker',   icon: '🦸',   sub: 'Stone warden',    cost: 4500, currency: 'diamonds' },
+    { id: 'h_jin',      name: 'Jin',      icon: '🥷',   sub: 'Shadow blade',    cost: 5500, currency: 'diamonds' },
+    { id: 'h_mira',     name: 'Mira',     icon: '🧝‍♀', sub: 'Wind archer',     cost: 4800, currency: 'diamonds' },
+  ],
+  skins: [
+    { id: 's_zyro_arc',   name: 'Arcane Zyro',     icon: '🔮', sub: 'Legendary skin',  cost: 1500, currency: 'diamonds' },
+    { id: 's_nyro_for',   name: 'Forest Nyro',     icon: '🌲', sub: 'Epic skin',        cost: 800,  currency: 'diamonds' },
+    { id: 's_kryx_ber',   name: 'Berserker Kryx',  icon: '🪓', sub: 'Rare skin',        cost: 4000, currency: 'gold' },
+    { id: 's_elar_pal',   name: 'Paladin Elar',    icon: '🛡', sub: 'Epic skin',        cost: 900,  currency: 'diamonds' },
+    { id: 's_kostef_smk', name: 'Smoke Kostef',    icon: '💨', sub: 'Rare skin',        cost: 3500, currency: 'gold' },
+    { id: 's_zyro_drk',   name: 'Dark Zyro',       icon: '🌑', sub: 'Epic skin',        cost: 800,  currency: 'diamonds' },
+  ],
+  weapons: [
+    { id: 'w_staff_lum',  name: 'Lumen Staff',     icon: '🪄', sub: 'For mages',        cost: 600, currency: 'diamonds' },
+    { id: 'w_bow_phx',    name: 'Phoenix Bow',     icon: '🏹', sub: 'For archers',      cost: 700, currency: 'diamonds' },
+    { id: 'w_axe_void',   name: 'Void Axe',        icon: '🪓', sub: 'For barbarians',   cost: 650, currency: 'diamonds' },
+    { id: 'w_sword_sun',  name: 'Sunblade',        icon: '⚔', sub: 'For knights',      cost: 750, currency: 'diamonds' },
+  ],
+  diamonds: [
+    { id: 'd_100',  name: '100 Diamonds',  icon: '💎', sub: '$1.99 (mock)',   cost: 199,  currency: 'usd' },
+    { id: 'd_500',  name: '500 + 50 bonus',icon: '💎', sub: '$7.99 (mock)',   cost: 799,  currency: 'usd' },
+    { id: 'd_1200', name: '1200 + 200 b.', icon: '💎', sub: '$14.99 (mock)',  cost: 1499, currency: 'usd' },
+    { id: 'd_3000', name: '3000 + 700 b.', icon: '💎', sub: '$34.99 (mock)',  cost: 3499, currency: 'usd' },
+  ],
+  gold: [
+    { id: 'g_1k',  name: '1,000 Gold',  icon: '💰', sub: 'Quick top-up',  cost: 10,  currency: 'diamonds' },
+    { id: 'g_5k',  name: '5,000 + 500', icon: '💰', sub: 'Best value',    cost: 45,  currency: 'diamonds' },
+    { id: 'g_15k', name: '15,000 + 2k', icon: '💰', sub: 'Bulk pack',     cost: 120, currency: 'diamonds' },
+    { id: 'g_50k', name: '50,000 + 10k',icon: '💰', sub: 'Whale stash',   cost: 350, currency: 'diamonds' },
+  ],
+};
+let _shopActiveTab = 'heroes';
+function renderShopContent() {
+  const content = document.getElementById('shop-content');
+  if (!content) return;
+  const items = SHOP_ITEMS[_shopActiveTab] || [];
+  content.innerHTML = '<div class="shop-grid">' + items.map(it => {
+    const isUsd = it.currency === 'usd';
+    const isDiamond = it.currency === 'diamonds';
+    const symbol = isUsd ? '$' : isDiamond ? '💎' : '💰';
+    const cost = isUsd ? (it.cost / 100).toFixed(2) : it.cost.toLocaleString();
+    return '<div class="shop-item">' +
+      '<div class="si-icon">' + it.icon + '</div>' +
+      '<div class="si-name">' + it.name + '</div>' +
+      '<div class="si-sub">' + it.sub + '</div>' +
+      '<button class="si-buy' + (isDiamond ? ' diamond' : '') + '" data-id="' + it.id + '">' +
+        symbol + ' ' + cost +
+      '</button>' +
+    '</div>';
+  }).join('') + '</div>';
+  // Buy-handlers
+  content.querySelectorAll('.si-buy').forEach(btn => {
+    btn.addEventListener('click', () => handleShopBuy(btn.dataset.id));
+  });
 }
+function handleShopBuy(itemId) {
+  let item = null;
+  for (const cat of Object.values(SHOP_ITEMS)) {
+    item = cat.find(i => i.id === itemId);
+    if (item) break;
+  }
+  if (!item) return;
+  // USD-flöde: kräver server-integration (Stripe etc.) — bara alert tills då.
+  if (item.currency === 'usd') {
+    alert('Real-money purchases require server integration — coming soon!');
+    return;
+  }
+  // Gold-packs (id startar med 'g_'): kostnad i diamonds, belöning i gold.
+  // Parsa belöningen från item.name (t.ex. "5,000 + 500" → 5500 gold).
+  if (item.id.startsWith('g_')) {
+    const parts = item.name.match(/[\d,]+(?:\s*k)?/g) || [];
+    let totalG = 0;
+    for (const part of parts) {
+      const isK = /k/i.test(part);
+      const n = parseInt(part.replace(/[,k\s]/gi, ''), 10) || 0;
+      totalG += n * (isK ? 1000 : 1);
+    }
+    if (spendDiamonds(item.cost)) {
+      addGold(totalG);
+      alert('Got ' + totalG.toLocaleString() + ' gold (-' + item.cost + ' 💎)');
+    } else {
+      alert('Not enough diamonds — need ' + item.cost + ' 💎');
+    }
+    return;
+  }
+  // Generic diamonds-cost (heroes / skins / weapons / etc.)
+  if (item.currency === 'diamonds') {
+    if (spendDiamonds(item.cost)) alert('Purchased: ' + item.name + ' (-' + item.cost + ' 💎)');
+    else alert('Not enough diamonds — need ' + item.cost + ' 💎');
+    return;
+  }
+  // Generic gold-cost
+  if (item.currency === 'gold') {
+    if (spendGold(item.cost)) alert('Purchased: ' + item.name + ' (-' + item.cost.toLocaleString() + ' 💰)');
+    else alert('Not enough gold — need ' + item.cost.toLocaleString() + ' 💰');
+    return;
+  }
+}
+function openShop(section) {
+  _shopActiveTab = (section && SHOP_ITEMS[section]) ? section : 'heroes';
+  showLobbyPanel('shop');
+  // Toggle sidebar-tabs
+  document.querySelectorAll('#shop-sidebar .shop-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.shopTab === _shopActiveTab);
+  });
+  renderShopContent();
+}
+(function _wireShop() {
+  const back = document.getElementById('btn-shop-back');
+  if (back) back.addEventListener('click', () => showLobbyPanel('main'));
+  document.querySelectorAll('#shop-sidebar .shop-tab').forEach(t => {
+    t.addEventListener('click', () => {
+      _shopActiveTab = t.dataset.shopTab;
+      document.querySelectorAll('#shop-sidebar .shop-tab').forEach(x =>
+        x.classList.toggle('active', x.dataset.shopTab === _shopActiveTab));
+      renderShopContent();
+    });
+  });
+})();
 // ============================================================
 // EVENT-sida (2026-05-27): aktiva events + kalender + leaderboard + prizes.
 // localStorage-MVP — användaren har inte server än, så events/leaderboards är

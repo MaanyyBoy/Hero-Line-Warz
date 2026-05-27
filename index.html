@@ -1267,6 +1267,125 @@
     }
     #btn-avatar svg { width: 100%; height: 100%; display: block; }
 
+    /* Shop-panel (lobby-shop) */
+    #lobby-shop {
+      padding: 18px 16px 24px;
+      max-width: 880px;
+      width: 100%;
+      max-height: 92vh;
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+    #lobby-shop.visible { display: flex; }
+    #lobby-shop .shop-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 56px;    /* skapa plats för currency-top-display */
+    }
+    #lobby-shop .shop-title {
+      flex: 1;
+      font: 800 24px/1.2 system-ui, sans-serif;
+      color: #ffd86a;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      text-align: center;
+    }
+    #lobby-shop .shop-body {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 14px;
+      flex: 1;
+      min-height: 0;
+    }
+    #shop-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 8px;
+    }
+    .shop-tab {
+      padding: 12px 14px;
+      background: transparent;
+      border: 0;
+      color: #b8c0d0;
+      font: 700 14px/1.2 system-ui, sans-serif;
+      text-align: left;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .shop-tab:hover { background: rgba(255,255,255,0.06); color: #fff; }
+    .shop-tab.active {
+      background: linear-gradient(135deg, rgba(255,216,106,0.85), rgba(220,160,40,0.85));
+      color: #2a1808;
+    }
+    #shop-content {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 14px;
+      overflow-y: auto;
+      max-height: 70vh;
+    }
+    .shop-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .shop-item {
+      background: linear-gradient(135deg, rgba(60,40,90,0.6), rgba(20,15,40,0.85));
+      border: 1px solid rgba(140,180,255,0.35);
+      border-radius: 12px;
+      padding: 12px 10px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: border-color 0.12s, transform 0.08s;
+    }
+    .shop-item:hover { border-color: rgba(255,216,106,0.7); transform: translateY(-2px); }
+    .shop-item .si-icon {
+      font-size: 38px;
+      height: 56px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .shop-item .si-name {
+      font: 700 14px/1.2 system-ui, sans-serif;
+      color: #fff;
+    }
+    .shop-item .si-sub {
+      font: 500 11px/1.3 system-ui, sans-serif;
+      color: #98a0b0;
+      min-height: 26px;
+    }
+    .shop-item .si-buy {
+      margin-top: auto;
+      padding: 8px 10px;
+      background: linear-gradient(135deg, #ffd86a, #d4a830);
+      color: #2a1808;
+      border: 0;
+      border-radius: 8px;
+      font: 800 13px/1 system-ui, sans-serif;
+      cursor: pointer;
+      transition: transform 0.08s, filter 0.12s;
+    }
+    .shop-item .si-buy.diamond {
+      background: linear-gradient(135deg, #8cd2ff, #4ab0e8);
+      color: #0a1830;
+    }
+    .shop-item .si-buy:hover { filter: brightness(1.1); }
+    .shop-item .si-buy:active { transform: scale(0.94); }
+    .shop-item .si-buy:disabled { opacity: 0.5; cursor: not-allowed; }
+    @media (max-width: 640px) {
+      #lobby-shop .shop-body { grid-template-columns: 1fr; }
+      #shop-sidebar { flex-direction: row; flex-wrap: wrap; }
+      .shop-tab { flex: 1 1 auto; min-width: 80px; font-size: 12px; padding: 8px 6px; text-align: center; }
+    }
+
     /* Event-panel (lobby-event) */
     #lobby-event {
       padding: 18px 16px 24px;
@@ -3705,6 +3824,24 @@
         <div class="cs-big">Coming Soon</div>
         <div class="cs-sub">This feature is still under construction — check back later!</div>
         <button class="lobby-btn secondary" id="btn-coming-soon-back">← Back</button>
+      </div>
+    </div>
+
+    <!-- SHOP-panel: sidebar med 5 kategorier + content-grid -->
+    <div class="lobby-panel" id="lobby-shop">
+      <div class="shop-header">
+        <button class="lobby-btn secondary" id="btn-shop-back">← Back</button>
+        <div class="shop-title">🛒 Shop</div>
+      </div>
+      <div class="shop-body">
+        <div class="shop-sidebar" id="shop-sidebar">
+          <button class="shop-tab active" data-shop-tab="heroes">🦸 Heroes</button>
+          <button class="shop-tab" data-shop-tab="skins">👗 Skins</button>
+          <button class="shop-tab" data-shop-tab="weapons">⚔ Weapon Skins</button>
+          <button class="shop-tab" data-shop-tab="diamonds">💎 Diamonds</button>
+          <button class="shop-tab" data-shop-tab="gold">💰 Gold</button>
+        </div>
+        <div class="shop-content" id="shop-content"></div>
       </div>
     </div>
 
