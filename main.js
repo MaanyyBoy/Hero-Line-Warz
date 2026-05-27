@@ -25222,6 +25222,10 @@ function enterPlayPhase() {
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
   document.body.classList.toggle('arena-mode', APP.gameMode === 'arena1v1');
   if (heroPickEl) heroPickEl.classList.add('hidden');
+  // Skydd: force-stang avatar-picker om den var oppen av nagot misstag
+  // (event-bubbling efter hero-pick-confirm har triggat den i singleplayer).
+  const _ap = document.getElementById('avatar-picker');
+  if (_ap) _ap.classList.remove('visible');
   // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
   // i solo tickas den lokalt via simulateAll/tick.
   duelState.timer = 300;   // 5 min mellan dueler (MP får detta från servern)
@@ -25619,6 +25623,10 @@ function renderAvatarOnButton() {
   btn.innerHTML = makeAvatarSvg(getAvatarIdx(), 'btn_');
 }
 function openAvatarPicker() {
+  // Skydd: pickern far bara oppnas fran hemskarmen (klick pa btn-avatar).
+  // Om APP.mode inte ar 'lobby' (= mitt i en match), bail. Detta forhindrar
+  // att picker oppnas av ev. event-bubbling efter hero-pick-confirm.
+  if (typeof APP !== 'undefined' && APP.mode && APP.mode !== 'lobby') return;
   const picker = document.getElementById('avatar-picker');
   const grid = document.getElementById('avatar-picker-grid');
   if (!picker || !grid) return;
