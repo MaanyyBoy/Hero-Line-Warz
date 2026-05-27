@@ -17190,21 +17190,29 @@ function tickPerfMeter(dt) {
 // ============================================================
 const PERF_MEASURE_STORAGE_KEY = 'hellbornePerfMeasureV1';
 const PERF_MEASURE_DURATION_MS = 30000;
-const PERF_MEASURE_TRIGGER_ZONE = 60;           // px från top-right corner
-const PERF_MEASURE_TRIGGER_WINDOW_MS = 700;     // 3 taps måste falla inom denna
+const PERF_MEASURE_LONG_DURATION_MS = 120000;
+const PERF_MEASURE_GEO_SAMPLE_INTERVAL_MS = 10000;   // var 10:e sek i long-mode
+const PERF_MEASURE_TRIGGER_ZONE = 60;                // px från top-right corner
+const PERF_MEASURE_TRIGGER_WINDOW_MS = 1200;          // debounce-fönster (1200ms)
 const _perfMeasure = {
   active: false,
   startMs: 0,
+  durationMs: PERF_MEASURE_DURATION_MS,
   frameMs: [],          // array av frame-times i ms
   drawCalls: [],        // array av render.calls per frame
   triangles: [],        // array av render.triangles per frame
   geometries: 0,        // sista mätta värde
   textures: 0,
   programs: 0,
+  sampleGeo: false,                    // long-mode flag
+  geoSnapshots: [],                    // [{ tSec, geo, tex, calls, fps }]
+  nextGeoSampleMs: 0,
 };
-// Trigger-state
+// Trigger-state — debounce: vänta hela TRIGGER_WINDOW_MS innan beslut.
+// 3 taps = 30s normal. 5+ taps = 120s long (med geo-snapshots).
 let _pmTapCount = 0;
 let _pmFirstTapMs = 0;
+let _pmDebounceTimer = 0;
 
 function pmCollectFrame(frameMs) {
   // Anropas per frame från tick() — bara om active.
@@ -17222,13 +17230,24 @@ function pmCollectFrame(frameMs) {
       _perfMeasure.programs = renderer.info.programs.length || 0;
     }
   }
-  // Uppdatera countdown-indikator
   const elapsed = performance.now() - _perfMeasure.startMs;
-  const left = Math.max(0, Math.ceil((PERF_MEASURE_DURATION_MS - elapsed) / 1000));
+  // Long-mode: var 10:e sek, snapshot geometries + textures + draw calls + nuvarande FPS
+  if (_perfMeasure.sampleGeo && elapsed >= _perfMeasure.nextGeoSampleMs) {
+    _perfMeasure.geoSnapshots.push({
+      tSec: Math.round(elapsed / 1000),
+      geo: _perfMeasure.geometries,
+      tex: _perfMeasure.textures,
+      calls: renderer.info && renderer.info.render ? renderer.info.render.calls : 0,
+      fps: frameMs > 0 ? Math.round(1000 / frameMs) : 0,
+    });
+    _perfMeasure.nextGeoSampleMs += PERF_MEASURE_GEO_SAMPLE_INTERVAL_MS;
+  }
+  // Uppdatera countdown-indikator
+  const left = Math.max(0, Math.ceil((_perfMeasure.durationMs - elapsed) / 1000));
   const indEl = document.getElementById('pm-indicator');
   if (indEl) indEl.querySelector('.pm-count').textContent = 'REC ' + left + 's';
   // Klar?
-  if (elapsed >= PERF_MEASURE_DURATION_MS) pmFinish();
+  if (elapsed >= _perfMeasure.durationMs) pmFinish();
 }
 
 function pmAvg(arr) {
@@ -17260,6 +17279,7 @@ function pmFinish() {
   const result = {
     when: new Date().toISOString(),
     duration: Math.round(_perfMeasure.frameMs.length),
+    durationMs: _perfMeasure.durationMs,
     avgFps: Math.round(avgFps * 10) / 10,
     onePctLowFps: Math.round(onePctLowFps * 10) / 10,
     avgCalls,
@@ -17268,6 +17288,7 @@ function pmFinish() {
     textures: _perfMeasure.textures,
     programs: _perfMeasure.programs,
     mode: APP.mode + '/' + (APP.gameMode || '?'),
+    snapshots: _perfMeasure.sampleGeo ? _perfMeasure.geoSnapshots.slice() : null,
   };
   try { localStorage.setItem(PERF_MEASURE_STORAGE_KEY, JSON.stringify(result)); } catch (_) {}
   pmRemoveIndicator();
@@ -17276,15 +17297,21 @@ function pmFinish() {
   _perfMeasure.frameMs.length = 0;
   _perfMeasure.drawCalls.length = 0;
   _perfMeasure.triangles.length = 0;
+  _perfMeasure.geoSnapshots.length = 0;
+  _perfMeasure.sampleGeo = false;
 }
 
-function pmStart() {
+function pmStart(durationMs, sampleGeo) {
   if (_perfMeasure.active) return;
   _perfMeasure.active = true;
   _perfMeasure.startMs = performance.now();
+  _perfMeasure.durationMs = durationMs || PERF_MEASURE_DURATION_MS;
+  _perfMeasure.sampleGeo = !!sampleGeo;
   _perfMeasure.frameMs.length = 0;
   _perfMeasure.drawCalls.length = 0;
   _perfMeasure.triangles.length = 0;
+  _perfMeasure.geoSnapshots.length = 0;
+  _perfMeasure.nextGeoSampleMs = 0;     // första snap vid t=0
   pmHideOverlay();
   pmAddIndicator();
 }
@@ -17371,9 +17398,27 @@ function pmShowOverlay(result) {
         '<div style="font-size:13px;color:#aee0ff;margin-top:4px;">' + result.mode + '</div>' +
       '</div>' +
     '</div>' +
-    '<div style="margin-top:14px;display:flex;gap:8px;">' +
-      '<button id="pm-rerun" style="flex:1;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
-        'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run new measurement</button>' +
+    // Long-mode snapshot-tabell — bara om sparat
+    (result.snapshots && result.snapshots.length ? (
+      '<div style="margin-top:14px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;">' +
+        '<div style="font:700 11px/1 system-ui;color:#ffd86a;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Geometry over time (' +
+        Math.round((result.durationMs || 120000) / 1000) + 's)</div>' +
+        '<div style="font:600 12px/1.5 ui-monospace,monospace;color:#d8e0f0;">' +
+        result.snapshots.map((s, i) => {
+          const prev = i > 0 ? result.snapshots[i - 1].geo : s.geo;
+          const delta = s.geo - prev;
+          const dSign = i === 0 ? '   ' : (delta >= 0 ? '+' + delta : String(delta));
+          return String(s.tSec).padStart(3, ' ') + 's → geo ' + String(s.geo).padStart(4, ' ') +
+            ' (' + dSign.padStart(4, ' ') + ') · tex ' + s.tex + ' · fps ' + s.fps;
+        }).join('<br>') +
+        '</div>' +
+      '</div>'
+    ) : '') +
+    '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">' +
+      '<button id="pm-rerun" style="flex:1;min-width:140px;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
+        'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run 30s</button>' +
+      '<button id="pm-rerun-long" style="flex:1;min-width:140px;padding:10px;background:linear-gradient(135deg,#8cd2ff,#4ab0e8);color:#0a1830;' +
+        'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run 120s (geo-log)</button>' +
     '</div>' +
     '<div style="margin-top:8px;font:500 10px/1.3 system-ui;color:#98a0b0;text-align:center;">' +
       'Frames sampled: ' + result.duration + ' · ' + result.when.replace('T', ' ').replace(/\..+/, '') +
@@ -17381,7 +17426,9 @@ function pmShowOverlay(result) {
   wrap.appendChild(card);
   document.body.appendChild(wrap);
   document.getElementById('pm-close').addEventListener('click', pmHideOverlay);
-  document.getElementById('pm-rerun').addEventListener('click', () => { pmHideOverlay(); pmStart(); });
+  document.getElementById('pm-rerun').addEventListener('click', () => { pmHideOverlay(); pmStart(PERF_MEASURE_DURATION_MS, false); });
+  const longBtn = document.getElementById('pm-rerun-long');
+  if (longBtn) longBtn.addEventListener('click', () => { pmHideOverlay(); pmStart(PERF_MEASURE_LONG_DURATION_MS, true); });
   wrap.addEventListener('click', (e) => { if (e.target === wrap) pmHideOverlay(); });
 }
 function pmHideOverlay() {
@@ -17389,29 +17436,87 @@ function pmHideOverlay() {
   if (el) el.remove();
 }
 
-// Trigger: trippel-tap top-right 60×60 px inom 700 ms.
+// Trigger med debounce (top-right 60×60 px). Vänta hela TRIGGER_WINDOW_MS
+// innan beslut: 3 taps = 30s, 5+ taps = 120s long med geo-snapshots. Liten
+// "väntar..."-pill visar att tap:en registrerades så användaren inte triggar
+// fler av misstag.
 function pmHandleTap(x, y) {
+  if (_perfMeasure.active) return;
   const w = window.innerWidth;
   if (x < w - PERF_MEASURE_TRIGGER_ZONE || y > PERF_MEASURE_TRIGGER_ZONE) {
-    // Utanför zonen — resetar räknaren
-    _pmTapCount = 0;
+    // Utanför zonen — utforska INTE tap-state (annars resetar debounce mid-flow)
     return;
   }
   const now = performance.now();
-  if (_pmTapCount === 0 || now - _pmFirstTapMs > PERF_MEASURE_TRIGGER_WINDOW_MS) {
+  if (_pmTapCount === 0) {
     _pmTapCount = 1;
     _pmFirstTapMs = now;
+    pmShowDebouncePill();
+    if (_pmDebounceTimer) clearTimeout(_pmDebounceTimer);
+    _pmDebounceTimer = setTimeout(pmDecideMode, PERF_MEASURE_TRIGGER_WINDOW_MS);
     return;
   }
-  _pmTapCount++;
-  if (_pmTapCount >= 3) {
+  if (now - _pmFirstTapMs <= PERF_MEASURE_TRIGGER_WINDOW_MS) {
+    _pmTapCount++;
+    pmUpdateDebouncePill();
+  } else {
+    // Race: timern har inte hunnit fira än men vi ar bortom 1200ms-fonstret.
+    // Avbryt pending timer + nollställ count + pill. Nästa tap startar ett nytt fönster.
+    if (_pmDebounceTimer) { clearTimeout(_pmDebounceTimer); _pmDebounceTimer = 0; }
     _pmTapCount = 0;
-    // Visa senaste resultat om finns + Rerun-knapp; annars starta direkt.
-    let prev = null;
-    try { prev = JSON.parse(localStorage.getItem(PERF_MEASURE_STORAGE_KEY) || 'null'); } catch (_) {}
-    if (prev && !_perfMeasure.active) pmShowOverlay(prev);
-    else if (!_perfMeasure.active) pmStart();
+    pmRemoveDebouncePill();
   }
+}
+function pmDecideMode() {
+  pmRemoveDebouncePill();
+  const count = _pmTapCount;
+  _pmTapCount = 0;
+  _pmDebounceTimer = 0;
+  if (_perfMeasure.active) return;
+  let prev = null;
+  try { prev = JSON.parse(localStorage.getItem(PERF_MEASURE_STORAGE_KEY) || 'null'); } catch (_) {}
+  if (count >= 5) {
+    // Long-mode: kör DIREKT (skip overlay-visning av tidigare resultat —
+    // användaren har redan signalerat tydlig intent med 5 taps).
+    pmStart(PERF_MEASURE_LONG_DURATION_MS, true);
+  } else if (count >= 3) {
+    // Normal-mode: visa tidigare resultat om finns, annars starta.
+    if (prev) pmShowOverlay(prev);
+    else pmStart(PERF_MEASURE_DURATION_MS, false);
+  }
+  // < 3 taps = ignorera helt
+}
+function pmShowDebouncePill() {
+  pmRemoveDebouncePill();
+  const el = document.createElement('div');
+  el.id = 'pm-debounce-pill';
+  el.style.cssText = 'position:fixed;top:max(6px,env(safe-area-inset-top));' +
+    'right:max(70px,calc(env(safe-area-inset-right) + 70px));' +
+    'background:rgba(0,0,0,0.82);border:1px solid rgba(140,210,255,0.6);' +
+    'border-radius:8px;padding:4px 9px;color:#aee0ff;' +
+    'font:700 11px/1 system-ui,sans-serif;letter-spacing:0.4px;z-index:9999;' +
+    'pointer-events:none;';
+  el.textContent = '⏱ 1/3';
+  document.body.appendChild(el);
+}
+function pmUpdateDebouncePill() {
+  const el = document.getElementById('pm-debounce-pill');
+  if (!el) return;
+  if (_pmTapCount >= 5) {
+    el.textContent = '⏱ ' + _pmTapCount + ' → LONG';
+    el.style.color = '#ffd86a';
+    el.style.borderColor = 'rgba(255,216,106,0.7)';
+  } else if (_pmTapCount >= 3) {
+    el.textContent = '⏱ ' + _pmTapCount + '/3+';
+    el.style.color = '#7fff7f';
+    el.style.borderColor = 'rgba(127,255,127,0.7)';
+  } else {
+    el.textContent = '⏱ ' + _pmTapCount + '/3';
+  }
+}
+function pmRemoveDebouncePill() {
+  const el = document.getElementById('pm-debounce-pill');
+  if (el) el.remove();
 }
 // Global touch/click-listener (passive — påverkar inte spel).
 document.addEventListener('touchstart', (e) => {
