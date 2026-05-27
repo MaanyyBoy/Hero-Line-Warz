@@ -186,8 +186,8 @@ const CHARACTER_ASSETS = {
   bosswars_1: 'enemies/Ultimate animated monsters pack/Big/glTF/Cactoro.gltf',       // T1 Captain (forest)
   bosswars_2: 'enemies/Ultimate animated monsters pack/Big/glTF/MushroomKing.gltf',  // T2 General (sanctum)
   bosswars_3: 'enemies/Ultimate animated monsters pack/Big/glTF/Yeti.gltf',          // T3 Warlord (lab)
-  bosswars_4: 'enemies/Ultimate animated monsters pack/Big/glTF/Demon.gltf',         // T4 Demon Prince (hive)
-  bosswars_5: 'enemies/Ultimate animated monsters pack/Big/glTF/Dino.gltf',          // T5 Dragon King (volcano)
+  bosswars_4: 'enemies/Ultimate animated monsters pack/Big/glTF/Dino.gltf',          // T4 Demon Prince (bytt till Dino-mesh 2026-05-27)
+  bosswars_5: 'enemies/Ultimate animated monsters pack/Big/glTF/Demon.gltf',         // T5 Dragon King (bytt till Demon-mesh 2026-05-27)
 };
 // Mobil-OOM-fix: dessa ~75 MB character-GLB:er laddas INTE i den initiala
 // preloaden — bara i de lägen som faktiskt behöver dem. Wave-bossar (wave
@@ -3955,8 +3955,8 @@ const BOSS_SCALE = {
   bosswars_1: 1.6,   // Cactoro (Captain)
   bosswars_2: 1.3,   // MushroomKing (General)
   bosswars_3: 2.1,   // Yeti (Warlord)
-  bosswars_4: 2.3,   // Demon (Demon Prince)
-  bosswars_5: 1.6,   // Dino (Dragon King)
+  bosswars_4: 1.6,   // Dino-mesh (Demon Prince) — scale flyttad fran bosswars_5
+  bosswars_5: 2.3,   // Demon-mesh (Dragon King) — scale flyttad fran bosswars_4
 };
 
 // Decision 048: Quaternius wave-monster per tier ersätter KayKit-skeleton.
