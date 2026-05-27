@@ -10371,6 +10371,7 @@ function cleanupTelegraphMesh(cast) {
   });
   scene.remove(cast.telegraphMesh);
   cast.telegraphMesh = null;
+  _leakDiag.nc.telegraphCleanup++;
 }
 
 function cleanupExecuteMesh(cast) {
@@ -10387,6 +10388,7 @@ function cleanupExecuteMesh(cast) {
     }
     scene.remove(obj);
   }
+  _leakDiag.nc.executeMeshCleanup++;
 }
 
 // ===== TELEGRAPHS =====
@@ -10396,6 +10398,7 @@ function spawnBossTelegraph(side, m, cast) {
   const grp = new THREE.Group();
   scene.add(grp);
   cast.telegraphMesh = grp;
+  _leakDiag.nc.telegraphSpawn++;
   // Y-offset: boss-wars-platformen är på y=0.42, så telegraphs måste vara ovanpå
   const gY = (APP.gameMode === 'bosswars') ? 0.48 : 0.08;
   const matRed = () => new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
@@ -10824,6 +10827,7 @@ function spawnBossProjectile(side, m, x, z, dx, dz, skill) {
     range: skill.range || 14,
     traveled: 0,
   });
+  _leakDiag.nc.bossProjSpawn++;
 }
 
 function tickBossProjectiles(side, dt) {
@@ -10849,12 +10853,14 @@ function tickBossProjectiles(side, dt) {
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
       side.bossProjectiles.splice(i, 1);
+      _leakDiag.nc.bossProjDispose++;
       continue;
     }
     if (p.traveled > p.range) {
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
       side.bossProjectiles.splice(i, 1);
+      _leakDiag.nc.bossProjDispose++;
     }
   }
 }
@@ -10880,6 +10886,7 @@ function spawnPoolDot(side, m, x, z, radius, duration, dpsMul, color = 0x66dd33,
     slow,
     color,
   });
+  _leakDiag.nc.bossPoolSpawn++;
 }
 
 function tickBossPools(side, dt) {
@@ -10921,6 +10928,7 @@ function tickBossPools(side, dt) {
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
       side.bossPools.splice(i, 1);
+      _leakDiag.nc.bossPoolDispose++;
     }
   }
 }
@@ -10935,6 +10943,7 @@ function spawnSweepBeamMesh(cast) {
   scene.add(beam);
   cast.extras.beamMesh = beam;
   cast.extras.meshes = [beam];
+  _leakDiag.nc.sweepBeamSpawn++;
 }
 
 function spawnSustainedConeMesh(cast) {
@@ -10960,6 +10969,7 @@ function spawnSustainedConeMesh(cast) {
   scene.add(cone);
   cast.extras.coneMesh = cone;
   cast.extras.meshes = [cone];
+  _leakDiag.nc.sustainedConeSpawn++;
 }
 
 // Tickar aura: pulsering + sporadiska smoke-puffs i världen runt boss
@@ -17213,6 +17223,7 @@ const _perfMeasure = {
   programs: 0,
   sampleGeo: false,                    // long-mode flag
   geoSnapshots: [],                    // [{ tSec, geo, tex, calls, fps }]
+  leakSnapshots: [],                   // [_leakSnapshotNow()] per 10s (long-mode)
   nextGeoSampleMs: 0,
 };
 // Oberoende tap-counters per zon (ingen debounce, ingen pill — direkt 3-tap-trigger).
@@ -17240,13 +17251,15 @@ function pmCollectFrame(frameMs) {
   const elapsed = performance.now() - _perfMeasure.startMs;
   // Long-mode: var 10:e sek, snapshot geometries + textures + draw calls + nuvarande FPS
   if (_perfMeasure.sampleGeo && elapsed >= _perfMeasure.nextGeoSampleMs) {
+    const tSec = Math.round(elapsed / 1000);
     _perfMeasure.geoSnapshots.push({
-      tSec: Math.round(elapsed / 1000),
+      tSec,
       geo: _perfMeasure.geometries,
       tex: _perfMeasure.textures,
       calls: renderer.info && renderer.info.render ? renderer.info.render.calls : 0,
       fps: frameMs > 0 ? Math.round(1000 / frameMs) : 0,
     });
+    _perfMeasure.leakSnapshots.push(_leakSnapshotNow(tSec));
     _perfMeasure.nextGeoSampleMs += PERF_MEASURE_GEO_SAMPLE_INTERVAL_MS;
   }
   // Uppdatera countdown-indikator
@@ -17296,6 +17309,7 @@ function pmFinish() {
     programs: _perfMeasure.programs,
     mode: APP.mode + '/' + (APP.gameMode || '?'),
     snapshots: _perfMeasure.sampleGeo ? _perfMeasure.geoSnapshots.slice() : null,
+    leakSnapshots: _perfMeasure.sampleGeo ? _perfMeasure.leakSnapshots.slice() : null,
   };
   try { localStorage.setItem(PERF_MEASURE_STORAGE_KEY, JSON.stringify(result)); } catch (_) {}
   pmRemoveIndicator();
@@ -17305,6 +17319,7 @@ function pmFinish() {
   _perfMeasure.drawCalls.length = 0;
   _perfMeasure.triangles.length = 0;
   _perfMeasure.geoSnapshots.length = 0;
+  _perfMeasure.leakSnapshots.length = 0;
   _perfMeasure.sampleGeo = false;
 }
 
@@ -17318,7 +17333,9 @@ function pmStart(durationMs, sampleGeo) {
   _perfMeasure.drawCalls.length = 0;
   _perfMeasure.triangles.length = 0;
   _perfMeasure.geoSnapshots.length = 0;
+  _perfMeasure.leakSnapshots.length = 0;
   _perfMeasure.nextGeoSampleMs = 0;     // första snap vid t=0
+  _leakReset();                         // räknare börjar från 0 vid varje mätning
   pmHideOverlay();
   pmAddIndicator();
 }
@@ -17421,6 +17438,76 @@ function pmShowOverlay(result) {
         '</div>' +
       '</div>'
     ) : '') +
+    // Leak-tabell: per-kind spawned/disposed/alive vid slut + non-combatFx
+    (result.leakSnapshots && result.leakSnapshots.length ? (() => {
+      const last = result.leakSnapshots[result.leakSnapshots.length - 1];
+      const kinds = new Set([
+        ...Object.keys(last.spawned || {}),
+        ...Object.keys(last.disposed || {}),
+        ...Object.keys(last.current || {}),
+      ]);
+      const rows = [];
+      for (const k of kinds) {
+        const sp = last.spawned[k] || 0;
+        const di = last.disposed[k] || 0;
+        const cu = last.current[k] || 0;
+        const leak = sp - di - cu;
+        rows.push({ k, sp, di, cu, leak });
+      }
+      rows.sort((a, b) => (b.leak - a.leak) || (b.sp - a.sp));
+      const fmt = (v, w) => String(v).padStart(w, ' ');
+      const header =
+        fmt('kind', 22) + ' ' +
+        fmt('spawn', 6) + ' ' +
+        fmt('disp', 6) + ' ' +
+        fmt('alive', 6) + ' ' +
+        fmt('LEAK', 6);
+      const rowsHtml = rows.map(r => {
+        const leakColor = r.leak > 5 ? '#ff7766' : r.leak > 0 ? '#ffcc55' : '#7fff7f';
+        return '<div>' +
+          fmt(r.k.slice(0, 22), 22) + ' ' +
+          fmt(r.sp, 6) + ' ' +
+          fmt(r.di, 6) + ' ' +
+          fmt(r.cu, 6) + ' ' +
+          '<span style="color:' + leakColor + '">' + fmt(r.leak, 6) + '</span>' +
+          '</div>';
+      }).join('');
+      const nc = last.nc || {};
+      const ncRows = [
+        ['telegraph', nc.telegraphSpawn, nc.telegraphCleanup],
+        ['bossProj', nc.bossProjSpawn, nc.bossProjDispose],
+        ['bossPool', nc.bossPoolSpawn, nc.bossPoolDispose],
+        ['sweepBeam', nc.sweepBeamSpawn, '—'],
+        ['sustainedCone', nc.sustainedConeSpawn, '—'],
+        ['executeMesh', '—', nc.executeMeshCleanup],
+      ];
+      const ncHtml = ncRows.map(([n, sp, di]) => {
+        const leak = (typeof sp === 'number' && typeof di === 'number') ? (sp - di) : null;
+        const leakStr = leak == null ? '  ?  ' : (leak > 0 ? '+' + leak : String(leak));
+        const leakColor = leak == null ? '#98a0b0' : leak > 5 ? '#ff7766' : leak > 0 ? '#ffcc55' : '#7fff7f';
+        return '<div>' +
+          fmt(n, 16) + ' ' +
+          fmt(sp, 6) + ' ' +
+          fmt(di, 6) + ' ' +
+          '<span style="color:' + leakColor + '">' + fmt(leakStr, 6) + '</span>' +
+          '</div>';
+      }).join('');
+      return (
+        '<div style="margin-top:14px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;">' +
+          '<div style="font:700 11px/1 system-ui;color:#ffd86a;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">combatFx per kind (sorted by LEAK)</div>' +
+          '<div style="font:600 11px/1.5 ui-monospace,monospace;color:#d8e0f0;white-space:pre;">' +
+          header + '<br>' + rowsHtml +
+          '</div>' +
+        '</div>' +
+        '<div style="margin-top:10px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;">' +
+          '<div style="font:700 11px/1 system-ui;color:#ffd86a;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">non-combatFx spawners</div>' +
+          '<div style="font:600 11px/1.5 ui-monospace,monospace;color:#d8e0f0;white-space:pre;">' +
+          fmt('source', 16) + ' ' + fmt('spawn', 6) + ' ' + fmt('disp', 6) + ' ' + fmt('LEAK', 6) + '<br>' +
+          ncHtml +
+          '</div>' +
+        '</div>'
+      );
+    })() : '') +
     '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button id="pm-rerun" style="flex:1;min-width:140px;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
         'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run 30s</button>' +
@@ -27482,6 +27569,51 @@ function checkIncomeTickNotifications() {
 // ============================================================
 const combatFx = [];
 
+// === LEAK DIAGNOSTICS (TEMP — geometri-läcka-felsökning, ta bort efter fix) ===
+// Räknar spawned/disposed per combatFx-kind + non-combatFx-spawn-sites.
+// pmCollectFrame samlar snapshot per 10s i long-mode → tabell i overlayen.
+const _leakDiag = {
+  spawnedByKind: new Map(),     // kind -> total push-count sedan reset
+  disposedByKind: new Map(),    // kind -> total dispose-count sedan reset
+  nc: {                         // non-combatFx spawn/dispose-counters
+    telegraphSpawn: 0, telegraphCleanup: 0,
+    bossProjSpawn: 0, bossProjDispose: 0,
+    bossPoolSpawn: 0, bossPoolDispose: 0,
+    sweepBeamSpawn: 0, sustainedConeSpawn: 0,
+    executeMeshCleanup: 0,
+  },
+};
+function _leakBump(map, key) { map.set(key, (map.get(key) || 0) + 1); }
+function _leakReset() {
+  _leakDiag.spawnedByKind.clear();
+  _leakDiag.disposedByKind.clear();
+  for (const k in _leakDiag.nc) _leakDiag.nc[k] = 0;
+}
+function _leakSnapshotNow(tSec) {
+  const cur = new Map();
+  for (const e of combatFx) {
+    const k = (e && e.kind) || 'unknown';
+    cur.set(k, (cur.get(k) || 0) + 1);
+  }
+  const mapToObj = (m) => { const o = {}; m.forEach((v, k) => { o[k] = v; }); return o; };
+  return {
+    tSec,
+    spawned: mapToObj(_leakDiag.spawnedByKind),
+    disposed: mapToObj(_leakDiag.disposedByKind),
+    current: mapToObj(cur),
+    nc: { ..._leakDiag.nc },
+  };
+}
+// Wrappa combatFx.push så varje push bumpar spawn-counter (ingen call-site-edit behövs).
+const _origCombatFxPush = combatFx.push;
+combatFx.push = function() {
+  for (let i = 0; i < arguments.length; i++) {
+    const entry = arguments[i];
+    _leakBump(_leakDiag.spawnedByKind, (entry && entry.kind) || 'unknown');
+  }
+  return _origCombatFxPush.apply(this, arguments);
+};
+
 // Boss-AA charge-FX: ring + uppåt-flammor vid bossens fot för att markera AA
 // så animationen syns omedelbart även om mesh:n inte hunnit spela attack-clip.
 // Tier styr färg (1=grön, 2=lila, 3=cyan, 4=röd, 5=vit-blå).
@@ -28166,6 +28298,7 @@ function tickCombatFx(dt) {
       if (e.fxLight) releaseFxLight(e.fxLight);
       scene.remove(e.mesh);
       combatFx.splice(i, 1);
+      _leakBump(_leakDiag.disposedByKind, e.kind || 'unknown');
       continue;
     }
     const t = 1 - e.life / e.maxLife;
