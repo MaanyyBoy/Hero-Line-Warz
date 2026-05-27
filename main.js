@@ -11939,6 +11939,7 @@ function hostSpawnMonsterProjectile(targetSide, monster) {
     isBoss: !!monster.isBoss,
     isMiniBoss: !!monster.isMiniBoss,
   });
+  _leakDiag.nc.monsterProjSpawn++;
 }
 
 function updateMonsterProjectiles(side, dt) {
@@ -11948,6 +11949,7 @@ function updateMonsterProjectiles(side, dt) {
     if (!side.hero || side.hero.dead) {
       scene.remove(p.mesh);
       side.monsterProjectiles.splice(i, 1);
+      _leakDiag.nc.monsterProjDispose++;
       continue;
     }
     p.timer = Math.max(0, p.timer - dt);
@@ -11994,6 +11996,7 @@ function updateMonsterProjectiles(side, dt) {
         }
       });
       side.monsterProjectiles.splice(i, 1);
+      _leakDiag.nc.monsterProjDispose++;
     }
   }
 }
@@ -13192,6 +13195,7 @@ function spawnSoulDrainExplosion(side, opp, x, z, damage) {
     x, z,
     life: 0.55, maxLife: 0.55,
   });
+  _leakDiag.nc.soulExplosionSpawn++;
   // Burst-partiklar runt explosion-center
   for (let i = 0; i < 16; i++) {
     const ang = Math.random() * Math.PI * 2;
@@ -13265,6 +13269,7 @@ function tickSoulExplosions(side, dt) {
       dispose(e.ring); dispose(e.flash); dispose(e.halo);
       if (e.light) releaseFxLight(e.light);
       side.soulExplosions.splice(i, 1);
+      _leakDiag.nc.soulExplosionDispose++;
     }
   }
 }
@@ -17480,6 +17485,8 @@ function pmShowOverlay(result) {
         ['sweepBeam', nc.sweepBeamSpawn, '—'],
         ['sustainedCone', nc.sustainedConeSpawn, '—'],
         ['executeMesh', '—', nc.executeMeshCleanup],
+        ['monsterProj', nc.monsterProjSpawn, nc.monsterProjDispose],
+        ['soulExplosion', nc.soulExplosionSpawn, nc.soulExplosionDispose],
       ];
       const ncHtml = ncRows.map(([n, sp, di]) => {
         const leak = (typeof sp === 'number' && typeof di === 'number') ? (sp - di) : null;
@@ -17492,6 +17499,31 @@ function pmShowOverlay(result) {
           '<span style="color:' + leakColor + '">' + fmt(leakStr, 6) + '</span>' +
           '</div>';
       }).join('');
+      // RUNDA 2: live entity-arrays + scene.children över tid. Om någon kolumn
+      // växer monotont över alla snapshots → smoking gun för persistenta orbs.
+      const entKeys = Object.keys(last.ents || {});
+      // Beräkna delta-tillväxt mellan första och sista snapshot per ent-key.
+      const first = result.leakSnapshots[0];
+      const growth = entKeys.map(k => ({
+        k,
+        first: (first.ents || {})[k] || 0,
+        last: (last.ents || {})[k] || 0,
+      })).map(r => ({ ...r, grew: r.last - r.first }));
+      growth.sort((a, b) => b.grew - a.grew);
+      const entHeader = fmt('array', 18) + ' ' + fmt('first', 6) + ' ' + fmt('last', 6) + ' ' + fmt('GREW', 6);
+      const entHtml = growth.map(r => {
+        const c = r.grew > 5 ? '#ff7766' : r.grew > 0 ? '#ffcc55' : '#7fff7f';
+        return '<div>' +
+          fmt(r.k.slice(0, 18), 18) + ' ' +
+          fmt(r.first, 6) + ' ' +
+          fmt(r.last, 6) + ' ' +
+          '<span style="color:' + c + '">' + fmt(r.grew, 6) + '</span>' +
+          '</div>';
+      }).join('');
+      const sceneFirst = first.sceneChildren || 0;
+      const sceneLast = last.sceneChildren || 0;
+      const sceneGrew = sceneLast - sceneFirst;
+      const sceneColor = sceneGrew > 5 ? '#ff7766' : sceneGrew > 0 ? '#ffcc55' : '#7fff7f';
       return (
         '<div style="margin-top:14px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;">' +
           '<div style="font:700 11px/1 system-ui;color:#ffd86a;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">combatFx per kind (sorted by LEAK)</div>' +
@@ -17504,6 +17536,16 @@ function pmShowOverlay(result) {
           '<div style="font:600 11px/1.5 ui-monospace,monospace;color:#d8e0f0;white-space:pre;">' +
           fmt('source', 16) + ' ' + fmt('spawn', 6) + ' ' + fmt('disp', 6) + ' ' + fmt('LEAK', 6) + '<br>' +
           ncHtml +
+          '</div>' +
+        '</div>' +
+        '<div style="margin-top:10px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;">' +
+          '<div style="font:700 11px/1 system-ui;color:#ffd86a;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">live entity-arrays (first→last)</div>' +
+          '<div style="font:600 11px/1.5 ui-monospace,monospace;color:#d8e0f0;white-space:pre;">' +
+          entHeader + '<br>' + entHtml +
+          '<div style="border-top:1px solid rgba(255,255,255,0.18);margin-top:4px;padding-top:4px;">' +
+          fmt('scene.children', 18) + ' ' + fmt(sceneFirst, 6) + ' ' + fmt(sceneLast, 6) + ' ' +
+          '<span style="color:' + sceneColor + '">' + fmt(sceneGrew, 6) + '</span>' +
+          '</div>' +
           '</div>' +
         '</div>'
       );
@@ -27581,6 +27623,11 @@ const _leakDiag = {
     bossPoolSpawn: 0, bossPoolDispose: 0,
     sweepBeamSpawn: 0, sustainedConeSpawn: 0,
     executeMeshCleanup: 0,
+    // RUNDA 2: visuella orbs som ackumulerar.
+    // Hero-projektiler täcks av ents.projectiles (live-array-count) → ingen
+    // separat spawn/dispose-räknare här.
+    monsterProjSpawn: 0, monsterProjDispose: 0,
+    soulExplosionSpawn: 0, soulExplosionDispose: 0,
   },
 };
 function _leakBump(map, key) { map.set(key, (map.get(key) || 0) + 1); }
@@ -27596,12 +27643,31 @@ function _leakSnapshotNow(tSec) {
     cur.set(k, (cur.get(k) || 0) + 1);
   }
   const mapToObj = (m) => { const o = {}; m.forEach((v, k) => { o[k] = v; }); return o; };
+  // RUNDA 2: räkna LIVE entity-arrays per side (visar om någon array ackumulerar
+  // utan dispose — då växer .length över tid → smoking gun för persistenta orbs).
+  const ents = {
+    projectiles: 0, monsterProjectiles: 0, bossProjectiles: 0, bossPools: 0,
+    soulExplosions: 0, fireballs: 0, novaEffects: 0, creepProjectiles: 0,
+    shatters: 0, blackHoles: 0, vineTraps: 0,
+  };
+  try {
+    for (const idx of [1, 2, 3, 4]) {
+      const s = (typeof sides !== 'undefined' && sides) ? sides[idx] : null;
+      if (!s) continue;
+      for (const key in ents) {
+        if (Array.isArray(s[key])) ents[key] += s[key].length;
+      }
+    }
+  } catch (_) {}
+  const sceneChildren = (typeof scene !== 'undefined' && scene && scene.children) ? scene.children.length : 0;
   return {
     tSec,
     spawned: mapToObj(_leakDiag.spawnedByKind),
     disposed: mapToObj(_leakDiag.disposedByKind),
     current: mapToObj(cur),
     nc: { ..._leakDiag.nc },
+    ents,
+    sceneChildren,
   };
 }
 // Wrappa combatFx.push så varje push bumpar spawn-counter (ingen call-site-edit behövs).
