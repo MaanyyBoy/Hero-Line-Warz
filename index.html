@@ -1281,6 +1281,61 @@
       font-size: 15px;
       border-radius: 14px;
     }
+    /* Currency-display — bredvid EVENT till vänster (gold + diamond chip).
+       Visas bara på hemskärmen (home-active). */
+    #home-currency {
+      position: fixed;
+      top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      right: max(158px, calc(env(safe-area-inset-right) + 150px));   /* event right + width + gap */
+      height: 50px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      z-index: 105;
+      pointer-events: auto;
+    }
+    #lobby:not(.home-active) #home-currency { display: none; }
+    /* Shop-sidan ska också visa currency (top-display) */
+    #lobby.shop-active #home-currency { display: flex; }
+    #home-currency .curr-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      height: 36px;
+      padding: 0 4px 0 10px;
+      background: linear-gradient(135deg, rgba(40,30,15,0.85), rgba(20,15,8,0.85));
+      border: 1px solid rgba(255,210,120,0.55);
+      border-radius: 18px;
+      font: 800 14px/1 system-ui, sans-serif;
+      color: #ffe6a0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+    }
+    #home-currency .curr-chip[data-curr="diamond"] {
+      background: linear-gradient(135deg, rgba(20,30,55,0.85), rgba(10,15,35,0.85));
+      border-color: rgba(140,210,255,0.55);
+      color: #aee0ff;
+    }
+    #home-currency .curr-icon { font-size: 16px; }
+    #home-currency .curr-val { min-width: 30px; text-align: right; }
+    #home-currency .curr-plus {
+      width: 22px; height: 22px;
+      margin-left: 2px;
+      padding: 0;
+      background: rgba(255,210,120,0.95);
+      color: #2a1808;
+      border: 0;
+      border-radius: 11px;
+      font: 800 16px/22px system-ui, sans-serif;
+      cursor: pointer;
+      transition: transform 0.08s, background 0.12s;
+    }
+    #home-currency .curr-chip[data-curr="diamond"] .curr-plus {
+      background: rgba(140,210,255,0.95);
+      color: #0a1830;
+    }
+    #home-currency .curr-plus:hover { transform: scale(1.12); }
+    #home-currency .curr-plus:active { transform: scale(0.92); }
+
     /* EVENT — uppe höger */
     #btn-event {
       top: max(14px, calc(env(safe-area-inset-top) + 6px));
@@ -3358,6 +3413,18 @@
           <path d="M2.5 7 L12 13 L21.5 7"/>
         </svg>
       </button>
+      <div id="home-currency">
+        <div class="curr-chip" data-curr="gold">
+          <span class="curr-icon">💰</span>
+          <span class="curr-val" id="curr-gold-val">0</span>
+          <button class="curr-plus" id="curr-gold-plus" aria-label="Buy gold">+</button>
+        </div>
+        <div class="curr-chip" data-curr="diamond">
+          <span class="curr-icon">💎</span>
+          <span class="curr-val" id="curr-diamond-val">0</span>
+          <button class="curr-plus" id="curr-diamond-plus" aria-label="Buy diamonds">+</button>
+        </div>
+      </div>
       <button class="home-btn aura" id="btn-event">Event</button>
       <button class="home-btn" id="btn-leaderboard">Leaderboard</button>
       <div id="home-dock">

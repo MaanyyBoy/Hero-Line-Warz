@@ -25556,10 +25556,39 @@ function openComingSoon(name) {
 }
 // Decision 112: btn-friends + btn-leaderboard har egna modaler (se längre ner).
 // btn-mail stannar som "Coming Soon" tills användaren bestämmer mail-funktionalitet.
-for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-event', 'Event'], ['btn-avatar', 'Profile'], ['btn-shop', 'Shop'], ['btn-mail', 'Mail']]) {
+// btn-event, btn-shop hanteras längre ner (egna sidor 2026-05-26).
+for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], ['btn-avatar', 'Profile'], ['btn-mail', 'Mail']]) {
   const csBtn = document.getElementById(csId);
   if (csBtn) csBtn.addEventListener('click', () => openComingSoon(csLabel));
 }
+
+// Currency-plus-knappar → öppna shop med rätt sektion förvald.
+// openShop() definieras i shop-page-blocket längre ner. Eftersom JS hoistar
+// funktions-deklarationer kan event-listener-anropet stå här innan blocket.
+const _currGoldPlus = document.getElementById('curr-gold-plus');
+const _currDiamondPlus = document.getElementById('curr-diamond-plus');
+if (_currGoldPlus) _currGoldPlus.addEventListener('click', (e) => { e.stopPropagation(); openShop('gold'); });
+if (_currDiamondPlus) _currDiamondPlus.addEventListener('click', (e) => { e.stopPropagation(); openShop('diamonds'); });
+
+// Shop-stub (riktig shop-sida byggs i nästa commit). Tillfälligt: öppna
+// coming-soon med 'Shop'-titel + förvald sektion i argumentet.
+function openShop(section) {
+  openComingSoon('Shop — ' + (section || 'Heroes'));
+}
+// Event-stub (riktig event-sida byggs i nästa commit).
+function openEvent() {
+  openComingSoon('Event');
+}
+
+// btn-shop + btn-event hooks (flyttade ut ur coming-soon-loopen ovan så de
+// kan pekas mot egna sidor när dessa byggs).
+const _btnShop = document.getElementById('btn-shop');
+if (_btnShop) _btnShop.addEventListener('click', () => openShop('heroes'));
+const _btnEventEl = document.getElementById('btn-event');
+if (_btnEventEl) _btnEventEl.addEventListener('click', openEvent);
+
+// Initial currency-display + safe-call (anropas igen vid setCurrency).
+try { updateCurrencyDisplay(); } catch (_) {}
 
 // ============================================================
 // Decision 112: PLAYER PROFILE + LEADERBOARDS + FRIENDS (localStorage MVP)
@@ -25571,6 +25600,48 @@ for (const [csId, csLabel] of [['btn-skins', 'Skins'], ['btn-level', 'Level'], [
 
 const LB_STORAGE_KEY = 'hellborneLeaderboardV1';
 const FRIENDS_STORAGE_KEY = 'hellborneFriendsV1';
+const CURRENCY_STORAGE_KEY = 'hellborneCurrencyV1';
+
+// In-game currency: gold + diamonds (localStorage MVP). Seedas vid första start
+// så användaren har lite att jobba med.
+function getCurrency() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(CURRENCY_STORAGE_KEY) || 'null'); } catch (_) {}
+  if (!data || typeof data !== 'object') {
+    data = { gold: 1000, diamonds: 100 };
+    try { localStorage.setItem(CURRENCY_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+  if (typeof data.gold !== 'number') data.gold = 0;
+  if (typeof data.diamonds !== 'number') data.diamonds = 0;
+  return data;
+}
+function setCurrency(gold, diamonds) {
+  const data = { gold: Math.max(0, Math.floor(gold)), diamonds: Math.max(0, Math.floor(diamonds)) };
+  try { localStorage.setItem(CURRENCY_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+  updateCurrencyDisplay();
+  return data;
+}
+function addGold(n) { const c = getCurrency(); return setCurrency(c.gold + n, c.diamonds); }
+function addDiamonds(n) { const c = getCurrency(); return setCurrency(c.gold, c.diamonds + n); }
+function spendGold(n) {
+  const c = getCurrency();
+  if (c.gold < n) return false;
+  setCurrency(c.gold - n, c.diamonds);
+  return true;
+}
+function spendDiamonds(n) {
+  const c = getCurrency();
+  if (c.diamonds < n) return false;
+  setCurrency(c.gold, c.diamonds - n);
+  return true;
+}
+function updateCurrencyDisplay() {
+  const c = getCurrency();
+  const gEl = document.getElementById('curr-gold-val');
+  const dEl = document.getElementById('curr-diamond-val');
+  if (gEl) gEl.textContent = c.gold.toLocaleString();
+  if (dEl) dEl.textContent = c.diamonds.toLocaleString();
+}
 const USERNAME_STORAGE_KEY = 'hellborneUsernameV1';
 
 function getLocalUsername() {
