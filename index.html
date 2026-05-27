@@ -1265,7 +1265,11 @@
       padding: 0;
       overflow: hidden;
     }
-    #btn-avatar svg { width: 100%; height: 100%; display: block; }
+    /* pointer-events: none så klicket går direkt till button-elementet
+       istället för att SVG fångar det (klick-event bubblar fortfarande
+       upp men vissa browsers/mobil hanterar pekare/click konstigt på
+       SVG-children). */
+    #btn-avatar svg { width: 100%; height: 100%; display: block; pointer-events: none; }
 
     /* Shop-sida (lobby-shop) — full-screen ny sida med sidebar pa vanster
        kant + content centrerad i mitten. Currency top-right (samma position
