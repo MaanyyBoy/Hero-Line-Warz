@@ -321,7 +321,7 @@ async function preloadAllAssets() {
 
   // Loading-skärmens titel växlar mellan två fraser tills skärmen döljs.
   const _alTitleEl = document.querySelector('#asset-loading .al-title');
-  const _alPhrases = ['Preparing heroes', 'Waking up monsters', 'Eri fik Kostef', 'bedi nikak Kostef'];
+  const _alPhrases = ['Preparing heroes', 'Waking up monsters', 'Feeding bosses'];
   let _alPhraseIdx = 0;
   const _alTitleTimer = setInterval(() => {
     const _al = document.getElementById('asset-loading');

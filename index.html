@@ -3759,7 +3759,9 @@
       z-index: 1500;
       font: 14px/1.4 system-ui, sans-serif;
       text-align: center;
-      padding: 24px 24px 46px;
+      /* Padding-bottom mindre (46→22) så titel/spinner sitter närmare
+         botten av skarmen (user-onskemal 2026-05-27). */
+      padding: 24px 24px 22px;
     }
     #asset-loading.hidden { display: none; }
     #asset-loading .al-spinner {
@@ -3772,10 +3774,10 @@
     }
     @keyframes al-spin { to { transform: rotate(360deg); } }
     #asset-loading .al-title {
-      font: 700 22px/1.2 system-ui, sans-serif;
-      color: #ffd34a;
-      letter-spacing: 1px;
-      margin-bottom: 14px;
+      font: 600 14px/1.2 system-ui, sans-serif;
+      color: #ffffff;
+      letter-spacing: 0.6px;
+      margin-bottom: 18px;
       text-shadow: 0 2px 9px rgba(0,0,0,0.95);
     }
     /* Loading-bar — tunn streck längst ner på skärmen, full bredd
