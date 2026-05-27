@@ -7505,6 +7505,31 @@ function buildBossWarsScene() {
   // Atmospheric arena-arkitektur: 8 stenkolonner runt arena med facklor +
   // banderoller + theme-specifika accents (waterfall/chain/tech/crystal/lava).
   buildBossArenaArchitecture(tier, map);
+
+  // ===========================================================================
+  // PRE-WARM 1 (Boss Wars arena) — decision 072-monstret applicerat for boss-
+  // wars (2026-05-27 perf-diagnos: 1% low FPS 44→29 vid kamerarorelse + programs
+  // +2 = shader-compile-stalls mid-game). renderer.compile() kompilerar alla
+  // material-shaders + uploadar texturer NU under scen-bygget (= loading-skarm-
+  // tid, inte mid-game). Synkron blocking 100-500ms acceptabel hee — battre an
+  // samma stall mitt under wave-spawn nar spelaren styr hjalten.
+  //
+  // Galler bara aktuell tier. Vid tier-byte triggar buildBossWarsScene en ny
+  // scene-build (builtForTier-check) → pre-warm korar igen for nya tier.
+  //
+  // Boss-meshen ar INTE spawnad an vid denna punkt → Pre-warm 2 i
+  // spawnBossWarsBoss tacker bossens shaders.
+  //
+  // TODO (ads-helper-task): nar ad-spawn-systemet byggs → lagg till en Pre-warm
+  // 3 efter forsta ad-spawn (efter att forsta ad-mesh ar tillagt till scenen)
+  // sa ad-meshes shader inte stallar mid-game.
+  // ===========================================================================
+  if (renderer && camera) {
+    const wasVisible = bossWarsSceneGroup.visible;
+    bossWarsSceneGroup.visible = true;
+    try { renderer.compile(scene, camera); } catch (_) { /* best-effort */ }
+    bossWarsSceneGroup.visible = wasVisible;
+  }
 }
 
 // Decision 049: tier-färgad fackla (sten-bracket + flame-cone, emissive-only).
@@ -7845,6 +7870,20 @@ function spawnBossWarsBoss(side, tier) {
     if (o.isMesh) o.castShadow = false;
   });
   scene.add(mesh);
+
+  // ===========================================================================
+  // PRE-WARM 2 (Boss-mesh shaders) — efter att boss-mesh har lagts till scenen.
+  // Decision 072-monstret applicerat aven for boss-meshens material. Komplement
+  // till Pre-warm 1 i buildBossWarsScene som tacker arena-shaders MEN inte boss
+  // (eftersom boss-mesh inte var spawnad an).
+  //
+  // Forsta gangen boss-mesh renderas (= match-start nar boss blir synlig)
+  // kompileras dess shaders, vilket ger en frame-spike. Pre-warm flyttar
+  // stallen till HAR (under match-start innan spelaren styr).
+  // ===========================================================================
+  if (renderer && camera) {
+    try { renderer.compile(scene, camera); } catch (_) { /* best-effort */ }
+  }
   // HP +200% och damage +50% (raid-buff — bossar tål och slår mycket hårdare).
   const hp = Math.round(bossInfo.hp * 3.0);
   // Bumpad bas-dmg: 28 → 42 × dmgScale × 1.5 (+50%).
