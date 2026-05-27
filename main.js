@@ -25779,8 +25779,8 @@ function openShop(section) {
   renderShopContent();
 }
 (function _wireShop() {
-  const back = document.getElementById('btn-shop-back');
-  if (back) back.addEventListener('click', () => showLobbyPanel('main'));
+  const closeBtn = document.getElementById('shop-close');
+  if (closeBtn) closeBtn.addEventListener('click', () => showLobbyPanel('main'));
   document.querySelectorAll('#shop-sidebar .shop-tab').forEach(t => {
     t.addEventListener('click', () => {
       _shopActiveTab = t.dataset.shopTab;

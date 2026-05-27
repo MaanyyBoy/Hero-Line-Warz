@@ -1267,74 +1267,90 @@
     }
     #btn-avatar svg { width: 100%; height: 100%; display: block; }
 
-    /* Shop-panel (lobby-shop) */
+    /* Shop-sida (lobby-shop) — full-screen ny sida med sidebar pa vanster
+       kant + content centrerad i mitten. Currency top-right (samma position
+       som pa hemskarmen). Stang-knapp top-right. */
     #lobby-shop {
-      padding: 18px 16px 24px;
-      max-width: 880px;
-      width: 100%;
-      max-height: 92vh;
+      position: fixed !important;
+      inset: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+      width: 100vw;
+      height: 100vh;
+      padding: 0;
+      margin: 0;
       display: none;
-      flex-direction: column;
-      gap: 14px;
+      background: linear-gradient(135deg, #0e1224, #1a1530);
+      z-index: 150;
     }
-    #lobby-shop.visible { display: flex; }
-    #lobby-shop .shop-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-top: 56px;    /* skapa plats för currency-top-display */
-    }
-    #lobby-shop .shop-title {
-      flex: 1;
-      font: 800 24px/1.2 system-ui, sans-serif;
-      color: #ffd86a;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.6);
-      text-align: center;
-    }
-    #lobby-shop .shop-body {
-      display: grid;
-      grid-template-columns: 180px 1fr;
-      gap: 14px;
-      flex: 1;
-      min-height: 0;
-    }
-    #shop-sidebar {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      background: rgba(0,0,0,0.35);
-      border: 1px solid rgba(255,255,255,0.08);
+    #lobby-shop.visible { display: block !important; }
+    #shop-close {
+      position: fixed;
+      top: max(14px, calc(env(safe-area-inset-top) + 6px));
+      left: max(190px, calc(env(safe-area-inset-left) + 182px));   /* under sidebar-bredd */
+      width: 44px; height: 44px;
+      padding: 0;
+      background: rgba(40,30,15,0.85);
+      border: 1px solid rgba(255,210,120,0.55);
       border-radius: 12px;
-      padding: 8px;
+      color: #ffd86a;
+      font: 800 18px/1 system-ui, sans-serif;
+      cursor: pointer;
+      z-index: 160;
+      transition: transform 0.08s, box-shadow 0.12s;
+    }
+    #shop-close:hover { transform: scale(1.05); box-shadow: 0 0 12px rgba(255,216,106,0.6); }
+    #shop-close:active { transform: scale(0.92); }
+    /* Sidebar — fast langst till vanster, fullhojd */
+    #shop-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 176px;
+      padding: max(70px, calc(env(safe-area-inset-top) + 70px)) 10px 12px;
+      box-sizing: border-box;
+      background: rgba(8,10,20,0.85);
+      border-right: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      z-index: 155;
     }
     .shop-tab {
-      padding: 12px 14px;
+      padding: 14px 14px;
       background: transparent;
       border: 0;
       color: #b8c0d0;
       font: 700 14px/1.2 system-ui, sans-serif;
       text-align: left;
-      border-radius: 8px;
+      border-radius: 10px;
       cursor: pointer;
       transition: background 0.12s, color 0.12s;
+      width: 100%;
     }
     .shop-tab:hover { background: rgba(255,255,255,0.06); color: #fff; }
     .shop-tab.active {
       background: linear-gradient(135deg, rgba(255,216,106,0.85), rgba(220,160,40,0.85));
       color: #2a1808;
     }
+    /* Content — centrerad i mitten, lamnar utrymme for sidebar + currency top */
     #shop-content {
-      background: rgba(0,0,0,0.25);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 12px;
-      padding: 14px;
+      position: absolute;
+      top: max(70px, calc(env(safe-area-inset-top) + 70px));
+      left: 188px;
+      right: 12px;
+      bottom: 12px;
+      padding: 14px 18px;
       overflow-y: auto;
-      max-height: 70vh;
     }
     .shop-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 14px;
+      max-width: 900px;
+      margin: 0 auto;
     }
     .shop-item {
       background: linear-gradient(135deg, rgba(60,40,90,0.6), rgba(20,15,40,0.85));
@@ -1381,9 +1397,21 @@
     .shop-item .si-buy:active { transform: scale(0.94); }
     .shop-item .si-buy:disabled { opacity: 0.5; cursor: not-allowed; }
     @media (max-width: 640px) {
-      #lobby-shop .shop-body { grid-template-columns: 1fr; }
-      #shop-sidebar { flex-direction: row; flex-wrap: wrap; }
-      .shop-tab { flex: 1 1 auto; min-width: 80px; font-size: 12px; padding: 8px 6px; text-align: center; }
+      #shop-sidebar {
+        width: 100%;
+        height: 70px;
+        bottom: auto;
+        flex-direction: row;
+        padding: max(8px, env(safe-area-inset-top)) 8px 8px;
+        gap: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      .shop-tab { flex: 0 0 auto; min-width: 90px; font-size: 12px; padding: 8px 8px; text-align: center; }
+      #shop-content { top: 130px; left: 0; right: 0; padding: 12px; }
+      #shop-close { left: auto; right: 12px; top: 80px; }
+      /* Currency-display flyttas till bottom på mobil-shop sa den inte krockar */
+      #lobby.shop-active #home-currency { right: 12px; }
     }
 
     /* Event-panel (lobby-event) */
@@ -3827,22 +3855,18 @@
       </div>
     </div>
 
-    <!-- SHOP-panel: sidebar med 5 kategorier + content-grid -->
+    <!-- SHOP-sida: full-screen med sidebar pa vanster + content-grid i mitten.
+         Currency-display (top-right) och X-stang-knapp ovanpa. -->
     <div class="lobby-panel" id="lobby-shop">
-      <div class="shop-header">
-        <button class="lobby-btn secondary" id="btn-shop-back">← Back</button>
-        <div class="shop-title">🛒 Shop</div>
+      <button id="shop-close" aria-label="Close shop">✕</button>
+      <div id="shop-sidebar">
+        <button class="shop-tab active" data-shop-tab="heroes">🦸 Heroes</button>
+        <button class="shop-tab" data-shop-tab="skins">👗 Skins</button>
+        <button class="shop-tab" data-shop-tab="weapons">⚔ Weapon Skins</button>
+        <button class="shop-tab" data-shop-tab="diamonds">💎 Diamonds</button>
+        <button class="shop-tab" data-shop-tab="gold">💰 Gold</button>
       </div>
-      <div class="shop-body">
-        <div class="shop-sidebar" id="shop-sidebar">
-          <button class="shop-tab active" data-shop-tab="heroes">🦸 Heroes</button>
-          <button class="shop-tab" data-shop-tab="skins">👗 Skins</button>
-          <button class="shop-tab" data-shop-tab="weapons">⚔ Weapon Skins</button>
-          <button class="shop-tab" data-shop-tab="diamonds">💎 Diamonds</button>
-          <button class="shop-tab" data-shop-tab="gold">💰 Gold</button>
-        </div>
-        <div class="shop-content" id="shop-content"></div>
-      </div>
+      <div id="shop-content"></div>
     </div>
 
     <!-- EVENT-panel: aktiva events + kalender-knapp för upcoming events -->
