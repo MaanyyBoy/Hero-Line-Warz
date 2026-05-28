@@ -8099,6 +8099,19 @@ function triggerBossPhaseTransition(side, boss) {
   boss.phaseTransitionTotal = 2.5;
   // Byt skill-set när transition är klar (sker i tick)
   boss._pendingPhase2 = true;
+  // LAGER 4a-balans: rensa alla phase-1-minions + reset vågtimer så phase 2
+  // börjar fresh. Bossen flyger upp samtidigt → tydlig visuell "rensa-arena".
+  // clearAllBossWarsMinions använder despawnBossWarsMinion (REN despawn —
+  // applyMinionAbsorption anropas BARA i updateBossWarsMinions absorption-
+  // grenen, INGA absorption-effekter triggas här).
+  // Vågtimer-flöde: countdown=0, active=false. Nästa frame:
+  // tickBossWarsMinionWaves bail:ar på phaseTransitionRemaining > 0 (pause).
+  // Efter transition (~2.5s) → !active → ny countdown = 5s. Första phase
+  // 2-våg spawnar ~7.5s in i phase 2.
+  if (APP.gameMode === 'bosswars') {
+    clearAllBossWarsMinions();
+    resetBossWarsWaveState();
+  }
   // Visuell shake + burst
   triggerCameraShake(0.6, 0.6);
   spawnShieldBurstFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44ff);
@@ -11946,15 +11959,24 @@ function projectileImpactColor(kind) {
 // Hjältar kan döda dem (gratis via side.monsters-medlemskap). När de
 // når bossen → despawn (heal/buff/AoE kommer i Lager 2).
 // ============================================================
-const BOSSWARS_MINION_HP = 50;
+// LAGER 4a-balans: HP skalas per phase (3× / 6× original-50 = 150 / 300).
+// Vågsystemet (single source of truth) väljer värdet baserat på boss.bossPhase.
+// +M-knappen använder default = P1.
+const BOSSWARS_MINION_HP_P1 = 150;
+const BOSSWARS_MINION_HP_P2 = 300;
 const BOSSWARS_MINION_SPEED = 1.5;
 const BOSSWARS_MINION_ABSORB_DIST = 1.5;   // hur nära boss = absorption
+
+// LAGER 4a-balans: AoE-skadan vid absorption skalas med boss-phase
+// (30% / 50% av hero maxHp). Heal + buff-stack oförändrade (10% / +20%).
+const BOSSWARS_MINION_ABSORB_AOE_PCT_P1 = 0.30;
+const BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
 
 // LAGER 3: aura-skada med synlig cirkel runt varje minion. Global eskalering
 // per match (en räknare för hela matchen, inte per minion). Reset till 1%
 // efter 3s utan tick. Match-reset säkrar fresh start (se resetBossWarsAuraState
 // i enterPlayPhase).
-const BOSSWARS_MINION_AURA_RADIUS = 9.0;
+const BOSSWARS_MINION_AURA_RADIUS = 13.5;   // 9.0 → 13.5 (+50% radie, 2.25× yta)
 const BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
 const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5; // +1.5 procentenheter per tick
 const BOSSWARS_MINION_AURA_RESET_TIME = 3.0;
@@ -11980,7 +12002,11 @@ const BOSSWARS_MINION_WAVE_FIRST_DELAY = 5.0;
 const BOSSWARS_MINION_WAVE_INTERVAL = 20.0;
 const BOSSWARS_MINION_WAVE_SIZE_P1 = 3;
 const BOSSWARS_MINION_WAVE_SIZE_P2 = 6;
-const BOSSWARS_MINION_WAVE_SPEED_MUL_P2 = 1.2;
+// LAGER 4a-balans: phase 2-speed-buff borttagen (1.2 → 1.0). Minions på normal
+// hastighet i båda phases så hjältarna har en chans att rensa dem trots
+// större aura + högre AoE + tankigare minions. Parametern kvar för framtida
+// tuning utan signaturändring av spawn-funktionerna.
+const BOSSWARS_MINION_WAVE_SPEED_MUL_P2 = 1.0;
 
 const bossWarsWaveState = {
   countdown: 0,
@@ -12006,7 +12032,7 @@ function clearAllBossWarsMinions() {
   }
 }
 
-function spawnBossWarsMinion(side, ang, speedMul = 1.0) {
+function spawnBossWarsMinion(side, ang, speedMul = 1.0, hp = BOSSWARS_MINION_HP_P1) {
   if (!side || !side.monsters || !side.bossWarsMinions) return null;
   const mesh = makeMonsterMesh();   // skeleton-fallback
   mesh.scale.setScalar(0.8);
@@ -12040,8 +12066,8 @@ function spawnBossWarsMinion(side, ang, speedMul = 1.0) {
   scene.add(auraMesh);
   const m = {
     id: nextEntityId++,
-    hp: BOSSWARS_MINION_HP,
-    maxHp: BOSSWARS_MINION_HP,
+    hp,
+    maxHp: hp,
     moveSpeed: BOSSWARS_MINION_SPEED * speedMul,
     isMinion: true,
     isMonster: false,
@@ -12060,11 +12086,11 @@ function spawnBossWarsMinion(side, ang, speedMul = 1.0) {
   return m;
 }
 
-function spawnBossWarsMinionWave(side, size = 3, speedMul = 1.0) {
+function spawnBossWarsMinionWave(side, size = 3, speedMul = 1.0, hp = BOSSWARS_MINION_HP_P1) {
   if (!side) return;
   // Jämnt fördelade runt arenan (0°, 360/size °, 2×360/size °, ...)
   for (let i = 0; i < size; i++) {
-    spawnBossWarsMinion(side, (i / size) * Math.PI * 2, speedMul);
+    spawnBossWarsMinion(side, (i / size) * Math.PI * 2, speedMul, hp);
   }
 }
 
@@ -12159,28 +12185,28 @@ function healBossWarsBoss(m, amount) {
   m.hp = Math.min(m.maxHp, m.hp + amount);
 }
 
-// LAGER 2: Absorption-effekter. Triggas ENDAST när minion når bossen
-// (dist < BOSSWARS_MINION_ABSORB_DIST i updateBossWarsMinions), INTE när
-// hjälte dödar minion. Tre effekter per absorption:
-//   1. Boss heal 10% av maxHp (cap vid maxHp)
-//   2. Boss damage-buff +20% additivt, 5s refresh duration (stacking)
-//   3. AoE 20% av VARJE levande hjältes maxHp
+// LAGER 2 + 4a-balans: Absorption-effekter. Triggas ENDAST när minion når
+// bossen (dist < BOSSWARS_MINION_ABSORB_DIST i updateBossWarsMinions), INTE
+// när hjälte dödar minion. Tre effekter per absorption:
+//   1. Boss heal 10% av maxHp (cap vid maxHp) — OFÖRÄNDRAD
+//   2. Boss damage-buff +20% additivt, 5s refresh duration (stacking) — OFÖRÄNDRAD
+//   3. AoE skalas med boss-phase: P1 = 30%, P2 = 50% av varje hjältes maxHp.
+//      Läser SAMMA boss.bossPhase-flagga som vågsystemet (single source).
 // TODO (Lager 3): Bossen är invulnerable under phase-transition (~2.5s).
 // Absorption under den fasen healar/buffar bossen och slår levande hjältar
 // medan bossen är immun → kan kännas orättvist. Överväg att blocka absorption
 // (eller bara AoE-grenen) när m.phaseTransitionRemaining > 0.
 function applyMinionAbsorption(side, boss) {
   if (!boss || boss.hp <= 0) return;
-  // 1) Heal 10% maxHp
   healBossWarsBoss(boss, boss.maxHp * 0.10);
-  // 2) Damage-buff: +20% additivt, 5s duration. Stack 3 ggr = +60%, full 5s.
   boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
   boss.damageBuffRemaining = 5.0;
-  // 3) AoE 20% av VARJE levande hjältes maxHp. Solo: bara side 1. MP co-op:
-  // alla 3 levande. damageHero hanterar shield/DR/death internt.
+  const aoePct = (boss.bossPhase === 2)
+    ? BOSSWARS_MINION_ABSORB_AOE_PCT_P2
+    : BOSSWARS_MINION_ABSORB_AOE_PCT_P1;
   for (const tgt of bossWarsTargets(side)) {
     if (!tgt || !tgt.hero || tgt.hero.dead) continue;
-    damageHero(tgt, tgt.hero.maxHp * 0.20);
+    damageHero(tgt, tgt.hero.maxHp * aoePct);
   }
 }
 
@@ -12266,7 +12292,8 @@ function tickBossWarsMinionWaves(dt) {
     const isPhase2 = boss.bossPhase === 2;
     const size = isPhase2 ? BOSSWARS_MINION_WAVE_SIZE_P2 : BOSSWARS_MINION_WAVE_SIZE_P1;
     const speedMul = isPhase2 ? BOSSWARS_MINION_WAVE_SPEED_MUL_P2 : 1.0;
-    spawnBossWarsMinionWave(side1, size, speedMul);
+    const hp = isPhase2 ? BOSSWARS_MINION_HP_P2 : BOSSWARS_MINION_HP_P1;
+    spawnBossWarsMinionWave(side1, size, speedMul, hp);
     bossWarsWaveState.countdown += BOSSWARS_MINION_WAVE_INTERVAL;
   }
 }
