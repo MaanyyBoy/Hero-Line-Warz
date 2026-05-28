@@ -10687,9 +10687,19 @@ function bossWarsTargets(side) {
   }
   return [side];
 }
+
+// LAGER 2: Boss Wars-minion absorption-buff multiplier. För Boss Wars-bossar
+// stackar denna additivt vid minion-absorption (+0.20 per absorption, 5s
+// refresh duration). För ALLA andra monster (wave-monsters, line-wars-bossar,
+// creeps, minions): damageBuffMul är undefined → `|| 1` → no-op. Säker fallback
+// på samtliga 8 call-sites.
+function bossEffectiveDamage(m) {
+  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1);
+}
+
 function applyBossCircleDmg(side, m, cast) {
   const s = cast.skill;
-  const dmg = m.damage * (s.dmgMul || 1);
+  const dmg = bossEffectiveDamage(m) * (s.dmgMul || 1);
   for (const tgt of bossWarsTargets(side)) {
     if (tgt.hero.dead) continue;
     if (Math.hypot(tgt.hero.x - cast.targetX, tgt.hero.z - cast.targetZ) < s.radius) {
@@ -10705,7 +10715,7 @@ function applyBossConeDmg(side, m, cast) {
   applyBossConeDmgRaw(side, m, cast, cast.skill.length, cast.skill.halfAngle, cast.skill.dmgMul);
 }
 function applyBossConeDmgRaw(side, m, cast, length, halfAngle, dmgMul) {
-  const dmg = m.damage * (dmgMul || 1);
+  const dmg = bossEffectiveDamage(m) * (dmgMul || 1);
   for (const tgt of bossWarsTargets(side)) {
     if (tgt.hero.dead) continue;
     const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
@@ -10719,7 +10729,7 @@ function applyBossConeDmgRaw(side, m, cast, length, halfAngle, dmgMul) {
 }
 function applyBossLineDmg(side, m, cast, cx, cz) {
   const s = cast.skill;
-  const dmg = m.damage * (s.dmgMul || 1);
+  const dmg = bossEffectiveDamage(m) * (s.dmgMul || 1);
   const e = cast.extras;
   for (const tgt of bossWarsTargets(side)) {
     if (tgt.hero.dead) continue;
@@ -10733,7 +10743,7 @@ function applyBossLineDmg(side, m, cast, cx, cz) {
   }
 }
 function applyBossBeamDmg(side, m, cast, length, width, dmg) {
-  const realDmg = m.damage * dmg;
+  const realDmg = bossEffectiveDamage(m) * dmg;
   for (const tgt of bossWarsTargets(side)) {
     if (tgt.hero.dead) continue;
     const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
@@ -10807,7 +10817,7 @@ function spawnConeFlash(x, z, dx, dz, length, halfAngle, color) {
 
 function spawnBossProjectile(side, m, x, z, dx, dz, skill) {
   side.bossProjectiles = side.bossProjectiles || [];
-  const dmg = m.damage * (skill.dmgMul || 1);
+  const dmg = bossEffectiveDamage(m) * (skill.dmgMul || 1);
   const grp = new THREE.Group();
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10),
     new THREE.MeshStandardMaterial({ color: 0xff4422, emissive: 0xff3311, emissiveIntensity: 1.4 }));
@@ -10882,7 +10892,7 @@ function spawnPoolDot(side, m, x, z, radius, duration, dpsMul, color = 0x66dd33,
   side.bossPools.push({
     mesh: grp, x, z, radius,
     life: duration, maxLife: duration,
-    dps: m.damage * dpsMul,
+    dps: bossEffectiveDamage(m) * dpsMul,
     tickAccum: 0,
     slow,
     color,
@@ -11051,6 +11061,14 @@ function updateMonsters(side, dt) {
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
     // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
     if (m.isBossWarsBoss && m.mesh && m.mesh.userData.phase2Aura) tickBossPhase2Aura(m.mesh, dt);
+    // LAGER 2: Boss-Wars-minion absorption damage-buff timer (5s refresh, +20%
+    // additivt per stack via applyMinionAbsorption). Vid <= 0 → reset multiplier.
+    // <= istället för === 0 så float-precision aldrig kan lämna oss "fast" på
+    // ett mikroskopiskt positivt rest-värde.
+    if (m.isBossWarsBoss && (m.damageBuffRemaining || 0) > 0) {
+      m.damageBuffRemaining = Math.max(0, m.damageBuffRemaining - dt);
+      if (m.damageBuffRemaining <= 0) m.damageBuffMul = 1.0;
+    }
     // Boss Wars: bossen är inaktiv (står still, attackar inte, castar inga skills)
     // tills alla aktiva heroes är inne i boss-rummet. tickBossSkills bail:ar redan
     // i sin egen check; här skippar vi också movement + AA.
@@ -11157,7 +11175,7 @@ function updateMonsters(side, dt) {
       if (m.attackType === 'range') {
         hostSpawnMonsterProjectile(targetSide, m);
       } else {
-        damageHero(targetSide, m.damage || MONSTER_MELEE_DAMAGE);
+        damageHero(targetSide, bossEffectiveDamage(m) || MONSTER_MELEE_DAMAGE);
         spawnSlashFx(targetSide.hero.x, targetSide.hero.z, 0xff5544);
         if ((m.isBoss || m.isBossWarsBoss) && m.mesh) {
           spawnGroundImpact(m.mesh.position.x, m.mesh.position.z, 2.2, 0xff6644);
@@ -12017,6 +12035,38 @@ function despawnBossWarsMinion(side, m) {
   const i2 = side.bossWarsMinions.indexOf(m); if (i2 >= 0) side.bossWarsMinions.splice(i2, 1);
 }
 
+// LAGER 2: heal boss (cap vid maxHp — ingen overheal). Anropas från
+// applyMinionAbsorption när minion når bossen.
+function healBossWarsBoss(m, amount) {
+  if (!m || amount <= 0 || m.hp <= 0) return;
+  m.hp = Math.min(m.maxHp, m.hp + amount);
+}
+
+// LAGER 2: Absorption-effekter. Triggas ENDAST när minion når bossen
+// (dist < BOSSWARS_MINION_ABSORB_DIST i updateBossWarsMinions), INTE när
+// hjälte dödar minion. Tre effekter per absorption:
+//   1. Boss heal 10% av maxHp (cap vid maxHp)
+//   2. Boss damage-buff +20% additivt, 5s refresh duration (stacking)
+//   3. AoE 10% av VARJE levande hjältes maxHp
+// TODO (Lager 3): Bossen är invulnerable under phase-transition (~2.5s).
+// Absorption under den fasen healar/buffar bossen och slår levande hjältar
+// medan bossen är immun → kan kännas orättvist. Överväg att blocka absorption
+// (eller bara AoE-grenen) när m.phaseTransitionRemaining > 0.
+function applyMinionAbsorption(side, boss) {
+  if (!boss || boss.hp <= 0) return;
+  // 1) Heal 10% maxHp
+  healBossWarsBoss(boss, boss.maxHp * 0.10);
+  // 2) Damage-buff: +20% additivt, 5s duration. Stack 3 ggr = +60%, full 5s.
+  boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
+  boss.damageBuffRemaining = 5.0;
+  // 3) AoE 10% av VARJE levande hjältes maxHp. Solo: bara side 1. MP co-op:
+  // alla 3 levande. damageHero hanterar shield/DR/death internt.
+  for (const tgt of bossWarsTargets(side)) {
+    if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+    damageHero(tgt, tgt.hero.maxHp * 0.10);
+  }
+}
+
 function updateBossWarsMinions(side, dt) {
   if (!side.bossWarsMinions || side.bossWarsMinions.length === 0) return;
   // Hitta bossen (i side.monsters med isBossWarsBoss-flagga)
@@ -12043,8 +12093,11 @@ function updateBossWarsMinions(side, dt) {
     const dx = bx - mx;
     const dz = bz - mz;
     const dist = Math.hypot(dx, dz);
-    // Absorption: nådde bossen
+    // Absorption: nådde bossen → Lager 2-effekter FÖRE despawn (heal + buff +
+    // AoE). Hero-kill / DoT-death går FORTFARANDE rakt till despawn via
+    // death-sweep ovan — ingen heal/buff/AoE triggas där.
     if (dist < BOSSWARS_MINION_ABSORB_DIST) {
+      applyMinionAbsorption(side, boss);
       despawnBossWarsMinion(side, m);
       continue;
     }
@@ -12072,7 +12125,7 @@ function hostSpawnMonsterProjectile(targetSide, monster) {
     id: nextEntityId++,
     mesh,
     srcX, srcZ,
-    damage: monster.damage || MONSTER_MELEE_DAMAGE,
+    damage: bossEffectiveDamage(monster) || MONSTER_MELEE_DAMAGE,
     timer: travel,
     totalTime: travel,
     kind,
