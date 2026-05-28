@@ -11954,9 +11954,9 @@ const BOSSWARS_MINION_ABSORB_DIST = 1.5;   // hur nära boss = absorption
 // per match (en räknare för hela matchen, inte per minion). Reset till 1%
 // efter 3s utan tick. Match-reset säkrar fresh start (se resetBossWarsAuraState
 // i enterPlayPhase).
-const BOSSWARS_MINION_AURA_RADIUS = 3.0;
+const BOSSWARS_MINION_AURA_RADIUS = 9.0;
 const BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
-const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1;   // +1 procentenhet per tick
+const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5; // +1.5 procentenheter per tick
 const BOSSWARS_MINION_AURA_RESET_TIME = 3.0;
 const BOSSWARS_MINION_AURA_START_PCT = 1;             // börjar på 1%
 
@@ -11970,6 +11970,26 @@ function resetBossWarsAuraState() {
   bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
   bossWarsAuraState.tickAccum = 0;
   bossWarsAuraState.resetTimer = 0;
+}
+
+// LAGER 4a: vågsystem. Första vågen 5s efter att bossen är aktiv. Sedan
+// var 20:e sek tills bossen dör. Phase 1 = 3 minions @ default speed,
+// phase 2 = 6 minions @ +20% speed. Pausar under boss phase-transition
+// (~2.5s invuln). Match-reset i enterPlayPhase säkrar fresh start.
+const BOSSWARS_MINION_WAVE_FIRST_DELAY = 5.0;
+const BOSSWARS_MINION_WAVE_INTERVAL = 20.0;
+const BOSSWARS_MINION_WAVE_SIZE_P1 = 3;
+const BOSSWARS_MINION_WAVE_SIZE_P2 = 6;
+const BOSSWARS_MINION_WAVE_SPEED_MUL_P2 = 1.2;
+
+const bossWarsWaveState = {
+  countdown: 0,
+  active: false,
+};
+
+function resetBossWarsWaveState() {
+  bossWarsWaveState.countdown = 0;
+  bossWarsWaveState.active = false;
 }
 
 // Match-reset cleanup: dispose:a ALLA kvarvarande minions (mesh + aura) på
@@ -11986,7 +12006,7 @@ function clearAllBossWarsMinions() {
   }
 }
 
-function spawnBossWarsMinion(side, ang) {
+function spawnBossWarsMinion(side, ang, speedMul = 1.0) {
   if (!side || !side.monsters || !side.bossWarsMinions) return null;
   const mesh = makeMonsterMesh();   // skeleton-fallback
   mesh.scale.setScalar(0.8);
@@ -12022,7 +12042,7 @@ function spawnBossWarsMinion(side, ang) {
     id: nextEntityId++,
     hp: BOSSWARS_MINION_HP,
     maxHp: BOSSWARS_MINION_HP,
-    moveSpeed: BOSSWARS_MINION_SPEED,
+    moveSpeed: BOSSWARS_MINION_SPEED * speedMul,
     isMinion: true,
     isMonster: false,
     isBoss: false,
@@ -12040,11 +12060,11 @@ function spawnBossWarsMinion(side, ang) {
   return m;
 }
 
-function spawnBossWarsMinionWave(side) {
+function spawnBossWarsMinionWave(side, size = 3, speedMul = 1.0) {
   if (!side) return;
-  // 3 minions runt arenan: 0°, 120°, 240°
-  for (let i = 0; i < 3; i++) {
-    spawnBossWarsMinion(side, (i / 3) * Math.PI * 2);
+  // Jämnt fördelade runt arenan (0°, 360/size °, 2×360/size °, ...)
+  for (let i = 0; i < size; i++) {
+    spawnBossWarsMinion(side, (i / size) * Math.PI * 2, speedMul);
   }
 }
 
@@ -12207,6 +12227,47 @@ function tickBossWarsMinionAura(dt) {
       bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
       bossWarsAuraState.tickAccum = 0;
     }
+  }
+}
+
+// LAGER 4a: vågsystem (global per match). Anropas EN GÅNG per frame i tick()
+// Boss Wars-grenen (bredvid tickBossWarsMinionAura).
+//
+// Guards:
+//   - APP.bossWars.started → matchen igång
+//   - APP.bossWars.bossActivated → alla hjältar i boss-rummet, bossen aktiv
+//   - boss finns + alive → annars stoppa vågor + reset state
+//   - phaseTransitionRemaining = 0 → pausa under ~2.5s invuln (orättvist mot
+//     stunade hjältar att spawna fler hot under transitionen)
+//
+// Första gången: countdown = 5s. Sedan: + 20s per spawn. Phase 2 detection:
+// boss.bossPhase === 2 → 6 minions × 1.2 speed istället för 3 × 1.0.
+function tickBossWarsMinionWaves(dt) {
+  if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  if (!APP.bossWars.bossActivated) return;
+  // MP host-auktoritativ: bara host (eller solo, där matchActive=false) får
+  // spawna vågor. Joiners/clients måste ej trigga lokala spawns — det skulle
+  // skapa ghost-entities som inte synkas via host-state.
+  if (bossMpState && bossMpState.matchActive && bossMpState.role !== 'host') return;
+  const side1 = sides[1];
+  if (!side1) return;
+  const boss = side1.monsters.find(x => x.isBossWarsBoss);
+  if (!boss || boss.hp <= 0) {
+    bossWarsWaveState.active = false;
+    return;
+  }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;
+  if (!bossWarsWaveState.active) {
+    bossWarsWaveState.active = true;
+    bossWarsWaveState.countdown = BOSSWARS_MINION_WAVE_FIRST_DELAY;
+  }
+  bossWarsWaveState.countdown -= dt;
+  if (bossWarsWaveState.countdown <= 0) {
+    const isPhase2 = boss.bossPhase === 2;
+    const size = isPhase2 ? BOSSWARS_MINION_WAVE_SIZE_P2 : BOSSWARS_MINION_WAVE_SIZE_P1;
+    const speedMul = isPhase2 ? BOSSWARS_MINION_WAVE_SPEED_MUL_P2 : 1.0;
+    spawnBossWarsMinionWave(side1, size, speedMul);
+    bossWarsWaveState.countdown += BOSSWARS_MINION_WAVE_INTERVAL;
   }
 }
 
@@ -12407,6 +12468,13 @@ function hostKillMonster(side, idx, byPlayerSide) {
   const xpReward = m.isBoss ? MONSTER_XP_REWARD * 5 : (m.isMiniBoss ? MONSTER_XP_REWARD * 2 : MONSTER_XP_REWARD);
   if (byPlayerSide) { byPlayerSide.gold += goldReward; gainXp(byPlayerSide, xpReward); }
   else { side.gold += goldReward; gainXp(side, xpReward); }
+  // LAGER 4a: Boss Wars-bossen dog → despawna ALLA kvarvarande minions direkt
+  // (renare victory-känsla + extra dispose-disciplin). Använder samma
+  // clearAllBossWarsMinions som match-reset — REN despawn utan absorption-
+  // effekter (de triggas separat i updateBossWarsMinions ABSORPTION-grenen,
+  // INTE i despawnBossWarsMinion). Bossen själv är redan disposad och spliced
+  // från side.monsters ovan, så denna loop går bara över minions.
+  if (m.isBossWarsBoss) clearAllBossWarsMinions();
 }
 
 function minionBounty(creep) {
@@ -18015,7 +18083,12 @@ function _ensureBwMinionBtn() {
 }
 function _updateBwMinionBtn() {
   if (!_bwMinionBtnEl) return;
-  const show = (typeof APP !== 'undefined' && APP && APP.gameMode === 'bosswars');
+  // LAGER 4a: bara solo (dev/test). I 3-player MP får knappen INTE synas —
+  // riktiga spelare ska inte kunna trigga vågor manuellt. bossMpState.matchActive
+  // = true i MP, false i solo (etablerat mönster).
+  const isBwMode = (typeof APP !== 'undefined' && APP && APP.gameMode === 'bosswars');
+  const isMp = (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive);
+  const show = isBwMode && !isMp;
   _bwMinionBtnEl.style.display = show ? 'block' : 'none';
 }
 setInterval(() => { _ensureBwMinionBtn(); _updateBwMinionBtn(); }, 500);
@@ -26203,6 +26276,7 @@ function enterPlayPhase() {
     // state så eskaleringen inte bär över. enterPlayPhase är ENDA väg in.
     clearAllBossWarsMinions();
     resetBossWarsAuraState();
+    resetBossWarsWaveState();
     buildBossWarsScene();
     bossWarsSceneGroup.visible = true;
     arenaSceneGroup.visible = false;
@@ -27971,7 +28045,11 @@ function simulateAll(dt) {
   // bara när BÅDA har avslutat sin wave).
   if (!isArena && !isBossWars) syncWaves(sides);
   // LAGER 3: Boss Wars-minion aura-tick (en gång per frame, global state).
-  if (isBossWars) tickBossWarsMinionAura(dt);
+  // LAGER 4a: vågsystem tickas också här (global per match).
+  if (isBossWars) {
+    tickBossWarsMinionAura(dt);
+    tickBossWarsMinionWaves(dt);
+  }
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }
