@@ -12047,7 +12047,7 @@ function healBossWarsBoss(m, amount) {
 // hjälte dödar minion. Tre effekter per absorption:
 //   1. Boss heal 10% av maxHp (cap vid maxHp)
 //   2. Boss damage-buff +20% additivt, 5s refresh duration (stacking)
-//   3. AoE 10% av VARJE levande hjältes maxHp
+//   3. AoE 20% av VARJE levande hjältes maxHp
 // TODO (Lager 3): Bossen är invulnerable under phase-transition (~2.5s).
 // Absorption under den fasen healar/buffar bossen och slår levande hjältar
 // medan bossen är immun → kan kännas orättvist. Överväg att blocka absorption
@@ -12059,11 +12059,11 @@ function applyMinionAbsorption(side, boss) {
   // 2) Damage-buff: +20% additivt, 5s duration. Stack 3 ggr = +60%, full 5s.
   boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
   boss.damageBuffRemaining = 5.0;
-  // 3) AoE 10% av VARJE levande hjältes maxHp. Solo: bara side 1. MP co-op:
+  // 3) AoE 20% av VARJE levande hjältes maxHp. Solo: bara side 1. MP co-op:
   // alla 3 levande. damageHero hanterar shield/DR/death internt.
   for (const tgt of bossWarsTargets(side)) {
     if (!tgt || !tgt.hero || tgt.hero.dead) continue;
-    damageHero(tgt, tgt.hero.maxHp * 0.10);
+    damageHero(tgt, tgt.hero.maxHp * 0.20);
   }
 }
 
