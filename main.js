@@ -17384,7 +17384,8 @@ function pmShowOverlay(result) {
   card.style.cssText = 'background:linear-gradient(135deg,#1f1432,#14101e);' +
     'border:1px solid rgba(140,180,255,0.45);border-radius:16px;padding:22px 22px 18px;' +
     'max-width:480px;width:100%;color:#fff;font:600 14px/1.4 system-ui,sans-serif;' +
-    'box-shadow:0 12px 40px rgba(0,0,0,0.7);position:relative;';
+    'box-shadow:0 12px 40px rgba(0,0,0,0.7);position:relative;' +
+    'max-height:calc(100vh - 32px);overflow-y:auto;-webkit-overflow-scrolling:touch;';
   card.innerHTML =
     '<button id="pm-close" style="position:absolute;top:10px;right:10px;width:36px;height:36px;' +
       'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:18px;' +
