@@ -11950,6 +11950,42 @@ const BOSSWARS_MINION_HP = 50;
 const BOSSWARS_MINION_SPEED = 1.5;
 const BOSSWARS_MINION_ABSORB_DIST = 1.5;   // hur nära boss = absorption
 
+// LAGER 3: aura-skada med synlig cirkel runt varje minion. Global eskalering
+// per match (en räknare för hela matchen, inte per minion). Reset till 1%
+// efter 3s utan tick. Match-reset säkrar fresh start (se resetBossWarsAuraState
+// i enterPlayPhase).
+const BOSSWARS_MINION_AURA_RADIUS = 3.0;
+const BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
+const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1;   // +1 procentenhet per tick
+const BOSSWARS_MINION_AURA_RESET_TIME = 3.0;
+const BOSSWARS_MINION_AURA_START_PCT = 1;             // börjar på 1%
+
+const bossWarsAuraState = {
+  escalationPct: BOSSWARS_MINION_AURA_START_PCT,
+  tickAccum: 0,
+  resetTimer: 0,
+};
+
+function resetBossWarsAuraState() {
+  bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
+  bossWarsAuraState.tickAccum = 0;
+  bossWarsAuraState.resetTimer = 0;
+}
+
+// Match-reset cleanup: dispose:a ALLA kvarvarande minions (mesh + aura) på
+// alla sides så vi inte börjar ny match med stale entities från förra. Anropas
+// från enterPlayPhase Boss Wars-grenen FÖRE buildBossWarsScene.
+function clearAllBossWarsMinions() {
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (!s || !Array.isArray(s.bossWarsMinions)) continue;
+    while (s.bossWarsMinions.length > 0) {
+      const m = s.bossWarsMinions[0];
+      despawnBossWarsMinion(s, m);   // disposas mesh + aura + splice från båda arrayer
+    }
+  }
+}
+
 function spawnBossWarsMinion(side, ang) {
   if (!side || !side.monsters || !side.bossWarsMinions) return null;
   const mesh = makeMonsterMesh();   // skeleton-fallback
@@ -11977,6 +12013,11 @@ function spawnBossWarsMinion(side, ang) {
   mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
   attachHpBar(mesh, 1.6);
   scene.add(mesh);
+  // LAGER 3: aura-cirkel (visuell fara-zon, matchar exakt skadezonen).
+  // Y strax ovanför golvet så ringen syns ovanpå platform-texturen.
+  const auraMesh = makeMinionAuraMesh(BOSSWARS_MINION_AURA_RADIUS);
+  auraMesh.position.set(x, BOSSWARS_FLOOR_Y + 0.02, z);
+  scene.add(auraMesh);
   const m = {
     id: nextEntityId++,
     hp: BOSSWARS_MINION_HP,
@@ -11990,6 +12031,7 @@ function spawnBossWarsMinion(side, ang) {
     attackType: 'none',
     damage: 0,
     mesh,
+    auraMesh,
   };
   // Båda arrayer (samma object-ref) — side.monsters ger gratis hero-targeting,
   // AA-projektil-impact, skill-impact. bossWarsMinions för minion-AI + diagnos.
@@ -12004,6 +12046,59 @@ function spawnBossWarsMinionWave(side) {
   for (let i = 0; i < 3; i++) {
     spawnBossWarsMinion(side, (i / 3) * Math.PI * 2);
   }
+}
+
+// LAGER 3: Visuell aura-cirkel runt minion (radie = damage-zonen). Standalone
+// scene-child (INTE child av minion-mesh) så ring ligger platt mot marken
+// utan att rotera med minion. Position uppdateras varje frame i
+// updateBossWarsMinions. Skapar fresh geometry + material per minion
+// (INTE shared cache) → tryggt att dispose:a fullt vid death.
+function makeMinionAuraMesh(radius) {
+  const grp = new THREE.Group();
+  // Yttre ring (outline) — tydlig fara-markör
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(radius * 0.92, radius, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xff3344, transparent: true, opacity: 0.85,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  // Inre fill — diskret, bara så hela zonen läses som fara
+  const fill = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xff3344, transparent: true, opacity: 0.18,
+      side: THREE.DoubleSide, depthWrite: false,
+    })
+  );
+  fill.rotation.x = -Math.PI / 2;
+  fill.position.y = -0.005;   // strax under ringen för z-fighting-fritt
+  grp.add(ring);
+  grp.add(fill);
+  grp.traverse(o => {
+    if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; }
+  });
+  return grp;
+}
+
+// LAGER 3: dispose aura-mesh (geometry + material, INTE shared) + scene.remove.
+// Anropas från ALLA 3 death-paths: despawnBossWarsMinion (absorption),
+// hostKillMonster (hero-kill via AA/skill), och defensiv death-sweep
+// (idempotent — m.auraMesh sätts till null så återanrop är no-op).
+function disposeBossWarsMinionAura(m) {
+  if (!m || !m.auraMesh) return;
+  m.auraMesh.traverse(o => {
+    if (o.isMesh) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(mt => mt && mt.dispose());
+        else o.material.dispose();
+      }
+    }
+  });
+  scene.remove(m.auraMesh);
+  m.auraMesh = null;
 }
 
 // Dispose minion-specifika material-clones (skapade i spawnBossWarsMinion
@@ -12024,11 +12119,13 @@ function despawnBossWarsMinion(side, m) {
   // Mimar hostKillMonster:s dispose-mönster men utan XP/guld-reward
   // (absorption = team loss). Mesh-geometry delas via GLTF-cache → bara
   // material-clones disposas (skapade per minion i spawnBossWarsMinion).
+  // Aura disposas separat (fresh per minion, ej shared cache).
   if (m.activeCast) {
     cleanupTelegraphMesh(m.activeCast);
     cleanupExecuteMesh(m.activeCast);
     m.activeCast = null;
   }
+  disposeBossWarsMinionAura(m);
   disposeBossWarsMinionMaterials(m.mesh);
   removeEntityMesh(m.mesh);
   const i1 = side.monsters.indexOf(m); if (i1 >= 0) side.monsters.splice(i1, 1);
@@ -12064,6 +12161,52 @@ function applyMinionAbsorption(side, boss) {
   for (const tgt of bossWarsTargets(side)) {
     if (!tgt || !tgt.hero || tgt.hero.dead) continue;
     damageHero(tgt, tgt.hero.maxHp * 0.20);
+  }
+}
+
+// LAGER 3: aura-skada (global per match). Anropas EN GÅNG per frame i
+// tick() Boss Wars-grenen (utanför for-side-loopen). Tickar var 0.5s om
+// minst en levande hjälte står i minst en levande minions aura. Damage
+// applic'as på ALLA levande hjältar samtidigt. Eskalerar +1pp per tick
+// globalt. Reset till start-pct efter 3s utan tick. Overlappande auror
+// = en tick (break-out så fort vi hittar overlap).
+function tickBossWarsMinionAura(dt) {
+  if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  const side1 = sides[1];
+  if (!side1) return;
+  const minions = side1.bossWarsMinions || [];
+  const tgts = bossWarsTargets(side1);
+  const r2 = BOSSWARS_MINION_AURA_RADIUS * BOSSWARS_MINION_AURA_RADIUS;
+  let anyInAura = false;
+  for (const mm of minions) {
+    if (!mm || !mm.mesh) continue;
+    const mx = mm.mesh.position.x, mz = mm.mesh.position.z;
+    for (const tgt of tgts) {
+      if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+      const dxh = tgt.hero.x - mx;
+      const dzh = tgt.hero.z - mz;
+      if (dxh * dxh + dzh * dzh < r2) { anyInAura = true; break; }
+    }
+    if (anyInAura) break;
+  }
+  if (anyInAura) {
+    bossWarsAuraState.resetTimer = 0;
+    bossWarsAuraState.tickAccum += dt;
+    while (bossWarsAuraState.tickAccum >= BOSSWARS_MINION_AURA_TICK_INTERVAL) {
+      bossWarsAuraState.tickAccum -= BOSSWARS_MINION_AURA_TICK_INTERVAL;
+      const pct = bossWarsAuraState.escalationPct / 100;
+      for (const tgt of tgts) {
+        if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+        damageHero(tgt, tgt.hero.maxHp * pct);
+      }
+      bossWarsAuraState.escalationPct += BOSSWARS_MINION_AURA_ESCALATION_PER_TICK;
+    }
+  } else {
+    bossWarsAuraState.resetTimer += dt;
+    if (bossWarsAuraState.resetTimer >= BOSSWARS_MINION_AURA_RESET_TIME) {
+      bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
+      bossWarsAuraState.tickAccum = 0;
+    }
   }
 }
 
@@ -12108,6 +12251,11 @@ function updateBossWarsMinions(side, dt) {
     m.mesh.position.z += nz * step;
     // Vänd mot bossen så minionen "ser" dit den går
     m.mesh.rotation.y = Math.atan2(nx, nz);
+    // LAGER 3: synka aura-position. Y orörd (auran ligger fast på golvet).
+    if (m.auraMesh) {
+      m.auraMesh.position.x = m.mesh.position.x;
+      m.auraMesh.position.z = m.mesh.position.z;
+    }
   }
 }
 
@@ -12238,7 +12386,11 @@ function hostKillMonster(side, idx, byPlayerSide) {
   // Boss Wars-minions: dispose material-clones (skapade per minion för blå tint
   // — bryter shared cache → måste dispose:as separat). MÅSTE ske före
   // removeEntityMesh så traversen inte triggas på en redan removed mesh.
-  if (m.isMinion) disposeBossWarsMinionMaterials(m.mesh);
+  // Lager 3: aura-mesh disposas också (fresh per minion).
+  if (m.isMinion) {
+    disposeBossWarsMinionAura(m);
+    disposeBossWarsMinionMaterials(m.mesh);
+  }
   removeEntityMesh(m.mesh);
   side.monsters.splice(idx, 1);
   // Boss Wars-minions: ingen reward (de är hot/hinder, inte XP-farm; reward-
@@ -26046,6 +26198,11 @@ function enterPlayPhase() {
     }
   } else if (APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.active) {
     // Boss Wars: bygg flat platform, sätt hjälte lvl 30, applicera prep-val, spawna boss
+    // LAGER 3: cleanup eventuella stale minions/auror från en föregående match
+    // (förlust → ny match, tier-byte, etc) FÖRE scenrebuild. Plus reset aura-
+    // state så eskaleringen inte bär över. enterPlayPhase är ENDA väg in.
+    clearAllBossWarsMinions();
+    resetBossWarsAuraState();
     buildBossWarsScene();
     bossWarsSceneGroup.visible = true;
     arenaSceneGroup.visible = false;
@@ -27813,6 +27970,8 @@ function simulateAll(dt) {
   // Decision 105: synka wave-progression mellan sidor (nästa wave startar
   // bara när BÅDA har avslutat sin wave).
   if (!isArena && !isBossWars) syncWaves(sides);
+  // LAGER 3: Boss Wars-minion aura-tick (en gång per frame, global state).
+  if (isBossWars) tickBossWarsMinionAura(dt);
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
 }
