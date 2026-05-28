@@ -11948,6 +11948,15 @@ function updateMonsterProjectiles(side, dt) {
     const p = side.monsterProjectiles[i];
     if (!side.hero || side.hero.dead) {
       scene.remove(p.mesh);
+      // GPU-dispose (samma mönster som impact-grenen) — annars läcker
+      // geometry/material vid hero-death-edge-case.
+      p.mesh.traverse(o => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+          else o.material.dispose();
+        }
+      });
       side.monsterProjectiles.splice(i, 1);
       _leakDiag.nc.monsterProjDispose++;
       continue;
@@ -27489,6 +27498,10 @@ function simulateAll(dt) {
       // ovan i enterPlayPhase), så hopp över tick:n för dem — annars körs
       // boss-AI 3× per frame.
       if (side.idx === 1) updateMonsters(side, dt);
+      // Per side: bossens AA-projektiler tickar mot DENNA sides hero,
+      // tills impact → damage + dispose. Utan denna tick ackumulerar
+      // monsterProjectiles[] visuellt (orbs står still vid spawn-pos).
+      updateMonsterProjectiles(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
