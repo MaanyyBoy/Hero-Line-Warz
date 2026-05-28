@@ -26043,6 +26043,14 @@ function enterPlayPhase() {
       s.level = 30;
       s.xp = 0;
       s.xpToNext = xpForLevel(30);
+      // Boss Wars singleplayer test: maxa skills + stats så hjälten är "riktig
+      // lvl 30" (annars lvl 30 men alla Q/F/E låsta + stats på 0). MP-co-op
+      // behåller normal SP-tilldelning så spelare faktiskt distribuerar via UI.
+      if (!bossMpState.matchActive) {
+        s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+        s.statPts = { as: STAT_LEVEL_MAX, ms: STAT_LEVEL_MAX, hp: STAT_LEVEL_MAX, sd: STAT_LEVEL_MAX, dr: STAT_LEVEL_MAX };
+        s.unspentPoints = 0;
+      }
       const sp = spawnPoints[idx] || spawnPoints[1];
       s.hero.x = sp.x;
       s.hero.z = sp.z;
