@@ -9701,6 +9701,7 @@ function createSide(idx) {
     monsterProjectiles: [],  // pilar/magi från ENEMY wave-monster mot DENNA hero (range-AA)
     heroCopies: [],          // (decision 107) bot-styrda hero-kloner som attackerar DENNA sida
     heroCopyFireballs: [],   // (decision 107) skill-projektiler från hero-kloner
+    bossWarsMinions: [],     // Lager 1 minion-mekanik — minions delar ref med side.monsters (isMinion:true)
     // Wave-system
     wave: {
       current: 0,
@@ -11043,6 +11044,9 @@ function updateMonsters(side, dt) {
       tickGandulfMarkClient(m, dt);
       if (m.hp <= 0) { hostKillMonster(side, i, side); continue; }
     }
+    // Boss Wars-minions: tar DoT/poison/mark-skada ovan, men ingen monster-AI
+    // (aura/phase/movement/attack/skill-cast). Egen tick i updateBossWarsMinions.
+    if (m.isMinion) continue;
     // Boss/miniboss: aura-tick varje frame
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
     // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
@@ -11918,6 +11922,142 @@ function projectileImpactColor(kind) {
   }
 }
 
+// ============================================================
+// BOSS WARS MINIONS — LAGER 1 (livscykel)
+// 3 minions spawnar vid arenans kant, rör sig långsamt mot bossen.
+// Hjältar kan döda dem (gratis via side.monsters-medlemskap). När de
+// når bossen → despawn (heal/buff/AoE kommer i Lager 2).
+// ============================================================
+const BOSSWARS_MINION_HP = 50;
+const BOSSWARS_MINION_SPEED = 1.5;
+const BOSSWARS_MINION_ABSORB_DIST = 1.5;   // hur nära boss = absorption
+
+function spawnBossWarsMinion(side, ang) {
+  if (!side || !side.monsters || !side.bossWarsMinions) return null;
+  const mesh = makeMonsterMesh();   // skeleton-fallback
+  mesh.scale.setScalar(0.8);
+  // Blå tint för synlighet (Lager 1 — polish-mesh i senare lager)
+  mesh.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = false;
+      o.receiveShadow = false;
+      if (o.material) {
+        if (Array.isArray(o.material)) {
+          o.material = o.material.map(m => {
+            const c = m.clone(); if (c.color) c.color.setHex(0x6699ff); return c;
+          });
+        } else {
+          o.material = o.material.clone();
+          if (o.material.color) o.material.color.setHex(0x6699ff);
+        }
+      }
+    }
+  });
+  const r = BOSSWARS_RADIUS - 2;
+  const x = BOSSWARS_CX + Math.cos(ang) * r;
+  const z = BOSSWARS_CZ + Math.sin(ang) * r;
+  mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
+  attachHpBar(mesh, 1.6);
+  scene.add(mesh);
+  const m = {
+    id: nextEntityId++,
+    hp: BOSSWARS_MINION_HP,
+    maxHp: BOSSWARS_MINION_HP,
+    moveSpeed: BOSSWARS_MINION_SPEED,
+    isMinion: true,
+    isMonster: false,
+    isBoss: false,
+    isMiniBoss: false,
+    isBossWarsBoss: false,
+    attackType: 'none',
+    damage: 0,
+    mesh,
+  };
+  // Båda arrayer (samma object-ref) — side.monsters ger gratis hero-targeting,
+  // AA-projektil-impact, skill-impact. bossWarsMinions för minion-AI + diagnos.
+  side.monsters.push(m);
+  side.bossWarsMinions.push(m);
+  return m;
+}
+
+function spawnBossWarsMinionWave(side) {
+  if (!side) return;
+  // 3 minions runt arenan: 0°, 120°, 240°
+  for (let i = 0; i < 3; i++) {
+    spawnBossWarsMinion(side, (i / 3) * Math.PI * 2);
+  }
+}
+
+// Dispose minion-specifika material-clones (skapade i spawnBossWarsMinion
+// för blå tint utan att påverka shared cache). Geometry delas via GLTF-cache
+// → INTE dispose. Anropas från despawnBossWarsMinion + hostKillMonster-grenen
+// för minion-deaths.
+function disposeBossWarsMinionMaterials(mesh) {
+  if (!mesh) return;
+  mesh.traverse(o => {
+    if (o.isMesh && o.material) {
+      if (Array.isArray(o.material)) o.material.forEach(mt => mt && mt.dispose());
+      else o.material.dispose();
+    }
+  });
+}
+
+function despawnBossWarsMinion(side, m) {
+  // Mimar hostKillMonster:s dispose-mönster men utan XP/guld-reward
+  // (absorption = team loss). Mesh-geometry delas via GLTF-cache → bara
+  // material-clones disposas (skapade per minion i spawnBossWarsMinion).
+  if (m.activeCast) {
+    cleanupTelegraphMesh(m.activeCast);
+    cleanupExecuteMesh(m.activeCast);
+    m.activeCast = null;
+  }
+  disposeBossWarsMinionMaterials(m.mesh);
+  removeEntityMesh(m.mesh);
+  const i1 = side.monsters.indexOf(m); if (i1 >= 0) side.monsters.splice(i1, 1);
+  const i2 = side.bossWarsMinions.indexOf(m); if (i2 >= 0) side.bossWarsMinions.splice(i2, 1);
+}
+
+function updateBossWarsMinions(side, dt) {
+  if (!side.bossWarsMinions || side.bossWarsMinions.length === 0) return;
+  // Hitta bossen (i side.monsters med isBossWarsBoss-flagga)
+  const boss = side.monsters.find(x => x.isBossWarsBoss);
+  for (let i = side.bossWarsMinions.length - 1; i >= 0; i--) {
+    const m = side.bossWarsMinions[i];
+    // Death-sweep. Två fall:
+    //  (a) m.hp <= 0 men hostKillMonster körde inte än → despawn här (defensiv
+    //      mot ev. framtida death-paths som missar hostKillMonster).
+    //  (b) Redan removed från side.monsters av hostKillMonster (= hero-kill)
+    //      → despawnBossWarsMinion är idempotent (scene.remove/material.dispose/
+    //      indexOf-splice = no-ops på redan hanterad mesh).
+    if (m.hp <= 0 || !side.monsters.includes(m)) {
+      despawnBossWarsMinion(side, m);
+      continue;
+    }
+    // Frusen (Gandulf): inget rörelse
+    if ((m.frozenTime || 0) > 0) continue;
+    if (!boss) continue;
+    const bx = boss.mesh.position.x;
+    const bz = boss.mesh.position.z;
+    const mx = m.mesh.position.x;
+    const mz = m.mesh.position.z;
+    const dx = bx - mx;
+    const dz = bz - mz;
+    const dist = Math.hypot(dx, dz);
+    // Absorption: nådde bossen
+    if (dist < BOSSWARS_MINION_ABSORB_DIST) {
+      despawnBossWarsMinion(side, m);
+      continue;
+    }
+    // Långsam rörelse mot bossen
+    const step = m.moveSpeed * dt;
+    const nx = dx / dist, nz = dz / dist;
+    m.mesh.position.x += nx * step;
+    m.mesh.position.z += nz * step;
+    // Vänd mot bossen så minionen "ser" dit den går
+    m.mesh.rotation.y = Math.atan2(nx, nz);
+  }
+}
+
 function hostSpawnMonsterProjectile(targetSide, monster) {
   if (!targetSide || !targetSide.monsterProjectiles) return;
   // Use per-monster projKind if set (boss wars / tier-specific). Fallback: magic for range, arrow for melee.
@@ -12042,8 +12182,21 @@ function hostKillMonster(side, idx, byPlayerSide) {
     cleanupExecuteMesh(m.activeCast);
     m.activeCast = null;
   }
+  // Boss Wars-minions: dispose material-clones (skapade per minion för blå tint
+  // — bryter shared cache → måste dispose:as separat). MÅSTE ske före
+  // removeEntityMesh så traversen inte triggas på en redan removed mesh.
+  if (m.isMinion) disposeBossWarsMinionMaterials(m.mesh);
   removeEntityMesh(m.mesh);
   side.monsters.splice(idx, 1);
+  // Boss Wars-minions: ingen reward (de är hot/hinder, inte XP-farm; reward-
+  // design läggs ev. i Lager 2 om vi vill ändra).
+  if (m.isMinion) {
+    // Sync bossWarsMinions-arrayen (death-sweep i updateBossWarsMinions
+    // hanterar också detta, men direkt-rensning här undviker 1-frame-gap).
+    const i2 = side.bossWarsMinions ? side.bossWarsMinions.indexOf(m) : -1;
+    if (i2 >= 0) side.bossWarsMinions.splice(i2, 1);
+    return;
+  }
   // Boss-belöning: 5× guld + XP
   const goldReward = m.isBoss ? GOLD_PER_KILL * 5 : (m.isMiniBoss ? GOLD_PER_KILL * 2 : GOLD_PER_KILL);
   const xpReward = m.isBoss ? MONSTER_XP_REWARD * 5 : (m.isMiniBoss ? MONSTER_XP_REWARD * 2 : MONSTER_XP_REWARD);
@@ -17630,6 +17783,37 @@ document.addEventListener('touchstart', (e) => {
 document.addEventListener('click', (e) => {
   pmHandleTap(e.clientX, e.clientY);
 }, { capture: true });
+
+// === Boss Wars Minion DEBUG-knapp (Lager 1 test-trigger) ===
+// Mitten-höger ytterkant (dead-zone på alla layouts). Visas bara i bosswars-läget.
+// Klick = spawnar 3 minions runt arenan. Kan tryckas obegränsat för upprepad
+// spawn/död/dispose-test. Tas bort när Lager 2 (riktigt timing/wave-system) finns.
+let _bwMinionBtnEl = null;
+function _ensureBwMinionBtn() {
+  if (_bwMinionBtnEl) return;
+  const btn = document.createElement('button');
+  btn.id = 'bw-minion-btn';
+  btn.textContent = '+M';
+  btn.style.cssText = 'position:fixed;right:8px;top:50%;transform:translateY(-50%);' +
+    'width:44px;height:44px;background:rgba(80,120,200,0.85);color:#fff;' +
+    'border:1px solid rgba(255,255,255,0.4);border-radius:10px;' +
+    'font:800 14px/1 system-ui;cursor:pointer;z-index:9998;display:none;' +
+    'box-shadow:0 4px 12px rgba(0,0,0,0.5);touch-action:manipulation;';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!APP || APP.gameMode !== 'bosswars') return;
+    const s = (typeof sides !== 'undefined') ? sides[1] : null;
+    if (s && s.monsters && s.bossWarsMinions) spawnBossWarsMinionWave(s);
+  });
+  document.body.appendChild(btn);
+  _bwMinionBtnEl = btn;
+}
+function _updateBwMinionBtn() {
+  if (!_bwMinionBtnEl) return;
+  const show = (typeof APP !== 'undefined' && APP && APP.gameMode === 'bosswars');
+  _bwMinionBtnEl.style.display = show ? 'block' : 'none';
+}
+setInterval(() => { _ensureBwMinionBtn(); _updateBwMinionBtn(); }, 500);
 
 // Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
 const bossHpWrapEl = document.getElementById('boss-hp-wrap');
@@ -27502,6 +27686,10 @@ function simulateAll(dt) {
       // tills impact → damage + dispose. Utan denna tick ackumulerar
       // monsterProjectiles[] visuellt (orbs står still vid spawn-pos).
       updateMonsterProjectiles(side, dt);
+      // Lager 1 minion-mekanik: rörelse mot boss + absorption-despawn +
+      // death-sweep (hero-kills via befintlig hostKillMonster). Sides 2/3
+      // har tom bossWarsMinions → early-bail.
+      updateBossWarsMinions(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
@@ -27663,6 +27851,7 @@ function _leakSnapshotNow(tSec) {
     projectiles: 0, monsterProjectiles: 0, bossProjectiles: 0, bossPools: 0,
     soulExplosions: 0, fireballs: 0, novaEffects: 0, creepProjectiles: 0,
     shatters: 0, blackHoles: 0, vineTraps: 0,
+    bossWarsMinions: 0,
   };
   try {
     for (const idx of [1, 2, 3, 4]) {
