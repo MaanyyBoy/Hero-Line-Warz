@@ -11981,26 +11981,27 @@ const BOSSWARS_MINION_ABSORB_DIST = 1.5;   // hur nära boss = absorption
 const BOSSWARS_MINION_ABSORB_AOE_PCT_P1 = 0.30;
 const BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
 
-// LAGER 3: aura-skada med synlig cirkel runt varje minion. Global eskalering
-// per match (en räknare för hela matchen, inte per minion). Reset till 1%
-// efter 3s utan tick. Match-reset säkrar fresh start (se resetBossWarsAuraState
-// i enterPlayPhase).
+// LAGER 3: aura-skada med synlig cirkel runt varje minion. INDIVIDUELL eskalering
+// PER HJÄLTE (varje hjälte har sin egen stack-räknare på side-objektet, inte en
+// global per match). Bara hjälten som faktiskt står i en aura tar skada + ökar
+// sin egen stack. Reset till 0 efter 7s utan tick. Match-reset säkrar fresh start
+// (se resetBossWarsAuraState i enterPlayPhase).
 const BOSSWARS_MINION_AURA_RADIUS = 13.5;   // 9.0 → 13.5 (+50% radie, 2.25× yta)
 const BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
 const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5; // +1.5 procentenheter per tick
-const BOSSWARS_MINION_AURA_RESET_TIME = 3.0;
-const BOSSWARS_MINION_AURA_START_PCT = 1;             // börjar på 1%
+const BOSSWARS_MINION_AURA_RESET_TIME = 7.0;          // 3.0 → 7.0 (individuell aura)
+const BOSSWARS_MINION_AURA_START_PCT = 1;             // första tick (stack 0) = 1%
 
-const bossWarsAuraState = {
-  escalationPct: BOSSWARS_MINION_AURA_START_PCT,
-  tickAccum: 0,
-  resetTimer: 0,
-};
-
+// Per-hjälte aura-state ligger på side-objektet: side.auraStacks (antal ticks
+// tagna, 0,1,2…), side.auraTickAccum, side.auraResetTimer. Nollas per side här.
 function resetBossWarsAuraState() {
-  bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
-  bossWarsAuraState.tickAccum = 0;
-  bossWarsAuraState.resetTimer = 0;
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (!s) continue;
+    s.auraStacks = 0;
+    s.auraTickAccum = 0;
+    s.auraResetTimer = 0;
+  }
 }
 
 // LAGER 4a: vågsystem. Första vågen 5s efter att bossen är aktiv. Sedan
@@ -12249,37 +12250,45 @@ function tickBossWarsMinionAura(dt) {
   const side1 = sides[1];
   if (!side1) return;
   const minions = side1.bossWarsMinions || [];
-  const tgts = bossWarsTargets(side1);
   const r2 = BOSSWARS_MINION_AURA_RADIUS * BOSSWARS_MINION_AURA_RADIUS;
-  let anyInAura = false;
-  for (const mm of minions) {
-    if (!mm || !mm.mesh) continue;
-    const mx = mm.mesh.position.x, mz = mm.mesh.position.z;
-    for (const tgt of tgts) {
-      if (!tgt || !tgt.hero || tgt.hero.dead) continue;
-      const dxh = tgt.hero.x - mx;
-      const dzh = tgt.hero.z - mz;
-      if (dxh * dxh + dzh * dzh < r2) { anyInAura = true; break; }
-    }
-    if (anyInAura) break;
-  }
-  if (anyInAura) {
-    bossWarsAuraState.resetTimer = 0;
-    bossWarsAuraState.tickAccum += dt;
-    while (bossWarsAuraState.tickAccum >= BOSSWARS_MINION_AURA_TICK_INTERVAL) {
-      bossWarsAuraState.tickAccum -= BOSSWARS_MINION_AURA_TICK_INTERVAL;
-      const pct = bossWarsAuraState.escalationPct / 100;
-      for (const tgt of tgts) {
-        if (!tgt || !tgt.hero || tgt.hero.dead) continue;
-        damageHero(tgt, tgt.hero.maxHp * pct);
+  // INDIVIDUELL aura: utvärdera VARJE hjälte separat. Bara hjälten som faktiskt
+  // står i någon minions aura tar skada + ökar sin EGEN stack; andra hjältars
+  // stacks påverkas inte. Reset till 0 efter 7s utan tick. Körs host/solo-only
+  // (denna funktion anropas i simulateAll-loopen) → skade-applicering är auth.
+  for (const side of bossWarsTargets(side1)) {
+    if (!side || !side.hero) continue;
+    // Lazy-init per-side state (säkrar fresh även om side skapats efter reset).
+    if (side.auraStacks == null) { side.auraStacks = 0; side.auraTickAccum = 0; side.auraResetTimer = 0; }
+    // Står DENNA hjälte i någon minions aura? (break på första → överlapp = en tick)
+    // Död hjälte = inte i aura → reset-timern fortsätter ticka (nollas efter 7s).
+    let inAura = false;
+    if (!side.hero.dead) {
+      const hx = side.hero.x, hz = side.hero.z;
+      for (const mm of minions) {
+        if (!mm || !mm.mesh) continue;
+        const dxh = hx - mm.mesh.position.x;
+        const dzh = hz - mm.mesh.position.z;
+        if (dxh * dxh + dzh * dzh < r2) { inAura = true; break; }
       }
-      bossWarsAuraState.escalationPct += BOSSWARS_MINION_AURA_ESCALATION_PER_TICK;
     }
-  } else {
-    bossWarsAuraState.resetTimer += dt;
-    if (bossWarsAuraState.resetTimer >= BOSSWARS_MINION_AURA_RESET_TIME) {
-      bossWarsAuraState.escalationPct = BOSSWARS_MINION_AURA_START_PCT;
-      bossWarsAuraState.tickAccum = 0;
+    if (inAura) {
+      side.auraResetTimer = 0;
+      side.auraTickAccum += dt;
+      while (side.auraTickAccum >= BOSSWARS_MINION_AURA_TICK_INTERVAL) {
+        side.auraTickAccum -= BOSSWARS_MINION_AURA_TICK_INTERVAL;
+        // Skada per tick oförändrad: START + stacks×ESCALATION (procentenheter).
+        // stack 0 → 1%, stack 1 → 2.5%, stack 2 → 4% … (identiskt med tidigare).
+        const pct = (BOSSWARS_MINION_AURA_START_PCT + side.auraStacks * BOSSWARS_MINION_AURA_ESCALATION_PER_TICK) / 100;
+        damageHero(side, side.hero.maxHp * pct);
+        side.auraStacks += 1;
+      }
+    } else {
+      side.auraResetTimer += dt;
+      if (side.auraResetTimer >= BOSSWARS_MINION_AURA_RESET_TIME) {
+        side.auraStacks = 0;
+        side.auraTickAccum = 0;
+        side.auraResetTimer = 0;   // vila på 0 (annars växer timern obegränsat)
+      }
     }
   }
 }
@@ -23411,6 +23420,9 @@ function heroSnap(side) {
     // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
     tx: _r2(side.targetX),
     tz: _r2(side.targetZ),
+    // Boss Wars individuell aura-stack (host-beräknad). _nz utelämnar 0 → snålt;
+    // applyHeroSnap läser `snap.aus || 0` så reset till 0 ändå syns på klienten.
+    aus: _nz(side.auraStacks),
   };
 }
 
@@ -23534,6 +23546,9 @@ function applyHeroSnap(side, snap) {
   // Arena power-up buffs — undefined i snap → 0 (inaktiv)
   side.arenaSpeedBuff = snap.asp || 0;
   side.arenaDamageBuff = snap.adm || 0;
+  // Boss Wars individuell aura-stack — host beräknar, klienten visar bara (debuff-
+  // listan). `|| 0` så reset (snap utelämnar 0) syns korrekt på klienten.
+  side.auraStacks = snap.aus || 0;
   // Elar whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
   // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
   side.whirlwindRemaining = snap.wwr || 0;
