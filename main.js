@@ -9723,7 +9723,8 @@ function createSide(idx) {
     monsterProjectiles: [],  // pilar/magi från ENEMY wave-monster mot DENNA hero (range-AA)
     heroCopies: [],          // (decision 107) bot-styrda hero-kloner som attackerar DENNA sida
     heroCopyFireballs: [],   // (decision 107) skill-projektiler från hero-kloner
-    bossWarsMinions: [],     // Lager 1 minion-mekanik — minions delar ref med side.monsters (isMinion:true)
+    bossWarsMinions: [],     // Boss 1 (tier 1) minion-mekanik — delar ref med side.monsters (isMinion:true)
+    boss2Ads: [],            // Boss 2 (tier 2) ad-mekanik — delar ref med side.monsters (isBoss2Ad:true)
     // Wave-system
     wave: {
       current: 0,
@@ -12396,6 +12397,153 @@ function updateBossWarsMinions(side, dt) {
   }
 }
 
+// ===========================================================================
+// BOSS 2 (tier 2, General/Warlock) — egen ad-mekanik, HELT skild från boss 1.
+// Lager 1: livscykel + jakt-AI + distansattack + killable + dispose. INGEN
+// dödstimer/kylning/explosion/wipe/UI (de är Lager 2-4). Gatead till tier 2 via
+// boss2AdsEnabled() — exakt som boss 1 är gateat till tier 1.
+//
+// >>> MP-SKULD <<<  Ads renderas HOST-SIDE ONLY. Klient-sync av själva ad-meshen
+// finns INTE — samma status som boss 1:s minions (buildBossWarsSnap broadcastar
+// h/b/mr, inte den fulla monsters-arrayen). Klient-sync för ALLA boss-ads (alla
+// 5 bossar) är en SEPARAT framtida task som löses EN gång, inte per boss.
+// Projektilerna syns dock för alla via mr (hostSpawnMonsterProjectile pushar till
+// targetSide.monsterProjectiles som redan broadcastas). Se decision-fil för boss 2.
+// ===========================================================================
+const BOSS2_AD_HP = 120;            // placeholder — tunas i balans-pass
+const BOSS2_AD_SPEED = 3.5;         // jagar hjälten men kitebar (hero min ~5.0)
+const BOSS2_AD_DAMAGE = 10;         // flat skada per projektil-träff (placeholder)
+const BOSS2_AD_RANGE = 8.0;         // distansattack-räckvidd
+const BOSS2_AD_ATK_INTERVAL = 1.5;  // sek mellan skott
+const BOSS2_AD_PROJ_TIME = 0.8;     // projektil-restid till hjälten
+
+// Gate: hela boss 2-ad-mekaniken gäller BARA tier 2 (strikt ===2; saknad tier →
+// false). Spegel av bossWarsMinionsEnabled().
+function boss2AdsEnabled() {
+  return !!(APP && APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.tier === 2);
+}
+
+// Närmaste levande hjälte-side från (x,z) bland alla spelare. null om ingen lever.
+function nearestLivingHeroSide(x, z) {
+  let best = null, bestD2 = Infinity;
+  for (const s of bossWarsTargets(sides[1])) {
+    if (!s || !s.hero || s.hero.dead) continue;
+    const dx = s.hero.x - x, dz = s.hero.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2) { bestD2 = d2; best = s; }
+  }
+  return best;
+}
+
+function spawnBoss2Ad(side, ang) {
+  if (!side || !side.monsters || !side.boss2Ads) return null;
+  const mesh = makeMonsterMesh();   // skeleton-fallback (polish-mesh i senare lager)
+  mesh.scale.setScalar(0.8);
+  // Lila tint (Warlock-tema). Material-CLONE bryter shared cache → MÅSTE disposas
+  // (geometry delas via GLTF-cache → rörs ALDRIG). Skiljer ads visuellt från boss 1.
+  mesh.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = false; o.receiveShadow = false;
+      if (o.material) {
+        if (Array.isArray(o.material)) {
+          o.material = o.material.map(m => { const c = m.clone(); if (c.color) c.color.setHex(0xaa66ff); return c; });
+        } else {
+          o.material = o.material.clone();
+          if (o.material.color) o.material.color.setHex(0xaa66ff);
+        }
+      }
+    }
+  });
+  const r = BOSSWARS_RADIUS - 2;
+  const x = BOSSWARS_CX + Math.cos(ang) * r;
+  const z = BOSSWARS_CZ + Math.sin(ang) * r;
+  mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
+  attachHpBar(mesh, 1.6);
+  scene.add(mesh);
+  const m = {
+    id: nextEntityId++,
+    hp: BOSS2_AD_HP, maxHp: BOSS2_AD_HP,
+    moveSpeed: BOSS2_AD_SPEED,
+    isBoss2Ad: true,        // EGEN flagga — INTE isMinion → boss 1:s aura/absorption/sweep rör dem aldrig
+    isMinion: false, isMonster: false, isBoss: false, isMiniBoss: false, isBossWarsBoss: false,
+    attackType: 'range',
+    damage: BOSS2_AD_DAMAGE,
+    attackRange: BOSS2_AD_RANGE,
+    attackInterval: BOSS2_AD_ATK_INTERVAL,
+    projTime: BOSS2_AD_PROJ_TIME,
+    projKind: 'darkOrb',
+    atkCd: 0,
+    mesh,
+  };
+  // Båda arrayer (samma ref): side.monsters → gratis hero-targeting/AA/skill-impact
+  // (samma mönster som boss 1). boss2Ads → ad-AI + diagnos-mätning.
+  side.monsters.push(m);
+  side.boss2Ads.push(m);
+  return m;
+}
+
+function spawnBoss2AdWave(side, size = 3) {
+  if (!side) return;
+  for (let i = 0; i < size; i++) spawnBoss2Ad(side, (i / size) * Math.PI * 2);
+}
+
+// Dispose en ad (death-sweep / mass-despawn). Idempotent: indexOf/splice är no-op
+// om redan borta. Material-clones disposas; geometry delas via GLTF-cache → rörs ej.
+function despawnBoss2Ad(side, m) {
+  // Idempotent: hero-kill (hostKillMonster) splittar redan ur boss2Ads, så
+  // death-sweepen bör ej träffa samma m — men _gone-flaggan gör dubbel-anrop
+  // till en garanterad no-op (dispose-disciplin: dispose får aldrig köras 2×).
+  if (!m || m._gone) return;
+  m._gone = true;
+  disposeBossWarsMinionMaterials(m.mesh);   // generisk: disposar material-clones
+  removeEntityMesh(m.mesh);
+  const i1 = side.monsters ? side.monsters.indexOf(m) : -1;
+  if (i1 >= 0) side.monsters.splice(i1, 1);
+  const i2 = side.boss2Ads ? side.boss2Ads.indexOf(m) : -1;
+  if (i2 >= 0) side.boss2Ads.splice(i2, 1);
+}
+
+// Mass-despawn (boss-död + match-reset). Spegel av clearAllBossWarsMinions.
+function clearAllBoss2Ads() {
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (!s || !Array.isArray(s.boss2Ads)) continue;
+    while (s.boss2Ads.length > 0) despawnBoss2Ad(s, s.boss2Ads[0]);
+  }
+}
+
+// Jakt + distansattack-AI. Anropas bara side.idx===1 i Boss Wars-grenen (host/solo
+// — klienter simulerar ej → host-auktoritativt, inga ghost-spawns).
+function updateBoss2Ads(side, dt) {
+  if (!boss2AdsEnabled()) return;
+  if (!side.boss2Ads || side.boss2Ads.length === 0) return;
+  for (let i = side.boss2Ads.length - 1; i >= 0; i--) {
+    const m = side.boss2Ads[i];
+    // Death-sweep: hp<=0, ELLER redan removed ur side.monsters av hostKillMonster
+    // (hero-kill) → despawn. despawnBoss2Ad är idempotent.
+    if (m.hp <= 0 || !side.monsters.includes(m)) { despawnBoss2Ad(side, m); continue; }
+    const target = nearestLivingHeroSide(m.mesh.position.x, m.mesh.position.z);
+    if (!target) continue;   // ingen levande hjälte → stå still
+    const dx = target.hero.x - m.mesh.position.x;
+    const dz = target.hero.z - m.mesh.position.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const nx = dx / dist, nz = dz / dist;
+    m.mesh.rotation.y = Math.atan2(nx, nz);   // vänd mot målet
+    m.atkCd = Math.max(0, (m.atkCd || 0) - dt);
+    if (dist > m.attackRange) {
+      // Utanför räckvidd → jaga hjälten.
+      const step = m.moveSpeed * dt;
+      m.mesh.position.x += nx * step;
+      m.mesh.position.z += nz * step;
+    } else if (m.atkCd <= 0) {
+      // Inom räckvidd → skjut. Återanvänder monster-projektil-systemet: projektilen
+      // homar mot target.hero + skadar vid impact + broadcastas via mr för alla.
+      hostSpawnMonsterProjectile(target, m);
+      m.atkCd = m.attackInterval;
+    }
+  }
+}
+
 function hostSpawnMonsterProjectile(targetSide, monster) {
   if (!targetSide || !targetSide.monsterProjectiles) return;
   // Use per-monster projKind if set (boss wars / tier-specific). Fallback: magic for range, arrow for melee.
@@ -12535,6 +12683,11 @@ function hostKillMonster(side, idx, byPlayerSide) {
     disposeBossWarsMinionAura(m);
     disposeBossWarsMinionMaterials(m.mesh);
   }
+  // Boss 2-ads: dispose lila-tint material-clones (ingen aura). Samma disciplin
+  // som boss 1-minions; geometry delas via GLTF-cache → rörs ej.
+  if (m.isBoss2Ad) {
+    disposeBossWarsMinionMaterials(m.mesh);
+  }
   removeEntityMesh(m.mesh);
   side.monsters.splice(idx, 1);
   // Boss Wars-minions: ingen reward (de är hot/hinder, inte XP-farm; reward-
@@ -12544,6 +12697,12 @@ function hostKillMonster(side, idx, byPlayerSide) {
     // hanterar också detta, men direkt-rensning här undviker 1-frame-gap).
     const i2 = side.bossWarsMinions ? side.bossWarsMinions.indexOf(m) : -1;
     if (i2 >= 0) side.bossWarsMinions.splice(i2, 1);
+    return;
+  }
+  // Boss 2-ads: sync boss2Ads-arrayen + ingen reward (hot/hinder, som boss 1).
+  if (m.isBoss2Ad) {
+    const i2 = side.boss2Ads ? side.boss2Ads.indexOf(m) : -1;
+    if (i2 >= 0) side.boss2Ads.splice(i2, 1);
     return;
   }
   // Boss-belöning: 5× guld + XP
@@ -12557,7 +12716,7 @@ function hostKillMonster(side, idx, byPlayerSide) {
   // effekter (de triggas separat i updateBossWarsMinions ABSORPTION-grenen,
   // INTE i despawnBossWarsMinion). Bossen själv är redan disposad och spliced
   // från side.monsters ovan, så denna loop går bara över minions.
-  if (m.isBossWarsBoss) clearAllBossWarsMinions();
+  if (m.isBossWarsBoss) { clearAllBossWarsMinions(); clearAllBoss2Ads(); }
 }
 
 function minionBounty(creep) {
@@ -18182,6 +18341,40 @@ function _updateBwMinionBtn() {
   const show = bossWarsMinionsEnabled() && !isMp;
   _bwMinionBtnEl.style.display = show ? 'block' : 'none';
 }
+
+// === Boss 2-ad DEBUG-knapp (+A) — Lager 1 test-trigger ===
+// Spegel av +M men för boss 2 (tier 2). Spawnar 3 ads. Bara tier 2 + solo.
+// Placerad strax ovanför +M (visas aldrig samtidigt — gateade till olika tiers).
+// TILLFÄLLIG: riktigt vågsystem (10s/40s/30s) kommer i ett senare lager.
+let _boss2AdBtnEl = null;
+function _ensureBoss2AdBtn() {
+  if (_boss2AdBtnEl) return;
+  const btn = document.createElement('button');
+  btn.id = 'boss2-ad-btn';
+  btn.textContent = '+A';
+  btn.style.cssText = 'position:fixed;right:8px;top:calc(50% - 52px);transform:translateY(-50%);' +
+    'width:44px;height:44px;background:rgba(140,80,200,0.85);color:#fff;' +
+    'border:1px solid rgba(255,255,255,0.4);border-radius:10px;' +
+    'font:800 14px/1 system-ui;cursor:pointer;z-index:9998;display:none;' +
+    'box-shadow:0 4px 12px rgba(0,0,0,0.5);touch-action:manipulation;';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!boss2AdsEnabled()) return;   // bara boss 2 (tier 2)
+    // Host-guard: aldrig klient-spawn (ghost-ads som ej synkas/disposas). Solo
+    // har matchActive=false → körs. Spegel av host-auktoritativa spawn-vägar.
+    if (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive) return;
+    const s = (typeof sides !== 'undefined') ? sides[1] : null;
+    if (s && s.monsters && s.boss2Ads) spawnBoss2AdWave(s);
+  });
+  document.body.appendChild(btn);
+  _boss2AdBtnEl = btn;
+}
+function _updateBoss2AdBtn() {
+  if (!_boss2AdBtnEl) return;
+  const isMp = (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive);
+  const show = boss2AdsEnabled() && !isMp;   // bara tier 2 + solo
+  _boss2AdBtnEl.style.display = show ? 'block' : 'none';
+}
 // === Debuff-stack-lista (Boss Wars) ===
 // Ovanför joysticken (#joy, 140px, bottom-left). En rad per aktiv spelare:
 // namn + stacks (stort/färgat/utan enhet) + reset-nedräkning (litet/grått/⏳+s).
@@ -18260,6 +18453,7 @@ function updateDebuffStackUI() {
 }
 setInterval(() => {
   _ensureBwMinionBtn(); _updateBwMinionBtn();
+  _ensureBoss2AdBtn(); _updateBoss2AdBtn();
   // Dölj debuff-listan när minion-mekaniken inte är aktiv (meny, annat läge, ELLER
   // boss 2–5). Täcker fallet där elementet byggts i en tidigare tier-1-session och
   // updateHud ej hinner dölja det vid byte till tier 2–5 i samma session.
@@ -26459,6 +26653,7 @@ function enterPlayPhase() {
     // (förlust → ny match, tier-byte, etc) FÖRE scenrebuild. Plus reset aura-
     // state så eskaleringen inte bär över. enterPlayPhase är ENDA väg in.
     clearAllBossWarsMinions();
+    clearAllBoss2Ads();
     resetBossWarsAuraState();
     resetBossWarsWaveState();
     buildBossWarsScene();
@@ -28166,6 +28361,9 @@ function simulateAll(dt) {
       // death-sweep (hero-kills via befintlig hostKillMonster). Sides 2/3
       // har tom bossWarsMinions → early-bail.
       updateBossWarsMinions(side, dt);
+      // Boss 2 (tier 2) ad-mekanik — jakt + distansattack. Bara side.idx===1 (ads
+      // bor i sides[1].boss2Ads, som updateMonsters). Gatead till tier 2 internt.
+      if (side.idx === 1) updateBoss2Ads(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
@@ -28334,6 +28532,7 @@ function _leakSnapshotNow(tSec) {
     soulExplosions: 0, fireballs: 0, novaEffects: 0, creepProjectiles: 0,
     shatters: 0, blackHoles: 0, vineTraps: 0,
     bossWarsMinions: 0,
+    boss2Ads: 0,
   };
   try {
     for (const idx of [1, 2, 3, 4]) {
