@@ -8097,6 +8097,15 @@ function triggerBossPhaseTransition(side, boss) {
   // (phaseTransitionRemaining > 0). Vi animerar y-pos i monster-loopen.
   boss.phaseTransitionRemaining = 2.5;
   boss.phaseTransitionTotal = 2.5;
+  // CLEANSE: rensa ALLA debuffs på bossen EN gång vid transition-start (denna
+  // funktion körs exakt en gång — early-return på bossPhase !== 1). Rör bara
+  // NEGATIVA status; damageBuffMul/damageBuffRemaining (minion-absorption-BUFF,
+  // positiv) lämnas orörd och överlever transitionen.
+  boss.dotRemaining = 0; boss.dotPerSec = 0;        // generisk DoT
+  boss.poisonRemaining = 0; boss.poisonStacks = 0;  // poison
+  boss.frozenTime = 0;                              // freeze/stun/root
+  boss.slowTime = 0; boss.slowMul = 1.0;            // slows
+  boss.legolasMarked = 0;                           // Legolas vine-mark
   // Byt skill-set när transition är klar (sker i tick)
   boss._pendingPhase2 = true;
   // LAGER 4a-balans: rensa alla phase-1-minions + reset vågtimer så phase 2
@@ -12474,6 +12483,13 @@ function computeBossWarsDmgReduction(m) {
 // Vanliga monster passerar igenom 1:1 (ingen reduction).
 function damageMonster(m, rawDmg) {
   if (!m || rawDmg <= 0) return 0;
+  // Boss Wars phase-transition: bossen är DAMAGE IMMUNE medan han flyger upp/
+  // landar (~2.5s, hjältarna stunnade). Detta är den ENDA chokepointen — DoTs
+  // (dotPerSec/poison), shatter, skills + AA går alla via damageMonster, så
+  // guarden här täcker ALL inkommande skada. Returnerar 0 → lifesteal får 0,
+  // ingen HP-förlust, ingen död. (Punkt-checkar på 13037/13211 visar "IMMUNE"-
+  // text på direkthits; vi spammar INTE text per DoT-tick härifrån.)
+  if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
   const dmg = rawDmg * (1 - dr);
   const actual = Math.min(dmg, Math.max(0, m.hp));
