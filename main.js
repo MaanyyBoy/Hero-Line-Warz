@@ -17666,6 +17666,7 @@ function updateHud() {
   }
   updateLevelUI(side);
   updateBossHpBar();
+  updateDebuffStackUI();
 }
 
 // Performance-mätare (top-right): frame-time i ms + FPS, med färg-kod
@@ -18169,7 +18170,87 @@ function _updateBwMinionBtn() {
   const show = isBwMode && !isMp;
   _bwMinionBtnEl.style.display = show ? 'block' : 'none';
 }
-setInterval(() => { _ensureBwMinionBtn(); _updateBwMinionBtn(); }, 500);
+// === Debuff-stack-lista (Boss Wars) ===
+// Ovanför joysticken (#joy, 140px, bottom-left). En rad per aktiv spelare:
+// namn + stacks (stort/färgat/utan enhet) + reset-nedräkning (litet/grått/⏳+s).
+// Byggs EN gång; updateDebuffStackUI (anropad i updateHud ~10 Hz) skriver DOM
+// bara när ett visat värde ändras (cache per rad). Stacks + timer synkas via
+// heroSnap (aus/art) → korrekt för alla spelare på alla klienter.
+let _debuffStackEl = null;
+const _debuffRows = [];
+function _ensureDebuffStackUI() {
+  if (_debuffStackEl) return;
+  const box = document.createElement('div');
+  box.id = 'debuff-stack-list';
+  box.style.cssText =
+    'position:absolute;left:max(16px,env(safe-area-inset-left));' +
+    'bottom:calc(max(16px,env(safe-area-inset-bottom)) + 154px);' +   // 140px joy + 14 gap
+    'min-width:150px;z-index:50;pointer-events:none;display:none;';
+  const title = document.createElement('div');
+  title.textContent = 'debuff stack';
+  title.style.cssText = 'font:700 10px/1 system-ui;letter-spacing:0.08em;' +
+    'text-transform:uppercase;color:#9aa;margin-bottom:4px;opacity:0.85;' +
+    'text-shadow:0 1px 3px rgba(0,0,0,0.9);';
+  box.appendChild(title);
+  for (let i = 0; i < 3; i++) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:none;align-items:baseline;gap:7px;margin-top:3px;' +
+      'white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,0.9);';
+    const nameEl = document.createElement('span');
+    nameEl.style.cssText = 'flex:0 0 auto;min-width:64px;font:600 13px/1.3 system-ui;color:#e8e8ee;';
+    const stacksEl = document.createElement('span');   // STORT, färgat, ingen enhet
+    stacksEl.style.cssText = 'font:800 17px/1 system-ui;flex:0 0 auto;min-width:14px;text-align:right;';
+    const timerEl = document.createElement('span');     // litet, grått, ⏳+s
+    timerEl.style.cssText = 'font:600 11px/1 system-ui;color:#8a93a0;flex:0 0 auto;';
+    row.appendChild(nameEl); row.appendChild(stacksEl); row.appendChild(timerEl);
+    box.appendChild(row);
+    _debuffRows.push({ wrap: row, nameEl, stacksEl, timerEl, _lastName: null, _lastStacks: null, _lastTimer: null, _lastColor: null });
+  }
+  document.body.appendChild(box);
+  _debuffStackEl = box;
+}
+function updateDebuffStackUI() {
+  const isBw = !!(APP && APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.started);
+  if (!isBw) { if (_debuffStackEl) _debuffStackEl.style.display = 'none'; return; }
+  _ensureDebuffStackUI();
+  if (_debuffStackEl.style.display !== 'block') _debuffStackEl.style.display = 'block';
+  const targets = sides[1] ? bossWarsTargets(sides[1]) : [];
+  for (let i = 0; i < 3; i++) {
+    const row = _debuffRows[i];
+    const side = targets[i];
+    if (!side || !side.hero) {
+      if (row.wrap.style.display !== 'none') row.wrap.style.display = 'none';
+      continue;
+    }
+    if (row.wrap.style.display !== 'flex') row.wrap.style.display = 'flex';
+    // Namn (spelar-vänt namn, "(You)" på egen rad) — ändras sällan.
+    const nm = (heroDef(side.heroId).name || side.heroId || '?') + (side.idx === APP.localSide ? ' (You)' : '');
+    if (nm !== row._lastName) { row.nameEl.textContent = nm; row._lastName = nm; }
+    // Stacks (heltal) + state-färg + timer.
+    const stacks = Math.max(0, Math.floor(side.auraStacks || 0));
+    const resetT = side.auraResetTimer || 0;
+    let color, timerTxt;
+    if (stacks === 0) {                 // idle
+      color = '#777777'; timerTxt = '';
+    } else if (resetT > 0) {            // utanför auran → klingar av (nedräkning)
+      color = '#ffaa44';
+      const secs = Math.max(1, Math.ceil(BOSSWARS_MINION_AURA_RESET_TIME - resetT));
+      timerTxt = '⏳' + secs + 's';
+    } else {                            // i auran → skadas nu (ingen nedräkning)
+      color = '#ff5544'; timerTxt = '';
+    }
+    const stacksStr = String(stacks);
+    if (stacksStr !== row._lastStacks) { row.stacksEl.textContent = stacksStr; row._lastStacks = stacksStr; }
+    if (color !== row._lastColor) { row.stacksEl.style.color = color; row._lastColor = color; }
+    if (timerTxt !== row._lastTimer) { row.timerEl.textContent = timerTxt; row._lastTimer = timerTxt; }
+  }
+}
+setInterval(() => {
+  _ensureBwMinionBtn(); _updateBwMinionBtn();
+  // Dölj debuff-listan utanför boss wars (t.ex. menyn, där updateHud ej tickar).
+  _ensureDebuffStackUI();
+  if (_debuffStackEl && !(APP && APP.gameMode === 'bosswars')) _debuffStackEl.style.display = 'none';
+}, 500);
 
 // Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
 const bossHpWrapEl = document.getElementById('boss-hp-wrap');
@@ -23423,6 +23504,9 @@ function heroSnap(side) {
     // Boss Wars individuell aura-stack (host-beräknad). _nz utelämnar 0 → snålt;
     // applyHeroSnap läser `snap.aus || 0` så reset till 0 ändå syns på klienten.
     aus: _nz(side.auraStacks),
+    // Aura reset-timern (räknar upp 0→7). _nzr2 utelämnar ≤0 (i auran/idle) →
+    // klient läser `snap.art || 0` → nedräkningen i debuff-listan blir korrekt.
+    art: _nzr2(side.auraResetTimer),
   };
 }
 
@@ -23549,6 +23633,7 @@ function applyHeroSnap(side, snap) {
   // Boss Wars individuell aura-stack — host beräknar, klienten visar bara (debuff-
   // listan). `|| 0` så reset (snap utelämnar 0) syns korrekt på klienten.
   side.auraStacks = snap.aus || 0;
+  side.auraResetTimer = snap.art || 0;   // nedräkning i debuff-listan (display-only)
   // Elar whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
   // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
   side.whirlwindRemaining = snap.wwr || 0;
