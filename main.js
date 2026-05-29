@@ -13020,9 +13020,16 @@ function updateProjectiles(side, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
-      // AA-träff → ult-energy gain + rage-lifesteal om aktiv
-      gainUltEnergy(side, ULT_GAIN_AA_HIT);
-      applyRageLifesteal(side, p.damage);
+      // AA-träff → ult-energy gain + rage-lifesteal om aktiv.
+      // "Ingen skada → ingen reward": skippa BÅDA om träffen är på en boss som
+      // är damage-immune under phase-transition (annars kan man farma ult-energi
+      // /Rage-heal genom att tima projektiler in i transition-fönstret). Övriga
+      // träfftyper (arena-orb/arena-hero/normal monster) ger reward som vanligt.
+      const bossImmuneHit = p.target.isBossWarsBoss && (p.target.phaseTransitionRemaining || 0) > 0;
+      if (!bossImmuneHit) {
+        gainUltEnergy(side, ULT_GAIN_AA_HIT);
+        applyRageLifesteal(side, p.damage);
+      }
       // Arena-orb / arena-hero hit → applicera special damage och hoppa över monster-logiken
       if (isArenaOrbT) {
         damageArenaOrb(p.damage, side.idx);
