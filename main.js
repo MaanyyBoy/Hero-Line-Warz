@@ -11992,6 +11992,16 @@ const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5; // +1.5 procentenheter per
 const BOSSWARS_MINION_AURA_RESET_TIME = 7.0;          // 3.0 → 7.0 (individuell aura)
 const BOSSWARS_MINION_AURA_START_PCT = 1;             // första tick (stack 0) = 1%
 
+// Minion-mekaniken (vågor + absorption + aura + debuff-UI + +M) gäller BARA
+// boss 1 = tier 1 (mekaniken byggdes/testades där). Boss 2–5 får egna
+// ad-mekaniker senare; just nu INGA minions/auror/UI. Strikt `=== 1`: saknad/
+// odefinierad tier → false (säker default, aktiverar inte minions av misstag).
+// Tier sätts alltid numeriskt vid match-start (solo parseInt, MP msg.tier||1).
+function bossWarsMinionsEnabled() {
+  return !!(APP && APP.gameMode === 'bosswars' &&
+            APP.bossWars && APP.bossWars.tier === 1);
+}
+
 // Per-hjälte aura-state ligger på side-objektet: side.auraStacks (antal ticks
 // tagna, 0,1,2…), side.auraTickAccum, side.auraResetTimer. Nollas per side här.
 function resetBossWarsAuraState() {
@@ -12247,6 +12257,7 @@ function applyMinionAbsorption(side, boss) {
 // = en tick (break-out så fort vi hittar overlap).
 function tickBossWarsMinionAura(dt) {
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  if (!bossWarsMinionsEnabled()) return;   // bara boss 1 (tier 1) — ingen aura tier 2–5
   const side1 = sides[1];
   if (!side1) return;
   const minions = side1.bossWarsMinions || [];
@@ -12307,6 +12318,7 @@ function tickBossWarsMinionAura(dt) {
 // boss.bossPhase === 2 → 6 minions × 1.2 speed istället för 3 × 1.0.
 function tickBossWarsMinionWaves(dt) {
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  if (!bossWarsMinionsEnabled()) return;   // bara boss 1 (tier 1) — inga vågor tier 2–5
   if (!APP.bossWars.bossActivated) return;
   // MP host-auktoritativ: bara host (eller solo, där matchActive=false) får
   // spawna vågor. Joiners/clients måste ej trigga lokala spawns — det skulle
@@ -18153,7 +18165,7 @@ function _ensureBwMinionBtn() {
     'box-shadow:0 4px 12px rgba(0,0,0,0.5);touch-action:manipulation;';
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!APP || APP.gameMode !== 'bosswars') return;
+    if (!bossWarsMinionsEnabled()) return;   // bara boss 1 (tier 1)
     const s = (typeof sides !== 'undefined') ? sides[1] : null;
     if (s && s.monsters && s.bossWarsMinions) spawnBossWarsMinionWave(s);
   });
@@ -18165,9 +18177,9 @@ function _updateBwMinionBtn() {
   // LAGER 4a: bara solo (dev/test). I 3-player MP får knappen INTE synas —
   // riktiga spelare ska inte kunna trigga vågor manuellt. bossMpState.matchActive
   // = true i MP, false i solo (etablerat mönster).
-  const isBwMode = (typeof APP !== 'undefined' && APP && APP.gameMode === 'bosswars');
   const isMp = (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive);
-  const show = isBwMode && !isMp;
+  // Bara boss 1 (tier 1) + solo (riktiga spelare i MP får ej trigga vågor).
+  const show = bossWarsMinionsEnabled() && !isMp;
   _bwMinionBtnEl.style.display = show ? 'block' : 'none';
 }
 // === Debuff-stack-lista (Boss Wars) ===
@@ -18210,7 +18222,8 @@ function _ensureDebuffStackUI() {
   _debuffStackEl = box;
 }
 function updateDebuffStackUI() {
-  const isBw = !!(APP && APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.started);
+  // Bara boss 1 (tier 1): listan visas inte alls för tier 2–5 (de har inga minions).
+  const isBw = bossWarsMinionsEnabled() && !!(APP.bossWars && APP.bossWars.started);
   if (!isBw) { if (_debuffStackEl) _debuffStackEl.style.display = 'none'; return; }
   _ensureDebuffStackUI();
   if (_debuffStackEl.style.display !== 'block') _debuffStackEl.style.display = 'block';
@@ -18247,9 +18260,11 @@ function updateDebuffStackUI() {
 }
 setInterval(() => {
   _ensureBwMinionBtn(); _updateBwMinionBtn();
-  // Dölj debuff-listan utanför boss wars (t.ex. menyn, där updateHud ej tickar).
+  // Dölj debuff-listan när minion-mekaniken inte är aktiv (meny, annat läge, ELLER
+  // boss 2–5). Täcker fallet där elementet byggts i en tidigare tier-1-session och
+  // updateHud ej hinner dölja det vid byte till tier 2–5 i samma session.
   _ensureDebuffStackUI();
-  if (_debuffStackEl && !(APP && APP.gameMode === 'bosswars')) _debuffStackEl.style.display = 'none';
+  if (_debuffStackEl && !bossWarsMinionsEnabled()) _debuffStackEl.style.display = 'none';
 }, 500);
 
 // Top-center boss HP-bar (procent). Synlig under boss-fighten i boss wars.
