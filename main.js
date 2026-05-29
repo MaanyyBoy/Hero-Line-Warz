@@ -12059,6 +12059,20 @@ function spawnBossWarsMinion(side, ang, speedMul = 1.0, hp = BOSSWARS_MINION_HP_
   mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
   attachHpBar(mesh, 1.6);
   scene.add(mesh);
+  // LAGER 4b: subtil spawn-flash. Liten ensam blå castRing (matchar minion-
+  // tinten) — INGEN Kenney-glow, så 6 samtidiga phase-2-spawns inte blir
+  // "disco". Frisk RingGeometry+material → generiska dispose-grenen i
+  // tickCombatFx frigör geo+material; 'castRing'-grenen sköter scale+fade.
+  {
+    const fRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.62, 0.70, 24),
+      new THREE.MeshBasicMaterial({ color: 0x6699ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+    );
+    fRing.rotation.x = -Math.PI / 2;
+    fRing.position.set(x, BOSSWARS_FLOOR_Y + 0.06, z);
+    scene.add(fRing);
+    combatFx.push({ mesh: fRing, life: 0.4, maxLife: 0.4, kind: 'castRing' });
+  }
   // LAGER 3: aura-cirkel (visuell fara-zon, matchar exakt skadezonen).
   // Y strax ovanför golvet så ringen syns ovanpå platform-texturen.
   const auraMesh = makeMinionAuraMesh(BOSSWARS_MINION_AURA_RADIUS);
@@ -12208,6 +12222,11 @@ function applyMinionAbsorption(side, boss) {
     if (!tgt || !tgt.hero || tgt.hero.dead) continue;
     damageHero(tgt, tgt.hero.maxHp * aoePct);
   }
+  // LAGER 4b: absorption-flash. Kort bärnstens-burst vid bossen (matchar
+  // heal/buff-temat). Triggas ENBART här (absorption-vägen) — hero-kill/DoT
+  // går via death-sweep och rör aldrig denna funktion. Återanvänder befintlig
+  // 'shieldBurst'-FX → auto-disposas i tickCombatFx, inget persistent state.
+  if (boss.mesh) spawnShieldBurstFx(boss.mesh.position.x, boss.mesh.position.z, 0xffcc44);
 }
 
 // LAGER 3: aura-skada (global per match). Anropas EN GÅNG per frame i
