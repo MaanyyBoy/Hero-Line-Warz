@@ -18382,6 +18382,50 @@ function _updateBoss2AdBtn() {
   const show = boss2AdsEnabled() && !isMp;   // bara tier 2 + solo
   _boss2AdBtnEl.style.display = show ? 'block' : 'none';
 }
+
+// === Boss 2-ad KILL-ALL DEBUG-knapp (+K) — TILLFÄLLIG dispose-test-trigger ===
+// Dödar ALLA levande ads via den PRIMÄRA hero-kill-pathen (hostKillMonster) — exakt
+// samma väg som hero-AA/skill. Syfte: diskriminerande test för att bevisa att
+// dispose-kedjan är sund (boss2Ads → 0 + geo plattar ut efter +K = ingen läcka, bara
+// live-ackumulering eftersom ads saknar självdespawn tills Lager 2:s dödstimer byggs).
+// Spegel av +A: tier 2 + solo + host-guardad. Placerad under +M (50% + 52px), röd.
+// >>> TA BORT när dispose-testet är klart (ingen del av produktionsmekaniken). <<<
+let _boss2KillBtnEl = null;
+function _ensureBoss2KillBtn() {
+  if (_boss2KillBtnEl) return;
+  const btn = document.createElement('button');
+  btn.id = 'boss2-kill-btn';
+  btn.textContent = '+K';
+  btn.style.cssText = 'position:fixed;right:8px;top:calc(50% + 52px);transform:translateY(-50%);' +
+    'width:44px;height:44px;background:rgba(200,60,60,0.85);color:#fff;' +
+    'border:1px solid rgba(255,255,255,0.4);border-radius:10px;' +
+    'font:800 14px/1 system-ui;cursor:pointer;z-index:9998;display:none;' +
+    'box-shadow:0 4px 12px rgba(0,0,0,0.5);touch-action:manipulation;';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!boss2AdsEnabled()) return;   // bara boss 2 (tier 2)
+    // Host-guard: aldrig klient (ghost-state). Solo har matchActive=false → körs.
+    if (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive) return;
+    const s = (typeof sides !== 'undefined') ? sides[1] : null;
+    if (!s || !s.boss2Ads || !s.monsters) return;
+    // Kopiera ref-listan först — hostKillMonster muterar BÅDE side.monsters OCH
+    // side.boss2Ads (splice) under loopen, så index driftar annars.
+    const ads = s.boss2Ads.slice();
+    for (const m of ads) {
+      const idx = s.monsters.indexOf(m);
+      if (idx >= 0) hostKillMonster(s, idx);   // primär hero-kill-path (dispose + splice båda)
+      else despawnBoss2Ad(s, m);               // edge: redan ur monsters → sweep-dispose-path
+    }
+  });
+  document.body.appendChild(btn);
+  _boss2KillBtnEl = btn;
+}
+function _updateBoss2KillBtn() {
+  if (!_boss2KillBtnEl) return;
+  const isMp = (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive);
+  const show = boss2AdsEnabled() && !isMp;   // bara tier 2 + solo (samma gate som +A)
+  _boss2KillBtnEl.style.display = show ? 'block' : 'none';
+}
 // === Debuff-stack-lista (Boss Wars) ===
 // Ovanför joysticken (#joy, 140px, bottom-left). En rad per aktiv spelare:
 // namn + stacks (stort/färgat/utan enhet) + reset-nedräkning (litet/grått/⏳+s).
@@ -18461,6 +18505,7 @@ function updateDebuffStackUI() {
 setInterval(() => {
   _ensureBwMinionBtn(); _updateBwMinionBtn();
   _ensureBoss2AdBtn(); _updateBoss2AdBtn();
+  _ensureBoss2KillBtn(); _updateBoss2KillBtn();
   // Dölj debuff-listan när minion-mekaniken inte är aktiv (meny, annat läge, ELLER
   // boss 2–5). Täcker fallet där elementet byggts i en tidigare tier-1-session och
   // updateHud ej hinner dölja det vid byte till tier 2–5 i samma session.
