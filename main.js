@@ -11079,7 +11079,11 @@ function updateMonsters(side, dt) {
     }
     // Boss Wars-minions: tar DoT/poison/mark-skada ovan, men ingen monster-AI
     // (aura/phase/movement/attack/skill-cast). Egen tick i updateBossWarsMinions.
-    if (m.isMinion) continue;
+    // Boss 2-ads har OCKSÅ egen tick (updateBoss2Ads) → skip dem med, annars kör
+    // de DUBBEL AI och faller in i wave-monster-targeting (tgt = path[idx2]) →
+    // "tgt.x" undefined-krasch när en ad skjuter. Targetbarhet kommer från
+    // side.monsters-medlemskap, inte härifrån → oförändrad.
+    if (m.isMinion || m.isBoss2Ad) continue;
     // Boss/miniboss: aura-tick varje frame
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
     // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
