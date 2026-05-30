@@ -12415,7 +12415,7 @@ function updateBossWarsMinions(side, dt) {
 // targetSide.monsterProjectiles som redan broadcastas). Se decision-fil för boss 2.
 // ===========================================================================
 const BOSS2_AD_HP = 120;            // placeholder — tunas i balans-pass
-const BOSS2_AD_SPEED = 3.5;         // jagar hjälten men kitebar (hero min ~5.0)
+const BOSS2_AD_SPEED = 5.25;        // snabbare än hjälten (~5.0) → INTE kitebar, jagar ikapp (avsiktligt hotfull; placeholder)
 const BOSS2_AD_DAMAGE = 10;         // flat skada per projektil-träff (placeholder)
 const BOSS2_AD_RANGE = 8.0;         // distansattack-räckvidd
 const BOSS2_AD_ATK_INTERVAL = 1.5;  // sek mellan skott
@@ -12480,7 +12480,7 @@ function nearestLivingHeroSide(x, z) {
 function spawnBoss2Ad(side, ang) {
   if (!side || !side.monsters || !side.boss2Ads) return null;
   const mesh = makeMonsterMesh();   // skeleton-fallback (polish-mesh i senare lager)
-  mesh.scale.setScalar(0.8);
+  mesh.scale.setScalar(1.6);        // placeholder — dubbel storlek (tunas i balans-pass)
   // Lila tint (Warlock-tema). Material-CLONE bryter shared cache → MÅSTE disposas
   // (geometry delas via GLTF-cache → rörs ALDRIG). Skiljer ads visuellt från boss 1.
   mesh.traverse(o => {
