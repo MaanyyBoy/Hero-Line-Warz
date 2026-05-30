@@ -12425,6 +12425,30 @@ const BOSS2_AD_PROJ_TIME = 0.8;     // projektil-restid till hjälten
 const BOSS2_AD_LIFETIME = 10;          // sek innan en ad detonerar (placeholder, tunas)
 const BOSS2_AD_EXPLODE_PCT_P1 = 0.25;  // explosion-AoE: % av hjälte-maxHp, phase 1
 const BOSS2_AD_EXPLODE_PCT_P2 = 0.50;  // phase 2
+// LAGER 3: global kylningsregel + wipe. Efter att en ad dödas via HERO-KILL startar
+// en GLOBAL kylning (en gemensam timer för hela matchen, inte per spelare). Dödas en
+// NY ad via hero-kill medan kylningen löper → WIPE (alla levande hjältar dör direkt).
+// Phase från boss.bossPhase (single source, som L2:s explosion). ENDAST hero-kills
+// räknas — timeout-explosion (L2) + mass-despawn (clearAllBoss2Ads) går via despawn,
+// aldrig via hostKillMonster, så de rör aldrig kylningen/wipe.
+const BOSS2_AD_KILL_COOLDOWN_P1 = 2.0;   // sek global kylning, phase 1 (placeholder, tunas)
+const BOSS2_AD_KILL_COOLDOWN_P2 = 3.0;   // phase 2
+const boss2KillCooldown = { remaining: 0 };   // GLOBAL — spegel av bossWarsWaveState-mönstret
+function resetBoss2KillCooldown() { boss2KillCooldown.remaining = 0; }
+
+// LAGER 3: WIPE — en ad dödades via hero-kill MEDAN den globala kylningen löpte.
+// Alla levande hjältar dör direkt. killHero = den faktiska hero-död-mekanismen (samma
+// funktion damageHero anropar vid hp<=0) → garanterad död oavsett DR/sköldar (en
+// damageHero(maxHp) kunde mitigeras bort). Respekterar Phoenix Amulet:s revive precis
+// som explosion-vägen (damageHero→killHero) skulle. Samma hjälte-enumeration
+// (bossWarsTargets(sides[1])) som applyBoss2AdExplosion. Host/solo-side (enda call-site
+// är hostKillMonster-grenen, host-auktoritativ) → hero.dead synkas via befintlig MP-sync.
+function triggerBoss2AdWipe() {
+  for (const tgt of bossWarsTargets(sides[1])) {
+    if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+    killHero(tgt);
+  }
+}
 
 // Gate: hela boss 2-ad-mekaniken gäller BARA tier 2 (strikt ===2; saknad tier →
 // false). Spegel av bossWarsMinionsEnabled().
@@ -12550,6 +12574,12 @@ function applyBoss2AdExplosion(side, boss, ad) {
 // Wars-grenen (host/solo — klienter simulerar ej → host-auktoritativt, inga ghost-spawns).
 function updateBoss2Ads(side, dt) {
   if (!boss2AdsEnabled()) return;
+  // LAGER 3: global kill-kylning tickar ALLTID (även när inga ads lever — kylningen
+  // överlever ad:en som startade den, så detta MÅSTE ligga före length===0-returnen).
+  // Enda call-site är side.idx===1 (host/solo) → tickar en gång/frame, host-auktoritativt.
+  if (boss2KillCooldown.remaining > 0) {
+    boss2KillCooldown.remaining = Math.max(0, boss2KillCooldown.remaining - dt);
+  }
   if (!side.boss2Ads || side.boss2Ads.length === 0) return;
   // Boss en gång före loopen: phase (explosion-%) + transition-check (timer-paus).
   const boss = side.monsters.find(x => x.isBossWarsBoss);
@@ -12753,6 +12783,20 @@ function hostKillMonster(side, idx, byPlayerSide) {
   if (m.isBoss2Ad) {
     const i2 = side.boss2Ads ? side.boss2Ads.indexOf(m) : -1;
     if (i2 >= 0) side.boss2Ads.splice(i2, 1);
+    // LAGER 3: detta är HERO-KILL-vägen (timeout-explosion + mass-despawn går via
+    // despawnBoss2Ad, aldrig hit). Löper den globala kylningen → WIPE. Annars →
+    // starta kylningen (den för-tidiga kill:en startar INGEN ny — den triggar wipe).
+    // Phase från samma boss.bossPhase som L2:s explosion. Ad:en är redan bortsplittad
+    // ur side.monsters ovan, men bossen finns kvar → find hittar den.
+    if (boss2AdsEnabled()) {
+      if (boss2KillCooldown.remaining > 0) {
+        triggerBoss2AdWipe();
+      } else {
+        const boss = side.monsters.find(x => x.isBossWarsBoss);
+        boss2KillCooldown.remaining = (boss && boss.bossPhase === 2)
+          ? BOSS2_AD_KILL_COOLDOWN_P2 : BOSS2_AD_KILL_COOLDOWN_P1;
+      }
+    }
     return;
   }
   // Boss-belöning: 5× guld + XP
@@ -26707,6 +26751,7 @@ function enterPlayPhase() {
     // state så eskaleringen inte bär över. enterPlayPhase är ENDA väg in.
     clearAllBossWarsMinions();
     clearAllBoss2Ads();
+    resetBoss2KillCooldown();   // LAGER 3: fresh global kylning per match (single-entry)
     resetBossWarsAuraState();
     resetBossWarsWaveState();
     buildBossWarsScene();
