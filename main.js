@@ -18325,6 +18325,9 @@ function _ensureBwMinionBtn() {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!bossWarsMinionsEnabled()) return;   // bara boss 1 (tier 1)
+    // Host-guard: aldrig klient-spawn (ghost-minions som ej synkas/disposas).
+    // Solo har matchActive=false → körs. Spegel av +A + host-auktoritativa spawn-vägar.
+    if (typeof bossMpState !== 'undefined' && bossMpState && bossMpState.matchActive) return;
     const s = (typeof sides !== 'undefined') ? sides[1] : null;
     if (s && s.monsters && s.bossWarsMinions) spawnBossWarsMinionWave(s);
   });
