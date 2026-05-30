@@ -12420,6 +12420,11 @@ const BOSS2_AD_DAMAGE = 10;         // flat skada per projektil-träff (placehol
 const BOSS2_AD_RANGE = 8.0;         // distansattack-räckvidd
 const BOSS2_AD_ATK_INTERVAL = 1.5;  // sek mellan skott
 const BOSS2_AD_PROJ_TIME = 0.8;     // projektil-restid till hjälten
+// LAGER 2: dödstimer + explosion. Ads har begränsad livslängd; vid utgång
+// detonerar de med global AoE (% av hjälte-maxHp, skalar med boss.bossPhase).
+const BOSS2_AD_LIFETIME = 10;          // sek innan en ad detonerar (placeholder, tunas)
+const BOSS2_AD_EXPLODE_PCT_P1 = 0.25;  // explosion-AoE: % av hjälte-maxHp, phase 1
+const BOSS2_AD_EXPLODE_PCT_P2 = 0.50;  // phase 2
 
 // Gate: hela boss 2-ad-mekaniken gäller BARA tier 2 (strikt ===2; saknad tier →
 // false). Spegel av bossWarsMinionsEnabled().
@@ -12468,6 +12473,7 @@ function spawnBoss2Ad(side, ang) {
     id: nextEntityId++,
     hp: BOSS2_AD_HP, maxHp: BOSS2_AD_HP,
     moveSpeed: BOSS2_AD_SPEED,
+    lifeRemaining: BOSS2_AD_LIFETIME,   // LAGER 2: dödstimer (fryses under phase-transition)
     isBoss2Ad: true,        // EGEN flagga — INTE isMinion → boss 1:s aura/absorption/sweep rör dem aldrig
     isMinion: false, isMonster: false, isBoss: false, isMiniBoss: false, isBossWarsBoss: false,
     attackType: 'range',
@@ -12516,16 +12522,56 @@ function clearAllBoss2Ads() {
   }
 }
 
-// Jakt + distansattack-AI. Anropas bara side.idx===1 i Boss Wars-grenen (host/solo
-// — klienter simulerar ej → host-auktoritativt, inga ghost-spawns).
+// LAGER 2: ad:ens dödstimer löpte ut → detonerar. Global AoE på ALLA levande
+// hjältar (% av deras maxHp). Phase läses från SAMMA boss.bossPhase som boss 1:s
+// vågor/absorption (single source) → 25% P1 / 50% P2. Spegel av applyMinionAbsorption.
+//
+// ENDA call-site: timer-expiry-grenen i updateBoss2Ads. Hero-kill (hostKillMonster)
+// + mass-despawn (clearAllBoss2Ads) går RAKT till despawn → rör ALDRIG denna funktion
+// → ingen explosion på de vägarna (samma separation som boss 1:s absorption).
+function applyBoss2AdExplosion(side, boss, ad) {
+  const pct = (boss && boss.bossPhase === 2)
+    ? BOSS2_AD_EXPLODE_PCT_P2
+    : BOSS2_AD_EXPLODE_PCT_P1;
+  for (const tgt of bossWarsTargets(side)) {
+    if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+    damageHero(tgt, tgt.hero.maxHp * pct);
+  }
+  // VFX: lila mark-burst + shield-burst vid ad:ens position (Warlock-tema).
+  // Återanvänder befintliga combatFx-kinds → auto-disposas i tickCombatFx,
+  // inget persistent state, inga nya mesh-typer/lights (iOS-regeln).
+  if (ad.mesh) {
+    spawnGroundImpact(ad.mesh.position.x, ad.mesh.position.z, 3.2, 0xaa66ff);
+    spawnShieldBurstFx(ad.mesh.position.x, ad.mesh.position.z, 0xaa66ff);
+  }
+}
+
+// Jakt + distansattack-AI + LAGER 2 dödstimer. Anropas bara side.idx===1 i Boss
+// Wars-grenen (host/solo — klienter simulerar ej → host-auktoritativt, inga ghost-spawns).
 function updateBoss2Ads(side, dt) {
   if (!boss2AdsEnabled()) return;
   if (!side.boss2Ads || side.boss2Ads.length === 0) return;
+  // Boss en gång före loopen: phase (explosion-%) + transition-check (timer-paus).
+  const boss = side.monsters.find(x => x.isBossWarsBoss);
+  const inTransition = !!(boss && (boss.phaseTransitionRemaining || 0) > 0);
   for (let i = side.boss2Ads.length - 1; i >= 0; i--) {
     const m = side.boss2Ads[i];
+    if (!m) continue;   // defensiv: array kan ha krympt under loopen (mass-despawn)
     // Death-sweep: hp<=0, ELLER redan removed ur side.monsters av hostKillMonster
     // (hero-kill) → despawn. despawnBoss2Ad är idempotent.
     if (m.hp <= 0 || !side.monsters.includes(m)) { despawnBoss2Ad(side, m); continue; }
+    // LAGER 2: dödstimer. Fryses under phase-transition (boss immun + hjältarna
+    // stunnade → orättvist att detonera en oundviklig explosion på handlingsförlamade
+    // hjältar; speglar våg-pausen + decision 117:s rättviseprincip). Vid utgång →
+    // explosion FÖRE despawn (enda call-site). despawn = ren borttagning, ingen explosion.
+    if (!inTransition) {
+      m.lifeRemaining -= dt;
+      if (m.lifeRemaining <= 0) {
+        applyBoss2AdExplosion(side, boss, m);
+        despawnBoss2Ad(side, m);
+        continue;
+      }
+    }
     const target = nearestLivingHeroSide(m.mesh.position.x, m.mesh.position.z);
     if (!target) continue;   // ingen levande hjälte → stå still
     const dx = target.hero.x - m.mesh.position.x;
