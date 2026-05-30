@@ -12436,6 +12436,15 @@ const BOSS2_AD_KILL_COOLDOWN_P2 = 3.0;   // phase 2
 const boss2KillCooldown = { remaining: 0 };   // GLOBAL — spegel av bossWarsWaveState-mönstret
 function resetBoss2KillCooldown() { boss2KillCooldown.remaining = 0; }
 
+// LAGER 2 (omarbetad): EN gemensam våg-dödstimer (ersätter per-ad lifeRemaining).
+// Hela vågen delar EN timer; vid utgång exploderar ALLA kvarvarande ads samma frame.
+// Enkel modul-level state (INTE en lista) tack vare invarianten "aldrig >1 våg samtidigt"
+// (BOSS2_AD_LIFETIME 10s < vågintervall). Spegel av boss2KillCooldown-mönstret. SKILD
+// från kylnings-timern (Lager 3) — två olika koncept. Skadan förblir PER AD (varje ad
+// gör 25/50% → full våg = 75/150%); det enda som ändras är att de delar EN timer.
+const boss2AdWaveTimer = { remaining: 0, active: false };
+function resetBoss2AdWaveTimer() { boss2AdWaveTimer.remaining = 0; boss2AdWaveTimer.active = false; }
+
 // LAGER 3: WIPE — en ad dödades via hero-kill MEDAN den globala kylningen löpte.
 // Alla levande hjältar dör direkt. killHero = den faktiska hero-död-mekanismen (samma
 // funktion damageHero anropar vid hp<=0) → garanterad död oavsett DR/sköldar (en
@@ -12497,7 +12506,8 @@ function spawnBoss2Ad(side, ang) {
     id: nextEntityId++,
     hp: BOSS2_AD_HP, maxHp: BOSS2_AD_HP,
     moveSpeed: BOSS2_AD_SPEED,
-    lifeRemaining: BOSS2_AD_LIFETIME,   // LAGER 2: dödstimer (fryses under phase-transition)
+    // LAGER 2 (omarbetad): dödstimern bor inte längre per ad — vågen delar EN
+    // gemensam boss2AdWaveTimer (satt i spawnBoss2AdWave). Inget lifeRemaining-fält här.
     isBoss2Ad: true,        // EGEN flagga — INTE isMinion → boss 1:s aura/absorption/sweep rör dem aldrig
     isMinion: false, isMonster: false, isBoss: false, isMiniBoss: false, isBossWarsBoss: false,
     attackType: 'range',
@@ -12519,6 +12529,12 @@ function spawnBoss2Ad(side, ang) {
 function spawnBoss2AdWave(side, size = 3) {
   if (!side) return;
   for (let i = 0; i < size; i++) spawnBoss2Ad(side, (i / size) * Math.PI * 2);
+  // LAGER 2 (omarbetad): (åter)starta vågens gemensamma dödstimer. Enda spawn-vägen för
+  // ads → täcker alla. Manuellt dubbel-+A medan en våg lever återställer remaining till
+  // 10 och slår ihop ads till EN våg/timer (harmlöst debug-edge; auto-vågsystemet
+  // respekterar 10s<intervall så det aldrig sker i drift).
+  boss2AdWaveTimer.remaining = BOSS2_AD_LIFETIME;
+  boss2AdWaveTimer.active = true;
 }
 
 // Dispose en ad (death-sweep / mass-despawn). Idempotent: indexOf/splice är no-op
@@ -12580,28 +12596,45 @@ function updateBoss2Ads(side, dt) {
   if (boss2KillCooldown.remaining > 0) {
     boss2KillCooldown.remaining = Math.max(0, boss2KillCooldown.remaining - dt);
   }
+  // LAGER 2 (omarbetad): vågen tömd av HERO-KILLS (alla ads dödade före timeout) →
+  // deaktivera våg-timern → ingen explosion, ren våg-avslutning. active&&-guarden gör
+  // att detta aldrig firar i glappet mellan vågor (active=false då). MÅSTE ligga före
+  // length===0-returnen (en tom array returnerar annars innan vi hinner deaktivera).
+  if (boss2AdWaveTimer.active && (!side.boss2Ads || side.boss2Ads.length === 0)) {
+    resetBoss2AdWaveTimer();
+  }
   if (!side.boss2Ads || side.boss2Ads.length === 0) return;
   // Boss en gång före loopen: phase (explosion-%) + transition-check (timer-paus).
   const boss = side.monsters.find(x => x.isBossWarsBoss);
   const inTransition = !!(boss && (boss.phaseTransitionRemaining || 0) > 0);
+  // LAGER 2 (omarbetad): EN gemensam våg-dödstimer (ersätter per-ad lifeRemaining).
+  // Tickar EN gång (inte per ad). Fryst under phase-transition (decision 117:s
+  // rättviseprincip — detonera ej på stunnade hjältar). Vid utgång → ALLA kvarvarande
+  // ads exploderar SAMMA frame. Skadan är PER AD (applyBoss2AdExplosion per ad →
+  // 25/50% var → full våg 75/150%). applyBoss2AdExplosion = fortfarande ENDA call-site
+  // (hero-kill + mass-despawn rör den aldrig; decision 118 lärdom 2). Backwards-loop +
+  // despawnBoss2Ad (splice-current) = säkert.
+  if (boss2AdWaveTimer.active && !inTransition) {
+    boss2AdWaveTimer.remaining -= dt;
+    if (boss2AdWaveTimer.remaining <= 0) {
+      for (let i = side.boss2Ads.length - 1; i >= 0; i--) {
+        const ad = side.boss2Ads[i];
+        if (!ad) continue;
+        applyBoss2AdExplosion(side, boss, ad);
+        despawnBoss2Ad(side, ad);
+      }
+      resetBoss2AdWaveTimer();
+      return;   // vågen detonerad + borta — inget mer denna frame
+    }
+  }
   for (let i = side.boss2Ads.length - 1; i >= 0; i--) {
     const m = side.boss2Ads[i];
     if (!m) continue;   // defensiv: array kan ha krympt under loopen (mass-despawn)
     // Death-sweep: hp<=0, ELLER redan removed ur side.monsters av hostKillMonster
     // (hero-kill) → despawn. despawnBoss2Ad är idempotent.
     if (m.hp <= 0 || !side.monsters.includes(m)) { despawnBoss2Ad(side, m); continue; }
-    // LAGER 2: dödstimer. Fryses under phase-transition (boss immun + hjältarna
-    // stunnade → orättvist att detonera en oundviklig explosion på handlingsförlamade
-    // hjältar; speglar våg-pausen + decision 117:s rättviseprincip). Vid utgång →
-    // explosion FÖRE despawn (enda call-site). despawn = ren borttagning, ingen explosion.
-    if (!inTransition) {
-      m.lifeRemaining -= dt;
-      if (m.lifeRemaining <= 0) {
-        applyBoss2AdExplosion(side, boss, m);
-        despawnBoss2Ad(side, m);
-        continue;
-      }
-    }
+    // (LAGER 2-dödstimern flyttad UT ur loopen → gemensam våg-timer ovan. Loopen gör
+    //  nu bara death-sweep + jakt/distansattack.)
     const target = nearestLivingHeroSide(m.mesh.position.x, m.mesh.position.z);
     if (!target) continue;   // ingen levande hjälte → stå still
     const dx = target.hero.x - m.mesh.position.x;
@@ -26752,6 +26785,7 @@ function enterPlayPhase() {
     clearAllBossWarsMinions();
     clearAllBoss2Ads();
     resetBoss2KillCooldown();   // LAGER 3: fresh global kylning per match (single-entry)
+    resetBoss2AdWaveTimer();    // LAGER 2 (omarbetad): fresh våg-dödstimer per match
     resetBossWarsAuraState();
     resetBossWarsWaveState();
     buildBossWarsScene();
