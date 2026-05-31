@@ -10728,7 +10728,9 @@ function applyBossCircleDmg(side, m, cast) {
     if (Math.hypot(tgt.hero.x - cast.targetX, tgt.hero.z - cast.targetZ) < s.radius) {
       damageHero(tgt, dmg);
       if (s.slow) {
-        tgt.heroSlowMul = Math.min(tgt.heroSlowMul || 1, s.slow.mul);
+        // null-safe: behåll en befintlig 0 (boss2-ad P2 full-stop) — `|| 1` skulle
+        // annars låta denna boss-slow skriva över full-stopen och frigöra hjälten.
+        tgt.heroSlowMul = Math.min(tgt.heroSlowMul != null ? tgt.heroSlowMul : 1, s.slow.mul);
         tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, s.slow.dur);
       }
     }
@@ -10937,7 +10939,8 @@ function tickBossPools(side, dt) {
         if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius) {
           damageHero(tgt, p.dps * 0.5);
           if (p.slow) {
-            tgt.heroSlowMul = Math.min(tgt.heroSlowMul || 1, p.slow.mul);
+            // null-safe: behåll en befintlig 0 (boss2-ad P2 full-stop) — se hostCastBossSkill.
+            tgt.heroSlowMul = Math.min(tgt.heroSlowMul != null ? tgt.heroSlowMul : 1, p.slow.mul);
             tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, p.slow.dur);
           }
         }
