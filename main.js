@@ -12445,6 +12445,25 @@ function resetBoss2KillCooldown() { boss2KillCooldown.remaining = 0; }
 const boss2AdWaveTimer = { remaining: 0, active: false };
 function resetBoss2AdWaveTimer() { boss2AdWaveTimer.remaining = 0; boss2AdWaveTimer.active = false; }
 
+// FÄRGSKIFT: visualiserar Lager 3-kylningen PÅ ad-meshen. Lila = säkert att döda nästa;
+// rött = kylning löper (boss2KillCooldown.remaining > 0) → döda INTE, då wipear ni.
+const BOSS2_AD_COLOR_SAFE   = 0xaa66ff;   // lila (Warlock-tema, oförändrad normalfärg)
+const BOSS2_AD_COLOR_DANGER = 0xff3333;   // rött — kylning löper, wipe-risk
+// Recolor: muterar BARA color-värdet på ad:ens BEFINTLIGA material-clones (klonade i
+// spawnBoss2Ad). INGEN ny clone/material/mesh → noll allokering, inget att disposa.
+// Samma traverse-form som lila-tinten vid spawn → täcker ALLA child-meshes/material-arrayer.
+function setBoss2AdColor(m, hex) {
+  if (!m || !m.mesh) return;
+  m.mesh.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    if (Array.isArray(o.material)) {
+      for (const mat of o.material) if (mat.color) mat.color.setHex(hex);
+    } else if (o.material.color) {
+      o.material.color.setHex(hex);
+    }
+  });
+}
+
 // LAGER 3: WIPE — en ad dödades via hero-kill MEDAN den globala kylningen löpte.
 // Alla levande hjältar dör direkt. killHero = den faktiska hero-död-mekanismen (samma
 // funktion damageHero anropar vid hp<=0) → garanterad död oavsett DR/sköldar (en
@@ -12483,15 +12502,19 @@ function spawnBoss2Ad(side, ang) {
   mesh.scale.setScalar(1.6);        // placeholder — dubbel storlek (tunas i balans-pass)
   // Lila tint (Warlock-tema). Material-CLONE bryter shared cache → MÅSTE disposas
   // (geometry delas via GLTF-cache → rörs ALDRIG). Skiljer ads visuellt från boss 1.
+  // FÄRGSKIFT: föds RÖD om kylningen redan löper vid spawn (annars lila) → ingen
+  // 1-frame-flash. Samma värde sätts på _isRed nedan så per-frame-uppdateringen matchar.
+  const bornRed = boss2KillCooldown.remaining > 0;
+  const initHex = bornRed ? BOSS2_AD_COLOR_DANGER : BOSS2_AD_COLOR_SAFE;
   mesh.traverse(o => {
     if (o.isMesh) {
       o.castShadow = false; o.receiveShadow = false;
       if (o.material) {
         if (Array.isArray(o.material)) {
-          o.material = o.material.map(m => { const c = m.clone(); if (c.color) c.color.setHex(0xaa66ff); return c; });
+          o.material = o.material.map(m => { const c = m.clone(); if (c.color) c.color.setHex(initHex); return c; });
         } else {
           o.material = o.material.clone();
-          if (o.material.color) o.material.color.setHex(0xaa66ff);
+          if (o.material.color) o.material.color.setHex(initHex);
         }
       }
     }
@@ -12517,6 +12540,7 @@ function spawnBoss2Ad(side, ang) {
     projTime: BOSS2_AD_PROJ_TIME,
     projKind: 'darkOrb',
     atkCd: 0,
+    _isRed: bornRed,        // FÄRGSKIFT-cache: matchar initHex ovan → ingen onödig recolor frame 1
     mesh,
   };
   // Båda arrayer (samma ref): side.monsters → gratis hero-targeting/AA/skill-impact
@@ -12634,7 +12658,14 @@ function updateBoss2Ads(side, dt) {
     // (hero-kill) → despawn. despawnBoss2Ad är idempotent.
     if (m.hp <= 0 || !side.monsters.includes(m)) { despawnBoss2Ad(side, m); continue; }
     // (LAGER 2-dödstimern flyttad UT ur loopen → gemensam våg-timer ovan. Loopen gör
-    //  nu bara death-sweep + jakt/distansattack.)
+    //  nu bara death-sweep + FÄRGSKIFT + jakt/distansattack.)
+    // FÄRGSKIFT: rött medan kylningen löper, lila annars. Bara vid TILLSTÅNDSBYTE
+    // (_isRed-cache) → setHex anropas en gång per byte, ingen per-frame material-spam.
+    const wantRed = boss2KillCooldown.remaining > 0;
+    if (m._isRed !== wantRed) {
+      setBoss2AdColor(m, wantRed ? BOSS2_AD_COLOR_DANGER : BOSS2_AD_COLOR_SAFE);
+      m._isRed = wantRed;
+    }
     const target = nearestLivingHeroSide(m.mesh.position.x, m.mesh.position.z);
     if (!target) continue;   // ingen levande hjälte → stå still
     const dx = target.hero.x - m.mesh.position.x;
