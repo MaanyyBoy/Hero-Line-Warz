@@ -3953,7 +3953,7 @@ const BOSS_SCALE = {
   // varden eftersom Quaternius-meshes redan ar storre i mesh-units).
   // Anvanderen kommer rapportera om for stor/liten per boss.
   bosswars_1: 1.6,   // Cactoro (Captain)
-  bosswars_2: 1.3,   // MushroomKing (General)
+  bosswars_2: 1.495, // MushroomKing (General) — +15% (1.3×1.15), placeholder-tuning
   bosswars_3: 2.1,   // Yeti (Warlord)
   bosswars_4: 1.6,   // Dino-mesh (Demon Prince) — scale flyttad fran bosswars_5
   bosswars_5: 2.3,   // Demon-mesh (Dragon King) — scale flyttad fran bosswars_4
