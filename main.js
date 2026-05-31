@@ -12464,6 +12464,61 @@ function setBoss2AdColor(m, hex) {
   });
 }
 
+// STACKING AA (Lager A): varje ad-TRÄFF (projektil-impact) bygger en stack PER HJÄLTE.
+// Stacken ger DIREKT skada (stack × 5% maxHP) + slow (stack × 10%), båda skalar med
+// stacken. Stack-skadan ERSÄTTER ad:ens flata BOSS2_AD_DAMAGE. Tak från boss.bossPhase
+// (single source): P1 = 5 (25% dmg + 50% slow), P2 = 10 (50% dmg + 100% slow =
+// stillastående, avsiktligt). DECAY: 5s utan ny träff → HELA stacken nollas på en gång.
+// Strukturell spegel av boss 1:s aura (per-hjälte state, timer som återställs vid varje
+// touch, reset nollar allt) — men trigger = ad-träff, skadan = direkt vid impact.
+const BOSS2_AD_STACK_DMG_PCT  = 0.05;   // per stack, % av hjälte-maxHP (direkt vid träff)
+const BOSS2_AD_STACK_SLOW_PCT = 0.10;   // per stack
+const BOSS2_AD_STACK_MAX_P1   = 5;      // tak phase 1 (25% dmg + 50% slow)
+const BOSS2_AD_STACK_MAX_P2   = 10;     // tak phase 2 (50% dmg + 100% slow = stillastående)
+const BOSS2_AD_STACK_DECAY    = 5;      // sek utan träff → hela stacken nollas
+
+// Ad-projektil-impact (enda call-site: isBoss2Ad-grenen i updateMonsterProjectiles).
+// side = den TRÄFFADE hjälten. Host-auktoritativt (impact körs host/solo-side).
+function applyBoss2AdStackHit(side) {
+  if (!side || !side.hero || side.hero.dead) return;
+  if (side.adStacks == null) { side.adStacks = 0; side.adStackTimer = 0; }   // lazy-init (spegel av aura)
+  // Tak från boss.bossPhase (single source — bossen bor i sides[1].monsters, delad i MP).
+  const boss = sides[1] && sides[1].monsters ? sides[1].monsters.find(x => x.isBossWarsBoss) : null;
+  const maxStacks = (boss && boss.bossPhase === 2) ? BOSS2_AD_STACK_MAX_P2 : BOSS2_AD_STACK_MAX_P1;
+  side.adStacks = Math.min(maxStacks, side.adStacks + 1);
+  side.adStackTimer = BOSS2_AD_STACK_DECAY;   // återställs vid VARJE träff
+  // SKADA (ersätter flat BOSS2_AD_DAMAGE): stack × 5% av maxHP, direkt vid impact.
+  damageHero(side, side.adStacks * BOSS2_AD_STACK_DMG_PCT * side.hero.maxHp);
+  // SLOW: återanvänder hjälte-slow-systemet (heroSlowMul/heroSlowTime). Math.min =
+  // STARKAST vinner (rör inte en starkare befintlig slow från boss-skill etc); Math.max
+  // = längst kvar. Decayar via tickIceBlock (synkat med stack-decayen, samma 5s).
+  const slowMul = 1 - side.adStacks * BOSS2_AD_STACK_SLOW_PCT;   // P2 10 stacks → 0 (stillastående)
+  const curSlow = side.heroSlowMul != null ? side.heroSlowMul : 1;   // null-safe: behåller en befintlig 0 (full-stop)
+  side.heroSlowMul  = Math.min(curSlow, slowMul);
+  side.heroSlowTime = Math.max(side.heroSlowTime || 0, BOSS2_AD_STACK_DECAY);
+}
+
+// Decay-tick: 5s utan ny träff → HELA stacken nollas på en gång (5→0, inte gradvis).
+// Per-hjälte → anropas för ALLA hero-sides i bosswars-loopen. Slowen self-clearar
+// parallellt via tickIceBlock (heroSlowTime sattes till samma 5s vid sista träffen).
+function tickBoss2AdStacks(side, dt) {
+  if ((side.adStackTimer || 0) > 0) {
+    side.adStackTimer -= dt;
+    if (side.adStackTimer <= 0) { side.adStackTimer = 0; side.adStacks = 0; }
+  }
+}
+
+// Match-reset: nolla stacks per side (spegel av resetBossWarsAuraState). Slowen nollas
+// separat (heroSlowMul/heroSlowTime) av befintliga reset-vägar.
+function resetBoss2AdStacks() {
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (!s) continue;
+    s.adStacks = 0;
+    s.adStackTimer = 0;
+  }
+}
+
 // LAGER 3: WIPE — en ad dödades via hero-kill MEDAN den globala kylningen löpte.
 // Alla levande hjältar dör direkt. killHero = den faktiska hero-död-mekanismen (samma
 // funktion damageHero anropar vid hp<=0) → garanterad död oavsett DR/sköldar (en
@@ -12708,6 +12763,7 @@ function hostSpawnMonsterProjectile(targetSide, monster) {
     kind,
     isBoss: !!monster.isBoss,
     isMiniBoss: !!monster.isMiniBoss,
+    isBoss2Ad: !!monster.isBoss2Ad,   // STACKING AA: ad-skott → stack-skada vid impact (annars vanlig flat skada)
   });
   _leakDiag.nc.monsterProjSpawn++;
 }
@@ -12756,7 +12812,10 @@ function updateMonsterProjectiles(side, dt) {
       p.mesh.rotation.y += dt * 6;   // fallback spin
     }
     if (p.timer <= 0) {
-      damageHero(side, p.damage);
+      // STACKING AA: ad-skott → stack-skada + slow (applyBoss2AdStackHit). Vanliga
+      // monster-/boss-skott → oförändrad flat skada. p.damage ignoreras för ad-skott.
+      if (p.isBoss2Ad) applyBoss2AdStackHit(side);
+      else damageHero(side, p.damage);
       // Impact-FX färgkodad efter projektil-typ
       const impactColor = projectileImpactColor(p.kind);
       spawnSlashFx(side.hero.x, side.hero.z, impactColor);
@@ -12991,6 +13050,13 @@ function respawnHero(side) {
   side.furyStacks = 0;
   side.furyTargetId = 0;
   side.titansInstanceStacks = 0;
+  // STACKING AA: död hjälte återuppstår inte med kvarvarande ad-stacks ELLER slow.
+  // respawnHero nollade INTE heroSlowMul/heroSlowTime tidigare → görs explicit här
+  // (annars kvarstår en ad-slow upp till 5s in i nästa liv). Spegel av övriga resets.
+  side.adStacks = 0;
+  side.adStackTimer = 0;
+  side.heroSlowMul = 1;
+  side.heroSlowTime = 0;
   side.titansBlockPending = false;
   side.lingShieldHp = 0;
   side.lingShieldRefreshTimer = 0.5;
@@ -16178,8 +16244,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   const whirlMs = (side.whirlwindRemaining || 0) > 0 ? WHIRLWIND_MS_BUFF : 0;
   // Elar allierad shout-buff: +20% MS (gäller bara allierade, INTE Elar själv)
   const allyShoutMs = (side.aragurnAllyShoutBuff || 0) > 0 ? SHOUT_BUFF_MS : 0;
-  // Ice-block applicerad slow från motspelaren
-  const slowMul = (side.heroSlowMul || 1);
+  // Applicerad slow (ice-block, soul-drain, shout, boss2-ad-stacks…). null-safe:
+  // heroSlowMul === 0 (boss2-ad P2 max-stacks = 100% slow) MÅSTE ge 0, inte falla
+  // till 1 via `|| 1` (då negeras full-stop helt). Latent sen innan boss2-ad-stacks
+  // var första källan som producerar exakt 0.
+  const slowMul = (side.heroSlowMul != null ? side.heroSlowMul : 1);
   // Shadow Volley (Nyro ult): +20% movespeed under invis
   const invisMs = (side.legolusInvisRemaining || 0) > 0 ? LEGOLUS_INVIS_SPEED_BONUS : 0;
   // Arena power-up speed-buff: +30% MS i 8s efter pickup
@@ -26817,6 +26886,7 @@ function enterPlayPhase() {
     clearAllBoss2Ads();
     resetBoss2KillCooldown();   // LAGER 3: fresh global kylning per match (single-entry)
     resetBoss2AdWaveTimer();    // LAGER 2 (omarbetad): fresh våg-dödstimer per match
+    resetBoss2AdStacks();       // STACKING AA: fresh stack-räknare per match (alla sides)
     resetBossWarsAuraState();
     resetBossWarsWaveState();
     buildBossWarsScene();
@@ -28527,6 +28597,8 @@ function simulateAll(dt) {
       // Boss 2 (tier 2) ad-mekanik — jakt + distansattack. Bara side.idx===1 (ads
       // bor i sides[1].boss2Ads, som updateMonsters). Gatead till tier 2 internt.
       if (side.idx === 1) updateBoss2Ads(side, dt);
+      // STACKING AA-decay — per hjälte (ALLA sides, inte bara 1). 5s utan träff → nolla.
+      tickBoss2AdStacks(side, dt);
     }
     if (!side.hero.dead) updateHeroAttack(side, dt);
     updateProjectiles(side, dt);
