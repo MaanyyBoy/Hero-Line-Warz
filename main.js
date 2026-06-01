@@ -8120,6 +8120,13 @@ function triggerBossPhaseTransition(side, boss) {
   if (APP.gameMode === 'bosswars') {
     clearAllBossWarsMinions();
     resetBossWarsWaveState();
+    // Boss 2-ads (tier 2): nolla SPAWN-schemat → frisk 10s-grace efter att bossen
+    // landat i phase 2, sen 30s-vågor (val B — ren spegel av boss 1 ovan). Annars kan
+    // en våg landa ~3s efter transition-stunnen, mot decision 117:s andrums-princip.
+    // OBS: ads WIPE-rensas INTE här (till skillnad från boss 1:s minions) — boss 2:s
+    // dödstimer FRYSER under transition (boss2AdWaveTimer) så ads ska bestå. Medveten
+    // divergens. Detta rör BARA spawn-schemat (boss2AdWaveSpawnState), inte dödstimern.
+    resetBoss2AdWaveSpawnState();
   }
   // Visuell shake + burst
   triggerCameraShake(0.6, 0.6);
