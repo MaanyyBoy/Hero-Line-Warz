@@ -18068,6 +18068,7 @@ function updateHud() {
   updateLevelUI(side);
   updateBossHpBar();
   updateDebuffStackUI();
+  updateAdStackUI();   // STACKING AA Lager B: grön stack-siffra över varje hjälte (tier 2)
 }
 
 // Performance-mätare (top-right): frame-time i ms + FPS, med färg-kod
@@ -18682,6 +18683,68 @@ function updateDebuffStackUI() {
     if (stacksStr !== row._lastStacks) { row.stacksEl.textContent = stacksStr; row._lastStacks = stacksStr; }
     if (color !== row._lastColor) { row.stacksEl.style.color = color; row._lastColor = color; }
     if (timerTxt !== row._lastTimer) { row.timerEl.textContent = timerTxt; row._lastTimer = timerTxt; }
+  }
+}
+
+// STACKING AA Lager B: grön siffra över VARJE hjältes huvud som visar dess ad-stacks.
+// Persistent DOM via worldToScreen (samma lager/positionering som skade-siffrorna i
+// #fx-overlay — position:absolute + translate(-50%,-50%)). 3 poolade element (en per
+// side-idx 1–3), skapas EN gång, döljs/visas. Inga three.js-objekt → ingen GPU-läcka.
+// SKILD från boss 1:s debuff-LISTA (fast ruta ovanför joysticken) — detta sitter PÅ
+// hjälten. Värdet (`side.adStacks`) är host-beräknat (Lager A) + MP-synkat via `ads`.
+let _adStackEls = null;   // [el1, el2, el3], _lastShown/_visible-cache per element
+function _ensureAdStackUI() {
+  if (_adStackEls || !fxOverlayEl) return;
+  _adStackEls = [];
+  for (let i = 0; i < 3; i++) {
+    const el = document.createElement('div');
+    // Spegel av .fx-popup-basen (position:absolute + center-transform) men grön + ingen
+    // animation (bestående). Egen z inom #fx-overlay (z-index:50).
+    el.style.cssText = 'position:absolute;transform:translate(-50%,-50%);' +
+      'font:800 22px/1 system-ui,"Segoe UI",sans-serif;color:#33ff66;' +
+      'text-shadow:0 2px 5px rgba(0,0,0,0.95),0 0 3px #000;white-space:nowrap;' +
+      'pointer-events:none;display:none;';
+    el._lastShown = null;
+    el._visible = false;
+    fxOverlayEl.appendChild(el);
+    _adStackEls.push(el);
+  }
+}
+function _hideAllAdStackEls() {
+  if (!_adStackEls) return;
+  for (const el of _adStackEls) {
+    if (el._visible) { el.style.display = 'none'; el._visible = false; }
+  }
+}
+function updateAdStackUI() {
+  // Gate: bara tier 2 boss wars (started). Annars dölj alla (spegel av debuff-listans gate).
+  if (!(boss2AdsEnabled() && APP.bossWars && APP.bossWars.started)) { _hideAllAdStackEls(); return; }
+  _ensureAdStackUI();
+  if (!_adStackEls) return;   // fxOverlayEl saknas (defensivt)
+  for (let i = 0; i < 3; i++) {
+    const el = _adStackEls[i];
+    const side = sides[i + 1];
+    const stacks = side ? Math.max(0, Math.floor(side.adStacks || 0)) : 0;
+    // Göm vid 0 / död / ingen mesh (toggle bara vid ändring).
+    if (!side || !side.hero || side.hero.dead || !side.mesh || stacks <= 0) {
+      if (el._visible) { el.style.display = 'none'; el._visible = false; }
+      continue;
+    }
+    // Position: läs RENDERADE meshen (interpolerad för remote-hjältar) → siffran sitter
+    // på den synliga hjälten. ~2.6 över origin = strax ovanför HP-baren (yOffset 2.0).
+    const m = side.mesh;
+    const p = worldToScreen(m.position.x, m.position.y + 2.6, m.position.z);
+    if (p.behind) {
+      if (el._visible) { el.style.display = 'none'; el._visible = false; }
+      continue;
+    }
+    if (!el._visible) { el.style.display = 'block'; el._visible = true; }
+    el.style.left = p.x + 'px';
+    el.style.top  = p.y + 'px';
+    // Text bara vid värdeändring → ingen per-frame-textContent-spam (position uppdateras
+    // varje frame eftersom hjälten rör sig; det är billig style.left/top).
+    const txt = String(stacks);
+    if (txt !== el._lastShown) { el.textContent = txt; el._lastShown = txt; }
   }
 }
 setInterval(() => {
@@ -23949,6 +24012,9 @@ function heroSnap(side) {
     // Aura reset-timern (räknar upp 0→7). _nzr2 utelämnar ≤0 (i auran/idle) →
     // klient läser `snap.art || 0` → nedräkningen i debuff-listan blir korrekt.
     art: _nzr2(side.auraResetTimer),
+    // Boss 2-ad stacking-AA-stack (host-beräknad, Lager A). _nz utelämnar 0 → snålt;
+    // applyHeroSnap läser `snap.ads || 0`. Display-only på klient (grön siffra, Lager B).
+    ads: _nz(side.adStacks),
   };
 }
 
@@ -24076,6 +24142,7 @@ function applyHeroSnap(side, snap) {
   // listan). `|| 0` så reset (snap utelämnar 0) syns korrekt på klienten.
   side.auraStacks = snap.aus || 0;
   side.auraResetTimer = snap.art || 0;   // nedräkning i debuff-listan (display-only)
+  side.adStacks = snap.ads || 0;         // boss 2-ad stack — display-only (grön siffra, Lager B)
   // Elar whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
   // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
   side.whirlwindRemaining = snap.wwr || 0;
