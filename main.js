@@ -23640,59 +23640,59 @@ function maybeSendClientInput(now) {
 
 // Bygger en snapshot för ett MP-boss-wars-state-meddelande
 function buildBossWarsSnap() {
-  // Hero snapshots för alla 3 sides (alla som existerar)
-  const h = {};
-  // Monster-projektiler per side — broadcastas så joinaren ser bossens AA-projektiler.
-  // Endast positioner+kind (damage tillämpas host-side vid impact, ingen sync-need).
-  const mr = {};
+  // Fix 3 (decision 119): muterar persistent _bossSnapBuf (= själva b-state-msg:et)
+  // i st f färska {h},{mr} + boss-objekt + .map 30 Hz. Sides som SAKNAS sätts till
+  // undefined (stringify hoppar dem → identisk wire mot gamla "utelämna"-beteendet).
+  const snap = _bossSnapBuf;
+  // Hero + monster-projektiler per side. Projektiler broadcastas så joinaren ser
+  // bossens AA-projektiler (positioner+kind; damage tillämpas host-side vid impact).
   for (const idx of [1, 2, 3]) {
     const s = sides[idx];
-    if (s) h[idx] = heroSnap(s);
-    if (s && s.monsterProjectiles && s.monsterProjectiles.length) {
-      mr[idx] = s.monsterProjectiles.map(p => ({
-        id: p.id,
-        x: _r2(p.mesh ? p.mesh.position.x : p.srcX),
-        z: _r2(p.mesh ? p.mesh.position.z : p.srcZ),
-        kind: p.kind,
-      }));
-    }
+    snap.h[idx] = s ? heroSnap(s) : undefined;
+    _refill(snap.mr[idx], s && s.monsterProjectiles, _mapMr);
   }
-  // Boss snapshot: hitta isBossWarsBoss-monstret i sides[1].monsters.
+  // Boss: hitta isBossWarsBoss-monstret i sides[1].monsters.
   // OBS: bossens position bor på mesh.position, inte på m.x/m.z (som projektiler har).
   let boss = null;
   const hostSide = sides[1];
   if (hostSide && hostSide.monsters && hostSide.monsters.length) {
     const b = hostSide.monsters.find(m => m.isBossWarsBoss);
     if (b && b.mesh) {
-      boss = {
-        x: _r2(b.mesh.position.x),
-        z: _r2(b.mesh.position.z),
-        hp: _ri(b.hp),
-        mh: b.maxHp,
-        ph: b.bossPhase || 1,
-        pt: _nzr2(b.phaseTransitionRemaining),
-        aac: b.aaCount || 0,           // AA-räknare för klient-visual (delta-detect)
-        c: b.activeCast && b.activeCast.skill ? {
-          n: b.activeCast.skill.id || '',
-          k: b.activeCast.skill.kind || 'circle',
-          rad: b.activeCast.skill.radius || 0,
-          len: b.activeCast.skill.length || 0,
-          ha: b.activeCast.skill.halfAngle || 0,
-          w: b.activeCast.skill.width || 0,
-          ph: b.activeCast.phase || 'telegraph',
-          t: _r2(b.activeCast.timer || 0),
-          tg: _r2(b.activeCast.skill.telegraph || 0),
-          tx: b.activeCast.targetX != null ? _r2(b.activeCast.targetX) : null,
-          tz: b.activeCast.targetZ != null ? _r2(b.activeCast.targetZ) : null,
-          ox: b.activeCast.originX != null ? _r2(b.activeCast.originX) : null,
-          oz: b.activeCast.originZ != null ? _r2(b.activeCast.originZ) : null,
-          dx: b.activeCast.dirX != null ? _r3(b.activeCast.dirX) : null,
-          dz: b.activeCast.dirZ != null ? _r3(b.activeCast.dirZ) : null,
-        } : undefined,
-      };
+      const o = _bossBossBuf;
+      o.x = _r2(b.mesh.position.x);
+      o.z = _r2(b.mesh.position.z);
+      o.hp = _ri(b.hp);
+      o.mh = b.maxHp;
+      o.ph = b.bossPhase || 1;
+      o.pt = _nzr2(b.phaseTransitionRemaining);
+      o.aac = b.aaCount || 0;           // AA-räknare för klient-visual (delta-detect)
+      if (b.activeCast && b.activeCast.skill) {
+        const c = _bossCastBuf, ac = b.activeCast, sk = ac.skill;
+        c.n = sk.id || '';
+        c.k = sk.kind || 'circle';
+        c.rad = sk.radius || 0;
+        c.len = sk.length || 0;
+        c.ha = sk.halfAngle || 0;
+        c.w = sk.width || 0;
+        c.ph = ac.phase || 'telegraph';
+        c.t = _r2(ac.timer || 0);
+        c.tg = _r2(sk.telegraph || 0);
+        c.tx = ac.targetX != null ? _r2(ac.targetX) : null;
+        c.tz = ac.targetZ != null ? _r2(ac.targetZ) : null;
+        c.ox = ac.originX != null ? _r2(ac.originX) : null;
+        c.oz = ac.originZ != null ? _r2(ac.originZ) : null;
+        c.dx = ac.dirX != null ? _r3(ac.dirX) : null;
+        c.dz = ac.dirZ != null ? _r3(ac.dirZ) : null;
+        o.c = c;
+      } else {
+        o.c = undefined;
+      }
+      boss = o;
     }
   }
-  return { h, b: boss, t: APP.bossWars && APP.bossWars.tier || 1, mr };
+  snap.b = boss;
+  snap.tr = (APP.bossWars && APP.bossWars.tier) || 1;
+  return snap;
 }
 
 function broadcastBossWarsState() {
@@ -23705,16 +23705,10 @@ function broadcastBossWarsState() {
   // Sänkt 96 KB → 48 KB (matchar server-relay) = aggressivare drop = mindre
   // kö-djup. Vid 30 Hz är nästa snap bara 33ms bort så drop är säkert.
   if (APP.ws.bufferedAmount > 48 * 1024) return;
-  const snap = buildBossWarsSnap();
-  sendGameMsg({
-    t: 'b-state',
-    h: snap.h,
-    b: snap.b,
-    tr: snap.t,
-    mr: snap.mr,                                          // monster-projektiler per side
-    ba: !!(APP.bossWars && APP.bossWars.bossActivated),   // boss aktiverad?
-    gc: !!(APP.bossWars && APP.bossWars.gateClosed),       // gate stängd?
-  });
+  const snap = buildBossWarsSnap();                       // = _bossSnapBuf (t:'b-state', h, b, tr, mr)
+  snap.ba = !!(APP.bossWars && APP.bossWars.bossActivated);   // boss aktiverad?
+  snap.gc = !!(APP.bossWars && APP.bossWars.gateClosed);       // gate stängd?
+  sendGameMsg(snap);
 }
 
 function applyBossWarsState(msg) {
@@ -24087,53 +24081,104 @@ function _nzr2(v) { return v > 0 ? _r2(v) : undefined; }
 function _flag(v) { return v ? 1 : undefined; }
 function _arrOpt(arr, mapper) { return (!arr || arr.length === 0) ? undefined : arr.map(mapper); }
 
+// ── Fix 3 (decision 119): buffer-reuse för host-snapshots ──────────────
+// Återanvänd persistenta objekt/arrayer mellan frames i st f att allokera färska
+// 30 Hz. sendGameMsg → wsSendEnvelope stringify:ar SYNKRONT och behåller aldrig
+// objektet, så en muterad-på-plats buffert har ingen alias-risk. Klienten bygger
+// ändå egna objekt via JSON.parse → host-side reuse kan ej påverka wire-datan.
+// Enda kontraktet: JSON-utdatan måste bli identisk → VARJE fält tilldelas varje
+// frame (villkorat fält som är inaktivt sätts EXPLICIT till undefined; stringify
+// hoppar undefined-fält precis som det gamla "utelämna"-beteendet).
+function _refill(dst, src, mapper, pred) {        // arrayer av objekt (element-alloc kvar, steg A)
+  dst.length = 0;
+  if (src) for (let i = 0; i < src.length; i++) {
+    const e = src[i];
+    if (pred && !pred(e)) continue;
+    dst.push(mapper(e));
+  }
+  return dst;
+}
+function _refillPrim(dst, src) {                  // arrayer av primitiver (ingen element-alloc)
+  dst.length = 0;
+  if (src) for (let i = 0; i < src.length; i++) dst.push(src[i]);
+  return dst;
+}
+// Element-mappers för entity-arrayerna (oförändrad form mot de gamla inline-.map)
+const _mapBh = (b) => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) });
+const _mapFw = (w) => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) });
+const _predFw = (w) => w.id != null && w.mesh;
+const _mapNv = (n) => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) });
+const _predNv = (n) => n.id != null && n.mesh;
+const _mapAb = (b) => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) });
+const _predId = (e) => e.id != null;
+const _mapKg = (g) => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) });
+const _mapKs = (s) => ({ id: s.id, x: _r2(s.x), z: _r2(s.z), ry: _r2(Math.atan2(s.dx, s.dz)) });
+const _mapPu = (p) => ({ id: p.id, x: _r2(p.x), z: _r2(p.z), t: p.type });
+const _mapMr = (p) => ({ id: p.id, x: _r2(p.mesh ? p.mesh.position.x : p.srcX), z: _r2(p.mesh ? p.mesh.position.z : p.srcZ), kind: p.kind });
+
+// Persistenta heroSnap-buffrar per side.idx (1,2,3). Inom EN snapshot förekommer
+// varje idx högst en gång (arena: h1/h2; boss: h[1..3]) → distinkta buffrar OK.
+const _heroSnapBufs = {};
+// Persistent arena a-state-buffert (alla fasta containrar + arrayer förallokerade)
+const _arenaSnapBuf = {
+  t: 'a-state',
+  tal: { 1: { p: 0, c: [] }, 2: { p: 0, c: [] } },
+  o: { hp: 0, a: false, sp: 0 },
+  pu: [],
+  bh: { 1: [], 2: [] }, fw: { 1: [], 2: [] }, nv: { 1: [], 2: [] },
+  ab: { 1: [], 2: [] }, kg: { 1: [], 2: [] }, ks: { 1: [], 2: [] },
+};
+// Persistent boss-wars b-state-buffert (slås ihop med f.d. buildBossWarsSnap-objektet)
+const _bossSnapBuf = { t: 'b-state', h: {}, mr: { 1: [], 2: [], 3: [] }, tr: 1, b: null, ba: false, gc: false };
+const _bossBossBuf = {};        // boss-objektet
+const _bossCastBuf = {};        // boss.c (activeCast) — nästlat
+
 function heroSnap(side) {
   if (!side) return null;
-  return {
-    x: _r2(side.hero.x), z: _r2(side.hero.z),
-    fx: _r3(side.hero.facingX), fz: _r3(side.hero.facingZ),
-    hp: _ri(side.hero.hp), mh: _ri(side.hero.maxHp),
-    d: side.hero.dead,
-    sh: _nzr2(side.shield),
-    lv: side.level,
-    sk: { q: _r2(side.skills.q.cd), f: _r2(side.skills.f.cd), e: _r2(side.skills.e.cd) },
-    hid: side.heroId || 'magiker',
-    ac: side.attackCounter || 0,
-    g: _nz(side.gold),
-    ue: _nzr2(side.ultEnergy),
-    tnt: _nzr2(side.hero.tauntedTime),
-    // CC-state: klient-prediction behöver dessa för att respektera stuns/freeze
-    // (annars rör sig hjälten lokalt under stun → ful rubber-band vid snap-tillbaka).
-    fzt: _nzr2(side.hero.frozenTime),
-    fer: _nzr2(side.heroFearTime),
-    ibr: _nzr2(side.iceBlockRemaining),
-    slm: (side.heroSlowMul != null && side.heroSlowMul !== 1) ? _r3(side.heroSlowMul) : undefined,
-    slt: _nzr2(side.heroSlowTime),
-    // Arena power-up buffs (undefined när inaktiva)
-    asp: _nzr2(side.arenaSpeedBuff),
-    adm: _nzr2(side.arenaDamageBuff),
-    // Elar whirlwind-state — joinaren behöver det för spinn-animationen.
-    wwr: _nzr2(side.whirlwindRemaining),
-    // Elar leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
-    lp: side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME), tx: _r2(side.aragurnLeap.targetX), tz: _r2(side.aragurnLeap.targetZ) } : undefined,
-    // Kostef— companion + cannabis-moln (updateKostefoMeshes renderar dem).
-    kComp: side.kostefoCompanion ? { x: _r2(side.kostefoCompanion.x), z: _r2(side.kostefoCompanion.z), ry: _r3(side.kostefoCompanion.ry || 0) } : undefined,
-    kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: _r2(side.kostefoCloudRemaining), x: _r2(side.kostefoCloudX), z: _r2(side.kostefoCloudZ), rm: _r2(side.kostefoCloudRadiusMul || 1) } : undefined,
-    // AA-målets position (host:ens maintainTargetLock) — klienten siktar sin
-    // syntetiska AA-projektil hit i stället för hjältens facing. MÅSTE vara
-    // _r2 (inte _nzr2): positioner är ofta negativa, _nzr2 slänger v <= 0.
-    tx: _r2(side.targetX),
-    tz: _r2(side.targetZ),
-    // Boss Wars individuell aura-stack (host-beräknad). _nz utelämnar 0 → snålt;
-    // applyHeroSnap läser `snap.aus || 0` så reset till 0 ändå syns på klienten.
-    aus: _nz(side.auraStacks),
-    // Aura reset-timern (räknar upp 0→7). _nzr2 utelämnar ≤0 (i auran/idle) →
-    // klient läser `snap.art || 0` → nedräkningen i debuff-listan blir korrekt.
-    art: _nzr2(side.auraResetTimer),
-    // Boss 2-ad stacking-AA-stack (host-beräknad, Lager A). _nz utelämnar 0 → snålt;
-    // applyHeroSnap läser `snap.ads || 0`. Display-only på klient (grön siffra, Lager B).
-    ads: _nz(side.adStacks),
-  };
+  // Fix 3 (decision 119): muterar persistent buffert per side.idx i st f färsk alloc.
+  // VARJE fält tilldelas ovillkorligt varje frame — villkorade fält sätts explicit
+  // till undefined när inaktiva så inget stale-värde fastnar (annars t.ex. en slow
+  // som aldrig släpper på klienten). JSON.stringify hoppar undefined → identisk wire.
+  let o = _heroSnapBufs[side.idx];
+  if (!o) o = _heroSnapBufs[side.idx] = { sk: {} };
+  o.x = _r2(side.hero.x); o.z = _r2(side.hero.z);
+  o.fx = _r3(side.hero.facingX); o.fz = _r3(side.hero.facingZ);
+  o.hp = _ri(side.hero.hp); o.mh = _ri(side.hero.maxHp);
+  o.d = side.hero.dead;
+  o.sh = _nzr2(side.shield);
+  o.lv = side.level;
+  o.sk.q = _r2(side.skills.q.cd); o.sk.f = _r2(side.skills.f.cd); o.sk.e = _r2(side.skills.e.cd);
+  o.hid = side.heroId || 'magiker';
+  o.ac = side.attackCounter || 0;
+  o.g = _nz(side.gold);
+  o.ue = _nzr2(side.ultEnergy);
+  o.tnt = _nzr2(side.hero.tauntedTime);
+  // CC-state: klient-prediction behöver dessa för att respektera stuns/freeze.
+  o.fzt = _nzr2(side.hero.frozenTime);
+  o.fer = _nzr2(side.heroFearTime);
+  o.ibr = _nzr2(side.iceBlockRemaining);
+  o.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? _r3(side.heroSlowMul) : undefined;
+  o.slt = _nzr2(side.heroSlowTime);
+  // Arena power-up buffs (undefined när inaktiva)
+  o.asp = _nzr2(side.arenaSpeedBuff);
+  o.adm = _nzr2(side.arenaDamageBuff);
+  // Elar whirlwind-state — joinaren behöver det för spinn-animationen.
+  o.wwr = _nzr2(side.whirlwindRemaining);
+  // Elar leap — progress u (0..1); tickAragurnVisuals renderar y-bågen.
+  o.lp = side.aragurnLeap ? { u: _r2(1 - (side.aragurnLeap.remaining || 0) / LEAP_TRAVEL_TIME), tx: _r2(side.aragurnLeap.targetX), tz: _r2(side.aragurnLeap.targetZ) } : undefined;
+  // Kostef— companion + cannabis-moln (updateKostefoMeshes renderar dem).
+  o.kComp = side.kostefoCompanion ? { x: _r2(side.kostefoCompanion.x), z: _r2(side.kostefoCompanion.z), ry: _r3(side.kostefoCompanion.ry || 0) } : undefined;
+  o.kCl = (side.kostefoCloudRemaining || 0) > 0 ? { r: _r2(side.kostefoCloudRemaining), x: _r2(side.kostefoCloudX), z: _r2(side.kostefoCloudZ), rm: _r2(side.kostefoCloudRadiusMul || 1) } : undefined;
+  // AA-målets position (host:ens maintainTargetLock). MÅSTE vara _r2 (inte _nzr2):
+  // positioner är ofta negativa, _nzr2 slänger v <= 0.
+  o.tx = _r2(side.targetX);
+  o.tz = _r2(side.targetZ);
+  // Boss Wars individuell aura-stack. _nz → undefined vid 0; applyHeroSnap läser `|| 0`.
+  o.aus = _nz(side.auraStacks);
+  o.art = _nzr2(side.auraResetTimer);
+  // Boss 2-ad stacking-AA-stack (Lager A). applyHeroSnap läser `snap.ads || 0`.
+  o.ads = _nz(side.adStacks);
+  return o;
 }
 
 function applyHeroSnap(side, snap) {
@@ -24456,67 +24501,50 @@ function broadcastArenaState() {
   // när mobil-nätverket har en spik. 48KB > 32KB input-tröskeln så input
   // prioriteras (input-frames är ~50 byte vs ~10-15 KB för state).
   if (APP.ws.bufferedAmount > 48 * 1024) return;
-  sendGameMsg({
-    t: 'a-state',
-    ph: arenaState.phase,
-    rn: arenaState.roundNum,
-    w: arenaState.wins,
-    pt: arenaState.prepTimer,
-    sst: arenaState.startingTimer,
-    spl: arenaState.startingPhaseShown,
-    et: arenaState.endTimer,
-    rw: arenaState.roundWinner,
-    mw: arenaState.matchWinner,
-    rdy: arenaState.ready,
-    tal: {
-      1: { p: arenaState.talents[1].points, c: arenaState.talents[1].chosen.slice() },
-      2: { p: arenaState.talents[2].points, c: arenaState.talents[2].chosen.slice() },
-    },
-    o: { hp: arenaState.orb.hp, a: arenaState.orb.alive, sp: arenaState.orb.spawnTimer },
-    mp: arenaState.mapIdx || 0,
-    sr: _r2(arenaState.shrinkRadius || 0),
-    ft: _r2(arenaState.fightTimer || 0),
-    // Power-ups: id, x, z, t (typ). Klient rendrar pickup-meshes baserat på snap.
-    pu: _arrOpt(arenaState.powerUps, p => ({ id: p.id, x: _r2(p.x), z: _r2(p.z), t: p.type })),
-    h1: heroSnap(sides[1]),
-    h2: heroSnap(sides[2]),
-    // Route B steg 1: skill-effekt-entiteter — black holes. Joinaren renderar
-    // de RIKTIGA via clientReconcileEntities (i st f generisk platshållare).
-    bh: {
-      1: ((sides[1] && sides[1].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
-      2: ((sides[2] && sides[2].blackHoles) || []).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
-    },
-    // Route B steg 2: Wind Puff-koner (fireWaves). Pos/rotation/life läses från
-    // kon-meshen; clientReconcileEntities placerar + fadar via life.
-    fw: {
-      1: ((sides[1] && sides[1].fireWaves) || []).filter(w => w.id != null && w.mesh)
-        .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
-      2: ((sides[2] && sides[2].fireWaves) || []).filter(w => w.id != null && w.mesh)
-        .map(w => ({ id: w.id, x: _r2(w.mesh.position.x), y: _r2(w.mesh.position.y), z: _r2(w.mesh.position.z), ry: _r2(w.mesh.rotation.y), life: _r2(w.life) })),
-    },
-    // Route B steg 3: Frost Nova-ringar (novaEffects med id — endast huvudringen,
-    // ej disk/shards/ljus). life skickas normaliserad (0..1) för fade.
-    nv: {
-      1: ((sides[1] && sides[1].novaEffects) || []).filter(n => n.id != null && n.mesh)
-        .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
-      2: ((sides[2] && sides[2].novaEffects) || []).filter(n => n.id != null && n.mesh)
-        .map(n => ({ id: n.id, x: _r2(n.mesh.position.x), z: _r2(n.mesh.position.z), life: _r2(n.life / n.maxLife) })),
-    },
-    // Route B: Aragurn-bannrar (lvl-5 leap-bonus) — stationära entiteter.
-    ab: {
-      1: ((sides[1] && sides[1].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
-      2: ((sides[2] && sides[2].aragurnBanners) || []).filter(b => b.id != null).map(b => ({ id: b.id, x: _r2(b.x), z: _r2(b.z) })),
-    },
-    // Route B: Kostef— goose-waves (Q) + sliders (F). Entiteterna har redan id.
-    kg: {
-      1: ((sides[1] && sides[1].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
-      2: ((sides[2] && sides[2].kostefoGooseWaves) || []).filter(g => g.id != null).map(g => ({ id: g.id, x: _r2(g.x), z: _r2(g.z), ry: _r2(Math.atan2(g.dx, g.dz)) })),
-    },
-    ks: {
-      1: ((sides[1] && sides[1].kostefoSliders) || []).filter(s => s.id != null).map(s => ({ id: s.id, x: _r2(s.x), z: _r2(s.z), ry: _r2(Math.atan2(s.dx, s.dz)) })),
-      2: ((sides[2] && sides[2].kostefoSliders) || []).filter(s => s.id != null).map(s => ({ id: s.id, x: _r2(s.x), z: _r2(s.z), ry: _r2(Math.atan2(s.dx, s.dz)) })),
-    },
-  });
+  // Fix 3 (decision 119): muterar persistent _arenaSnapBuf i st f färsk objekt-träd
+  // + .map/.slice 30 Hz. Alla fält tilldelas varje frame; entity-arrayerna refill:as
+  // in-place (`.length=0`+push). w/rdy passeras som live-referenser (allokerade ej här).
+  const m = _arenaSnapBuf;
+  m.ph = arenaState.phase;
+  m.rn = arenaState.roundNum;
+  m.w = arenaState.wins;
+  m.pt = arenaState.prepTimer;
+  m.sst = arenaState.startingTimer;
+  m.spl = arenaState.startingPhaseShown;
+  m.et = arenaState.endTimer;
+  m.rw = arenaState.roundWinner;
+  m.mw = arenaState.matchWinner;
+  m.rdy = arenaState.ready;
+  m.tal[1].p = arenaState.talents[1].points;
+  _refillPrim(m.tal[1].c, arenaState.talents[1].chosen);
+  m.tal[2].p = arenaState.talents[2].points;
+  _refillPrim(m.tal[2].c, arenaState.talents[2].chosen);
+  m.o.hp = arenaState.orb.hp; m.o.a = arenaState.orb.alive; m.o.sp = arenaState.orb.spawnTimer;
+  m.mp = arenaState.mapIdx || 0;
+  m.sr = _r2(arenaState.shrinkRadius || 0);
+  m.ft = _r2(arenaState.fightTimer || 0);
+  // Power-ups: id, x, z, t (typ). Klient rendrar pickup-meshes baserat på snap.
+  _refill(m.pu, arenaState.powerUps, _mapPu);
+  m.h1 = heroSnap(sides[1]);
+  m.h2 = heroSnap(sides[2]);
+  // Route B steg 1: black holes — joinaren renderar de RIKTIGA via clientReconcileEntities.
+  _refill(m.bh[1], sides[1] && sides[1].blackHoles, _mapBh);
+  _refill(m.bh[2], sides[2] && sides[2].blackHoles, _mapBh);
+  // Route B steg 2: Wind Puff-koner (fireWaves) — pos/rotation/life från kon-meshen.
+  _refill(m.fw[1], sides[1] && sides[1].fireWaves, _mapFw, _predFw);
+  _refill(m.fw[2], sides[2] && sides[2].fireWaves, _mapFw, _predFw);
+  // Route B steg 3: Frost Nova-ringar — life normaliserad (0..1) för fade.
+  _refill(m.nv[1], sides[1] && sides[1].novaEffects, _mapNv, _predNv);
+  _refill(m.nv[2], sides[2] && sides[2].novaEffects, _mapNv, _predNv);
+  // Route B: Aragurn-bannrar (lvl-5 leap-bonus) — stationära.
+  _refill(m.ab[1], sides[1] && sides[1].aragurnBanners, _mapAb, _predId);
+  _refill(m.ab[2], sides[2] && sides[2].aragurnBanners, _mapAb, _predId);
+  // Route B: Kostef— goose-waves (Q) + sliders (F).
+  _refill(m.kg[1], sides[1] && sides[1].kostefoGooseWaves, _mapKg, _predId);
+  _refill(m.kg[2], sides[2] && sides[2].kostefoGooseWaves, _mapKg, _predId);
+  _refill(m.ks[1], sides[1] && sides[1].kostefoSliders, _mapKs, _predId);
+  _refill(m.ks[2], sides[2] && sides[2].kostefoSliders, _mapKs, _predId);
+  sendGameMsg(m);
 }
 
 // Client: ta emot a-state och applicera lokalt.
