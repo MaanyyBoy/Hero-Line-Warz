@@ -18158,6 +18158,30 @@ function tickPerfMeter(dt) {
   perfMeterEl.classList.remove('warn', 'bad');
   if (ms > 33) perfMeterEl.classList.add('bad');         // < 30 fps
   else if (ms > 20) perfMeterEl.classList.add('warn');   // < 50 fps
+  _updateNetDiagReadout();   // TEMP: MP-state recv/apply-räknare (teknik E-verifiering)
+}
+
+// TEMP MP-diag-readout (teknik E-verifiering) — TAS BORT efter mätning. Visar
+// state-meddelanden/sek (recv) vs faktiska applies/sek (apply) + max recv per frame.
+// max/frame > 1 bevisar att bursts tidigare gav >1 synkron apply/frame (root cause #1),
+// nu coalescade till 1 apply/frame. Uppdateras i tickPerfMeter:s 250ms-fönster (×4=/sek).
+let _netDiagEl = null;
+function _updateNetDiagReadout() {
+  const showNet = isMpMode() || (bossMpState && bossMpState.matchActive);
+  if (!showNet) { if (_netDiagEl) _netDiagEl.style.display = 'none'; return; }
+  if (!_netDiagEl) {
+    _netDiagEl = document.createElement('div');
+    _netDiagEl.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);z-index:60;' +
+      'font:700 11px/1.3 monospace;color:#9fe;background:rgba(0,0,0,0.55);padding:3px 7px;border-radius:5px;pointer-events:none;white-space:nowrap;';
+    document.body.appendChild(_netDiagEl);
+  }
+  if (_netDiagEl.style.display !== 'block') _netDiagEl.style.display = 'block';
+  const dRecv = (_netDiag.recv - _netDiag._recvPrev) * 4;
+  const dApply = (_netDiag.apply - _netDiag._applyPrev) * 4;
+  _netDiag._recvPrev = _netDiag.recv;
+  _netDiag._applyPrev = _netDiag.apply;
+  _netDiagEl.textContent = `NET recv:${dRecv}/s apply:${dApply}/s max/frame:${_netDiag.maxPerFrame}`;
+  _netDiag.maxPerFrame = 0;
 }
 
 // ============================================================
@@ -23872,10 +23896,30 @@ function applyBossWarsRemoteInputs(dt) {
     }
   }
 }
+// ============================================================
+// MP-LAG FIX — teknik E (commit 1): buffra inkommande state, applicera 1×/frame.
+// state-meddelanden (st/a-state/b-state) appliceras EJ synkront i onmessage utan
+// sparas latest-wins i _netPending och dräneras EN gång per frame i tick(). Bursts
+// (TCP-coalescing/jitter) → max 1 apply/renderad frame, INOM rAF-budgeten → dödar
+// root cause #1 (synkron apply i onmessage konkurrerade med rendering + burst-spikar).
+// Bara de 3 högfrekventa state-typerna coalescas; lobby/kontroll/input lämnas synkrona.
+// ============================================================
+const _netPending = { classic: null, arena: null, boss: null };
+// TEMP-mätning (markerad — TAS BORT efter verifiering): bevisar coalescing.
+// maxPerFrame > 1 = bursts som förr gav >1 synkron apply/frame, nu coalescade till 1.
+const _netDiag = { recv: 0, apply: 0, _frameRecv: 0, maxPerFrame: 0, _recvPrev: 0, _applyPrev: 0 };
+function applyPendingNetState() {
+  if (_netPending.classic) { const m = _netPending.classic; _netPending.classic = null; applyRemoteState(m);  _netDiag.apply++; }
+  if (_netPending.arena)   { const m = _netPending.arena;   _netPending.arena = null;   applyArenaState(m);    _netDiag.apply++; }
+  if (_netPending.boss)    { const m = _netPending.boss;    _netPending.boss = null;    applyBossWarsState(m); _netDiag.apply++; }
+  if (_netDiag._frameRecv > _netDiag.maxPerFrame) _netDiag.maxPerFrame = _netDiag._frameRecv;
+  _netDiag._frameRecv = 0;
+}
 function handleNetworkMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'st' && isMpMode() && APP.gameMode !== 'arena1v1') {
-    applyRemoteState(msg);
+    _netPending.classic = msg;   // teknik E: buffra (latest-wins), applicera i tick()
+    _netDiag.recv++; _netDiag._frameRecv++;
     return;
   }
   // Arena MP-meddelanden
@@ -23896,7 +23940,8 @@ function handleNetworkMessage(msg) {
     return;
   }
   if (msg.t === 'a-state' && APP.mode === 'client' && isArenaMp()) {
-    applyArenaState(msg);
+    _netPending.arena = msg;   // teknik E: buffra (latest-wins), applicera i tick()
+    _netDiag.recv++; _netDiag._frameRecv++;
     return;
   }
   if (msg.t === 'a-ready' && APP.mode === 'host' && isArenaMp()) {
@@ -23972,7 +24017,8 @@ function handleNetworkMessage(msg) {
     return;
   }
   if (msg.t === 'b-state' && bossMpState.active && bossMpState.role === 'client' && bossMpState.matchActive) {
-    applyBossWarsState(msg);
+    _netPending.boss = msg;   // teknik E: buffra (latest-wins), applicera i tick()
+    _netDiag.recv++; _netDiag._frameRecv++;
     return;
   }
   if (msg.t === 'b-input' && bossMpState.active && bossMpState.role === 'host' && bossMpState.matchActive) {
@@ -30097,6 +30143,10 @@ function tick() {
       _localSide._ultLockoutTime = Math.max(0, _localSide._ultLockoutTime - dt);
     }
   }
+
+  // MP-lag fix E: dränera buffrad inkommande state EN gång/frame FÖRE prediction/
+  // render/smoothing (så de jobbar mot färsk state). No-op i solo (inga pending-slots).
+  applyPendingNetState();
 
   // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state.
   // MEN: klient kör applyMovement lokalt för EGEN hjälte (prediction) så
