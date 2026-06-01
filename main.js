@@ -12448,6 +12448,18 @@ function resetBoss2KillCooldown() { boss2KillCooldown.remaining = 0; }
 const boss2AdWaveTimer = { remaining: 0, active: false };
 function resetBoss2AdWaveTimer() { boss2AdWaveTimer.remaining = 0; boss2AdWaveTimer.active = false; }
 
+// AUTO-VÅGSYSTEM: SPAWN-SCHEMAT (när nästa våg kommer). Spegel av bossWarsWaveState.
+// >>> SKILD från boss2AdWaveTimer ovan <<< — det är DÖDSTIMERN (när nuvarande vågs ads
+// exploderar). Två helt olika koncept: WaveSpawnState = schema (countdown till nästa
+// spawn), WaveTimer = dödstimer (countdown till explosion). Blanda inte ihop.
+// Första vågen 10s efter boss-aktivering; sedan var 40:e sek (P1) / 30:e sek (P2) tills
+// bossen dör. Invarianten 10s dödstimer < 30/40s intervall → aldrig >1 våg samtidigt.
+const BOSS2_AD_WAVE_FIRST_DELAY = 10;    // sek efter boss-aktivering till första vågen
+const BOSS2_AD_WAVE_INTERVAL_P1 = 40;    // sek mellan vågor, phase 1
+const BOSS2_AD_WAVE_INTERVAL_P2 = 30;    // sek mellan vågor, phase 2
+const boss2AdWaveSpawnState = { countdown: 0, active: false };
+function resetBoss2AdWaveSpawnState() { boss2AdWaveSpawnState.countdown = 0; boss2AdWaveSpawnState.active = false; }
+
 // FÄRGSKIFT: visualiserar Lager 3-kylningen PÅ ad-meshen. Lila = säkert att döda nästa;
 // rött = kylning löper (boss2KillCooldown.remaining > 0) → döda INTE, då wipear ni.
 const BOSS2_AD_COLOR_SAFE   = 0xaa66ff;   // lila (Warlock-tema, oförändrad normalfärg)
@@ -12665,6 +12677,37 @@ function applyBoss2AdExplosion(side, boss, ad) {
   if (ad.mesh) {
     spawnGroundImpact(ad.mesh.position.x, ad.mesh.position.z, 3.2, 0xaa66ff);
     spawnShieldBurstFx(ad.mesh.position.x, ad.mesh.position.z, 0xaa66ff);
+  }
+}
+
+// AUTO-VÅGSYSTEM: spawnar ad-vågor på intervall tills bossen dör. Ren spegel av boss
+// 1:s tickBossWarsMinionWaves. EGEN tick (vågschemat är en GLOBAL per-match-angelägenhet,
+// inte per-side) → anropas EN gång/frame i tick():s isBossWars-gren. Host-auktoritativ.
+// Ren interval-spawn — INTE villkorat på att förra vågen är död (10s dödstimer < 30/40s
+// intervall garanterar en-våg-i-taget). spawnBoss2AdWave sätter dödstimern → auto-vågorna
+// får explosion/kylning/stacks/färgskift gratis, oförändrat.
+function tickBoss2AdWaves(dt) {
+  if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) return;
+  if (!boss2AdsEnabled()) return;                 // bara tier 2
+  if (!APP.bossWars.bossActivated) return;        // boss aktiverad (alla i boss-rummet)
+  // MP host-auktoritativ: bara host/solo spawnar (klienter får ads via host-state, ej
+  // egna lokala spawns → inga ghost-entities). Identisk guard som boss 1.
+  if (bossMpState && bossMpState.matchActive && bossMpState.role !== 'host') return;
+  const side1 = sides[1];
+  if (!side1) return;
+  const boss = side1.monsters.find(x => x.isBossWarsBoss);
+  if (!boss || boss.hp <= 0) { boss2AdWaveSpawnState.active = false; return; }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;   // frys under transition (som dödstimern, decision 117)
+  if (!boss2AdWaveSpawnState.active) {
+    boss2AdWaveSpawnState.active = true;
+    boss2AdWaveSpawnState.countdown = BOSS2_AD_WAVE_FIRST_DELAY;   // första vågen 10s in
+  }
+  boss2AdWaveSpawnState.countdown -= dt;
+  if (boss2AdWaveSpawnState.countdown <= 0) {
+    spawnBoss2AdWave(side1);   // 3 ads (default) + sätter dödstimern (boss2AdWaveTimer)
+    // Nästa intervall läser AKTUELL phase → phase-byte ger automatiskt rätt nästa-intervall.
+    const interval = (boss.bossPhase === 2) ? BOSS2_AD_WAVE_INTERVAL_P2 : BOSS2_AD_WAVE_INTERVAL_P1;
+    boss2AdWaveSpawnState.countdown += interval;
   }
 }
 
@@ -26956,6 +26999,7 @@ function enterPlayPhase() {
     clearAllBoss2Ads();
     resetBoss2KillCooldown();   // LAGER 3: fresh global kylning per match (single-entry)
     resetBoss2AdWaveTimer();    // LAGER 2 (omarbetad): fresh våg-dödstimer per match
+    resetBoss2AdWaveSpawnState(); // AUTO-VÅGSYSTEM: fresh spawn-schema per match
     resetBoss2AdStacks();       // STACKING AA: fresh stack-räknare per match (alla sides)
     resetBossWarsAuraState();
     resetBossWarsWaveState();
@@ -28736,6 +28780,7 @@ function simulateAll(dt) {
   if (isBossWars) {
     tickBossWarsMinionAura(dt);
     tickBossWarsMinionWaves(dt);
+    tickBoss2AdWaves(dt);   // AUTO-VÅGSYSTEM boss 2 (tier 2) — global per-match, host-auth
   }
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
