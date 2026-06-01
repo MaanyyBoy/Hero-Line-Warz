@@ -18177,10 +18177,15 @@ function _updateNetDiagReadout() {
   }
   if (_netDiagEl.style.display !== 'block') _netDiagEl.style.display = 'block';
   const dRecv = (_netDiag.recv - _netDiag._recvPrev) * 4;
-  const dApply = (_netDiag.apply - _netDiag._applyPrev) * 4;
+  const dApplyN = (_netDiag.apply - _netDiag._applyPrev) * 4;
+  const dSendMs = (_netDiag.sendMs - _netDiag._sendMsPrev) * 4;     // host-side CPU/s
+  const dApplyMs = (_netDiag.applyMs - _netDiag._applyMsPrev) * 4;  // joiner-side CPU/s
   _netDiag._recvPrev = _netDiag.recv;
   _netDiag._applyPrev = _netDiag.apply;
-  _netDiagEl.textContent = `NET recv:${dRecv}/s apply:${dApply}/s max/frame:${_netDiag.maxPerFrame}`;
+  _netDiag._sendMsPrev = _netDiag.sendMs;
+  _netDiag._applyMsPrev = _netDiag.applyMs;
+  _netDiagEl.textContent = `NET r:${dRecv}/s a:${dApplyN}/s max/f:${_netDiag.maxPerFrame}` +
+    ` | host-send:${dSendMs.toFixed(0)}ms/s apply:${dApplyMs.toFixed(0)}ms/s`;
   _netDiag.maxPerFrame = 0;
 }
 
@@ -23920,11 +23925,15 @@ function applyBossWarsRemoteInputs(dt) {
 const _netPending = { classic: null, arena: null, boss: null };
 // TEMP-mätning (markerad — TAS BORT efter verifiering): bevisar coalescing.
 // maxPerFrame > 1 = bursts som förr gav >1 synkron apply/frame, nu coalescade till 1.
-const _netDiag = { recv: 0, apply: 0, _frameRecv: 0, maxPerFrame: 0, _recvPrev: 0, _applyPrev: 0 };
+const _netDiag = { recv: 0, apply: 0, _frameRecv: 0, maxPerFrame: 0, _recvPrev: 0, _applyPrev: 0,
+  sendMs: 0, applyMs: 0, _sendMsPrev: 0, _applyMsPrev: 0 };   // host-send / joiner-apply CPU-tid
 function applyPendingNetState() {
+  const hasPending = _netPending.classic || _netPending.arena || _netPending.boss;
+  const _t0 = hasPending ? performance.now() : 0;
   if (_netPending.classic) { const m = _netPending.classic; _netPending.classic = null; applyRemoteState(m);  _netDiag.apply++; }
   if (_netPending.arena)   { const m = _netPending.arena;   _netPending.arena = null;   applyArenaState(m);    _netDiag.apply++; }
   if (_netPending.boss)    { const m = _netPending.boss;    _netPending.boss = null;    applyBossWarsState(m); _netDiag.apply++; }
+  if (hasPending) _netDiag.applyMs += performance.now() - _t0;
   if (_netDiag._frameRecv > _netDiag.maxPerFrame) _netDiag.maxPerFrame = _netDiag._frameRecv;
   _netDiag._frameRecv = 0;
 }
@@ -30207,7 +30216,7 @@ function tick() {
   if (isArenaMp() && APP.mode === 'host' && wsOpen()) {
     APP.stateAccum = (APP.stateAccum || 0) + dt;
     if (APP.stateAccum >= ARENA_STATE_SEND_INTERVAL * 0.9) {
-      broadcastArenaState();
+      const _ts = performance.now(); broadcastArenaState(); _netDiag.sendMs += performance.now() - _ts;   // TEMP-mätning
       APP.stateAccum -= ARENA_STATE_SEND_INTERVAL;
       // Anti-burst: efter en lång host-hicka, skicka inte ikapp-snapshots.
       if (APP.stateAccum > ARENA_STATE_SEND_INTERVAL) APP.stateAccum = 0;
@@ -30219,7 +30228,7 @@ function tick() {
   if (isBossMpHost && wsOpen()) {
     if (now - bossMpState.lastStateSent > (1 / 30)) {
       bossMpState.lastStateSent = now;
-      broadcastBossWarsState();
+      const _ts = performance.now(); broadcastBossWarsState(); _netDiag.sendMs += performance.now() - _ts;   // TEMP-mätning
     }
   }
   // Arena state-machine (host kör; client följer a-state)
