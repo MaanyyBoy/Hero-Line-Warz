@@ -23872,6 +23872,16 @@ function sendBossWarsInput() {
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = bossMpState.pendingEvents;
+  // MP-lag fix 2 (idle-skip): inga events + joystick ~oförändrad sedan senast SKICKADE
+  // → skippa. Host applicerar redan senast mottagna input varje frame, så att repetera
+  // (0,0) ~45 ggr/sek när man står still är ren overhead på mobilnät. Spegel av
+  // maybeSendClientInput-dedupen. Events tvingar alltid send (diskreta). Heartbeat var
+  // 500ms = liveness + säkrar att en tappad "stopp"-input ändå når host inom 0.5s.
+  const nowSec = performance.now() / 1000;
+  const ljx = bossMpState.lastSentJx, ljz = bossMpState.lastSentJz;
+  const unchanged = (ljx != null) && Math.abs(dir.x - ljx) < 0.005 && Math.abs(dir.z - ljz) < 0.005;
+  const heartbeatDue = (nowSec - (bossMpState.lastInputActualSent || 0)) > 0.5;
+  if (evs.length === 0 && unchanged && !heartbeatDue) return;
   bossMpState.pendingEvents = [];
   sendGameMsg({
     t: 'b-input',
@@ -23880,6 +23890,9 @@ function sendBossWarsInput() {
     jz: +dir.z.toFixed(3),
     ev: evs,
   });
+  bossMpState.lastSentJx = dir.x;
+  bossMpState.lastSentJz = dir.z;
+  bossMpState.lastInputActualSent = nowSec;
 }
 
 // Host: applicera mottagen klient-input i simulateAll-loopen
@@ -28544,6 +28557,11 @@ function bossMpCleanupAfterMatch() {
   bossMpState.pendingEvents = [];
   bossMpState.lastStateSent = 0;
   bossMpState.lastInputSent = 0;
+  // MP-lag fix 2 (idle-skip): nolla dedupe-state så en omatch med identisk
+  // startposition inte fördröjer första input upp till heartbeat (500ms).
+  bossMpState.lastSentJx = null;
+  bossMpState.lastSentJz = null;
+  bossMpState.lastInputActualSent = 0;
   bossMpState.peersReady = {};
   // Återställ prep-panel UI till default-state inför nästa match
   const waitEl = document.getElementById('bp-mp-waiting');
