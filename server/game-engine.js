@@ -1291,7 +1291,7 @@ function startArenaRound(state, roundNum) {
 function transitionArenaToStarting(state) {
   state.phase = 'starting';
   state.startingTimer = ARENA_STARTING_DURATION;
-  state.startingPhaseShown = false;
+  state.startingPhaseShown = '3';   // countdown-label klienten visar (3→2→1→FIGHT!)
   for (const idx of [1, 2]) {
     const s = state.sides[idx];
     const spawn = (idx === 1) ? ARENA1V1_SPAWN1 : ARENA1V1_SPAWN2;
@@ -1405,6 +1405,15 @@ function tickArena(state, dt) {
     if (state.prepTimer <= 0 || allReady) transitionArenaToStarting(state);
   } else if (state.phase === 'starting') {
     state.startingTimer = Math.max(0, state.startingTimer - dt);
+    // Driv 3-2-1-FIGHT-countdown via startingPhaseShown (klienten visar texten).
+    // Måste vara en truthy STRING — klienten gör `if (lbl)` + jämför mot prev text.
+    const rem = state.startingTimer;
+    let label;
+    if (rem > 2.0) label = '3';
+    else if (rem > 1.0) label = '2';
+    else if (rem > 0.4) label = '1';
+    else label = 'FIGHT!';
+    state.startingPhaseShown = label;
     if (state.startingTimer <= 0) transitionArenaToFight(state);
   } else if (state.phase === 'fight') {
     state.fightTimer += dt;

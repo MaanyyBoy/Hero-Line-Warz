@@ -9127,7 +9127,7 @@ function transitionArenaToFight() {
   if (arenaOrbMesh) arenaOrbMesh.visible = true;
   spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
   spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
-  showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
+  showOrbBanner('ORB HAS SPAWNED', '#88ffdd');
 }
 
 function transitionArenaRoundEnd(winnerIdx) {
@@ -9379,7 +9379,7 @@ function updateArenaOrb(dt) {
       // Spawn-FX: stor ring-burst + skill-cast-ring runt orb-position
       spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
       spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
-      showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
+      showOrbBanner('ORB HAS SPAWNED', '#88ffdd');
     }
     return;
   }
@@ -9448,8 +9448,8 @@ function damageArenaOrb(amount, byIdx) {
     }
     // Banner visas alltid vid orb-död (även edge-case när winner saknas)
     const isLocal = byIdx === APP.localSide;
-    showOrbBanner(isLocal ? 'ORB DÖDAD! +30% HP & SHIELD' :
-                  (winner ? 'Motståndaren tog orben' : 'Orben dog'),
+    showOrbBanner(isLocal ? 'ORB SLAIN! +30% HP & SHIELD' :
+                  (winner ? 'Enemy took the orb' : 'Orb died'),
                   isLocal ? '#aaffaa' : '#ffaaaa');
   }
 }
@@ -24644,7 +24644,7 @@ function applyArenaState(msg) {
     // Orb spawnade — spela FX lokalt också
     spawnSkillCastFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc, 1.6);
     spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x55ffcc);
-    showOrbBanner('ORB UPPENBARAR SIG', '#88ffdd');
+    showOrbBanner('ORB HAS SPAWNED', '#88ffdd');
   } else if (orbWasAlive && !arenaState.orb.alive) {
     // Orb dog
     spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x88ffdd);
@@ -29460,7 +29460,18 @@ function triggerClientVisualSkill(side, key) {
   const heroId = side.heroId || 'magiker';
   // Route B: Gandulfs black hole (E), wind puff (Q) + frost nova (F) broadcastas
   // som entiteter och renderas via clientReconcileEntities → skippa gen. synten.
-  if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && arenaActsAsClient()) return;
+  if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && arenaActsAsClient()) {
+    // Wind puff (Q) / frost nova (F) / black hole (E) renderas via entity-broadcast
+    // (clientReconcileEntities) → skippa den generiska projektil/ground-synten.
+    // MEN ge ändå instant cast-feedback vid hjälten så casten inte känns "död" på
+    // tap (entiteten anländer först ~1 nät-tick + RTT senare). Ringen ligger vid
+    // hjälte-ankaret och krockar inte visuellt med den utplacerade entiteten.
+    const mox = heroFxAnchorX(side), moz = heroFxAnchorZ(side);
+    const mcol = { q: 0xffaa44, f: 0x77ccff, e: 0xbb88ff }[key] || 0xffdc66;
+    spawnSkillCastFx(mox, moz, mcol, 1.8);
+    spawnShieldBurstFx(mox, moz, mcol);
+    return;
+  }
   // Route B: Aragurns shout (F) — spawna RIKTIGA shout-visualen (cone-flash +
   // buff-cirkel) i st f generisk synt. Riktning ≈ hjältens facing.
   if (heroId === 'aragurn' && key === 'f' && arenaActsAsClient()) {
