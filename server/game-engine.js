@@ -1105,6 +1105,47 @@ function createGameState() {
   };
 }
 
+// ── Decision 120 Fas 1: arena 1v1 server-auktoritativ ──────────────────
+// Arena 1v1 = hjälte-mot-hjälte i en separat arena (z-offset 80, skild från
+// duel-arenan CZ=35). Återanvänder createSide + engine:ns duel-strids-tick.
+// ADDITIVT: inget anropar detta än (server.js kör fortf. host-auth för arena-rum)
+// förrän hela slice:n + server-wiren är klar och testad. Bryter inget under tiden.
+const ARENA1V1_Z = 80;                 // matchar main.js ARENA_Z_OFFSET
+const ARENA1V1_SPAWN1 = { x: -32, z: ARENA1V1_Z };
+const ARENA1V1_SPAWN2 = { x: 32, z: ARENA1V1_Z };
+function createArenaState() {
+  const s1 = createSide(1);
+  const s2 = createSide(2);
+  // Arena-spawns (createSide sätter classic-lane-positioner). Heroes startar på
+  // motsatta sidor; facing in mot mitten.
+  s1.hero.x = ARENA1V1_SPAWN1.x; s1.hero.z = ARENA1V1_SPAWN1.z;
+  s1.hero.facingX = 1; s1.hero.facingZ = 0;
+  s2.hero.x = ARENA1V1_SPAWN2.x; s2.hero.z = ARENA1V1_SPAWN2.z;
+  s2.hero.facingX = -1; s2.hero.facingZ = 0;
+  return {
+    mode: 'arena1v1',
+    sides: { 1: s1, 2: s2 },
+    nextEntityId: 1,
+    lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
+    // Arena-flöde (speglar arenaState i main.js / a-state-formen)
+    phase: 'prep',             // prep | fight | roundEnd | matchEnd
+    roundNum: 1,
+    wins: { 1: 0, 2: 0 },
+    ready: { 1: false, 2: false },
+    prepTimer: 0,
+    startingTimer: 0,
+    startingPhaseShown: false,
+    endTimer: 0,
+    roundWinner: 0,
+    matchWinner: 0,
+    fightTimer: 0,
+    shrinkRadius: 0,
+    mapIdx: 0,
+    talents: { 1: { points: 0, chosen: [] }, 2: { points: 0, chosen: [] } },
+    orb: { hp: 0, alive: false, spawnTimer: 0 },
+  };
+}
+
 function checkMatchEnd(state) {
   if (state.matchState.gameOver) return;
   if (state.sides[1].tower.hp <= 0) {
@@ -5407,6 +5448,7 @@ function serializeState(state) {
 
 module.exports = {
   createGameState,
+  createArenaState,        // decision 120 Fas 1 (arena server-auth) — ännu ej wirad i server.js
   tickGame,
   serializeState,
   applyEvent,
