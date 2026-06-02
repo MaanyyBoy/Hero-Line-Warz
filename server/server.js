@@ -119,16 +119,18 @@ function gameLoopTick(room) {
   room.lastTickMs = now;
   // Mät simuleringskostnad separat från serialize för bättre spike-diagnostik.
   const _simStart = Date.now();
+  const _isArena = !!room.arenaSim;          // decision 120: server-auth arena
   try {
-    engine.tickGame(room.game, dt);
+    if (_isArena) engine.tickArena(room.game, dt);
+    else engine.tickGame(room.game, dt);
   } catch (e) {
-    console.error(`[${room.code}] tickGame error:`, e && e.stack || e);
+    console.error(`[${room.code}] tick error:`, e && e.stack || e);
   }
   const _simMs = Date.now() - _simStart;
   if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
     room.lastStateMs = now;
     try {
-      const stateMsg = engine.serializeState(room.game);
+      const stateMsg = _isArena ? engine.serializeArenaState(room.game) : engine.serializeState(room.game);
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
@@ -156,6 +158,10 @@ function gameLoopTick(room) {
   }
   // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
   // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
+  // Arena: matchen slut → stoppa loopen (slut-staten broadcastades just ovan, så
+  // klienterna fick phase='matchEnd'). Utan detta tickar ett avslutat arena-rum i
+  // 30 Hz tills spelarna lämnar = onödig CPU. (Bug-hunter-fynd, decision 120.)
+  if (_isArena && room.game && room.game.matchState.gameOver) { stopGame(room); return; }
   room.nextTickAt += TICK_INTERVAL_MS;
   if (room.nextTickAt < now - TICK_INTERVAL_MS * 2) room.nextTickAt = now + TICK_INTERVAL_MS;
   scheduleNextTick(room);
@@ -202,9 +208,67 @@ function relayPeerSend(peer, envelope, isState) {
   send(peer, envelope);
 }
 
-// Arena MP är peer-to-peer (host simulerar lokalt i webbläsaren). Servern
-// bara relayar arena-meddelanden mellan peers. Den server-körda klassiska
-// engine:n startas aldrig för arena-rum — se 'join'-handlern.
+// ── Decision 120: server-auktoritativ arena (opt-in via a-sim-start) ──────
+// Bakåtkompatibelt: en arena-klient som INTE skickar a-sim-start får gammalt
+// P2P-relä-beteende (host-auth) → deploy av servern ensam bryter inget. När den
+// nya klientens host skickar a-sim-start startar servern arena-engine:n och äger
+// a-state; host:ens egna a-state ignoreras då.
+function startArenaSim(room, heroes) {
+  if (room.game || room.tickHandle) return;        // redan igång
+  room.arenaSim = true;
+  room.game = engine.initArenaMatch(heroes);
+  room.lastStateMs = 0;
+  room.lastTickMs = Date.now();
+  room.nextTickAt = Date.now();
+  scheduleNextTick(room);
+  console.log(`[${room.code}] arena sim started (server-auth)`);
+}
+
+function applyArenaInput(room, ws, payload) {
+  if (!room.game) return;
+  const sideIdx = (ws === room.host) ? 1 : 2;       // socket-identitet, ej payload (spoof-skydd)
+  const inp = room.game.lastInputs[sideIdx];
+  if (inp) {
+    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    const mag = Math.hypot(jx, jz);
+    if (mag > 1) { jx /= mag; jz /= mag; }
+    inp.j = { x: jx, z: jz };
+  }
+  if (Array.isArray(payload.events) && payload.events.length) {
+    for (const ev of payload.events) {
+      if (!ev || typeof ev !== 'object') continue;
+      try { engine.applyEvent(room.game, sideIdx, ev); }
+      catch (e) { console.warn('arena applyEvent error', e); }
+    }
+  }
+}
+
+function handleArenaMessage(room, fromWs, envelope) {
+  const payload = envelope.d;
+  const t = payload && payload.t;
+  // Host begär server-auth-sim (skickas vid fight-start). Bara host.
+  if (t === 'a-sim-start') {
+    if (fromWs === room.host) startArenaSim(room, payload.heroes);
+    return;
+  }
+  if (room.arenaSim) {
+    // Server-auth aktivt: input → engine, a-state ägs av servern (ignorera host:ens),
+    // ready → server-state (driver prep→fight-övergången).
+    if (t === 'a-input') { applyArenaInput(room, fromWs, payload); return; }
+    if (t === 'a-state') return;
+    if (t === 'a-ready') {
+      const sideIdx = (fromWs === room.host) ? 1 : 2;
+      if (room.game && room.game.ready) room.game.ready[sideIdx] = !!payload.value;
+      return;
+    }
+    // Övriga a- (a-pick/a-mvote/a-mvstate/a-mvres/a-pick-confirm): relä till peer (lobby-flöde)
+  }
+  relayArenaMessage(room, fromWs, envelope);
+}
+
+// Arena MP (host-auth, legacy): servern relayar arena-meddelanden mellan peers.
+// Används när a-sim-start ej skickats (gammal klient). Den klassiska engine:n
+// startas aldrig för arena-rum — se 'join'-handlern.
 function relayArenaMessage(room, fromWs, envelope) {
   // Spoof-skydd: bara host får broadcasta auktoritativ state.
   if (envelope.d && envelope.d.t === 'a-state' && fromWs !== room.host) return;
@@ -351,7 +415,7 @@ wss.on('connection', (ws) => {
       if (!room) return;
       const payload = msg.d;
       if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
-        relayArenaMessage(room, ws, msg);
+        handleArenaMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
         relayBossWarsMessage(room, ws, msg);
       } else {

@@ -1144,6 +1144,9 @@ function createArenaState() {
     sides: { 1: s1, 2: s2 },
     nextEntityId: 1,
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
+    // matchState så server.js:gameLoopTick:s `room.game.matchState.gameOver`-guard
+    // fungerar för arena också (sätts i transitionArenaMatchEnd).
+    matchState: { gameOver: false, winner: 0 },
     // Arena-flöde (speglar arenaState i main.js / a-state-formen)
     phase: 'prep',             // prep | fight | roundEnd | matchEnd
     roundNum: 1,
@@ -1303,6 +1306,23 @@ function transitionArenaRoundEnd(state, winnerIdx) {
 function transitionArenaMatchEnd(state, winnerIdx) {
   state.phase = 'matchEnd';
   state.matchWinner = winnerIdx;
+  state.matchState.gameOver = true;       // stoppar gameLoopTick
+  state.matchState.winner = winnerIdx;
+}
+
+// Skapar + initierar en arena-match server-side: sätter valda hjältar, kör
+// startArenaRound(1) (recompute-stats + full HP + gold + talent-poäng). Anropas
+// av server.js när host skickar a-sim-start. heroes = { 1: heroId, 2: heroId }.
+function initArenaMatch(heroes) {
+  const state = createArenaState();
+  for (const idx of [1, 2]) {
+    if (heroes && typeof heroes[idx] === 'string') {
+      state.sides[idx].heroId = heroes[idx];
+      state.sides[idx].heroPickConfirmed = true;
+    }
+  }
+  startArenaRound(state, 1);
+  return state;
 }
 
 function checkArenaRoundEnd(state) {
@@ -1347,8 +1367,9 @@ function tickArenaOrbTimer(state, dt) {
   }
 }
 
-// Arena top-tick (oanropat tills wirad i server.js). Komplett fas-maskin.
+// Arena top-tick. Komplett fas-maskin.
 function tickArena(state, dt) {
+  if (state.matchState && state.matchState.gameOver) return;   // matchen slut — server.js stoppar loopen
   if (state.phase === 'prep') {
     state.prepTimer = Math.max(0, state.prepTimer - dt);
     const allReady = state.ready[1] && state.ready[2];
@@ -5768,7 +5789,8 @@ function serializeState(state) {
 
 module.exports = {
   createGameState,
-  createArenaState,        // decision 120 Fas 1 (arena server-auth) — ännu ej wirad i server.js
+  createArenaState,        // decision 120 Fas 1 (arena server-auth)
+  initArenaMatch,          // skapa+initiera arena-match (sätt hjältar + round 1)
   tickArena,               // arena fas-maskin + combat-tick
   serializeArenaState,     // arena → a-state-meddelande
   tickGame,
