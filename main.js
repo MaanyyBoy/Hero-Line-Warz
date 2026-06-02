@@ -19851,8 +19851,8 @@ function onTalentPick(talentId) {
   if (side) recomputeArenaSideStats(side);
   renderTalentsGrid();
   updateArenaPrepUI();
-  // Skicka till host om vi är klient
-  if (isArenaMp() && APP.mode === 'client') {
+  // Skicka till auktoritet: host-auth-client → host; server-auth (host+client) → server
+  if (arenaActsAsClient()) {
     sendGameMsg({ t: 'a-talent', side: APP.localSide, talentId, remove });
   }
 }
@@ -19861,7 +19861,7 @@ if (apReadyBtn) apReadyBtn.addEventListener('click', () => {
   const newVal = !arenaState.ready[APP.localSide];
   arenaState.ready[APP.localSide] = newVal;
   updateArenaPrepUI();
-  if (isArenaMp() && APP.mode === 'client') {
+  if (arenaActsAsClient()) {        // server-auth: host:ens ready måste också nå servern (annars fastnar prep)
     sendGameMsg({ t: 'a-ready', side: APP.localSide, value: newVal });
   }
 });
@@ -23288,7 +23288,7 @@ function screenToWorld(sx, sz) {
 function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
-  const isArenaMpClient = (APP.mode === 'client' && isArenaMp());
+  const isArenaMpClient = arenaActsAsClient();   // decision 120: server-auth host agerar klient
   // Skill-point-lock-gate: Q/F/E kräver skillLvl > 0. R kräver hero-level >= 10.
   if (key === 'q' || key === 'f' || key === 'e') {
     const skLvl = (side.skillLvl && side.skillLvl[key]) || 0;
@@ -23523,11 +23523,12 @@ function sendOrApplyEvent(ev) {
     applyEvent(sides[APP.localSide], ev);
     return;
   }
-  if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
-    // Solo + arena-host kör simulering lokalt — applicera event direkt
+  if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host' && !APP.arenaServerAuth)) {
+    // Solo + arena-host (HOST-AUTH) kör simulering lokalt — applicera event direkt.
+    // Server-auth (decision 120): host KÖAR event som klient (servern exekverar).
     applyEvent(sides[APP.localSide], ev);
   } else if (APP.mode === 'host' || APP.mode === 'client') {
-    // Klassisk MP / arena-client: events går via relay
+    // Klassisk MP / arena-client / server-auth-host: events går via relay/server
     APP.pendingEvents.push(ev);
     flushClientInput();
   }
@@ -23576,17 +23577,22 @@ const ARENA_STATE_SEND_INTERVAL = 1 / 30;
 
 function isMpMode() { return APP.mode === 'host' || APP.mode === 'client'; }
 function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host' || APP.mode === 'client'); }
+// Decision 120: i SERVER-auth arena beter sig BÅDE host och client som "klient" —
+// servern simulerar, så de skickar input/casts + följer a-state och kör INGEN lokal sim.
+// (I host-auth är bara den faktiska klienten "client"; host simulerar.)
+function arenaActsAsClient() { return isArenaMp() && (APP.mode === 'client' || APP.arenaServerAuth); }
 
 function flushClientInput() {
   if (!isMpMode() || !wsOpen()) return;
-  // Arena-host kör lokalt och ska aldrig skicka client-input
-  if (isArenaMp() && APP.mode === 'host') return;
+  // Arena-host i HOST-AUTH-läge kör lokalt → skickar ingen client-input. I server-
+  // auth (decision 120) skickar host input som vilken klient som helst.
+  if (isArenaMp() && APP.mode === 'host' && !APP.arenaServerAuth) return;
   const raw = readLocalJoystick();
   const dir = screenToWorld(raw.x, raw.z);
   const evs = APP.pendingEvents;
   APP.pendingEvents = [];
-  // I arena-MP: skicka som 'a-input' till host (peer-to-peer), inte 'in' till server
-  if (isArenaMp() && APP.mode === 'client') {
+  // Arena-MP: skicka 'a-input'. Server-auth → till servern; host-auth-client → relä till host.
+  if (isArenaMp() && (APP.mode === 'client' || APP.arenaServerAuth)) {
     sendGameMsg({ t: 'a-input', jx: dir.x, jz: dir.z, events: evs });
   } else {
     sendGameMsg({ t: 'in', j: { x: dir.x, z: dir.z }, ev: evs });
@@ -23598,8 +23604,9 @@ function flushClientInput() {
 
 function maybeSendClientInput(now) {
   if (!isMpMode() || !wsOpen()) return;
-  // Arena MP: bara client skickar input (host kör simulering lokalt)
-  if (isArenaMp() && APP.mode !== 'client') return;
+  // Arena MP host-auth: bara client skickar input (host simulerar lokalt).
+  // Server-auth (decision 120): host skickar också input till servern.
+  if (isArenaMp() && APP.mode !== 'client' && !APP.arenaServerAuth) return;
   // Klassisk MP är server-auktoritativ — BÅDE host och client skickar input
   // till servern. Tidigare blockerades host här ("klassisk host får server-state")
   // vilket gjorde att host's joystick-input aldrig nådde servern → host's hero
@@ -23955,7 +23962,7 @@ function handleNetworkMessage(msg) {
     }
     return;
   }
-  if (msg.t === 'a-state' && APP.mode === 'client' && isArenaMp()) {
+  if (msg.t === 'a-state' && isArenaMp() && (APP.mode === 'client' || APP.arenaServerAuth)) {
     _netPending.arena = msg;   // teknik E: buffra (latest-wins), applicera i tick()
     _netDiag.recv++; _netDiag._frameRecv++;
     return;
@@ -24189,7 +24196,7 @@ function applyHeroSnap(side, snap) {
   // position avviker mycket från host (knockback, wall-hit, stun, etc.).
   const isLocalMpClient = (
     side.idx === APP.localSide &&
-    ((APP.mode === 'client' && isArenaMp()) ||
+    (arenaActsAsClient() ||     // decision 120: server-auth host predikterar egen hjälte (ingen rubber-band)
      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))
   );
   // isMpClientForVisuals = true om vi inte kör simuleringen lokalt och därför
@@ -24198,7 +24205,7 @@ function applyHeroSnap(side, snap) {
   // — varken host eller client kör skill-logik lokalt).
   const isClassicMpForVis = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
   const isMpClientForVisuals = (
-    (APP.mode === 'client' && isArenaMp()) ||
+    arenaActsAsClient() ||      // decision 120: server-auth host behöver också delta-FX
     (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars') ||
     isClassicMpForVis
   );
@@ -24547,9 +24554,9 @@ function broadcastArenaState() {
   sendGameMsg(m);
 }
 
-// Client: ta emot a-state och applicera lokalt.
+// Client (och server-auth-host, decision 120): ta emot a-state och applicera lokalt.
 function applyArenaState(msg) {
-  if (APP.mode !== 'client' || !isArenaMp()) return;
+  if (!isArenaMp() || (APP.mode !== 'client' && !APP.arenaServerAuth)) return;
   const prevPhase = arenaState.phase;
   const prevRound = arenaState.roundNum;
   arenaState.phase = msg.ph;
@@ -27004,6 +27011,7 @@ function enterPlayPhase() {
   // reporting-flag så nästa match-end registreras igen.
   matchState._startTime = performance.now();
   matchState._lbReported = false;
+  APP.arenaServerAuth = false;   // decision 120: sätts true nedan bara för arena MP (server-auth)
   document.body.classList.add('in-game');
   // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
@@ -27081,17 +27089,25 @@ function enterPlayPhase() {
       // recomputeSideStats nedan (rad ~23543).
       s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
     }
-    // Endast host (eller solo) initierar arenaState. Klienten följer via a-state-broadcast.
-    if (APP.mode !== 'client') {
+    // Decision 120: arena MP är SERVER-auktoritativt — servern äger simuleringen.
+    // Både host och client följer a-state; host kickar server-simmen via a-sim-start
+    // (med valda hjältar). Solo kör fortfarande lokalt (isArenaMp() är false i solo).
+    if (isArenaMp()) {
+      resetArenaState();
+      APP.arenaServerAuth = true;
+      if (APP.mode === 'host') {
+        sendGameMsg({ t: 'a-sim-start', heroes: { 1: sides[1] && sides[1].heroId, 2: sides[2] && sides[2].heroId } });
+      }
+      // Båda peers: göm lobby-paneler, vänta på serverns första a-state.
+      hideArenaPrep();
+      hideArenaEnd();
+      hideArenaCountdown();
+    } else if (APP.mode !== 'client') {
+      // Solo: lokal arena-sim
       resetArenaState();
       arenaState.talents[1].points = 0;
       arenaState.talents[2].points = 0;
       startArenaRound(1);
-    } else {
-      // Client: visa hero-pick-överlag bortagen, vänta på host's första a-state
-      hideArenaPrep();
-      hideArenaEnd();
-      hideArenaCountdown();
     }
   } else if (APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.active) {
     // Boss Wars: bygg flat platform, sätt hjälte lvl 30, applicera prep-val, spawna boss
@@ -29444,10 +29460,10 @@ function triggerClientVisualSkill(side, key) {
   const heroId = side.heroId || 'magiker';
   // Route B: Gandulfs black hole (E), wind puff (Q) + frost nova (F) broadcastas
   // som entiteter och renderas via clientReconcileEntities → skippa gen. synten.
-  if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && APP.mode === 'client' && isArenaMp()) return;
+  if (heroId === 'magiker' && (key === 'e' || key === 'q' || key === 'f') && arenaActsAsClient()) return;
   // Route B: Aragurns shout (F) — spawna RIKTIGA shout-visualen (cone-flash +
   // buff-cirkel) i st f generisk synt. Riktning ≈ hjältens facing.
-  if (heroId === 'aragurn' && key === 'f' && APP.mode === 'client' && isArenaMp()) {
+  if (heroId === 'aragurn' && key === 'f' && arenaActsAsClient()) {
     const afx = side.hero.facingX || 0, afz = side.hero.facingZ || 1;
     spawnConeFlash(side.hero.x, side.hero.z, afx, afz, SHOUT_LENGTH, SHOUT_HALF_ANGLE, 0xffe399);
     spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
@@ -29455,7 +29471,7 @@ function triggerClientVisualSkill(side, key) {
   }
   // Route B: Kostef— Q (goose-wave) + F (slider) broadcastas som entiteter
   // (skippa generiska synten); E (cannabis-moln) → spawna rök-pufrarna.
-  if (heroId === 'kostefo' && APP.mode === 'client' && isArenaMp()) {
+  if (heroId === 'kostefo' && arenaActsAsClient()) {
     if (key === 'q' || key === 'f') return;
     if (key === 'e') { spawnKostefoCloudSmoke(side.hero.x, side.hero.z); return; }
   }
@@ -30192,7 +30208,7 @@ function tick() {
   // Tick lokal optimistic ult-lockout för classic MP-klient (line wars).
   // I solo + arena/boss host körs simulateAll som tickar via buff-loopen
   // — guard:a här så det inte blir dubbel tick (2.5s istället för 5s lockout).
-  if (APP.mode !== 'solo' && !(isArenaMp() && APP.mode === 'host')) {
+  if (APP.mode !== 'solo' && !(isArenaMp() && APP.mode === 'host' && !APP.arenaServerAuth)) {
     const _localSide = sides[APP.localSide];
     if (_localSide && (_localSide._ultLockoutTime || 0) > 0) {
       _localSide._ultLockoutTime = Math.max(0, _localSide._ultLockoutTime - dt);
@@ -30221,8 +30237,9 @@ function tick() {
       const _boss = sides[1].monsters.find(m => m.isBossWarsBoss);
       if (_boss && _boss.mesh && _boss.mesh.userData.phase2Aura) tickBossPhase2Aura(_boss.mesh, dt);
     }
-  } else if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host')) {
-    // Solo + arena-host kör simulationen lokalt
+  } else if (APP.mode === 'solo' || (isArenaMp() && APP.mode === 'host' && !APP.arenaServerAuth)) {
+    // Solo + arena-host (HOST-AUTH) kör simulationen lokalt. I server-auth (decision 120)
+    // simulerar servern → host faller till isMpMode()-grenen (input + prediction + render).
     if (!matchState.gameOver) simulateAll(dt);
   } else if (isMpMode()) {
     // Klassisk MP (server-auth): bara input + render från server's state.
@@ -30241,7 +30258,7 @@ function tick() {
   // ≈ 50 ms (ojämn ~20 Hz). Ackumulatorn drar av exakt ETT intervall per
   // sändning → snittakt = exakt 30 Hz utan drift; tröskeln ×0.9 gör att en
   // 60 Hz-host pålitligt träffar var 2:a frame trots flyttalsprecision.
-  if (isArenaMp() && APP.mode === 'host' && wsOpen()) {
+  if (isArenaMp() && APP.mode === 'host' && !APP.arenaServerAuth && wsOpen()) {
     APP.stateAccum = (APP.stateAccum || 0) + dt;
     if (APP.stateAccum >= ARENA_STATE_SEND_INTERVAL * 0.9) {
       const _ts = performance.now(); broadcastArenaState(); _netDiag.sendMs += performance.now() - _ts;   // TEMP-mätning
@@ -30259,13 +30276,13 @@ function tick() {
       const _ts = performance.now(); broadcastBossWarsState(); _netDiag.sendMs += performance.now() - _ts;   // TEMP-mätning
     }
   }
-  // Arena state-machine (host kör; client följer a-state)
+  // Arena state-machine. Solo + host-auth-host kör tickArena lokalt; server-auth-host
+  // OCH client följer serverns a-state (kör bara shrink-cirkelns visual lokalt).
   if (APP.gameMode === 'arena1v1') {
-    if (APP.mode === 'solo' || APP.mode === 'host') tickArena(dt);
-    // Klient: tickArena körs INTE (host-auth), men shrink-cirkelns visual måste
-    // uppdateras lokalt så klienten ser cirkeln. arenaState.shrinkRadius synkas
-    // via a-state.
-    else if (APP.mode === 'client') {
+    if (APP.mode === 'solo' || (APP.mode === 'host' && !APP.arenaServerAuth)) tickArena(dt);
+    // Följare (client ELLER server-auth-host): tickArena körs INTE, men shrink-
+    // cirkelns visual uppdateras lokalt. arenaState.shrinkRadius synkas via a-state.
+    else if (APP.mode === 'client' || APP.arenaServerAuth) {
       if (arenaState.phase === 'fight') updateShrinkCircleVisual(dt);
       // Klienten kör inte simulateAll → localOnly vine traps (klient-prediktion
       // via spawnClientLocalVineTrap) tickas/fade:as aldrig → de blir kvar för

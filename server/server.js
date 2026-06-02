@@ -261,6 +261,19 @@ function handleArenaMessage(room, fromWs, envelope) {
       if (room.game && room.game.ready) room.game.ready[sideIdx] = !!payload.value;
       return;
     }
+    if (t === 'a-talent') {
+      // Talent-pick → server-state (server äger talents). Stat-effekten av talents
+      // appliceras ej än server-side (TODO recomputeArenaSideStats-port); picken
+      // registreras så UI + persistens funkar och kan aktiveras senare.
+      const sideIdx = (fromWs === room.host) ? 1 : 2;
+      const tal = room.game.talents && room.game.talents[sideIdx];
+      if (tal) {
+        const id = payload.talentId;
+        if (payload.remove) { const i = tal.chosen.indexOf(id); if (i >= 0) { tal.chosen.splice(i, 1); tal.points++; } }
+        else if (tal.points > 0 && id && tal.chosen.indexOf(id) < 0) { tal.chosen.push(id); tal.points--; }
+      }
+      return;
+    }
     // Övriga a- (a-pick/a-mvote/a-mvstate/a-mvres/a-pick-confirm): relä till peer (lobby-flöde)
   }
   relayArenaMessage(room, fromWs, envelope);
