@@ -2571,7 +2571,7 @@ const BLACKHOLE_EXPLOSION_DMG = 30;
 const BLACKHOLE_CAST_DISTANCE = 10.4;      // E cast-range +30% (8.0 → 10.4), matchar server
 // Legolus
 const VINE_TRAP_RADIUS = 3.0 * 1.3 * 0.8;        // +30% → -20% = 3.9 → 3.12
-const VINE_TRAP_DURATION = 3.0;
+const VINE_TRAP_DURATION = 2.0;   // nerf från 3.0 (matchar server)
 const VINE_TRAP_DOT_DPS = 8;
 const VINE_TRAP_CAST_DISTANCE = 7 * 1.3 * 0.8;   // +30% → -20% = 9.1 → 7.28
 const VINE_TRAP_ROOT_REFRESH = 0.25;
@@ -4597,9 +4597,9 @@ const ARENA_ORB_MAX_HP = 100;
 const ARENA_ORB_SPAWN_DELAY = 0;       // spawnar direkt vid fight-start
 const ARENA_ORB_RESPAWN_DELAY = 15;    // 15s respawn efter kill
 const ARENA_ORB_HEAL_PCT = 0.30;
-const ARENA_ORB_SHIELD_PCT = 0.30;
-const ARENA_PREP_TIME = 60;
-const ARENA_ROUND_END_PAUSE = 4;
+const ARENA_ORB_SHIELD_PCT = 0.15;   // nerf från 0.30 (matchar server — mindre snöboll)
+const ARENA_PREP_TIME = 25;          // nerf från 60 (matchar server)
+const ARENA_ROUND_END_PAUSE = 5;     // +1s (matchar server)
 const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_PER_ROUND = 250;          // alla får 250 vid round-end
 const ARENA_GOLD_WIN_BONUS = 500;          // winners får 500 extra
@@ -8900,7 +8900,7 @@ const arenaState = {
 
 // Shrink-konfiguration: efter SHRINK_START_DELAY krymper circle linjärt till
 // SHRINK_FINAL_RADIUS över SHRINK_DURATION sekunder. Utanför = 5% maxHP/s skada.
-const SHRINK_START_DELAY = 60;       // 1 min countdown innan shrink börjar
+const SHRINK_START_DELAY = 30;       // nerf från 60 (matchar server A_SHRINK_START_DELAY — zonen formar rundan)
 const SHRINK_INITIAL_RADIUS = 28;    // täcker arenan (bounds 88×56 → 28 ryms)
 const SHRINK_FINAL_RADIUS = 4;
 const SHRINK_DURATION = 60;          // krymper över 60s
@@ -9065,6 +9065,12 @@ function startArenaRound(roundNum) {
       scene.remove(s.berserkSwordMesh);
       s.berserkSwordMesh = null;
     }
+    // Server-auth ult-visualer (tickArenaUltVisuals): rensa mesh + flaggor så de
+    // inte fastnar om snap hoppar från aktiv→inaktiv över round-gränsen.
+    if (s._srvLaserMesh) { disposeSrvUltMesh(s._srvLaserMesh); s._srvLaserMesh = null; }
+    if (s._srvBerserkMesh) { disposeSrvUltMesh(s._srvBerserkMesh); s._srvBerserkMesh = null; }
+    s._srvLaser = null; s._srvRage = 0; s._srvBerserk = 0;
+    s._srvRageActive = false; s._srvRageAccum = 0;
     if (s.soulDrain || s.soulDrainBeam) {
       if (typeof removeSoulDrainBeam === 'function') removeSoulDrainBeam(s);
       s.soulDrain = null;
@@ -19484,6 +19490,14 @@ const skillTooltipState = {
 };
 const SKILL_LONGPRESS_MS = 500;
 
+// Läser safe-area-inset (px) från CSS-varen på :root. Används för att klampa
+// tooltips utanför notch/Dynamic Island i landskap. Faller till 0 om ostödd.
+function safeAreaInset(side) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(side === 'right' ? '--sai-right' : '--sai-left');
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function showSkillTooltip(key) {
   if (!skillTooltipEl) return;
   const side = sides[APP.localSide];
@@ -19502,8 +19516,9 @@ function showSkillTooltip(key) {
     const tr = skillTooltipEl.getBoundingClientRect();
     let left = r.left + r.width / 2 - tr.width / 2;
     let top = r.top - tr.height - 12;
-    // Klamra inom viewport
-    left = Math.max(8, Math.min(window.innerWidth - tr.width - 8, left));
+    // Klamra inom viewport OCH utanför notch/Dynamic Island (safe-area i landskap)
+    const _saL = safeAreaInset('left'), _saR = safeAreaInset('right');
+    left = Math.max(8 + _saL, Math.min(window.innerWidth - tr.width - 8 - _saR, left));
     if (top < 8) top = r.bottom + 12;
     skillTooltipEl.style.left = `${left}px`;
     skillTooltipEl.style.top = `${top}px`;
@@ -19881,6 +19896,8 @@ function triggerAA() {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
+  // Arena: ingen AA-toggle utanför fight-fasen (bakom prep-panelen).
+  if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return;
   // Toggle klient-side "AA on/off" sa AA-range-cirkeln syns oavsett om
   // en fiende finns i range. Server fattar fortfarande aaActive utifran
   // target-tillgang — _aaWanted styr bara visualindikatorn.
@@ -20707,7 +20724,7 @@ const _K_SLIDER_SPEED = 7.0;
 const _K_SLIDER_RADIUS = 0.55;
 const _K_SLIDER_DIRECT_PCT = 0.15;
 const _K_SLIDER_DOT_DUR = 2.0;
-const _K_SLIDER_DOT_PER_SEC = 0.15;
+const _K_SLIDER_DOT_PER_SEC = 0.08;   // nerf från 0.15 (matchar server KOSTEFO_SLIDER_DOT_PER_SEC)
 const _K_SLIDER_SLOW_DUR = 2.0;
 const _K_SLIDER_SLOW_MUL = 0.70;
 const _K_SLIDER_EXPLOSION_R = 2.5;
@@ -21499,8 +21516,8 @@ function onLegolasUltHit(side, hit, arr) {
 // === Kryx ult: Rage ===
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
-const RAGE_PULSE_RADIUS = 4.5;
-const RAGE_PULSE_DMG_PCT = 0.035;    // 3.5% maxHP per 0.5s (nerf -30%)
+const RAGE_PULSE_RADIUS = 5.5;       // buff från 4.5 (matchar server)
+const RAGE_PULSE_DMG_PCT = 0.05;     // buff från 0.035 (matchar server — rage var svagast i 1v1)
 const RAGE_DR_MUL = 0.50;             // 50% DR
 const RAGE_HEAL_PCT = 0.20;           // 20% lifesteal från all skada utdelad
 const RAGE_SCALE = 2.0;
@@ -21598,7 +21615,7 @@ function applyRageLifesteal(side, dmgDealt) {
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
 const WHIRLWIND_RADIUS = 3.6;   // +20% (3.0 → 3.6), matchar server
-const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
+const WHIRLWIND_DMG_PCT = 0.05;      // nerf tillbaka från 0.075 (matchar server)
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;      // 60° halv-vinkel = 120° kon (vidare)
@@ -23042,7 +23059,8 @@ function showItemTooltipForSlot(slotEl) {
   const ttRect = tooltipEl.getBoundingClientRect();
   let left = rect.left + rect.width / 2 - ttRect.width / 2;
   let top = rect.top - ttRect.height - 8;
-  left = Math.max(8, Math.min(window.innerWidth - ttRect.width - 8, left));
+  const _saL = safeAreaInset('left'), _saR = safeAreaInset('right');
+  left = Math.max(8 + _saL, Math.min(window.innerWidth - ttRect.width - 8 - _saR, left));
   if (top < 8) top = rect.bottom + 8;
   tooltipEl.style.left = left + 'px';
   tooltipEl.style.top = top + 'px';
@@ -23292,6 +23310,8 @@ function screenToWorld(sx, sz) {
 function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
+  // Arena: skills bara i fight-fasen (ej prep/starting/roundEnd bakom panelerna).
+  if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return;
   const isArenaMpClient = arenaActsAsClient();   // decision 120: server-auth host agerar klient
   // Skill-point-lock-gate: Q/F/E kräver skillLvl > 0. R kräver hero-level >= 10.
   if (key === 'q' || key === 'f' || key === 'e') {
@@ -23539,6 +23559,9 @@ function sendOrApplyEvent(ev) {
 }
 
 function readLocalJoystick() {
+  // Arena: ingen rörelse utanför fight-fasen (hjälten är låst vid spawn i prep/
+  // starting/roundEnd). Annars rör sig hjälten "bakom" prep-panelen → snap-tillbaka.
+  if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return { x: 0, z: 0 };
   // Tangentbord
   let kx = 0, kz = 0;
   if (keys['KeyW'] || keys['ArrowUp']) kz -= 1;
@@ -24806,7 +24829,15 @@ function applyArenaState(msg) {
       showArenaCountdown('FIGHT!', true);
     } else if (arenaState.phase === 'fight') {
       hideArenaPrep();
-      hideArenaCountdown();
+      // Servern byter starting→fight i SAMMA tick som den sätter label 'FIGHT!'
+      // (ingen separat starting-end-fas server-side) → visa FIGHT! kort innan
+      // countdown göms, annars hoppar 3-2-1 direkt till fight utan FIGHT!-flash.
+      if (prevPhase === 'starting' && typeof msg.spl === 'string' && msg.spl.toUpperCase().startsWith('F')) {
+        showArenaCountdown('FIGHT!', true);
+        setTimeout(() => { if (arenaState.phase === 'fight') hideArenaCountdown(); }, 600);
+      } else {
+        hideArenaCountdown();
+      }
       hideArenaEnd();
     } else if (arenaState.phase === 'roundEnd') {
       showArenaEnd(arenaState.roundWinner, false);
@@ -29780,6 +29811,7 @@ function tickArenaUltVisuals(dt) {
         s._srvLaserMesh = grp;
         spawnSkillCastFx(mx, mz, 0x88ccff, 2.0);
         spawnShieldBurstFx(mx, mz, 0xaaddff);
+        triggerCameraShake(0.30, 0.35);
       }
       const ang = Math.atan2(ldx, ldz);
       s._srvLaserMesh.position.set(mx + ldx * LASER_RANGE / 2, 1.0, mz + ldz * LASER_RANGE / 2);
@@ -29795,6 +29827,7 @@ function tickArenaUltVisuals(dt) {
         s._srvRageActive = true;
         spawnSkillCastFx(mx, mz, 0xff4422, 2.2);
         spawnShieldBurstFx(mx, mz, 0xff6633);
+        triggerCameraShake(0.45, 0.5);
       }
       s._srvRageAccum = (s._srvRageAccum || 0) + dt;
       if (s._srvRageAccum > 0.4) { s._srvRageAccum = 0; spawnShieldBurstFx(mx, mz, 0xff6633); }
@@ -29818,6 +29851,7 @@ function tickArenaUltVisuals(dt) {
         s._srvBerserkMesh = grp;
         spawnSkillCastFx(mx, mz, 0xff7733, 2.2);
         spawnShieldBurstFx(mx, mz, 0xffaa55);
+        triggerCameraShake(0.30, 0.40);
       }
       s._srvBerserkMesh.position.set(mx + 0.6, 0, mz);
       s._srvBerserkMesh.rotation.y = s.mesh.rotation.y;

@@ -244,7 +244,7 @@ const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
 // Legolus-skills
 const VINE_TRAP_RADIUS = 3.0;
-const VINE_TRAP_DURATION = 3.0;
+const VINE_TRAP_DURATION = 2.0;   // nerf från 3.0 (~75% root-uptime i arena var för hög)
 const VINE_TRAP_DOT_DPS = 8;
 const VINE_TRAP_CAST_DISTANCE = 7;
 const VINE_TRAP_ROOT_REFRESH = 0.25;     // håller frozenTime hög så länge i zonen
@@ -277,7 +277,7 @@ const KOSTEFO_SLIDER_SPEED = 7.0;        // ~0.86s flight på 6m (halverad från
 const KOSTEFO_SLIDER_RADIUS = 0.55;      // hit-radie för pierce
 const KOSTEFO_SLIDER_DIRECT_PCT = 0.15;  // 15% maxHP direct
 const KOSTEFO_SLIDER_DOT_DUR = 2.0;
-const KOSTEFO_SLIDER_DOT_PER_SEC = 0.15; // 15% maxHP per sek
+const KOSTEFO_SLIDER_DOT_PER_SEC = 0.08; // 8% maxHP/s (nerf från 0.15: ~97%→67% maxHP/träff skalat)
 const KOSTEFO_SLIDER_SLOW_DUR = 2.0;
 const KOSTEFO_SLIDER_SLOW_MUL = 0.70;    // 30% slow → multiplier 0.7
 const KOSTEFO_SLIDER_EXPLOSION_RADIUS = 2.5;
@@ -1129,8 +1129,8 @@ function heroWalk(side, x, z, opts) {
   return isHeroWalkable(side.idx, x, z, opts);
 }
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
-const ARENA_PREP_TIME = 60;
-const ARENA_ROUND_END_PAUSE = 4;
+const ARENA_PREP_TIME = 25;        // nerf från 60 (ready-knappen finns; 60s dödtid/runda var för långt)
+const ARENA_ROUND_END_PAUSE = 5;   // +1s så utfallet hinner läsas
 const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_START = 400;
 const ARENA_GOLD_PER_ROUND = 250;
@@ -1138,10 +1138,11 @@ const ARENA_GOLD_WIN_BONUS = 500;
 const ARENA_ORB_MAX_HP = 100;
 const ARENA_ORB_RESPAWN_DELAY = 15;
 const ARENA_ORB_HEAL_PCT = 0.30;       // dödaren får +30% maxHp heal
-const ARENA_ORB_SHIELD_PCT = 0.30;     // + 30% maxHp shield
+const ARENA_ORB_SHIELD_PCT = 0.15;     // + 15% maxHp shield (nerf från 0.30: ~60%→45% eff-HP-swing = mindre snöboll i Bo5)
+const ARENA_ORB_AA_BIAS_SQ = 6.25;     // auto-AA prioriterar fiende-hjälten: orben väljs bara om ~2.5m närmare
 const ARENA_STARTING_DURATION = 3.0;   // 3-2-1-FIGHT countdown
 // Shrink-zon
-const A_SHRINK_START_DELAY = 60;
+const A_SHRINK_START_DELAY = 30;   // nerf från 60: zonen formar rundan i tid (rundor avgjordes ofta innan)
 const A_SHRINK_INITIAL_RADIUS = 28;
 const A_SHRINK_FINAL_RADIUS = 4;
 const A_SHRINK_DURATION = 60;
@@ -1158,8 +1159,8 @@ const LASER_RANGE = 60;
 const LASER_WIDTH = 2.2;
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
-const RAGE_PULSE_RADIUS = 4.5;
-const RAGE_PULSE_DMG_PCT = 0.035;
+const RAGE_PULSE_RADIUS = 5.5;       // buff från 4.5: realistiskt hålla kiter inom radien
+const RAGE_PULSE_DMG_PCT = 0.05;     // buff från 0.035: rage var svagast i 1v1 (~35%→50% maxHP-ceiling)
 const RAGE_HEAL_PCT = 0.20;
 const BERSERK_DURATION = 5.0;
 const BERSERK_AA_DMG_MUL = 2.50;     // +150% AA-damage
@@ -1245,6 +1246,7 @@ function tickMagikerLaserServer(state, side, dt) {
   side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.iceBlockRemaining = 0;
+  side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
   while (lb.tickAccum >= LASER_TICK_INTERVAL && lb.remaining > -LASER_TICK_INTERVAL) {
     lb.tickAccum -= LASER_TICK_INTERVAL;
     applyLaserBeamTickServer(state, side);
@@ -1260,6 +1262,7 @@ function tickGimluRageServer(state, side, dt) {
   side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.iceBlockRemaining = 0;
+  side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
   const opp = state.sides[3 - side.idx];
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
     side.rageTickAccum -= RAGE_TICK_INTERVAL;
@@ -1307,7 +1310,12 @@ function tickArenaCombat(state, dt) {
     // Server-auth ults: magiker laser + gimlu rage (aragurn berserk = AA-modifier nedan)
     if (side.laserBeam) tickMagikerLaserServer(state, side, dt);
     if ((side.rageRemaining || 0) > 0) tickGimluRageServer(state, side, dt);
-    if ((side.berserkRemaining || 0) > 0) side.berserkRemaining = Math.max(0, side.berserkRemaining - dt);
+    if ((side.berserkRemaining || 0) > 0) {
+      // Nollställ vid död (som laser/rage) — annars svävar berserk-svärdet kvar
+      // på liket i hela round-end-pausen (klientens _srvBerserkMesh följer bz>0).
+      if (side.hero.dead) side.berserkRemaining = 0;
+      else side.berserkRemaining = Math.max(0, side.berserkRemaining - dt);
+    }
     if (side.heroId === 'aragurn') {
       side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
       if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
@@ -1505,7 +1513,7 @@ function tickArenaOrbTimer(state, dt) {
   // skill-applicerings-vägarna senare (TODO) — kräver integration i skill-pipen.
   const orb = state.orb;
   if (!orb.alive) {
-    orb.spawnTimer -= dt;
+    orb.spawnTimer = Math.max(0, orb.spawnTimer - dt);   // clamp: ingen negativ timer i snap
     if (orb.spawnTimer <= 0) { orb.alive = true; orb.hp = orb.maxHp; }
   }
 }
@@ -2680,10 +2688,13 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
       if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
     }
     // Arena1v1: center-orben (state.orb) är också ett giltigt AA-target (mirror klient).
+    // Bias mot hero-target (ej mot range-cap) så auto-AA inte siktar fel när båda
+    // hjältarna trängs vid mitten där orben står — orben väljs bara om klart närmast.
     if (side.inArena1v1 && state.orb && state.orb.alive) {
       const dx = 0 - x, dz = ARENA1V1_Z - z;
       const d2 = dx * dx + dz * dz;
-      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp }, isMonster: false, isArenaOrb: true }; }
+      const bias = (best && best.isHero) ? ARENA_ORB_AA_BIAS_SQ : 0;
+      if (d2 + bias < bestDistSq) { bestDistSq = d2; best = { entity: { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp }, isMonster: false, isArenaOrb: true }; }
     }
     return best;
   }
@@ -4008,7 +4019,7 @@ function updateSoulDrain(state, side, opp, dt) {
 const WHIRLWIND_DURATION = 3.0;
 const WHIRLWIND_TICK = 0.5;
 const WHIRLWIND_RADIUS = 3.6;              // +20% (3.0 → 3.6)
-const WHIRLWIND_DMG_PCT = 0.075;     // var 0.05 — buff till 7.5% per 0.5s
+const WHIRLWIND_DMG_PCT = 0.05;      // nerf tillbaka från 0.075 (~194% maxHP/3s i max-arena var för högt)
 const WHIRLWIND_HEAL_PCT = 0.10;     // Aragurn healar 10% av all damage done från whirlwind
 
 // Aragurn passive — Lifesteal (proportional till HP loss) + DR (baserat på nearby enemies)
@@ -4836,14 +4847,15 @@ function tickKostefoUltJoints(state, side, opp, dt) {
   // range — joints kan träffa oavsett avstånd). Om Kostefo inte attackerar
   // (aaActive=false eller targetId=0) → joints attackerar inte heller.
   // Resolverar target en gång per tick (inte per joint) — sparar ~8 lookups.
-  const heroIsAttacking = side.aaActive && !side.hero.dead && (side.targetId > 0 || side.targetType === 'hero' || side.targetType === 'duelOrb');
+  const heroIsAttacking = side.aaActive && !side.hero.dead && (side.targetId > 0 || side.targetType === 'hero' || side.targetType === 'duelOrb' || side.targetType === 'arenaOrb');
   let target = null;          // entity (m / creep / opp.hero / orb)
-  let targetKind = null;      // 'monster' | 'creep' | 'hero' | 'duelOrb'
+  let targetKind = null;      // 'monster' | 'creep' | 'hero' | 'duelOrb' | 'arenaOrb'
   if (heroIsAttacking) {
     target = resolveTargetEntity(side, opp, state);
     if (target) {
       if (side.targetType === 'hero') targetKind = 'hero';
       else if (side.targetType === 'duelOrb') targetKind = 'duelOrb';
+      else if (side.targetType === 'arenaOrb') targetKind = 'arenaOrb';
       else if (side.targetType === 'monster') targetKind = 'monster';
       else if (side.targetType === 'creep') targetKind = 'creep';
     }
@@ -4875,6 +4887,12 @@ function tickKostefoUltJoints(state, side, opp, dt) {
       if (state.duelBigOrb && state.duelBigOrb.alive) {
         dealt = Math.min(state.duelBigOrb.hp, dmg);
         damageDuelBigOrb(state, dmg, side.idx);
+      }
+    } else if (targetKind === 'arenaOrb') {
+      // Arena1v1 center-orb: joints skadar den om Kostefo själv targetar den.
+      if (state.orb && state.orb.alive) {
+        dealt = Math.min(state.orb.hp, dmg);
+        damageArenaOrbServer(state, dmg, side.idx);
       }
     }
     // Lifesteal: 50% av dealt dmg → heal Kostefo

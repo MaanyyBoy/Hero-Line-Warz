@@ -12,6 +12,9 @@
       --aa-size: 96px;
       --joy-size: 140px;
       --joy-knob: 60px;
+      /* Safe-area-insets exponerade för JS (tooltip-clamp mot notch/Dynamic Island) */
+      --sai-left: env(safe-area-inset-left, 0px);
+      --sai-right: env(safe-area-inset-right, 0px);
     }
     html, body {
       margin: 0; padding: 0; overflow: hidden; height: 100%;
@@ -362,7 +365,7 @@
     /* Ult-knapp — större (88px), ovanför Q. Energy-fill animeras bottom→top. */
     .skill.skill-ult {
       width: 88px; height: 88px;
-      right: 4px; bottom: 222px;
+      right: 4px; bottom: 180px;
       background: rgba(60,30,80,0.7);
       border: 3px solid rgba(180,140,255,0.7);
       overflow: hidden;
@@ -486,7 +489,7 @@
        blinkar pulse-ringen så spelaren märker att det finns points att fördela. */
     #stats-toggle {
       position: fixed;
-      right: max(216px, calc(env(safe-area-inset-right) + 216px));
+      right: max(232px, calc(env(safe-area-inset-right) + 232px));
       bottom: max(24px, calc(env(safe-area-inset-bottom) + 24px));
       width: 50px; height: 50px;
       border-radius: 50%;
@@ -3014,7 +3017,7 @@
       color: #fff;
       display: flex; flex-direction: column;
       align-items: center;
-      padding: 24px 32px;
+      padding: max(24px, env(safe-area-inset-top)) max(32px, calc(env(safe-area-inset-right) + 16px)) 24px max(32px, calc(env(safe-area-inset-left) + 16px));
       z-index: 400;
       font: 14px/1.4 system-ui, sans-serif;
       overflow-y: auto;
