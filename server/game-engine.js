@@ -1329,6 +1329,19 @@ function tickArenaCombat(state, dt) {
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    // CC-timers på hero: tickas ner här (tickGame gör detta i sin loop, men
+    // tickArenaCombat är en separat path). Utan detta fastnar frozenTime/
+    // tauntedTime/heroSlowTime permanent på det satta värdet i arena.
+    if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime = Math.max(0, side.hero.frozenTime - dt);
+    if ((side.hero.tauntedTime || 0) > 0) side.hero.tauntedTime = Math.max(0, side.hero.tauntedTime - dt);
+    if ((side.hero.dotRemaining || 0) > 0) side.hero.dotRemaining = Math.max(0, side.hero.dotRemaining - dt);
+    if ((side.hero.poisonRemaining || 0) > 0) side.hero.poisonRemaining = Math.max(0, side.hero.poisonRemaining - dt);
+    if ((side.heroSlowTime || 0) > 0) {
+      side.heroSlowTime = Math.max(0, side.heroSlowTime - dt);
+      if (side.heroSlowTime <= 0) { side.heroSlowTime = 0; side.heroSlowMul = 1; }
+    }
+    if ((side.heroFearTime || 0) > 0) side.heroFearTime = Math.max(0, side.heroFearTime - dt);
+    if ((side.iceBlockRemaining || 0) > 0) side.iceBlockRemaining = Math.max(0, side.iceBlockRemaining - dt);
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -1356,20 +1369,48 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.shrinkHitStacks = 0;
   if (side.skills) { if (side.skills.q) side.skills.q.cd = 0; if (side.skills.f) side.skills.f.cd = 0; if (side.skills.e) side.skills.e.cd = 0; }
   // Nolla combat-entiteter + buff-timers så varje runda startar fräsch (ej ult-energy)
-  for (const arr of ['projectiles', 'fireballs', 'blackHoles', 'vineTraps', 'hammers', 'novaEffects', 'bossProjectiles', 'bossPools', 'thornPools', 'ironWillExplosions', 'kostefoGooseWaves', 'kostefoSliders', 'aragurnBanners']) {
+  for (const arr of ['projectiles', 'fireballs', 'blackHoles', 'vineTraps', 'hammers', 'novaEffects',
+                     'bossProjectiles', 'bossPools', 'thornPools', 'ironWillExplosions',
+                     'kostefoGooseWaves', 'kostefoSliders', 'aragurnBanners', 'kostefoUltJoints']) {
     if (Array.isArray(side[arr])) side[arr].length = 0;
   }
   side.whirlwindRemaining = 0;
   side.aragurnLeap = null;
   side.laserBeam = null;            // magiker ult (R)
   side.rageRemaining = 0;           // gimlu ult (R)
+  side.rageTickAccum = 0;           // gimlu ult ackumulator
   side.berserkRemaining = 0;        // aragurn ult (R)
   side.legolusBuffRemaining = 0;
   side.legolusInvisRemaining = 0;
+  side.legolusUltAaPending = false; // shadow volley empowered-AA pending
+  side.legolusAaCounter = 0;        // legolas passive split-counter
+  side.legolusSplitPending = false;
+  side.legolusDashBuffPending = false;
+  side.legolasDashStackCd = 0;
   side.titansTauntRemaining = 0;
+  side.tauntLvl5 = false; side.tauntHealAccum = 0; side._tauntHpPrev = side.hero.hp;
   side.ironWillRemaining = 0;
+  side.ironWillStored = 0;
+  if (side.ironWillReflectQueue) side.ironWillReflectQueue.length = 0;
+  side.inAragurnBanner = false;
+  side._ultLockoutTime = 0;         // ult-lockout nollas så R kan castas direkt
   side.gandulfBuffRemaining = 0; side.gandulfBuffStacks = 0;
-  side.kostefoCloudRemaining = 0; side.kostefoUltRemaining = 0; side.kostefoCompanion = null;
+  side.kostefoCloudRemaining = 0; side.kostefoCloudTickAccum = 0;
+  side.kostefoCloudX = 0; side.kostefoCloudZ = 0; side.kostefoInCloud = false;
+  side.kostefoCloudRadiusMul = 1;
+  side.kostefoSliderTpMarker = null;
+  if (side.kostefoClones) side.kostefoClones.length = 0;
+  side.kostefoUltRemaining = 0; side.kostefoCompanion = null;
+  if (side.soulDrain) side.soulDrain = null;   // Gandulf Q drain-beam
+  side.gimluDmgInstanceCount = 0;
+  side.attackCd = 0; side.attackCounter = 0;
+  side.aaActive = false; side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
+  side.windPuffMsRem = 0; side.gimluHammerMsRem = 0;
+  // CC-fält på hero-objektet (frozenTime etc. kan kvarstå från sista dead-tick)
+  side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
+  side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
+  side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.iceBlockRemaining = 0;
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
 }
 
