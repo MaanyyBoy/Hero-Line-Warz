@@ -1113,6 +1113,13 @@ function createGameState() {
 const ARENA1V1_Z = 80;                 // matchar main.js ARENA_Z_OFFSET
 const ARENA1V1_SPAWN1 = { x: -32, z: ARENA1V1_Z };
 const ARENA1V1_SPAWN2 = { x: 32, z: ARENA1V1_Z };
+// Arena1v1 walkable-bounds (matchar main.js ARENA_CFG.bounds, 88×56 runt z=80).
+// Egen check: duel-arenan (isArenaWalkable) är en cirkel vid z=35 → fel för z=80.
+const ARENA1V1_BOUNDS = { minX: -44, maxX: 44, minZ: ARENA1V1_Z - 28, maxZ: ARENA1V1_Z + 28 };
+function isArena1v1Walkable(x, z) {
+  return x >= ARENA1V1_BOUNDS.minX && x <= ARENA1V1_BOUNDS.maxX
+      && z >= ARENA1V1_BOUNDS.minZ && z <= ARENA1V1_BOUNDS.maxZ;
+}
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
 const ARENA_PREP_TIME = 60;
 const ARENA_ROUND_END_PAUSE = 4;
@@ -1139,10 +1146,16 @@ function createArenaState() {
   s1.hero.facingX = 1; s1.hero.facingZ = 0;
   s2.hero.x = ARENA1V1_SPAWN2.x; s2.hero.z = ARENA1V1_SPAWN2.z;
   s2.hero.facingX = -1; s2.hero.facingZ = 0;
+  // inArena1v1 → applyMovement använder arena1v1-walkability (ej duel-cirkeln/classic).
+  s1.inArena1v1 = true; s2.inArena1v1 = true;
   return {
     mode: 'arena1v1',
     sides: { 1: s1, 2: s2 },
     nextEntityId: 1,
+    // duelActive=true aktiverar engine:ns hero-vs-hero-combat (skill-träffar mot opp.hero,
+    // AA-targeting, isHeroPvpActive) — samma gate duel-deathmatchen använder. Arena kör
+    // tickArena (ej tickGame:s duelActive-gren) så ingen dubbel-tick.
+    duelActive: true,
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
     // matchState så server.js:gameLoopTick:s `room.game.matchState.gameOver`-guard
     // fungerar för arena också (sätts i transitionArenaMatchEnd).
@@ -1316,10 +1329,18 @@ function transitionArenaMatchEnd(state, winnerIdx) {
 function initArenaMatch(heroes) {
   const state = createArenaState();
   for (const idx of [1, 2]) {
+    const side = state.sides[idx];
     if (heroes && typeof heroes[idx] === 'string') {
-      state.sides[idx].heroId = heroes[idx];
-      state.sides[idx].heroPickConfirmed = true;
+      side.heroId = heroes[idx];
+      side.heroPickConfirmed = true;
     }
+    // Arena = full-power lvl 30: alla skills unlockade + maxade (matchar klientens
+    // enterPlayPhase). Utan detta är skillLvl 0 server-side → skill-lock-gaten i
+    // applyEvent avvisar casten → ingen cd sätts → skills blir spambara.
+    side.level = 30;
+    side.xp = 0;
+    side.xpToNext = xpForLevel(30);
+    side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
   }
   startArenaRound(state, 1);
   return state;
@@ -4768,7 +4789,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  const check = side.inDuel ? isArenaWalkable : (x, z) => isHeroWalkable(side.idx, x, z, opts);
+  const check = side.inArena1v1 ? isArena1v1Walkable
+              : side.inDuel ? isArenaWalkable
+              : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
   else if (check(side.hero.x, nz)) side.hero.z = nz;
