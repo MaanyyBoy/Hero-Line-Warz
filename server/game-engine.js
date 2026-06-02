@@ -1137,6 +1137,8 @@ const ARENA_GOLD_PER_ROUND = 250;
 const ARENA_GOLD_WIN_BONUS = 500;
 const ARENA_ORB_MAX_HP = 100;
 const ARENA_ORB_RESPAWN_DELAY = 15;
+const ARENA_ORB_HEAL_PCT = 0.30;       // dödaren får +30% maxHp heal
+const ARENA_ORB_SHIELD_PCT = 0.30;     // + 30% maxHp shield
 const ARENA_STARTING_DURATION = 3.0;   // 3-2-1-FIGHT countdown
 // Shrink-zon
 const A_SHRINK_START_DELAY = 60;
@@ -1474,6 +1476,26 @@ function tickArenaShrink(state, dt) {
         damageHero(s, dmg);
         s.shrinkHitStacks = stacks + 1;
       }
+    }
+  }
+}
+
+// Skada på arena1v1-center-orb (state.orb). Vid kill: dödaren får heal + shield.
+// Mirror av klientens damageArenaOrb. Respawn sköts av tickArenaOrbTimer.
+function damageArenaOrbServer(state, amount, byIdx) {
+  const orb = state.orb;
+  if (!orb || !orb.alive || orb.hp <= 0 || amount <= 0) return;
+  orb.hp -= amount;
+  if (orb.hp <= 0) {
+    orb.hp = 0;
+    orb.alive = false;
+    orb.spawnTimer = ARENA_ORB_RESPAWN_DELAY;
+    const winner = state.sides[byIdx];
+    if (winner && !winner.hero.dead) {
+      const heal = winner.hero.maxHp * ARENA_ORB_HEAL_PCT;
+      winner.hero.hp = Math.min(winner.hero.maxHp, winner.hero.hp + heal);
+      const shield = winner.hero.maxHp * ARENA_ORB_SHIELD_PCT;
+      winner.shield = Math.max(winner.shield || 0, shield);
     }
   }
 }
@@ -2657,6 +2679,12 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
       const d2 = dx * dx + dz * dz;
       if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: state.duelBigOrb, isMonster: false, isHero: false, isDuelOrb: true }; }
     }
+    // Arena1v1: center-orben (state.orb) är också ett giltigt AA-target (mirror klient).
+    if (side.inArena1v1 && state.orb && state.orb.alive) {
+      const dx = 0 - x, dz = ARENA1V1_Z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp }, isMonster: false, isArenaOrb: true }; }
+    }
     return best;
   }
   // Portal-PvP: opp.hero blir target om någon sida är i fiendens territorium
@@ -2691,6 +2719,12 @@ function resolveTargetEntity(side, opp, state) {
   }
   if (side.targetType === 'duelOrb') {
     if (state && state.duelActive && state.duelBigOrb && state.duelBigOrb.alive) return state.duelBigOrb;
+    return null;
+  }
+  if (side.targetType === 'arenaOrb') {
+    if (side.inArena1v1 && state && state.orb && state.orb.alive) {
+      return { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp };
+    }
     return null;
   }
   if (!side.targetId) return null;
@@ -2749,6 +2783,7 @@ function maintainTargetLock(side, opp, state) {
   let isMonster = side.targetType === 'monster';
   let isHero = side.targetType === 'hero';
   let isDuelOrb = side.targetType === 'duelOrb';
+  let isArenaOrb = side.targetType === 'arenaOrb';
   const baseRange = side.attackRange || HERO_ATTACK_RANGE;
   // Legolus Shadow Volley empowered AA: dubbel range medan invis-ult-pending.
   const ultAaRange = (side.heroId === 'legolas' && side.legolusUltAaPending)
@@ -2767,7 +2802,7 @@ function maintainTargetLock(side, opp, state) {
   }
   side.targetX = target.x;
   side.targetZ = target.z;
-  return { entity: target, isMonster, isHero, isDuelOrb };
+  return { entity: target, isMonster, isHero, isDuelOrb, isArenaOrb };
 }
 
 function updateHeroAttack(state, side, opp, dt) {
@@ -2817,6 +2852,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsMonster: !!target.isMonster,
     targetIsHero: !!target.isHero,
     targetIsDuelOrb: !!target.isDuelOrb,
+    targetIsArenaOrb: !!target.isArenaOrb,
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
@@ -2896,6 +2932,9 @@ function updateProjectiles(state, side, opp, dt) {
     } else if (p.targetIsDuelOrb) {
       targetAlive = state.duelBigOrb && state.duelBigOrb.alive;
       tp = state.duelBigOrb;
+    } else if (p.targetIsArenaOrb) {
+      targetAlive = state.orb && state.orb.alive;
+      tp = targetAlive ? { x: 0, z: ARENA1V1_Z } : null;
     } else if (p.targetIsMonster) {
       targetAlive = side.monsters.includes(p.target);
       tp = p.target;
@@ -2922,7 +2961,7 @@ function updateProjectiles(state, side, opp, dt) {
       }
       let aaDmgDealt = 0;   // För Aragurn-passive lifesteal — räkna utdelad AA-skada
       // Lvl-5 Legolas Vine Trap mark: +20% dmg på marked targets (bara primär hit)
-      const _primaryTarget = p.targetIsHero ? (state.sides[p.targetSideIdx] ? state.sides[p.targetSideIdx].hero : null) : (p.targetIsDuelOrb ? null : p.target);
+      const _primaryTarget = p.targetIsHero ? (state.sides[p.targetSideIdx] ? state.sides[p.targetSideIdx].hero : null) : ((p.targetIsDuelOrb || p.targetIsArenaOrb) ? null : p.target);
       const _primaryDmg = p.damage * legolasMarkMul(side, _primaryTarget);
       if (p.targetIsHero) {
         const ts = state.sides[p.targetSideIdx];
@@ -2934,6 +2973,11 @@ function updateProjectiles(state, side, opp, dt) {
         if (orb && orb.alive) {
           damageDuelBigOrb(state, _primaryDmg, p.ownerSideIdx || side.idx);
           if (!orb.alive) killedTarget = true;
+        }
+      } else if (p.targetIsArenaOrb) {
+        if (state.orb && state.orb.alive) {
+          damageArenaOrbServer(state, _primaryDmg, p.ownerSideIdx || side.idx);
+          if (!state.orb.alive) killedTarget = true;
         }
       } else {
         aaDmgDealt = Math.min(p.target.hp, _primaryDmg);
@@ -2986,7 +3030,7 @@ function updateProjectiles(state, side, opp, dt) {
         if (p.targetIsHero) {
           const ts = state.sides[p.targetSideIdx];
           if (ts && !ts.hero.dead) ts.hero.frozenTime = Math.max(ts.hero.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
-        } else if (!p.targetIsDuelOrb) {
+        } else if (!p.targetIsDuelOrb && !p.targetIsArenaOrb) {
           if (p.target) p.target.frozenTime = Math.max(p.target.frozenTime || 0, LEGOLUS_ULT_AA_STUN_DUR);
         }
         // AoE-stun runt hit-pos
@@ -5003,6 +5047,7 @@ function applyEvent(state, sideIdx, ev) {
       side.aaActive = true;
       if (t.isHero) { side.targetId = 0; side.targetType = 'hero'; }
       else if (t.isDuelOrb) { side.targetId = 0; side.targetType = 'duelOrb'; }
+      else if (t.isArenaOrb) { side.targetId = 0; side.targetType = 'arenaOrb'; }
       else {
         side.targetId = t.entity.id;
         side.targetType = t.isMonster ? 'monster' : 'creep';
