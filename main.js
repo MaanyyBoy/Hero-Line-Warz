@@ -78,7 +78,11 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.0 : 
 // mindre värme. 22 ms tröskel → ~30 FPS på 60 Hz-skärm, ~40 på 120 Hz. Logik +
 // input körs fortfarande varje frame (input-rate orörd → ingen MP-regression).
 // Desktop ocapad (dev/test, ingen värme-budget).
-const _renderMinIntervalMs = isMobileDevice ? 22 : 0;
+// Render-cap: 16ms = 60fps-mål på mobil (var 22ms ≈ 30fps — den enskilt största
+// "känns inte smooth"-faktorn; logiken kördes 60Hz men presentationen 30fps).
+// Scenen är low-poly + DPR-cap + skuggor av → moderna iPhones klarar 60fps. Perf-
+// mätaren (snitt-ms / värsta-ms) övervakar — höj igen vid termisk drop på svag enhet.
+let _renderMinIntervalMs = isMobileDevice ? 16 : 0;
 let _lastRenderMs = 0;
 // getViewportSize() läser visualViewport när det finns (mer exakt på mobil vid
 // rotation, adressfält som glider, pinch-zoom) och faller tillbaka på innerWidth.
@@ -17072,10 +17076,16 @@ function animateGltfCharacter(mesh, dt, side, type) {
   // skapar kort frame-paus där position-delta dippar (decision 080 fix v2).
   if (vel > 2.5) st.lowVelTime = 0;
   else st.lowVelTime = (st.lowVelTime || 0) + dt;
+  // Walk→idle-debounce: vel samplas i 33ms-bucket men mesh rör sig 60Hz → vid
+  // stopp/riktningsbyte oscillerar vel kring 0.4-tröskeln → walk/idle-flicker.
+  // Håll walk i 180ms efter sista rörelse (samma mönster som run-debouncen).
+  if (vel > 0.4) st.lowWalkTime = 0;
+  else st.lowWalkTime = (st.lowWalkTime || 0) + dt;
   const running = vel > 2.5 || st.lowVelTime < 0.35;
+  const walking = vel > 0.4 || st.lowWalkTime < 0.18;
   if (running && clips.run) {
     playGltfAction(mesh, clips.run);
-  } else if (vel > 0.4 && clips.walk) {
+  } else if (walking && clips.walk) {
     playGltfAction(mesh, clips.walk);
   } else if (clips.idle) {
     playGltfAction(mesh, clips.idle);
@@ -17969,7 +17979,11 @@ function updateCamera(dt) {
       cameraShake.elapsed = 0;
     } else {
       const fade = 1 - cameraShake.elapsed / cameraShake.duration;
-      const m = cameraShake.magnitude * fade;
+      let m = cameraShake.magnitude * fade;
+      // Skala ner shake medan lokala hjälten springer — annars "fightar" shake-offset
+      // kamera-lerpen och det känns som att hjälten halkar mitt i rörelsen.
+      const _mv = readLocalJoystick();
+      if (_mv.x * _mv.x + _mv.z * _mv.z > 0.0025) m *= 0.4;
       camera.position.x += (Math.random() - 0.5) * m * 2;
       camera.position.y += (Math.random() - 0.5) * m;
       camera.position.z += (Math.random() - 0.5) * m * 2;
@@ -30702,7 +30716,6 @@ function tick() {
   checkShieldGain();
   checkHealGain();
   checkAllCcStates();
-  updateBuffDebuffSprites();
 
   // Throttle text-tunga HUD-uppdateringar till ~10 Hz. innerHTML-skrivningar
   // är dyra (force reflow). 6× mindre CPU per frame utan synlig skillnad.
@@ -30713,6 +30726,9 @@ function tick() {
     updateHud();
     updateDuelHud();
     updateIncomeDisplay();
+    // Buff/debuff-sprites: collectBuffs allokerar + canvas-omritning behövs bara
+    // ~10 Hz (timer-text 0.1s-precision). Flyttad hit från per-frame = 6× mindre GC.
+    updateBuffDebuffSprites();
   } else {
     // Mellan throttle-ticks: bara den snabba boss-HP-baren behöver fortsätta
     updateBossHpBar();
