@@ -19094,8 +19094,9 @@ function updateAaRangeIndicator() {
   const range = (side.attackRange != null ? side.attackRange : (side.hero.attackRange || 4));
   if (!range || range <= 0) { aaRangeRing.visible = false; return; }
   aaRangeRing.visible = true;
-  // Y-offset matchar duel-arena om hjälten är i duelen (golv y=0.32), annars 0.05
-  const _inDuelArena = (duelState && duelState.active) || (side.hero.z > 30);
+  // Y-offset matchar duel-arena om hjälten är i duelen (golv y=0.32), annars 0.05.
+  // arena1v1 (z=80) har golv y=0 → INTE elevated (annars flyter ringen 1m i luften).
+  const _inDuelArena = APP.gameMode !== 'arena1v1' && ((duelState && duelState.active) || (side.hero.z > 30));
   aaRangeRing.position.set(side.hero.x, _inDuelArena ? 0.95 : 0.05, side.hero.z);
   aaRangeRing.scale.set(range, range, 1);
 }
@@ -19164,8 +19165,11 @@ function updateAimIndicators() {
   // y=1.0 (= 0.68 ovan golvet) för aggressiv marginal — depthTest:false +
   // renderOrder=999 räcker INTE alltid; vissa transparenta golv-mesher sorterar
   // över aim. Hellre lite hög ring än osynlig ring. Utanför duel: y=0.07 oförändrat.
-  const _inDuelArena = (duelState && duelState.active) ||
-                       (side && side.hero && side.hero.z > 30);
+  // arena1v1 (z=80) har golv y=0 → aimY=0.07 (på marken). Bara classic-duelarenan
+  // (z≈35, golv y=0.32) behöver den höjda ringen.
+  const _inDuelArena = APP.gameMode !== 'arena1v1' &&
+                       ((duelState && duelState.active) ||
+                        (side && side.hero && side.hero.z > 30));
   const aimY = _inDuelArena ? 1.0 : 0.07;
   function showCircle(x, z, radius, color) {
     aimCircle.visible = true;
@@ -19933,7 +19937,7 @@ function tickArenaBot(side, dt) {
   // Mål: enemy hero. Om enemy död → stå still nära mitten.
   let tx, tz, enemyAlive = !enemy.hero.dead;
   if (enemyAlive) { tx = enemy.hero.x; tz = enemy.hero.z; }
-  else { tx = 0; tz = 35; }   // arena-mitt
+  else { tx = 0; tz = ARENA_Z_OFFSET; }   // arena-mitt (z=80, ej gamla duel-arenan z=35)
   const dx = tx - side.hero.x, dz = tz - side.hero.z;
   const d = Math.hypot(dx, dz);
   // Decision-cache: undvik att spamma applyEvent varje frame
