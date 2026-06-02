@@ -1619,6 +1619,25 @@ function serializeArenaState(state) {
       1: arrOpt(s1.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || [],
       2: arrOpt(s2.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || [],
     },
+    // Legolas vine traps + thorn pools, Gimlu hammers + iron-will-explosions.
+    // Tidigare ej broadcastade → osynliga för motståndaren (skadan beräknas dock).
+    // Klient: vt/tp reconcileras bara för MOTSTÅNDARsidan (egna är client-predikterade).
+    vt: {
+      1: arrOpt(s1.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || [],
+      2: arrOpt(s2.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || [],
+    },
+    tp: {
+      1: arrOpt(s1.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || [],
+      2: arrOpt(s2.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || [],
+    },
+    hm: {
+      1: arrOpt(s1.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || [],
+      2: arrOpt(s2.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || [],
+    },
+    iwe: {
+      1: arrOpt(s1.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || [],
+      2: arrOpt(s2.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || [],
+    },
   };
 }
 

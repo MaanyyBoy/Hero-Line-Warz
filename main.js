@@ -24477,6 +24477,87 @@ function makeClientAragurnBannerMesh() {
   return grp;
 }
 
+// Route B-factories för arena-reconcile (speglar classic-inline-versionerna i
+// applyRemoteState). Egna namngivna fn så arena-pathen kan återanvända dem utan
+// att röra classic-koden (vine-trap-dubbletter = känd fälla, se pitfalls).
+function makeClientVineTrapMesh() {
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(VINE_TRAP_RADIUS * 0.85, VINE_TRAP_RADIUS, 36),
+    new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.07;
+  grp.add(ring);
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const r = VINE_TRAP_RADIUS * 0.6;
+    const sp = new THREE.Mesh(
+      new THREE.ConeGeometry(0.08, 0.35, 6),
+      new THREE.MeshStandardMaterial({ color: 0x3a5018, roughness: 0.85 })
+    );
+    sp.position.set(Math.cos(ang) * r, 0.17, Math.sin(ang) * r);
+    grp.add(sp);
+  }
+  grp.userData.vtRing = ring;
+  return grp;
+}
+
+function makeClientThornPoolMesh(e) {
+  const grp = new THREE.Group();
+  const r = (e && e.r) || 2.5;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(r * 0.85, r, 36),
+    new THREE.MeshBasicMaterial({ color: 0x4a8030, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  grp.add(ring);
+  const inner = new THREE.Mesh(
+    new THREE.CircleGeometry(r * 0.83, 28),
+    new THREE.MeshBasicMaterial({ color: 0x2a4818, transparent: true, opacity: 0.45, side: THREE.DoubleSide })
+  );
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.06;
+  grp.add(inner);
+  for (let i = 0; i < 10; i++) {
+    const ang = (i / 10) * Math.PI * 2;
+    const rad = r * (0.3 + Math.random() * 0.4);
+    const sp = new THREE.Mesh(
+      new THREE.ConeGeometry(0.10, 0.42, 6),
+      new THREE.MeshStandardMaterial({ color: 0x224410, roughness: 0.75 })
+    );
+    sp.position.set(Math.cos(ang) * rad, 0.20, Math.sin(ang) * rad);
+    sp.rotation.x = (Math.random() - 0.5) * 0.3;
+    grp.add(sp);
+  }
+  grp.userData.tpRing = ring;
+  grp.userData.tpInner = inner;
+  return grp;
+}
+
+function makeClientHammerMesh() {
+  const grp = new THREE.Group();
+  const haft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6, 8), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.85 }));
+  haft.rotation.z = Math.PI / 2;
+  grp.add(haft);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.22), new THREE.MeshStandardMaterial({ color: 0x808488, metalness: 0.55, roughness: 0.35 }));
+  head.position.x = 0.3;
+  grp.add(head);
+  grp.position.y = 1.0;
+  return grp;
+}
+
+function makeClientIronWillMesh() {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.5, IRON_WILL_EXPLOSION_RADIUS, 56),
+    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.12;
+  return ring;
+}
+
 // Landnings-indikator för Aragurns leap (route B) — orange ring vid målet,
 // lever leap-restiden ut. combatFx-entry → tickCombatFx sköter livstid+dispose.
 function spawnLeapIndicator(x, z) {
@@ -24677,6 +24758,39 @@ function applyArenaState(msg) {
       () => makeKostefoGooseWaveMesh({ w: _K_GOOSEWAVE_WIDTH, l: _K_GOOSEWAVE_LENGTH }), true);
     clientReconcileEntities(_seIdx, 'kostefoSliders', (msg.ks && msg.ks[_seIdx]) || [],
       makeKostefoSliderMesh, true);
+    // Hammers + iron-will-explosions: ingen client-prediktion → reconcile BÅDA sidor.
+    clientReconcileEntities(_seIdx, 'hammers', (msg.hm && msg.hm[_seIdx]) || [],
+      makeClientHammerMesh, true);
+    const _hmMap = clientMeshes.hammers && clientMeshes.hammers.get(_seIdx);
+    if (_hmMap) for (const m of _hmMap.values()) m.rotation.y += 0.2;
+    clientReconcileEntities(_seIdx, 'ironWillExplosions', (msg.iwe && msg.iwe[_seIdx]) || [],
+      makeClientIronWillMesh, true);
+    const _iweMap = clientMeshes.ironWillExplosions && clientMeshes.ironWillExplosions.get(_seIdx);
+    if (_iweMap && msg.iwe && msg.iwe[_seIdx]) for (const ie of msg.iwe[_seIdx]) {
+      const m = _iweMap.get(ie.id);
+      if (m && m.material) m.material.opacity = 0.85 * ie.life;
+    }
+    // Vine traps + thorn pools: EGNA är client-predikterade (spawnClientLocalVineTrap
+    // + updateVineTrapsSolo) → reconcile bara MOTSTÅNDARsidan (undvik dubbletter, pitfall #4).
+    if (_seIdx !== APP.localSide) {
+      clientReconcileEntities(_seIdx, 'vineTraps', (msg.vt && msg.vt[_seIdx]) || [],
+        makeClientVineTrapMesh, true);
+      const _vtMap = clientMeshes.vineTraps && clientMeshes.vineTraps.get(_seIdx);
+      if (_vtMap && msg.vt && msg.vt[_seIdx]) for (const vt of msg.vt[_seIdx]) {
+        const m = _vtMap.get(vt.id);
+        if (m && m.userData.vtRing) m.userData.vtRing.material.opacity = 0.65 * vt.life;
+      }
+      clientReconcileEntities(_seIdx, 'thornPools', (msg.tp && msg.tp[_seIdx]) || [],
+        makeClientThornPoolMesh, true);
+      const _tpMap = clientMeshes.thornPools && clientMeshes.thornPools.get(_seIdx);
+      if (_tpMap && msg.tp && msg.tp[_seIdx]) for (const tp of msg.tp[_seIdx]) {
+        const m = _tpMap.get(tp.id);
+        if (m && m.userData.tpRing) {
+          m.userData.tpRing.material.opacity = 0.70 * tp.life;
+          if (m.userData.tpInner) m.userData.tpInner.material.opacity = 0.45 * tp.life;
+        }
+      }
+    }
   }
   // UI-fas-transitions
   if (prevPhase !== arenaState.phase) {
