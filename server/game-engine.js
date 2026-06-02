@@ -1452,6 +1452,11 @@ function tickArenaCombat(state, dt) {
     }
     if ((side.heroFearTime || 0) > 0) side.heroFearTime = Math.max(0, side.heroFearTime - dt);
     if ((side.iceBlockRemaining || 0) > 0) side.iceBlockRemaining = Math.max(0, side.iceBlockRemaining - dt);
+    // HP-regen (g_regen-talent / item healPerSecPct) — tickGame gör detta i sin loop,
+    // men tickArenaCombat är separat path → utan detta var g_regen-talenten placebo i arena.
+    if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) {
+      side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
+    }
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
