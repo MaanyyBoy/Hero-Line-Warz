@@ -13797,7 +13797,7 @@ function hostCastSoulDrain(side, ev) {
 // ============================================================
 const WIND_PUFF_LENGTH = 5.5;
 const WIND_PUFF_HALF_ANGLE = Math.PI / 4;        // 90° total cone
-const WIND_PUFF_DMG_PCT = 0.20;
+const WIND_PUFF_DMG_PCT = 0.07;   // nerf från 0.20 (se game-engine.js: 86% maxHP/cast i max-level arena)
 const WIND_PUFF_PUSH_DIST = 3;
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;

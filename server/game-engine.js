@@ -3777,7 +3777,7 @@ function updateHammers(state, side, opp, dt) {
 // ============================================================
 const WIND_PUFF_LENGTH = 5.5;
 const WIND_PUFF_HALF_ANGLE = Math.PI / 4;       // 90° total cone
-const WIND_PUFF_DMG_PCT = 0.20;                  // 20% av targets max HP
+const WIND_PUFF_DMG_PCT = 0.07;                  // 7% maxHP (nerf från 0.20: stackade med level-mult ×2.16 + skill-lvl-mult ×2.0 → 86% maxHP/cast på 4s CD = 2-cast-kill i max-level arena)
 const WIND_PUFF_PUSH_DIST = 3;                   // 3m pushback i cast-riktning
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;               // +20% taken damage
