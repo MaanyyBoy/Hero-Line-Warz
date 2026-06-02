@@ -1146,6 +1146,74 @@ function createArenaState() {
   };
 }
 
+// Arena combat-tick: ÅTERANVÄNDER engine:ns duel-strids-funktioner (samma set som
+// tickGame:s duelActive-gren, rad ~4993–5082). Bara combat här; arena-flödet
+// (prep/round/orb/shrink/talents) portas separat. ADDITIVT — oanropat tills wirad.
+// Movement: joystick via lastInputs (trust-client-position bakas in vid input-wiring).
+function tickArenaCombat(state, dt) {
+  for (const sideIdx of [1, 2]) {
+    const side = state.sides[sideIdx];
+    const j = state.lastInputs[sideIdx] && state.lastInputs[sideIdx].j;
+    if (j) applyMovement(side, j.x, j.z, dt);
+  }
+  for (const sideIdx of [1, 2]) {
+    const side = state.sides[sideIdx];
+    const opp = state.sides[3 - sideIdx];
+    updateSkillCooldowns(side, dt);
+    if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
+    updateProjectiles(state, side, opp, dt);
+    updateFireballs(state, side, opp, dt);
+    updateBlackHoles(state, side, opp, dt);
+    updateVineTraps(state, side, opp, dt);
+    updateHammers(state, side, opp, dt);
+    updateIronWill(state, side, opp, dt);
+    updateAragurnWhirlwind(state, side, opp, dt);
+    updateAragurnLeap(state, side, opp, dt);
+    updateAragurnShoutHeal(side, dt);
+    updateSoulDrain(state, side, opp, dt);
+    updateBossProjectiles(state, side, dt);
+    updateBossPools(state, side, dt);
+    tickLegolusInvis(side, dt);
+    tickThornPools(state, side, dt);
+    tickKostefoSkills(state, side, opp, dt);
+    if (side.heroId === 'aragurn') {
+      side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
+      if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
+        side._aragurnCountTickAccum = 0;
+        side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+      }
+    }
+    if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
+    if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
+    if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    tickGimluTauntLvl5(state, side, opp, dt);
+    if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
+    if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    flushIronWillReflectLvl5(state, side, opp);
+    tickAragurnBannersLvl5(side, dt);
+    if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
+      side.ironWillExplosions[k].life -= dt;
+      if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
+    }
+    updateNovaEffects(side, dt);
+    updateActiveBuffs(side, dt);
+  }
+}
+
+// Arena top-tick (oanropat tills wirad). Bara 'fight'-fasen simuleras combat;
+// prep/roundEnd/matchEnd-timers + orb/shrink portas i nästa steg från main.js tickArena.
+function tickArena(state, dt) {
+  if (state.phase !== 'fight') return;
+  tickArenaCombat(state, dt);
+  // Round-end-detektering (minimal): en hjältes död avgör rundan. Full flöde
+  // (wins-räkning, best-of, prep→fight-övergångar, shrink-skada) portas härnäst.
+  const s1 = state.sides[1], s2 = state.sides[2];
+  if (s1.hero.dead || s2.hero.dead) {
+    state.roundWinner = s1.hero.dead ? 2 : 1;
+    state.phase = 'roundEnd';
+  }
+}
+
 function checkMatchEnd(state) {
   if (state.matchState.gameOver) return;
   if (state.sides[1].tower.hp <= 0) {
