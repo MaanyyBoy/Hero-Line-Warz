@@ -3052,7 +3052,8 @@
     }
     #hp-grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(110px, 140px));
+      grid-template-columns: repeat(auto-fit, minmax(110px, 140px));
+      justify-content: center;
       gap: 12px;
       max-width: 760px;
       width: 100%;
@@ -3176,7 +3177,7 @@
        Bredare + tätare talent-grid så all info ryms utan scroll. */
     #arena-prep {
       position: fixed;
-      top: 50%; left: max(16px, 4vw);
+      top: 50%; left: max(16px, calc(env(safe-area-inset-left) + 16px));
       transform: translateY(-50%);
       width: min(700px, 68vw);
       max-height: 96vh;
@@ -3628,7 +3629,7 @@
       align-items: center; justify-content: center;
       z-index: 240;
       backdrop-filter: blur(4px);
-      padding: 16px;
+      padding: max(16px, env(safe-area-inset-top)) max(16px, calc(env(safe-area-inset-right) + 16px)) max(16px, env(safe-area-inset-bottom)) max(16px, calc(env(safe-area-inset-left) + 16px));
     }
     #arena-end.visible { display: flex; }
     #ae-card {

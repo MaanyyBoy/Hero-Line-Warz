@@ -13803,7 +13803,7 @@ function hostCastSoulDrain(side, ev) {
 // ============================================================
 const WIND_PUFF_LENGTH = 5.5;
 const WIND_PUFF_HALF_ANGLE = Math.PI / 4;        // 90° total cone
-const WIND_PUFF_DMG_PCT = 0.07;   // nerf från 0.20 (se game-engine.js: 86% maxHP/cast i max-level arena)
+const WIND_PUFF_DMG_PCT = 0.10;   // 0.20→0.07 var övernerf; 0.10 är balanspunkten (matchar server)
 const WIND_PUFF_PUSH_DIST = 3;
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;
@@ -19254,6 +19254,13 @@ function updateAimIndicators() {
     } else if (heroId === 'gimlu') {
       // Berserker Rage: self-buff, visa rage-pulse-radien runt hero
       showCircle(side.hero.x, side.hero.z, RAGE_PULSE_RADIUS, 0xff4422);
+    } else if (heroId === 'aragurn') {
+      // Berserk Form: self-buff — visa en bekräftelse-ring runt hero (annars
+      // ingen pre-cast-feedback på mobil = "funkar knappen ens?").
+      showCircle(side.hero.x, side.hero.z, 3.0, 0xff7733);
+    } else if (heroId === 'kostefo') {
+      // Joint Avengers: self-buff — visa joint-orbit-radien runt hero.
+      showCircle(side.hero.x, side.hero.z, 2.2, 0x66dd44);
     }
   }
 }
@@ -19466,6 +19473,14 @@ const SKILL_ICON_SVG = {
         <line x1="2" y1="20" x2="7" y2="20" stroke="#aaa" stroke-width="1.8" opacity="0.4"/>
         <path d="M 10 16 L 18 16 M 10 24 L 18 24" stroke="#666" stroke-width="0.8" opacity="0.7"/>
       </svg>`,
+  },
+  // Kostefo saknade ikoner → föll tillbaka på magikerns. Emoji-i-SVG matchar
+  // HERO_INFO.kostefo-temat (gäss/joint/moln/orbit) i samma 40×40-slot.
+  kostefo: {
+    q: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><text x="20" y="30" font-size="26" text-anchor="middle">🦢</text></svg>`,
+    f: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><text x="20" y="30" font-size="26" text-anchor="middle">🌿</text></svg>`,
+    e: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><text x="20" y="30" font-size="26" text-anchor="middle">💨</text></svg>`,
+    r: `<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><text x="20" y="30" font-size="26" text-anchor="middle">🎯</text></svg>`,
   },
 };
 
@@ -23235,7 +23250,9 @@ function updateSkillButtonStyles() {
     if (lockTextEl) lockTextEl.textContent = locked ? 'LOCKED' : '';
     // Level-badge "X/5" — visa endast om unlocked
     const lvlEl = el.querySelector('.sk-level');
-    if (lvlEl) lvlEl.textContent = locked ? '' : `${skLvl}/${SKILL_LEVEL_MAX}`;
+    // Arena maxar alla skills direkt (ingen skill-point-UI) → "5/5"-badgen är bara
+    // clutter där. Dölj i arena; visa i line wars/solo där progression sker.
+    if (lvlEl) lvlEl.textContent = (APP.gameMode === 'arena1v1' || locked) ? '' : `${skLvl}/${SKILL_LEVEL_MAX}`;
     // Plus-button: visa om unspent > 0 och skill kan uppgraderas
     const plusEl = el.querySelector('.sk-plus');
     if (plusEl) plusEl.classList.toggle('visible', unspent > 0 && skLvl < SKILL_LEVEL_MAX);
@@ -23562,6 +23579,12 @@ function readLocalJoystick() {
   // Arena: ingen rörelse utanför fight-fasen (hjälten är låst vid spawn i prep/
   // starting/roundEnd). Annars rör sig hjälten "bakom" prep-panelen → snap-tillbaka.
   if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return { x: 0, z: 0 };
+  // Arena: spegla serverns hard-CC-block (freeze/stun/ice) så lokal prediction inte
+  // rör hjälten medan servern håller den stilla → ingen rubber-band.
+  if (APP.gameMode === 'arena1v1') {
+    const ls = sides[APP.localSide];
+    if (ls && ((ls.hero.frozenTime || 0) > 0 || (ls.iceBlockRemaining || 0) > 0)) return { x: 0, z: 0 };
+  }
   // Tangentbord
   let kx = 0, kz = 0;
   if (keys['KeyW'] || keys['ArrowUp']) kz -= 1;
@@ -24351,6 +24374,11 @@ function applyHeroSnap(side, snap) {
   side._srvLaser = snap.lz || null;             // magiker laser: {dx,dz} eller null
   side._srvRage = snap.rg || 0;                 // gimlu rage: sek kvar
   side._srvBerserk = snap.bz || 0;              // aragurn berserk: sek kvar
+  // Legolas Shadow Volley-invis + Kostefo Joint Avengers (motståndarens ult-visualer):
+  // updateLegolusInvisVisibility göm:er enemy; updateKostefoMeshes spawnar joints.
+  side.legolusInvisRemaining = snap.lInv || 0;
+  side.kostefoUltRemaining = snap.kUlt || 0;
+  side.kostefoUltJoints = snap.kJoints || [];
   // Kostefcompanion + cannabis-moln — updateKostefoMeshes renderar från detta.
   side.kostefoCompanion = snap.kComp ? { x: snap.kComp.x, z: snap.kComp.z, ry: snap.kComp.ry } : null;
   if (snap.kCl) {

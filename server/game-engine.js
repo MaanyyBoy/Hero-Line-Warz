@@ -1627,6 +1627,11 @@ function serializeArenaHero(side) {
     lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
     rg: nzr2(side.rageRemaining),
     bz: nzr2(side.berserkRemaining),
+    // Legolas Shadow Volley-invis + Kostefo Joint Avengers — saknades (drift från
+    // classic-serializern) → motståndaren såg varken Legolas-invis eller Kostefo-joints.
+    lInv: nzr2(side.legolusInvisRemaining),
+    kUlt: nzr2(side.kostefoUltRemaining),
+    kJoints: arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) })),
     kComp: side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined,
     kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined,
     tx: r2(side.targetX || 0),
@@ -2860,6 +2865,8 @@ function maintainTargetLock(side, opp, state) {
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
+  // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block).
+  if (side.inArena1v1 && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
   const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
@@ -3829,7 +3836,7 @@ function updateHammers(state, side, opp, dt) {
 // ============================================================
 const WIND_PUFF_LENGTH = 5.5;
 const WIND_PUFF_HALF_ANGLE = Math.PI / 4;       // 90° total cone
-const WIND_PUFF_DMG_PCT = 0.07;                  // 7% maxHP (nerf från 0.20: stackade med level-mult ×2.16 + skill-lvl-mult ×2.0 → 86% maxHP/cast på 4s CD = 2-cast-kill i max-level arena)
+const WIND_PUFF_DMG_PCT = 0.10;                  // 10% maxHP (0.20→0.07 var övernerf; 0.10 = ~20% maxHP/cast @ lvl30, stark utility-Q med push+debuff utan 2-cast-kill)
 const WIND_PUFF_PUSH_DIST = 3;                   // 3m pushback i cast-riktning
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;               // +20% taken damage
@@ -5013,12 +5020,19 @@ function tickKostefoSkills(state, side, opp, dt) {
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
+  // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
+  // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
+  // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
+  if (side.inArena1v1 && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
   const ndx = joyX / mag, ndz = joyZ / mag;
   side.hero.facingX = ndx;
   side.hero.facingZ = ndz;
+  // Slow (Kostefo Slider / Aragurn Shout / Gimlu Hammer lvl5) — appliceras nu på
+  // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
+  const slowMul = (side.inArena1v1 && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
@@ -5029,8 +5043,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zyro passive: +10% MS per stack (max 30%) under buff-duration.
   const zyroPassiveMs = (side.heroId === 'magiker' && (side.gandulfBuffRemaining || 0) > 0)
     ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * strength * dt;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
