@@ -1145,6 +1145,23 @@ const A_SHRINK_FINAL_RADIUS = 4;
 const A_SHRINK_DURATION = 60;
 const A_SHRINK_DMG_PCT = 0.05;
 const A_SHRINK_TICK_INTERVAL = 0.25;
+// Ult-konstanter (speglar main.js — håll i sync). Server-auth arena: dessa 3 ults
+// (magiker laser, gimlu rage, aragurn berserk) körs auktoritativt här; klienten
+// renderar bara visualen från synkat tillstånd (lz/rg/bz i serializeArenaHero).
+const LASER_DURATION = 3.0;
+const LASER_TURN_RATE = 4.5;
+const LASER_TICK_INTERVAL = 0.5;
+const LASER_TICK_DMG_PCT = 0.15;
+const LASER_RANGE = 60;
+const LASER_WIDTH = 2.2;
+const RAGE_DURATION = 5.0;
+const RAGE_TICK_INTERVAL = 0.5;
+const RAGE_PULSE_RADIUS = 4.5;
+const RAGE_PULSE_DMG_PCT = 0.035;
+const RAGE_HEAL_PCT = 0.20;
+const BERSERK_DURATION = 5.0;
+const BERSERK_AA_DMG_MUL = 2.50;     // +150% AA-damage
+const BERSERK_AA_LIFESTEAL = 0.25;
 function createArenaState() {
   const s1 = createSide(1);
   const s2 = createSide(2);
@@ -1191,6 +1208,74 @@ function createArenaState() {
 // tickGame:s duelActive-gren, rad ~4993–5082). Bara combat här; arena-flödet
 // (prep/round/orb/shrink/talents) portas separat. ADDITIVT — oanropat tills wirad.
 // Movement: joystick via lastInputs (trust-client-position bakas in vid input-wiring).
+// === Server-auth ult-tickar (arena 1v1). Magiker laser + Gimlu rage körs här;
+// Aragurn berserk är en AA-modifier (updateHeroAttack) + ren timer-nedräkning.
+// Enda arena-target är opp.hero (orb-skada hör till separat orb-system). ===
+function applyLaserBeamTickServer(state, side) {
+  const lb = side.laserBeam;
+  if (!lb || side.hero.dead) return;
+  const opp = state.sides[3 - side.idx];
+  if (!opp || opp.hero.dead) return;
+  const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
+  const along = ddx * lb.dx + ddz * lb.dz;
+  if (along < 0 || along > LASER_RANGE) return;
+  const perp = Math.abs(ddx * (-lb.dz) + ddz * lb.dx);
+  if (perp >= LASER_WIDTH) return;
+  damageHero(opp, opp.hero.maxHp * LASER_TICK_DMG_PCT);
+}
+
+function tickMagikerLaserServer(state, side, dt) {
+  const lb = side.laserBeam;
+  if (!lb) return;
+  if (side.hero.dead) { side.laserBeam = null; return; }
+  lb.remaining -= dt;
+  lb.tickAccum += dt;
+  // Strålen svänger mot hero-facing (LASER_TURN_RATE rad/s) — matchar klientens host-fn
+  const desired = Math.atan2(side.hero.facingX, side.hero.facingZ);
+  const cur = Math.atan2(lb.dx, lb.dz);
+  let delta = desired - cur;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  const maxStep = LASER_TURN_RATE * dt;
+  const ang = cur + Math.max(-maxStep, Math.min(maxStep, delta));
+  lb.dx = Math.sin(ang); lb.dz = Math.cos(ang);
+  // CC-immun under laser
+  side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
+  side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.iceBlockRemaining = 0;
+  while (lb.tickAccum >= LASER_TICK_INTERVAL && lb.remaining > -LASER_TICK_INTERVAL) {
+    lb.tickAccum -= LASER_TICK_INTERVAL;
+    applyLaserBeamTickServer(state, side);
+  }
+  if (lb.remaining <= 0) side.laserBeam = null;
+}
+
+function tickGimluRageServer(state, side, dt) {
+  if (side.hero.dead) { side.rageRemaining = 0; return; }
+  side.rageRemaining -= dt;
+  side.rageTickAccum = (side.rageTickAccum || 0) + dt;
+  // CC-immun under rage
+  side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
+  side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
+  side.iceBlockRemaining = 0;
+  const opp = state.sides[3 - side.idx];
+  while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
+    side.rageTickAccum -= RAGE_TICK_INTERVAL;
+    if (opp && !opp.hero.dead) {
+      const d = Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z);
+      if (d < RAGE_PULSE_RADIUS) {
+        const dmg = opp.hero.maxHp * RAGE_PULSE_DMG_PCT;
+        const dealt = Math.min(dmg, opp.hero.hp);
+        damageHero(opp, dmg);
+        if (dealt > 0 && !side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
+        }
+      }
+    }
+  }
+  if (side.rageRemaining <= 0) side.rageRemaining = 0;
+}
+
 function tickArenaCombat(state, dt) {
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
@@ -1217,6 +1302,10 @@ function tickArenaCombat(state, dt) {
     tickLegolusInvis(side, dt);
     tickThornPools(state, side, dt);
     tickKostefoSkills(state, side, opp, dt);
+    // Server-auth ults: magiker laser + gimlu rage (aragurn berserk = AA-modifier nedan)
+    if (side.laserBeam) tickMagikerLaserServer(state, side, dt);
+    if ((side.rageRemaining || 0) > 0) tickGimluRageServer(state, side, dt);
+    if ((side.berserkRemaining || 0) > 0) side.berserkRemaining = Math.max(0, side.berserkRemaining - dt);
     if (side.heroId === 'aragurn') {
       side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
       if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
@@ -1262,6 +1351,9 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   }
   side.whirlwindRemaining = 0;
   side.aragurnLeap = null;
+  side.laserBeam = null;            // magiker ult (R)
+  side.rageRemaining = 0;           // gimlu ult (R)
+  side.berserkRemaining = 0;        // aragurn ult (R)
   side.legolusBuffRemaining = 0;
   side.legolusInvisRemaining = 0;
   side.titansTauntRemaining = 0;
@@ -1459,6 +1551,11 @@ function serializeArenaHero(side) {
     adm: nzr2(side.arenaDamageBuff),
     wwr: nzr2(side.whirlwindRemaining),
     lp: leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined,
+    // Ult-visual-state (klient renderar via tickArenaUltVisuals): laser-riktning,
+    // rage-timer, berserk-timer. Utelämnas (undefined) när inaktiv.
+    lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
+    rg: nzr2(side.rageRemaining),
+    bz: nzr2(side.berserkRemaining),
     kComp: side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined,
     kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined,
     tx: r2(side.targetX || 0),
@@ -2683,7 +2780,11 @@ function updateHeroAttack(state, side, opp, dt) {
   // Shadow Volley empowered AA: target.maxHp*25% direct dmg + stun nearby + thorn pool.
   // Pilen revealar Legolus när den skjuts. Override:ar normal dmg-formel.
   const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul;
+  // Aragurn Berserk (R): +150% AA-dmg + 25% lifesteal under 5s. (AS oförändrad.)
+  // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
+  // skulle ett oavsiktligt satt fält ge permanent buff.
+  const berserkActive = side.inArena1v1 && (side.berserkRemaining || 0) > 0;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -2700,7 +2801,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : 0,
+    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : (berserkActive ? BERSERK_AA_LIFESTEAL : 0),
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
     legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
@@ -4929,6 +5030,29 @@ function applyEvent(state, sideIdx, ev) {
               attackCd: i * (KOSTEFO_COMPANION_AA_INTERVAL / KOSTEFO_ULT_JOINT_COUNT),
             });
           }
+        }
+        // Server-auth ults gäller ENBART arena 1v1 (side.inArena1v1). I classic
+        // tickas dessa state-fält aldrig ner (egen tick-loop) → skulle ge permanent
+        // berserk-AA m.m. Magiker/gimlu/aragurn ults i classic är pre-existerande
+        // no-ops och rörs inte här.
+        // Magiker Master Beam: 3s svängande laser (AoE-tick mot opp hero). Riktning
+        // från ev.dx/dz (cast-aim) med facing-fallback. Klient renderar via lz-snap.
+        if (side.inArena1v1 && side.heroId === 'magiker' && !side.hero.dead) {
+          let ldx = ev.dx, ldz = ev.dz;
+          const lm = Math.hypot(ldx || 0, ldz || 0);
+          if (lm < 0.01) { ldx = side.hero.facingX || 0; ldz = side.hero.facingZ || 1; }
+          else { ldx /= lm; ldz /= lm; }
+          side.laserBeam = { remaining: LASER_DURATION, dx: ldx, dz: ldz, tickAccum: 0 };
+          applyLaserBeamTickServer(state, side);   // initial tick direkt (matchar klientens host-fn)
+        }
+        // Gimlu Rage: 5s AoE-pulser + 20% lifesteal + CC-immun
+        if (side.inArena1v1 && side.heroId === 'gimlu' && !side.hero.dead) {
+          side.rageRemaining = RAGE_DURATION;
+          side.rageTickAccum = 0;
+        }
+        // Aragurn Berserk: 5s +150% AA-dmg + 25% lifesteal (AA-modifier i updateHeroAttack)
+        if (side.inArena1v1 && side.heroId === 'aragurn' && !side.hero.dead) {
+          side.berserkRemaining = BERSERK_DURATION;
         }
       }
       return;

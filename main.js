@@ -24319,6 +24319,11 @@ function applyHeroSnap(side, snap) {
   if (side.mesh) side.mesh.userData._whirl = (snap.wwr || 0) > 0;
   // Elar leap — tickAragurnVisuals renderar y-bågen från {active, u}.
   side.aragurnLeap = snap.lp ? { active: true, u: snap.lp.u, tx: snap.lp.tx, tz: snap.lp.tz } : null;
+  // Server-auth ults (route B): gameplay körs server-side; klienten renderar
+  // visualen via tickArenaUltVisuals från dessa synkade fält. INGEN damage här.
+  side._srvLaser = snap.lz || null;             // magiker laser: {dx,dz} eller null
+  side._srvRage = snap.rg || 0;                 // gimlu rage: sek kvar
+  side._srvBerserk = snap.bz || 0;              // aragurn berserk: sek kvar
   // Kostefcompanion + cannabis-moln — updateKostefoMeshes renderar från detta.
   side.kostefoCompanion = snap.kComp ? { x: snap.kComp.x, z: snap.kComp.z, ry: snap.kComp.ry } : null;
   if (snap.kCl) {
@@ -29619,6 +29624,93 @@ function spawnKenneyFx(opts) {
 // Whirlwind: spin hero-mesh + transient golden aura. Leap: y-arc upp/ner +
 // landings-impact när leap slutar. Server är auktoritativ och skickar
 // whirlwindRemaining/aragurnLeap-state via state-snap; klient renderar.
+// Server-auth arena: rendera de 3 ults vars gameplay körs server-side (magiker
+// laser, gimlu rage, aragurn berserk). Drivs av synkat tillstånd (_srvLaser/
+// _srvRage/_srvBerserk i applyHeroSnap). INGEN damage/CC här — bara visual.
+// Gatead på APP.arenaServerAuth så den aldrig krockar med host-auth-pathens
+// riktiga tickUltimates (som annars skulle dubbel-rendera).
+function disposeSrvUltMesh(obj) {
+  if (!obj) return;
+  scene.remove(obj);
+  obj.traverse(o => {
+    if (o.isMesh) { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }
+  });
+}
+
+function tickArenaUltVisuals(dt) {
+  if (!APP.arenaServerAuth) return;
+  for (const idx of [1, 2]) {
+    const s = sides[idx];
+    if (!s || !s.mesh) continue;
+    const mx = s.mesh.position.x, mz = s.mesh.position.z;
+    // --- MAGIKER LASER (beam-mesh, svänger med synkad dx/dz) ---
+    if (s._srvLaser) {
+      const ldx = s._srvLaser.dx || 0, ldz = s._srvLaser.dz || 1;
+      if (!s._srvLaserMesh) {
+        const grp = new THREE.Group();
+        const halo = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.6, 1.6, LASER_RANGE, 18, 1, false),
+          new THREE.MeshBasicMaterial({ color: 0x66bbff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+        const beam = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.0, 1.0, LASER_RANGE, 18, 1, false),
+          new THREE.MeshBasicMaterial({ color: 0xccddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
+        const core = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.4, 0.4, LASER_RANGE, 16, 1, false),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98 }));
+        for (const m of [halo, beam, core]) { m.rotation.order = 'YXZ'; m.rotation.x = Math.PI / 2; grp.add(m); }
+        scene.add(grp);
+        s._srvLaserMesh = grp;
+        spawnSkillCastFx(mx, mz, 0x88ccff, 2.0);
+        spawnShieldBurstFx(mx, mz, 0xaaddff);
+      }
+      const ang = Math.atan2(ldx, ldz);
+      s._srvLaserMesh.position.set(mx + ldx * LASER_RANGE / 2, 1.0, mz + ldz * LASER_RANGE / 2);
+      for (const m of s._srvLaserMesh.children) m.rotation.y = ang;
+    } else if (s._srvLaserMesh) {
+      disposeSrvUltMesh(s._srvLaserMesh);
+      s._srvLaserMesh = null;
+    }
+    // --- GIMLU RAGE (mesh-scale + periodiska puffar) ---
+    if ((s._srvRage || 0) > 0) {
+      s.mesh.scale.set(RAGE_SCALE, RAGE_SCALE, RAGE_SCALE);
+      if (!s._srvRageActive) {
+        s._srvRageActive = true;
+        spawnSkillCastFx(mx, mz, 0xff4422, 2.2);
+        spawnShieldBurstFx(mx, mz, 0xff6633);
+      }
+      s._srvRageAccum = (s._srvRageAccum || 0) + dt;
+      if (s._srvRageAccum > 0.4) { s._srvRageAccum = 0; spawnShieldBurstFx(mx, mz, 0xff6633); }
+    } else if (s._srvRageActive) {
+      s._srvRageActive = false;
+      s._srvRageAccum = 0;
+      s.mesh.scale.set(1, 1, 1);
+    }
+    // --- ARAGURN BERSERK (mesh-scale + glödande svärd) ---
+    if ((s._srvBerserk || 0) > 0) {
+      s.mesh.scale.set(BERSERK_SCALE, BERSERK_SCALE, BERSERK_SCALE);
+      if (!s._srvBerserkMesh) {
+        const grp = new THREE.Group();
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.4, 0.05),
+          new THREE.MeshStandardMaterial({ color: 0xddc680, emissive: 0xff7733, emissiveIntensity: 1.6, metalness: 0.6, roughness: 0.3 }));
+        blade.position.y = 1.4; grp.add(blade);
+        const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2.6, 14),
+          new THREE.MeshBasicMaterial({ color: 0xff8844, transparent: true, opacity: 0.35, depthWrite: false }));
+        halo.position.y = 1.4; grp.add(halo);
+        scene.add(grp);
+        s._srvBerserkMesh = grp;
+        spawnSkillCastFx(mx, mz, 0xff7733, 2.2);
+        spawnShieldBurstFx(mx, mz, 0xffaa55);
+      }
+      s._srvBerserkMesh.position.set(mx + 0.6, 0, mz);
+      s._srvBerserkMesh.rotation.y = s.mesh.rotation.y;
+    } else if (s._srvBerserkMesh) {
+      disposeSrvUltMesh(s._srvBerserkMesh);
+      s._srvBerserkMesh = null;
+      s.mesh.scale.set(1, 1, 1);
+    }
+  }
+}
+
 function tickAragurnVisuals(dt) {
   const idxs = [1, 2];
   for (const idx of idxs) {
@@ -30326,6 +30418,7 @@ function tick() {
   tickCombatFx(dt);
   tickProjectileEntitySpins(dt);
   tickAragurnVisuals(dt);
+  tickArenaUltVisuals(dt);          // server-auth ult-visualer (laser/rage/berserk)
   tickBossArenaFlames(dt);
   tickBossArenaCrystals(dt);
   // Kostefstate-meshes (companion + cloud + ult-joints) — körs i alla lägen
