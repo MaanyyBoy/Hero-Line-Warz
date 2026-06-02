@@ -3255,7 +3255,7 @@
     #ap-items-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-      gap: 6px;
+      gap: 8px;
       margin-bottom: 12px;
     }
     .ap-item-card {
@@ -3271,6 +3271,7 @@
       color: #fff;
     }
     .ap-item-card:hover { border-color: rgba(220,180,255,0.9); transform: translateY(-2px); }
+    .ap-item-card:active { transform: scale(0.96); }
     .ap-item-card.owned {
       background: linear-gradient(135deg, rgba(120,90,200,0.55), rgba(80,60,160,0.45));
       border-color: #c8a8ff;
@@ -3282,7 +3283,7 @@
     #ap-talents-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 7px;
+      gap: 8px;
       margin-bottom: 4px;
     }
     .talent-card {
@@ -3296,6 +3297,12 @@
       min-height: 70px;
     }
     .talent-card:hover { border-color: rgba(180,200,255,0.85); transform: translateY(-2px); }
+    .talent-card:active:not(.picked):not(.disabled) { transform: scale(0.97); }
+    /* iOS: ingen "stuck hover" efter tap på touch-enheter (hover fastnar annars) */
+    @media (hover: none) {
+      .ap-item-card:hover { border-color: rgba(200,170,255,0.4); transform: none; }
+      .talent-card:hover { border-color: rgba(180,200,255,0.4); transform: none; }
+    }
     .talent-card.picked {
       background: linear-gradient(135deg, rgba(80,160,90,0.55), rgba(60,120,70,0.45));
       border-color: #88dd66;
@@ -3334,7 +3341,7 @@
       z-index: 2;
     }
     #ap-ready {
-      padding: 12px 36px;
+      padding: 14px 36px;
       font: 700 16px/1 system-ui, sans-serif;
       background: rgba(180,60,60,0.85);
       border-color: rgba(255,160,160,0.7);
@@ -3466,6 +3473,9 @@
       z-index: 400;
       display: flex; align-items: center; justify-content: center;
       pointer-events: auto;
+      /* Safe-area i landskap så kortet ej hamnar under notch/Dynamic Island */
+      padding: env(safe-area-inset-top) max(12px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px, env(safe-area-inset-left));
+      box-sizing: border-box;
     }
     #ap-item-modal.hidden { display: none; }
     #ap-item-modal-backdrop {
@@ -3486,8 +3496,8 @@
       box-shadow: 0 14px 40px rgba(0,0,0,0.75);
     }
     #ap-item-modal-close {
-      position: absolute; top: 6px; right: 8px;
-      width: 30px; height: 30px;
+      position: absolute; top: 8px; right: 8px;
+      width: 44px; height: 44px;
       background: rgba(255,80,80,0.35);
       border: 1px solid rgba(255,120,120,0.6);
       border-radius: 50%;

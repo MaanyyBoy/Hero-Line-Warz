@@ -4725,7 +4725,7 @@ const ARENA_TALENTS = {
     // Skill-modifiers
     { id: 'a_spin_extend', icon: '🌀', name: 'Endless Spin',  desc: 'Whirlwind lasts 1.5s longer (3s → 4.5s)' },
     { id: 'a_shout_radius',icon: '📣', name: 'Booming Voice', desc: 'Shout cone is +30% longer and wider' },
-    { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap heals +50% per enemy hit (10%→15%)' },
+    { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap heals +50% per enemy hit (25%→37.5% of lost HP)' },
   ],
   kostefo: [
     // Stat-talents — använder befintliga stat-systemet (recomputeArenaSideStats).
@@ -8912,8 +8912,10 @@ const SHRINK_TICK_INTERVAL = 0.25;
 // CPU vid 30 Hz state-tick). Deklareras här (före resetArenaState) för att
 // undvika TDZ vid module-load.
 let _lastRecomputedTalentsHash = '';
+let _lastPrepItemsHash = '';   // item-grid re-render-gate (server-auth: snapshot-driven gold/inventory)
 function resetArenaState() {
   _lastRecomputedTalentsHash = '';   // nolla så ny match recomputerar stats korrekt
+  _lastPrepItemsHash = '';
   arenaState.phase = 'idle';
   arenaState.roundNum = 0;
   arenaState.wins = { 1: 0, 2: 0 };
@@ -19610,6 +19612,9 @@ function renderArenaPrepItems() {
   const ownedById = new Map();
   for (const it of (side.inventory || [])) ownedById.set(it.itemId, it);
   for (const [itemId, def] of Object.entries(ITEM_TYPES)) {
+    // Hoppa placeholder-items utan stats (t.ex. item6 "stats TBD") → annars köp-fälla
+    // (200g för noll effekt). Variant-items + items med riktiga stats visas.
+    if (!def.variants && def.statsAtLevel && Object.keys(def.statsAtLevel(1) || {}).length === 0) continue;
     const existing = ownedById.get(itemId);
     const card = document.createElement('div');
     card.className = 'ap-item-card' + (existing ? ' owned' : '');
@@ -19622,6 +19627,9 @@ function renderArenaPrepItems() {
       cost = ITEM_BUY_COST + 'g';
       action = 'buy';
     }
+    // Variant-items (Boots m.fl.) kan inte köpas i arena-prep (kräver variant-val
+    // som bara finns i match-shoppen) → visa tydlig "Match only" i st f död knapp.
+    if (action === 'buy' && def.variants) cost = 'Match only';
     const lvlStr = existing ? `<span class="ai-level">Lvl ${existing.level}</span>` : '';
     card.innerHTML = `<div class="ai-name">${name}${lvlStr}</div><div class="ai-cost">${cost}</div>`;
     // Disabled om vi inte har råd eller inventory är full vid buy
@@ -19734,7 +19742,10 @@ if (apItemModalBuyEl) apItemModalBuyEl.addEventListener('click', () => {
   if (disabled || action === null) return;
   sendOrApplyEvent({ type: 'shop', kind: 'item', item: itemId });
   hideArenaItemModal();
-  setTimeout(() => { renderArenaPrepItems(); updateArenaPrepUI(); }, 80);
+  // Solo/host-auth: köpet applicerades synkront → rendera direkt. Server-auth:
+  // gold/inventory bekräftas via nästa a-state-snap → prep-loopens hash-gate
+  // re-renderar då (inget setTimeout-gissande mot RTT).
+  renderArenaPrepItems(); updateArenaPrepUI();
 });
 function hideArenaPrep() {
   if (arenaPrepEl) arenaPrepEl.classList.remove('visible');
@@ -24896,6 +24907,17 @@ function applyArenaState(msg) {
   // Uppdatera prep-UI om i prep-fas (timer, points, ready)
   if (arenaState.phase === 'prep') {
     updateArenaPrepUI();
+    // Item-grid: re-rendera när snapshot ändrat gold/inventory (server-auth: köpet
+    // bekräftas async via a-state, inte direkt). Hash-gate → bara vid faktisk
+    // förändring (ej varje frame) = ingen click-eating, men köp syns direkt.
+    {
+      const _ls = sides[APP.localSide];
+      const _invHash = ((_ls && _ls.inventory) || []).map(i => i.itemId + ':' + i.level).join(',') + '|' + ((_ls && _ls.gold) || 0);
+      if (_invHash !== _lastPrepItemsHash) {
+        _lastPrepItemsHash = _invHash;
+        renderArenaPrepItems();
+      }
+    }
     // VIKTIGT: anropa INTE renderTalentsGrid här. Den rebuildar hela
     // DOM:en via innerHTML='' och vid 45 Hz broadcast skulle klick-events
     // ätas (mouseDown/Up spänner över flera renders → click landar på
