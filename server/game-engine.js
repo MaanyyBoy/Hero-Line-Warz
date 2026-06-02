@@ -1120,6 +1120,14 @@ function isArena1v1Walkable(x, z) {
   return x >= ARENA1V1_BOUNDS.minX && x <= ARENA1V1_BOUNDS.maxX
       && z >= ARENA1V1_BOUNDS.minZ && z <= ARENA1V1_BOUNDS.maxZ;
 }
+// Väljer rätt walkability-check för en sides läge. Används av movement OCH alla
+// teleport/leap-skills (dash/leap/hammer-tp/slider-tp) — annars använder de classic
+// isHeroWalkable som avvisar arena1v1-positioner (z≈80) → teleport-skills misslyckas.
+function heroWalk(side, x, z, opts) {
+  if (side.inArena1v1) return isArena1v1Walkable(x, z);
+  if (side.inDuel) return isArenaWalkable(x, z);
+  return isHeroWalkable(side.idx, x, z, opts);
+}
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
 const ARENA_PREP_TIME = 60;
 const ARENA_ROUND_END_PAUSE = 4;
@@ -2481,8 +2489,11 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
     tx = side.hero.x + dx * defaultDistance * mag;
     tz = side.hero.z + dz * defaultDistance * mag;
   }
-  // Clamp till arenan under duel så skills inte landar utanför
-  if (state && state.duelActive) {
+  // Clamp till duel-arenan (cirkel vid z=35) så skills inte landar utanför.
+  // EJ för arena1v1: den delar duelActive-flaggan men ligger vid z=80 i en stor
+  // öppen arena — clampen skulle annars dra varje skill-target till z=35 (~49 enh
+  // bort) → skills missar helt. (decision 120: test-fynd 2)
+  if (state && state.duelActive && state.mode !== 'arena1v1') {
     const dx = tx - ARENA_CX, dz = tz - ARENA_CZ;
     const d = Math.hypot(dx, dz);
     const maxR = ARENA_RADIUS - 0.5;
@@ -3315,7 +3326,7 @@ function castLegolusDash(state, sideIdx, ev) {
   while (dist >= 0.5) {
     nx = side.hero.x + dx * dist;
     nz = side.hero.z + dz * dist;
-    if (isHeroWalkable(side.idx, nx, nz)) break;
+    if (heroWalk(side, nx, nz)) break;
     dist -= 0.5;
   }
   if (dist < 0.5) return;
@@ -3488,7 +3499,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
   // Om hammer redan ute → teleport till den och despawn
   if (side.hammers && side.hammers.length > 0) {
     const h = side.hammers[0];
-    if (isHeroWalkable(side.idx, h.x, h.z)) {
+    if (heroWalk(side, h.x, h.z)) {
       side.hero.x = h.x;
       side.hero.z = h.z;
     }
@@ -4095,7 +4106,7 @@ function castAragurnLeap(state, sideIdx, ev) {
   // Walkability-clamp: om target ligger i icke-walkable terräng, gå tillbaka
   // mot hero i 0.5m-steg tills vi hittar walkable pos. Skippar leap helt om
   // ingen walkable mellan hero och target hittas.
-  if (!isHeroWalkable(sideIdx, tx, tz, walkOpts)) {
+  if (!heroWalk(side, tx, tz, walkOpts)) {
     const ddx = tx - side.hero.x, ddz = tz - side.hero.z;
     const d = Math.hypot(ddx, ddz);
     if (d < 0.1) return;   // för nära, skip
@@ -4105,7 +4116,7 @@ function castAragurnLeap(state, sideIdx, ev) {
     for (let testX = tx - stepX, testZ = tz - stepZ;
          Math.hypot(testX - side.hero.x, testZ - side.hero.z) > 0.4;
          testX -= stepX, testZ -= stepZ) {
-      if (isHeroWalkable(sideIdx, testX, testZ, walkOpts)) {
+      if (heroWalk(side, testX, testZ, walkOpts)) {
         tx = testX; tz = testZ;
         foundWalkable = true;
         break;
@@ -4241,7 +4252,7 @@ function castKostefoJointSlider(state, sideIdx, dirX, dirZ) {
   // CD från initial cast tickar fortsatt (ingen ny CD-set vid tp).
   if (side.kostefoSliderTpMarker) {
     const m = side.kostefoSliderTpMarker;
-    if (isHeroWalkable(side.idx, m.x, m.z)) {
+    if (heroWalk(side, m.x, m.z)) {
       side.hero.x = m.x;
       side.hero.z = m.z;
     }
