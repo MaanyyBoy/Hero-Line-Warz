@@ -262,15 +262,15 @@ function handleArenaMessage(room, fromWs, envelope) {
       return;
     }
     if (t === 'a-talent') {
-      // Talent-pick → server-state (server äger talents). Stat-effekten av talents
-      // appliceras ej än server-side (TODO recomputeArenaSideStats-port); picken
-      // registreras så UI + persistens funkar och kan aktiveras senare.
       const sideIdx = (fromWs === room.host) ? 1 : 2;
       const tal = room.game.talents && room.game.talents[sideIdx];
       if (tal) {
         const id = payload.talentId;
         if (payload.remove) { const i = tal.chosen.indexOf(id); if (i >= 0) { tal.chosen.splice(i, 1); tal.points++; } }
         else if (tal.points > 0 && id && tal.chosen.indexOf(id) < 0) { tal.chosen.push(id); tal.points--; }
+        // Recompute stats so talent stat-bonuses (HP/dmg/AS/MS/CDR/DR) take effect immediately
+        const side = room.game.sides && room.game.sides[sideIdx];
+        if (side) engine.recomputeArenaSideStats(room.game, side);
       }
       return;
     }

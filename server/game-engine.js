@@ -806,6 +806,113 @@ function recomputeSideStats(side) {
   side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
 }
 
+// ── Arena-talents (server-side kopia av main.js ARENA_TALENTS) ──
+// Stat-talents: appliceras i recomputeArenaSideStats efter recomputeSideStats.
+// Skill-modifier-talents: läses via engineHasTalent(state, side, id) i cast/tick-funktioner.
+const ENGINE_ARENA_TALENTS = {
+  magiker: [
+    { id: 'm_skill',        stats: { skillDmgPct: 0.10 } },
+    { id: 'm_cdr',          stats: { cdrPct: 0.10 } },
+    { id: 'm_hp',           stats: { maxHpPct: 0.15 } },
+    { id: 'm_dr',           stats: { dmgReductionPct: 0.10 } },
+    { id: 'm_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'm_frost_heal' }, // Frost Nova heals 15% of damage dealt
+    { id: 'm_drain_extend' }, // Soul Drain +2s (5s → 7s)
+    { id: 'm_bh_radius' },  // Black Hole radius + explosion +30%
+  ],
+  legolas: [
+    { id: 'l_dmg',          stats: { attackDmg: 5 } },
+    { id: 'l_as',           stats: { attackSpeedPct: 0.15 } },
+    { id: 'l_crit',         stats: { critChancePct: 0.10 } },
+    { id: 'l_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'l_cdr',          stats: { cdrPct: 0.10 } },
+    { id: 'l_vine_dot' },   // Vine Trap DoT doubles damage
+    { id: 'l_focus_dur' },  // Hunter's Focus +2s duration
+    { id: 'l_dash_buff' },  // Shadow Dash lifesteal 20% → 50%
+  ],
+  gimlu: [
+    { id: 'g_hp',           stats: { maxHpPct: 0.20 } },
+    { id: 'g_dr',           stats: { dmgReductionPct: 0.15 } },
+    { id: 'g_dmg',          stats: { attackDmg: 5 } },
+    { id: 'g_as',           stats: { attackSpeedPct: 0.10 } },
+    { id: 'g_regen',        stats: { healPerSecPct: 0.01 } },
+    { id: 'g_taunt_heal' }, // Titan's Taunt heal +50%
+    { id: 'g_iron_radius' }, // Iron Will explosion +30%
+    { id: 'g_hammer_full' }, // Hammer return 100% damage
+  ],
+  aragurn: [
+    { id: 'a_dmg',          stats: { attackDmg: 6 } },
+    { id: 'a_hp',           stats: { maxHpPct: 0.15 } },
+    { id: 'a_as',           stats: { attackSpeedPct: 0.12 } },
+    { id: 'a_dr',           stats: { dmgReductionPct: 0.12 } },
+    { id: 'a_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'a_spin_extend' }, // Whirlwind +1.5s
+    { id: 'a_shout_radius' }, // Shout cone +30%
+    { id: 'a_leap_heal' },  // Hero Leap heal 10% → 15%
+  ],
+  kostefo: [
+    { id: 'k_skill',        stats: { skillDmgPct: 0.10 } },
+    { id: 'k_cdr',          stats: { cdrPct: 0.10 } },
+    { id: 'k_hp',           stats: { maxHpPct: 0.15 } },
+    { id: 'k_dr',           stats: { dmgReductionPct: 0.10 } },
+    { id: 'k_ms',           stats: { moveSpeedPct: 0.10 } },
+  ],
+};
+
+// Kolla om en side valt en specifik talent (för arena server-auth skill-modifier-logic).
+function engineHasTalent(state, side, talentId) {
+  if (!state || !state.talents) return false;
+  const t = state.talents[side.idx];
+  return !!(t && t.chosen && t.chosen.includes(talentId));
+}
+
+// Räknar om stats inklusive arena-talents (stat-talents ovanpå recomputeSideStats).
+// Speglar main.js:recomputeArenaSideStats. Kräver state för talents-lookup.
+function recomputeArenaSideStats(state, side) {
+  recomputeSideStats(side);
+  if (!state || !state.talents) return;
+  const heroId = side.heroId || 'magiker';
+  const talentList = ENGINE_ARENA_TALENTS[heroId] || [];
+  const chosen = (state.talents[side.idx] && state.talents[side.idx].chosen) || [];
+  let attackDmgFlat = 0;
+  let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0;
+  let dmgReductionPct = 0, maxHpPct = 0, critChancePct = 0, healPerSecPct = 0;
+  for (const id of chosen) {
+    const t = talentList.find(x => x.id === id);
+    if (!t || !t.stats) continue;
+    if (t.stats.attackDmg) attackDmgFlat += t.stats.attackDmg;
+    attackSpeedPct  += t.stats.attackSpeedPct  || 0;
+    moveSpeedPct    += t.stats.moveSpeedPct    || 0;
+    skillDmgPct     += t.stats.skillDmgPct     || 0;
+    cdrPct          += t.stats.cdrPct          || 0;
+    dmgReductionPct += t.stats.dmgReductionPct || 0;
+    maxHpPct        += t.stats.maxHpPct        || 0;
+    critChancePct   += t.stats.critChancePct   || 0;
+    healPerSecPct   += t.stats.healPerSecPct   || 0;
+  }
+  side.attackDmg = (side.attackDmg || 0) + attackDmgFlat;
+  side.attackSpeedMul = (side.attackSpeedMul || 1) * (1 + attackSpeedPct);
+  side.moveSpeed = (side.moveSpeed || HERO_BASE_MOVE_SPEED) * (1 + moveSpeedPct);
+  side.skillDmgMul = (side.skillDmgMul || 1) * (1 + skillDmgPct);
+  side.cdrMul = Math.max(0.1, (side.cdrMul || 1) * (1 - cdrPct));
+  side.dmgReductionMul = Math.max(0.0, (side.dmgReductionMul || 1) * (1 - dmgReductionPct));
+  const maxHpBefore = side.hero.maxHp;
+  side.hero.maxHp = Math.round(side.hero.maxHp * (1 + maxHpPct));
+  if (side.hero.maxHp > maxHpBefore) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + (side.hero.maxHp - maxHpBefore));
+  }
+  side.critChancePct = Math.min(1, (side.critChancePct || 0) + critChancePct);
+  side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
+  // Uppdatera CD-max för skills efter ev. cdrPct-förändring
+  if (cdrPct !== 0) {
+    const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 } };
+    const heroCd = HERO_SKILL_CD[side.heroId] || {};
+    side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
+    side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
+    side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
+  }
+}
+
 // Gandulf passive-helpers — buff/shield på skill-hit
 function gandulfSkillDmgMul(side) {
   if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
@@ -878,9 +985,10 @@ function damageHero(side, amount) {
     else { final -= side.shield; side.shield = 0; }
   }
   side.hero.hp = Math.max(0, side.hero.hp - final);
-  // Titans Taunt: heala tillbaka 20% av tagen skada
+  // Titans Taunt: heala tillbaka 20% av tagen skada (g_taunt_heal talent: +50% → 30%)
   if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
-    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT);
+    const tauntHealMul = engineHasTalent(side._arenaState, side, 'g_taunt_heal') ? 1.5 : 1.0;
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + final * TAUNT_HEAL_PCT * tauntHealMul);
   }
   // Iron Will: stacka tagen skada för senare explosion
   if ((side.ironWillRemaining || 0) > 0) {
@@ -1357,15 +1465,16 @@ function tickArenaCombat(state, dt) {
 
 // ── Arena-flöde (server-side, ren logik — UI/mesh/FX stannar på klienten) ──
 // Speglar main.js startArenaRound/transition*/checkArenaRoundEnd/tickShrinkCircle/
-// updateArenaOrb, men ENBART logik-delarna. 1v1 (sides 1,2). TODO senare: 2v2,
-// arena-talents-stats (recomputeArenaSideStats), orb-skill-damage-hook, power-ups (av).
+// updateArenaOrb, men ENBART logik-delarna. 1v1 (sides 1,2).
 function _arenaResetHero(state, side, spawn, roundNum) {
   side.hero.x = spawn.x; side.hero.z = spawn.z;
   side.hero.facingX = (side.idx === 1) ? 1 : -1;
   side.hero.facingZ = 0;
   side.hero.dead = false;
   side.hero.respawnTimer = 0;
-  recomputeSideStats(side);            // TODO: recomputeArenaSideStats (talent-stats) när talents portats
+  // Lagra referens till state på side för talent-lookup i funktioner som inte tar state (damageHero etc.)
+  side._arenaState = state;
+  recomputeArenaSideStats(state, side); // applicerar stat-talents ovanpå base+items
   side.hero.hp = side.hero.maxHp;
   side.shield = 0;
   side.shrinkHitStacks = 0;
@@ -2932,7 +3041,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? LEGOLUS_DASH_LIFESTEAL : (berserkActive ? BERSERK_AA_LIFESTEAL : 0),
+    lifestealRatio: dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : 0),
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
     legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
@@ -3313,6 +3422,8 @@ function castFrostnova(state, sideIdx, ev) {
     life: 0.6, maxLife: 0.6,
   });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+  // m_frost_heal talent: heala 15% av skill-skada per träff
+  const frostHeal = engineHasTalent(state, side, 'm_frost_heal');
   // Lvl 5 bonus: applicera attack-speed-slow på alla hit-targets
   const isLvl5 = (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX);
   const applyLvl5AsSlow = (entity) => {
@@ -3320,12 +3431,15 @@ function castFrostnova(state, sideIdx, ev) {
     entity.aSlowTime = Math.max(entity.aSlowTime || 0, GANDULF_LVL5_FN_AS_DURATION);
     entity.aSlowMul = Math.min(entity.aSlowMul == null ? 1 : entity.aSlowMul, GANDULF_LVL5_FN_AS_MUL);
   };
+  let frostHealTotal = 0;
   for (let j = side.monsters.length - 1; j >= 0; j--) {
     const m = side.monsters[j];
     if (Math.hypot(m.x - center.x, m.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (m.frozenTime || 0) > 0;
       onGandulfSkillHit(side, m);
+      const hpBefore = m.hp;
       applySkillDamageToMonster(state, side, opp, j, novaDmg);
+      if (frostHeal) frostHealTotal += Math.min(novaDmg, hpBefore) * 0.15;
       const stillAlive = side.monsters[j] === m && m.hp > 0;
       if (stillAlive) {
         if (!wasFrozen) m.frozenTime = NOVA_FREEZE_TIME;
@@ -3338,7 +3452,9 @@ function castFrostnova(state, sideIdx, ev) {
     if (Math.hypot(c.x - center.x, c.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (c.frozenTime || 0) > 0;
       onGandulfSkillHit(side, c);
+      const hpBefore = c.hp;
       applySkillDamageToCreep(state, side, opp, c, novaDmg);
+      if (frostHeal) frostHealTotal += Math.min(novaDmg, hpBefore) * 0.15;
       if (c.hp > 0) {
         if (!wasFrozen) c.frozenTime = NOVA_FREEZE_TIME;
         applyLvl5AsSlow(c);
@@ -3352,9 +3468,15 @@ function castFrostnova(state, sideIdx, ev) {
     if (Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z) < NOVA_RADIUS) {
       const wasFrozen = (opp.hero.frozenTime || 0) > 0;
       onGandulfSkillHit(side, opp.hero);
+      const hpBefore = opp.hero.hp;
       applySkillDamageToOppHero(state, side, opp, novaDmg);
+      if (frostHeal) frostHealTotal += Math.min(novaDmg, hpBefore) * 0.15;
       if (!opp.hero.dead && !wasFrozen) opp.hero.frozenTime = NOVA_FREEZE_TIME;
     }
+  }
+  // m_frost_heal: applicera samlad heal
+  if (frostHeal && frostHealTotal > 0 && !side.hero.dead) {
+    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + frostHealTotal);
   }
 }
 
@@ -3386,11 +3508,14 @@ function castBlink(state, sideIdx, ev) {
   side.skills.e.cd = side.skills.e.max * gandulfCdrMul(side);
   if (!side.blackHoles) side.blackHoles = [];
   const skillDmgMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
+  // m_bh_radius talent: +30% pull-radius och explosion-radius
+  const bhRadiusMul = engineHasTalent(state, side, 'm_bh_radius') ? 1.30 : 1.0;
   side.blackHoles.push({
     id: state.nextEntityId++,
     x: center.x, z: center.z,
     life: BLACKHOLE_DURATION, maxLife: BLACKHOLE_DURATION,
     explosionDmg: BLACKHOLE_EXPLOSION_DMG * skillDmgMul,
+    radiusMul: bhRadiusMul,
     // Lvl 5 bonus: stun:a alla hit-targets vid explosion (sparas på effekten
     // så framtida lvl-down inte påverkar redan castade black holes)
     lvl5Stun: !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX),
@@ -3402,13 +3527,15 @@ function updateBlackHoles(state, side, opp, dt) {
   for (let i = side.blackHoles.length - 1; i >= 0; i--) {
     const bh = side.blackHoles[i];
     bh.life -= dt;
-    // Sug-styrka: smooth pull i radien
+    // Sug-styrka: smooth pull i radien (m_bh_radius talent applicerat vid cast)
     const pull = BLACKHOLE_PULL_SPEED * dt;
+    const bhPullR = BLACKHOLE_RADIUS * (bh.radiusMul || 1);
+    const bhExplosionR = BLACKHOLE_EXPLOSION_RADIUS * (bh.radiusMul || 1);
     for (const m of side.monsters) {
       const dx = bh.x - m.x, dz = bh.z - m.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
-        const f = 1 - d / BLACKHOLE_RADIUS; // starkare vid kanten? nej, starkare nära mitten = (1 - d/r)
+      if (d > 0.15 && d < bhPullR) {
+        const f = 1 - d / bhPullR;
         m.x += (dx / d) * pull * (0.4 + f * 0.6);
         m.z += (dz / d) * pull * (0.4 + f * 0.6);
       }
@@ -3416,8 +3543,8 @@ function updateBlackHoles(state, side, opp, dt) {
     if (opp) for (const c of opp.playerCreeps) {
       const dx = bh.x - c.x, dz = bh.z - c.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
-        const f = 1 - d / BLACKHOLE_RADIUS;
+      if (d > 0.15 && d < bhPullR) {
+        const f = 1 - d / bhPullR;
         c.x += (dx / d) * pull * (0.4 + f * 0.6);
         c.z += (dz / d) * pull * (0.4 + f * 0.6);
       }
@@ -3426,7 +3553,7 @@ function updateBlackHoles(state, side, opp, dt) {
     if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
       const dx = bh.x - opp.hero.x, dz = bh.z - opp.hero.z;
       const d = Math.hypot(dx, dz);
-      if (d > 0.15 && d < BLACKHOLE_RADIUS) {
+      if (d > 0.15 && d < bhPullR) {
         opp.hero.x += (dx / d) * pull * 0.5;
         opp.hero.z += (dz / d) * pull * 0.5;
       }
@@ -3436,7 +3563,7 @@ function updateBlackHoles(state, side, opp, dt) {
       const stunDur = bh.lvl5Stun ? GANDULF_LVL5_BH_STUN_DURATION : 0;
       for (let j = side.monsters.length - 1; j >= 0; j--) {
         const m = side.monsters[j];
-        if (Math.hypot(m.x - bh.x, m.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+        if (Math.hypot(m.x - bh.x, m.z - bh.z) < bhExplosionR) {
           onGandulfSkillHit(side, m);
           applySkillDamageToMonster(state, side, opp, j, bh.explosionDmg);
           // Lvl 5: stun (= frozen) i 1s om träffad och fortfarande vid liv
@@ -3447,7 +3574,7 @@ function updateBlackHoles(state, side, opp, dt) {
       }
       if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
         const c = opp.playerCreeps[j];
-        if (Math.hypot(c.x - bh.x, c.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+        if (Math.hypot(c.x - bh.x, c.z - bh.z) < bhExplosionR) {
           onGandulfSkillHit(side, c);
           applySkillDamageToCreep(state, side, opp, c, bh.explosionDmg);
           if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
@@ -3455,7 +3582,7 @@ function updateBlackHoles(state, side, opp, dt) {
         }
       }
       if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
-        if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < BLACKHOLE_EXPLOSION_RADIUS) {
+        if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < bhExplosionR) {
           onGandulfSkillHit(side, opp.hero);
           applySkillDamageToOppHero(state, side, opp, bh.explosionDmg);
           if (stunDur > 0 && !opp.hero.dead) opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, stunDur);
@@ -3475,11 +3602,12 @@ function castLegolusVineTrap(state, sideIdx, ev) {
   const opp = state.sides[3 - sideIdx];
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, VINE_TRAP_CAST_DISTANCE);
   if (!side.vineTraps) side.vineTraps = [];
+  const vineDotMul = engineHasTalent(state, side, 'l_vine_dot') ? 2 : 1;
   side.vineTraps.push({
     id: state.nextEntityId++,
     x: center.x, z: center.z,
     life: VINE_TRAP_DURATION, maxLife: VINE_TRAP_DURATION,
-    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1),
+    dotPerSec: VINE_TRAP_DOT_DPS * (side.skillDmgMul || 1) * vineDotMul,
     radius: VINE_TRAP_RADIUS,
     // Lvl 5: spara mark-flagga + Set över träffade entiteter (för mark vid trap-slut)
     lvl5Mark: !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX),
@@ -3554,7 +3682,7 @@ function castLegolusBuff(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION;
+  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION + (engineHasTalent(state, side, 'l_focus_dur') ? 2 : 0);
 }
 
 // E: Kort dash + flagga: nästa AA = 100% crit + 20% lifesteal. Reset cd om buffed AA dödar.
@@ -3713,7 +3841,9 @@ function updateIronWill(state, side, opp, dt) {
     side.ironWillStored = 0;
     side.ironWillRemaining = 0;
     if (dmg > 0) {
-      const r2 = IRON_WILL_EXPLOSION_RADIUS * IRON_WILL_EXPLOSION_RADIUS;
+      // g_iron_radius talent: +30% explosion radius
+      const ironRadiusMul = engineHasTalent(state, side, 'g_iron_radius') ? 1.30 : 1.0;
+      const r2 = (IRON_WILL_EXPLOSION_RADIUS * ironRadiusMul) * (IRON_WILL_EXPLOSION_RADIUS * ironRadiusMul);
       for (let i = side.monsters.length - 1; i >= 0; i--) {
         const m = side.monsters[i];
         const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
@@ -3763,6 +3893,8 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
   side.hammers = side.hammers || [];
+  // g_hammer_full talent: return = 100% damage (base is 50%)
+  const hammerReturnMul = engineHasTalent(state, side, 'g_hammer_full') ? 1.0 : HAMMER_RETURN_DMG_MUL;
   side.hammers.push({
     id: state.nextEntityId++,
     x: side.hero.x, z: side.hero.z,
@@ -3771,6 +3903,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
     returning: false,
     hit: new Set(),
     damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    returnDmgMul: hammerReturnMul,
     lvl5Slow: isLvl5,
   });
 }
@@ -3799,7 +3932,7 @@ function updateHammers(state, side, opp, dt) {
       h.x += (ddx / d) * step;
       h.z += (ddz / d) * step;
     }
-    const dmgMul = h.returning ? HAMMER_RETURN_DMG_MUL : 1;
+    const dmgMul = h.returning ? (h.returnDmgMul !== undefined ? h.returnDmgMul : HAMMER_RETURN_DMG_MUL) : 1;
     const dmg = h.damage * dmgMul;
     // Träff på monsters
     for (let j = side.monsters.length - 1; j >= 0; j--) {
@@ -3968,8 +4101,9 @@ function castSoulDrain(state, sideIdx, ev) {
     }
   }
   if (target) {
+    const drainDuration = SOULDRAIN_DURATION + (engineHasTalent(state, side, 'm_drain_extend') ? 2 : 0);
     side.soulDrain = {
-      remaining: SOULDRAIN_DURATION,
+      remaining: drainDuration,
       tickAccum: 0,
       stacks: 0,
       targetId: target.id,
@@ -4159,7 +4293,7 @@ function castAragurnWhirlwind(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.q.cd > 0) return;
   if ((side.whirlwindRemaining || 0) > 0) return;
-  side.whirlwindRemaining = WHIRLWIND_DURATION;
+  side.whirlwindRemaining = WHIRLWIND_DURATION + (engineHasTalent(state, side, 'a_spin_extend') ? 1.5 : 0);
   side.whirlwindTickAccum = 0;
   // Initial tick direkt
   applyWhirlwindTick(state, side, state.sides[3 - sideIdx]);
@@ -4247,6 +4381,10 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
   const opp = state.sides[3 - sideIdx];
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  // a_shout_radius talent: +30% cone length and half-angle
+  const shoutRangeMul = engineHasTalent(state, side, 'a_shout_radius') ? 1.30 : 1.0;
+  const shoutLength = SHOUT_LENGTH * shoutRangeMul;
+  const shoutHalfAngle = SHOUT_HALF_ANGLE * shoutRangeMul;
   // Lvl 5: pull targets halvvägs mot Aragurn + 1s stun
   const isLvl5 = !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX);
   const pullToward = (target) => {
@@ -4257,9 +4395,9 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   const inCone = (ex, ez) => {
     const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
     const d = Math.hypot(ddx, ddz);
-    if (d > SHOUT_LENGTH || d < 0.001) return false;
+    if (d > shoutLength || d < 0.001) return false;
     const dot = (ddx * dirX + ddz * dirZ) / d;
-    return Math.acos(Math.max(-1, Math.min(1, dot))) < SHOUT_HALF_ANGLE;
+    return Math.acos(Math.max(-1, Math.min(1, dot))) < shoutHalfAngle;
   };
   // Monsters
   for (let i = side.monsters.length - 1; i >= 0; i--) {
@@ -4453,10 +4591,11 @@ function applyAragurnLeapImpact(state, side, opp, x, z) {
       hitCount++;
     }
   }
-  // Heal Aragurn: 25% av förlorad HP per träffad fiende
+  // Heal Aragurn: 25% av förlorad HP per träffad fiende (a_leap_heal talent: ×1.5)
   if (hitCount > 0 && !side.hero.dead) {
     const lost = Math.max(0, side.hero.maxHp - side.hero.hp);
-    const heal = lost * LEAP_HEAL_LOST_PCT * hitCount;
+    const healPct = LEAP_HEAL_LOST_PCT * (engineHasTalent(state, side, 'a_leap_heal') ? 1.5 : 1.0);
+    const heal = lost * healPct * hitCount;
     side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + heal);
   }
 }
@@ -5303,7 +5442,10 @@ function applyEvent(state, sideIdx, ev) {
   }
   if (ev.type !== 'shop') return;
   if (side.hero.dead) return;
-  if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;
+  // Arena prep: item-köp tillåtet var som helst (ingen bas i arena1v1).
+  // Classic line wars: kräver att hjälten är i sin bas.
+  const isArenaPrep = (state.mode === 'arena1v1') && (state.phase === 'prep');
+  if (!isArenaPrep && !inSideBase(side.idx, side.hero.x, side.hero.z)) return;
   if (ev.kind === 'item') {
     const def = ITEM_TYPES[ev.item];
     if (!def) return;
@@ -5323,7 +5465,7 @@ function applyEvent(state, sideIdx, ev) {
       side.gold -= cost;
       existing.level += 1;
     }
-    recomputeSideStats(side);
+    if (isArenaPrep) recomputeArenaSideStats(state, side); else recomputeSideStats(side);
   } else if (ev.kind === 'minion') {
     const def = MINION_TYPES[ev.minionType];
     if (!def || !side.tierUnlocks[def.tier]) return;
@@ -6117,4 +6259,5 @@ module.exports = {
   tickGame,
   serializeState,
   applyEvent,
+  recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
 };
