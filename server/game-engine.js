@@ -57,6 +57,11 @@ const HERO_DEFS = {
   },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
+
+// Konstanta side-index-arrayer — undviker `[1,2]` literal-allokering i hot-paths
+// (30 Hz × N anrop = märkbar GC-tryck i Render free-tier Node). Frysta = immutable.
+const _SIDE_KEYS = Object.freeze([1, 2]);
+
 const PASSIVE_EVERY = 4;
 const PASSIVE_AOE_RADIUS = 2.0;
 
@@ -1392,12 +1397,12 @@ function tickGimluRageServer(state, side, dt) {
 }
 
 function tickArenaCombat(state, dt) {
-  for (const sideIdx of [1, 2]) {
+  for (const sideIdx of _SIDE_KEYS) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx] && state.lastInputs[sideIdx].j;
     if (j) applyMovement(side, j.x, j.z, dt);
   }
-  for (const sideIdx of [1, 2]) {
+  for (const sideIdx of _SIDE_KEYS) {
     const side = state.sides[sideIdx];
     const opp = state.sides[3 - sideIdx];
     updateSkillCooldowns(side, dt);
@@ -1540,7 +1545,7 @@ function startArenaRound(state, roundNum) {
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
   state.ready = { 1: false, 2: false };
-  for (const idx of [1, 2]) {
+  for (const idx of _SIDE_KEYS) {
     if (!state.talents[idx]) state.talents[idx] = { points: 0, chosen: [] };
     state.talents[idx].points += 1;                 // +1 talent-poäng/runda
   }
@@ -1554,7 +1559,7 @@ function transitionArenaToStarting(state) {
   state.phase = 'starting';
   state.startingTimer = ARENA_STARTING_DURATION;
   state.startingPhaseShown = '3';   // countdown-label klienten visar (3→2→1→FIGHT!)
-  for (const idx of [1, 2]) {
+  for (const idx of _SIDE_KEYS) {
     const s = state.sides[idx];
     const spawn = (idx === 1) ? ARENA1V1_SPAWN1 : ARENA1V1_SPAWN2;
     s.hero.x = spawn.x; s.hero.z = spawn.z;
@@ -1598,7 +1603,7 @@ function transitionArenaMatchEnd(state, winnerIdx) {
 // av server.js när host skickar a-sim-start. heroes = { 1: heroId, 2: heroId }.
 function initArenaMatch(heroes) {
   const state = createArenaState();
-  for (const idx of [1, 2]) {
+  for (const idx of _SIDE_KEYS) {
     const side = state.sides[idx];
     if (heroes && typeof heroes[idx] === 'string') {
       side.heroId = heroes[idx];
@@ -1633,7 +1638,7 @@ function tickArenaShrink(state, dt) {
   state.shrinkDamageAccum = (state.shrinkDamageAccum || 0) + dt;
   while (state.shrinkDamageAccum >= A_SHRINK_TICK_INTERVAL) {
     state.shrinkDamageAccum -= A_SHRINK_TICK_INTERVAL;
-    for (const idx of [1, 2]) {
+    for (const idx of _SIDE_KEYS) {
       const s = state.sides[idx];
       if (!s || s.hero.dead) continue;
       const dx = s.hero.x - 0;
@@ -1713,134 +1718,175 @@ function tickArena(state, dt) {
   }
 }
 
+// Persistent hero-snap-objekt per sida — muteras i stället för att allokeras 30 Hz.
+// Alla fält som kan vara undefined MÅSTE explicit sättas till undefined när inaktiva,
+// annars läcker stale-värden till nästa tick. Sk-objektet har ett eget persistent sub-objekt.
+// Optional-objekt (lp/lz/kComp/kCl) skapas fortfarande nytt när aktiva — de är sällan
+// aktiva och involverar olika fält beroende på state, vilket gör in-place-muttering farlig.
+function _makeHeroSnapBuf() {
+  return {
+    x: 0, z: 0, fx: 0, fz: 0, hp: 0, mh: 0, d: false,
+    sh: undefined, lv: 0, sk: { q: 0, f: 0, e: 0 }, hid: 'magiker',
+    ac: 0, g: undefined, ue: undefined, tnt: undefined, fzt: undefined,
+    fer: undefined, ibr: undefined, slm: undefined, slt: undefined,
+    asp: undefined, adm: undefined, wwr: undefined,
+    lp: undefined, lz: undefined, rg: undefined, bz: undefined,
+    lInv: undefined, kUlt: undefined, kJoints: undefined,
+    kComp: undefined, kCl: undefined,
+    tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
+  };
+}
+const _heroSnapBuf1 = _makeHeroSnapBuf();
+const _heroSnapBuf2 = _makeHeroSnapBuf();
+
 // Serialisera arena-side → heroSnap-form (matchar main.js heroSnap / klientens
 // applyHeroSnap). Läser engine:ns logiska side-state. Optional-fält utelämnas via
 // nz/nzr2 (klient läser `|| 0`). LEAP_TRAVEL_TIME finns ej här → använd leap.total.
-function serializeArenaHero(side) {
+// Perf: muterar _heroSnapBuf1/_heroSnapBuf2 på plats (undviker 2×30=60 obj-allok/sek).
+function serializeArenaHero(side, buf) {
   if (!side) return null;
   const leap = side.aragurnLeap;
-  return {
-    x: r2(side.hero.x), z: r2(side.hero.z),
-    fx: r3(side.hero.facingX), fz: r3(side.hero.facingZ),
-    hp: ri(side.hero.hp), mh: ri(side.hero.maxHp),
-    d: side.hero.dead,
-    sh: nzr2(side.shield),
-    lv: side.level,
-    sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
-    hid: side.heroId || 'magiker',
-    ac: side.attackCounter || 0,
-    g: nz(side.gold),
-    ue: nzr2(side.ultEnergy),
-    tnt: nzr2(side.hero.tauntedTime),
-    fzt: nzr2(side.hero.frozenTime),
-    fer: nzr2(side.heroFearTime),
-    ibr: nzr2(side.iceBlockRemaining),
-    slm: (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined,
-    slt: nzr2(side.heroSlowTime),
-    asp: nzr2(side.arenaSpeedBuff),
-    adm: nzr2(side.arenaDamageBuff),
-    wwr: nzr2(side.whirlwindRemaining),
-    lp: leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined,
-    // Ult-visual-state (klient renderar via tickArenaUltVisuals): laser-riktning,
-    // rage-timer, berserk-timer. Utelämnas (undefined) när inaktiv.
-    lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
-    rg: nzr2(side.rageRemaining),
-    bz: nzr2(side.berserkRemaining),
-    // Legolas Shadow Volley-invis + Kostefo Joint Avengers — saknades (drift från
-    // classic-serializern) → motståndaren såg varken Legolas-invis eller Kostefo-joints.
-    lInv: nzr2(side.legolusInvisRemaining),
-    kUlt: nzr2(side.kostefoUltRemaining),
-    kJoints: arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) })),
-    kComp: side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined,
-    kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined,
-    tx: r2(side.targetX || 0),
-    tz: r2(side.targetZ || 0),
-    aus: nz(side.auraStacks),
-    art: nzr2(side.auraResetTimer),
-    ads: nz(side.adStacks),
-  };
+  buf.x = r2(side.hero.x); buf.z = r2(side.hero.z);
+  buf.fx = r3(side.hero.facingX); buf.fz = r3(side.hero.facingZ);
+  buf.hp = ri(side.hero.hp); buf.mh = ri(side.hero.maxHp);
+  buf.d = side.hero.dead;
+  buf.sh = nzr2(side.shield);
+  buf.lv = side.level;
+  buf.sk.q = r2(side.skills.q.cd); buf.sk.f = r2(side.skills.f.cd); buf.sk.e = r2(side.skills.e.cd);
+  buf.hid = side.heroId || 'magiker';
+  buf.ac = side.attackCounter || 0;
+  buf.g = nz(side.gold);
+  buf.ue = nzr2(side.ultEnergy);
+  buf.tnt = nzr2(side.hero.tauntedTime);
+  buf.fzt = nzr2(side.hero.frozenTime);
+  buf.fer = nzr2(side.heroFearTime);
+  buf.ibr = nzr2(side.iceBlockRemaining);
+  buf.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined;
+  buf.slt = nzr2(side.heroSlowTime);
+  buf.asp = nzr2(side.arenaSpeedBuff);
+  buf.adm = nzr2(side.arenaDamageBuff);
+  buf.wwr = nzr2(side.whirlwindRemaining);
+  // Ult-visual-state: optional-objekt skapas nytt vid aktivering (men är sällan aktiva).
+  buf.lp = leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined;
+  buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
+  buf.rg = nzr2(side.rageRemaining);
+  buf.bz = nzr2(side.berserkRemaining);
+  buf.lInv = nzr2(side.legolusInvisRemaining);
+  buf.kUlt = nzr2(side.kostefoUltRemaining);
+  buf.kJoints = arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) }));
+  buf.kComp = side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined;
+  buf.kCl = (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined;
+  buf.tx = r2(side.targetX || 0);
+  buf.tz = r2(side.targetZ || 0);
+  buf.aus = nz(side.auraStacks);
+  buf.art = nzr2(side.auraResetTimer);
+  buf.ads = nz(side.adStacks);
+  return buf;
 }
 
 // Konstant tom array för power-ups (av, decision 073) — undviker ny allokering 30 Hz.
 const _ARENA_EMPTY_PU = [];
 Object.freeze(_ARENA_EMPTY_PU);
+// Konstant tom array används som fallback när arrOpt returnerar undefined (tom entitets-array).
+// Undviker `|| []` som skapar ny tom array-instans varje tick för inaktiva entitetstyper.
+// Aldrig muterad — arrOpt returnerar en NY array när entiteter finns, annars lämnar vi detta.
+const _ARENA_EMPTY_ARR = _ARENA_EMPTY_PU;   // samma fryst tomma array
+
+// Persistent snap-objekt: muteras i stället för att allokeras nytt 30 Hz.
+// JSON.stringify bryr sig inte om objektidentitet — samma objekt med nya värden
+// serialiseras identiskt mot ett nyskapat. Sparar ~40 objekt-allokeringar/tick + GC-tryck.
+// sub-objekten (o/bh/fw/nv/ab/kg/ks/vt/tp/hm/iwe) muteras likaså på plats.
+const _arenaSSnap = {
+  t: 'a-state',
+  ph: '', rn: 0, w: null, pt: 0, sst: 0, spl: false, et: 0,
+  rw: 0, mw: 0, rdy: null, tal: undefined,
+  o: { hp: 0, a: false, sp: 0 },
+  mp: 0, sr: 0, ft: 0, pu: _ARENA_EMPTY_PU,
+  h1: null, h2: null,
+  bh: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  fw: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  nv: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  ab: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  kg: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  ks: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  vt: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  tp: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  hm: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+};
+// Persistent talent-sub-objekt — allokeras bara under prep/roundEnd/matchEnd (ej 30 Hz i fight).
+// Dessa behöver fortfarande ny allokering (chosen.slice()) — acceptabelt (ej fight-hot-path).
+// Persistent orb-tal-containers för de tre faserna.
+const _arenaTalSnap = {
+  1: { p: 0, c: [] },
+  2: { p: 0, c: [] },
+};
 
 // Serialisera hela arena-state → a-state-meddelandet (matchar main.js
 // broadcastArenaState så klientens applyArenaState läser det oförändrat).
 // Entity-arrayerna byggs från LOGISKT state (server har ingen mesh) — fw/kg/ks
-// härleder ry från dx/dz. Power-ups av (073). TODO: ev. klient-reconcile-justering.
+// härleder ry från dx/dz. Power-ups av (073).
+// Perf: muterar _arenaSSnap på plats (undviker ~40 objekt-allokeringar/tick).
+// Klienten ser exakt samma fält-struktur som tidigare — ingen format-skillnad.
 function serializeArenaState(state) {
   const s1 = state.sides[1], s2 = state.sides[2];
-  return {
-    t: 'a-state',
-    ph: state.phase,
-    rn: state.roundNum,
-    w: state.wins,
-    pt: state.prepTimer,
-    sst: state.startingTimer,
-    spl: state.startingPhaseShown,
-    et: state.endTimer,
-    rw: state.roundWinner,
-    mw: state.matchWinner,
-    rdy: state.ready,
-    // tal skickas bara under prep/roundEnd/matchEnd (då talents kan ändras).
-    // Under fight/starting ändras de aldrig → klient behåller föregående snap.
-    // Undviker chosen.slice()-allokering vid 30 Hz under striden.
-    tal: (state.phase === 'prep' || state.phase === 'roundEnd' || state.phase === 'matchEnd') ? {
-      1: { p: state.talents[1].points, c: state.talents[1].chosen.slice() },
-      2: { p: state.talents[2].points, c: state.talents[2].chosen.slice() },
-    } : undefined,
-    o: { hp: state.orb.hp, a: state.orb.alive, sp: state.orb.spawnTimer },
-    mp: state.mapIdx || 0,
-    sr: r2(state.shrinkRadius || 0),
-    ft: r2(state.fightTimer || 0),
-    pu: _ARENA_EMPTY_PU,                        // power-ups av (decision 073) — konstant, ej ny allokering/tick
-    h1: serializeArenaHero(s1),
-    h2: serializeArenaHero(s2),
-    bh: {
-      1: arrOpt(s1.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || [],
-      2: arrOpt(s2.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || [],
-    },
-    fw: {
-      1: arrOpt(s1.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || [],
-      2: arrOpt(s2.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || [],
-    },
-    nv: {
-      1: arrOpt(s1.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || [],
-      2: arrOpt(s2.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || [],
-    },
-    ab: {
-      1: arrOpt(s1.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || [],
-      2: arrOpt(s2.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || [],
-    },
-    kg: {
-      1: arrOpt(s1.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || [],
-      2: arrOpt(s2.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || [],
-    },
-    ks: {
-      1: arrOpt(s1.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || [],
-      2: arrOpt(s2.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || [],
-    },
-    // Legolas vine traps + thorn pools, Gimlu hammers + iron-will-explosions.
-    // Tidigare ej broadcastade → osynliga för motståndaren (skadan beräknas dock).
-    // Klient: vt/tp reconcileras bara för MOTSTÅNDARsidan (egna är client-predikterade).
-    vt: {
-      1: arrOpt(s1.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || [],
-      2: arrOpt(s2.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || [],
-    },
-    tp: {
-      1: arrOpt(s1.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || [],
-      2: arrOpt(s2.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || [],
-    },
-    hm: {
-      1: arrOpt(s1.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || [],
-      2: arrOpt(s2.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || [],
-    },
-    iwe: {
-      1: arrOpt(s1.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || [],
-      2: arrOpt(s2.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || [],
-    },
-  };
+  const snap = _arenaSSnap;
+  snap.ph = state.phase;
+  snap.rn = state.roundNum;
+  snap.w = state.wins;
+  snap.pt = state.prepTimer;
+  snap.sst = state.startingTimer;
+  snap.spl = state.startingPhaseShown;
+  snap.et = state.endTimer;
+  snap.rw = state.roundWinner;
+  snap.mw = state.matchWinner;
+  snap.rdy = state.ready;
+  snap.mp = state.mapIdx || 0;
+  snap.sr = r2(state.shrinkRadius || 0);
+  snap.ft = r2(state.fightTimer || 0);
+  // tal skickas bara under prep/roundEnd/matchEnd (då talents kan ändras).
+  // Under fight/starting ändras de aldrig → klient behåller föregående snap.
+  // chosen.slice() allokerar bara under dessa faser (ej fight-hot-path).
+  if (state.phase === 'prep' || state.phase === 'roundEnd' || state.phase === 'matchEnd') {
+    _arenaTalSnap[1].p = state.talents[1].points;
+    _arenaTalSnap[1].c = state.talents[1].chosen.slice();
+    _arenaTalSnap[2].p = state.talents[2].points;
+    _arenaTalSnap[2].c = state.talents[2].chosen.slice();
+    snap.tal = _arenaTalSnap;
+  } else {
+    snap.tal = undefined;
+  }
+  // Orb: mutera sub-objektet på plats (undviker ny { hp,a,sp } allokering/tick)
+  snap.o.hp = state.orb.hp;
+  snap.o.a = state.orb.alive;
+  snap.o.sp = state.orb.spawnTimer;
+  // Hero-snapshots: muterar persistenta buffrar _heroSnapBuf1/_heroSnapBuf2.
+  snap.h1 = serializeArenaHero(s1, _heroSnapBuf1);
+  snap.h2 = serializeArenaHero(s2, _heroSnapBuf2);
+  // Entity-arrayer: arrOpt returnerar undefined om tom (nytt array bara vid aktiva entiteter).
+  // _ARENA_EMPTY_ARR = konstant fryst [] → JSON.stringify skriver "[]" utan ny allokering.
+  snap.bh[1] = arrOpt(s1.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+  snap.bh[2] = arrOpt(s2.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+  snap.fw[1] = arrOpt(s1.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
+  snap.fw[2] = arrOpt(s2.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
+  snap.nv[1] = arrOpt(s1.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
+  snap.nv[2] = arrOpt(s2.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
+  snap.ab[1] = arrOpt(s1.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+  snap.ab[2] = arrOpt(s2.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+  snap.kg[1] = arrOpt(s1.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
+  snap.kg[2] = arrOpt(s2.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
+  snap.ks[1] = arrOpt(s1.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
+  snap.ks[2] = arrOpt(s2.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
+  // Legolas vine traps + thorn pools, Gimlu hammers + iron-will-explosions.
+  snap.vt[1] = arrOpt(s1.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
+  snap.vt[2] = arrOpt(s2.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
+  snap.tp[1] = arrOpt(s1.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
+  snap.tp[2] = arrOpt(s2.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
+  snap.hm[1] = arrOpt(s1.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
+  snap.hm[2] = arrOpt(s2.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
+  snap.iwe[1] = arrOpt(s1.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
+  snap.iwe[2] = arrOpt(s2.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
+  return snap;
 }
 
 function checkMatchEnd(state) {
