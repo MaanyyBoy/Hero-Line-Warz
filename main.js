@@ -24742,9 +24742,11 @@ function applyArenaState(msg) {
   const _localTalentSide = APP.localSide;
   const _localChosenPrev = (arenaState.talents[_localTalentSide]?.chosen || []).slice();
   // Motståndarens sida(or): host är auktoritativ, skriv över direkt.
+  // msg.tal kan vara undefined (server skickar det bara under prep/roundEnd/matchEnd
+  // för att undvika slice()-allokering 30 Hz under fight). Null-guard alla tal-läsningar.
   for (const idx of [1, 2]) {
     if (idx === _localTalentSide) continue;
-    if (msg.tal[idx]) {
+    if (msg.tal && msg.tal[idx]) {
       arenaState.talents[idx].points = msg.tal[idx].p;
       arenaState.talents[idx].chosen = msg.tal[idx].c.slice();
     }
@@ -24752,7 +24754,7 @@ function applyArenaState(msg) {
   // Egen sida: jämför host-vy med lokal vy. Matchar de = accept host-punkter (täcker
   // +1 vid round-start). Skiljer de sig = behåll lokal chosen, re-skicka diff-actions
   // tills host hunnit applicera (idempotent på host-sidan).
-  if (msg.tal[_localTalentSide]) {
+  if (msg.tal && msg.tal[_localTalentSide]) {
     const hostChosen = msg.tal[_localTalentSide].c || [];
     const hostSet = new Set(hostChosen);
     const localSet = new Set(_localChosenPrev);

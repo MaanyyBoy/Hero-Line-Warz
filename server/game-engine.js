@@ -1203,7 +1203,9 @@ function createArenaState() {
     shrinkRadius: 0,
     mapIdx: 0,
     talents: { 1: { points: 0, chosen: [] }, 2: { points: 0, chosen: [] } },
-    orb: { hp: 0, alive: false, spawnTimer: 0 },
+    // x/z på orb-objektet sätts här en gång för alla — undviker ny position-wrapper
+    // i findClosestHostile varje tick (var { entity: { x,z,hp,maxHp }, ... } ).
+    orb: { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0, x: 0, z: ARENA1V1_Z },
   };
 }
 
@@ -1369,9 +1371,11 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.shrinkHitStacks = 0;
   if (side.skills) { if (side.skills.q) side.skills.q.cd = 0; if (side.skills.f) side.skills.f.cd = 0; if (side.skills.e) side.skills.e.cd = 0; }
   // Nolla combat-entiteter + buff-timers så varje runda startar fräsch (ej ult-energy)
+  // fireWaves + shatters är kort-livade FX men kan bridga till nästa runda vid round-end mitt i cast.
   for (const arr of ['projectiles', 'fireballs', 'blackHoles', 'vineTraps', 'hammers', 'novaEffects',
                      'bossProjectiles', 'bossPools', 'thornPools', 'ironWillExplosions',
-                     'kostefoGooseWaves', 'kostefoSliders', 'aragurnBanners', 'kostefoUltJoints']) {
+                     'kostefoGooseWaves', 'kostefoSliders', 'aragurnBanners', 'kostefoUltJoints',
+                     'fireWaves', 'shatters']) {
     if (Array.isArray(side[arr])) side[arr].length = 0;
   }
   side.whirlwindRemaining = 0;
@@ -1426,7 +1430,8 @@ function startArenaRound(state, roundNum) {
     if (!state.talents[idx]) state.talents[idx] = { points: 0, chosen: [] };
     state.talents[idx].points += 1;                 // +1 talent-poäng/runda
   }
-  state.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
+  // x/z behövs för AA-targeting (findClosestHostile/resolveTargetEntity läser target.x/z).
+  state.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0, x: 0, z: ARENA1V1_Z };
   _arenaResetHero(state, state.sides[1], ARENA1V1_SPAWN1, roundNum);
   _arenaResetHero(state, state.sides[2], ARENA1V1_SPAWN2, roundNum);
 }
@@ -1642,6 +1647,10 @@ function serializeArenaHero(side) {
   };
 }
 
+// Konstant tom array för power-ups (av, decision 073) — undviker ny allokering 30 Hz.
+const _ARENA_EMPTY_PU = [];
+Object.freeze(_ARENA_EMPTY_PU);
+
 // Serialisera hela arena-state → a-state-meddelandet (matchar main.js
 // broadcastArenaState så klientens applyArenaState läser det oförändrat).
 // Entity-arrayerna byggs från LOGISKT state (server har ingen mesh) — fw/kg/ks
@@ -1660,15 +1669,18 @@ function serializeArenaState(state) {
     rw: state.roundWinner,
     mw: state.matchWinner,
     rdy: state.ready,
-    tal: {
+    // tal skickas bara under prep/roundEnd/matchEnd (då talents kan ändras).
+    // Under fight/starting ändras de aldrig → klient behåller föregående snap.
+    // Undviker chosen.slice()-allokering vid 30 Hz under striden.
+    tal: (state.phase === 'prep' || state.phase === 'roundEnd' || state.phase === 'matchEnd') ? {
       1: { p: state.talents[1].points, c: state.talents[1].chosen.slice() },
       2: { p: state.talents[2].points, c: state.talents[2].chosen.slice() },
-    },
+    } : undefined,
     o: { hp: state.orb.hp, a: state.orb.alive, sp: state.orb.spawnTimer },
     mp: state.mapIdx || 0,
     sr: r2(state.shrinkRadius || 0),
     ft: r2(state.fightTimer || 0),
-    pu: [],                                    // power-ups av (decision 073)
+    pu: _ARENA_EMPTY_PU,                        // power-ups av (decision 073) — konstant, ej ny allokering/tick
     h1: serializeArenaHero(s1),
     h2: serializeArenaHero(s2),
     bh: {
@@ -2740,7 +2752,7 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
       const dx = 0 - x, dz = ARENA1V1_Z - z;
       const d2 = dx * dx + dz * dz;
       const bias = (best && best.isHero) ? ARENA_ORB_AA_BIAS_SQ : 0;
-      if (d2 + bias < bestDistSq) { bestDistSq = d2; best = { entity: { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp }, isMonster: false, isArenaOrb: true }; }
+      if (d2 + bias < bestDistSq) { bestDistSq = d2; best = { entity: state.orb, isMonster: false, isArenaOrb: true }; }
     }
     return best;
   }
@@ -2779,9 +2791,8 @@ function resolveTargetEntity(side, opp, state) {
     return null;
   }
   if (side.targetType === 'arenaOrb') {
-    if (side.inArena1v1 && state && state.orb && state.orb.alive) {
-      return { x: 0, z: ARENA1V1_Z, hp: state.orb.hp, maxHp: state.orb.maxHp };
-    }
+    // state.orb har x/z-fält (satta i createArenaState) — returnera objektet direkt.
+    if (side.inArena1v1 && state && state.orb && state.orb.alive) return state.orb;
     return null;
   }
   if (!side.targetId) return null;
@@ -2859,7 +2870,13 @@ function maintainTargetLock(side, opp, state) {
   }
   side.targetX = target.x;
   side.targetZ = target.z;
-  return { entity: target, isMonster, isHero, isDuelOrb, isArenaOrb };
+  // Återanvänd ett cachat result-objekt per side (undviker ny allokering 30 Hz).
+  // Fälten skrivs varje gång → ingen stale-data-risk. Objektet används bara
+  // under samma sync-tick av updateHeroAttack (ej async/multi-tick).
+  if (!side._aaTarget) side._aaTarget = { entity: null, isMonster: false, isHero: false, isDuelOrb: false, isArenaOrb: false };
+  const r = side._aaTarget;
+  r.entity = target; r.isMonster = isMonster; r.isHero = isHero; r.isDuelOrb = isDuelOrb; r.isArenaOrb = isArenaOrb;
+  return r;
 }
 
 function updateHeroAttack(state, side, opp, dt) {
@@ -2993,7 +3010,7 @@ function updateProjectiles(state, side, opp, dt) {
       tp = state.duelBigOrb;
     } else if (p.targetIsArenaOrb) {
       targetAlive = state.orb && state.orb.alive;
-      tp = targetAlive ? { x: 0, z: ARENA1V1_Z } : null;
+      tp = targetAlive ? state.orb : null;  // state.orb har x/z-fält — undviker ny allokering
     } else if (p.targetIsMonster) {
       targetAlive = side.monsters.includes(p.target);
       tp = p.target;
