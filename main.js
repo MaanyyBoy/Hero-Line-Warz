@@ -21270,7 +21270,7 @@ function updateKostefoMeshes(dt) {
         cj.rotation.z = -0.25 + Math.sin(tt * 5) * 0.10;
       }
     } else if (comp) {
-      scene.remove(comp);
+      disposeSrvUltMesh(comp);   // dispose geo+mat (var scene.remove → GPU-läcka per respawn)
       kostefoMeshTrack.companions.delete(idx);
     }
     // === Cannabis Cloud (E) ===
@@ -21303,7 +21303,7 @@ function updateKostefoMeshes(dt) {
         }
       }
     } else if (cloud) {
-      scene.remove(cloud);
+      disposeSrvUltMesh(cloud);   // dispose geo+mat (var scene.remove → GPU-läcka per E-cast)
       kostefoMeshTrack.clouds.delete(idx);
     }
     // === Joint Avengers (R) — 8 orbiting joints ===
@@ -21328,7 +21328,7 @@ function updateKostefoMeshes(dt) {
       }
       while (joints.length > side.kostefoUltJoints.length) {
         const jm = joints.pop();
-        scene.remove(jm);
+        disposeSrvUltMesh(jm);   // dispose geo+mat
       }
       const r = 2.2;       // större orbit-radie
       const tt = performance.now() / 1000;
@@ -21350,7 +21350,7 @@ function updateKostefoMeshes(dt) {
         jm.rotation.z = Math.sin(tt * 3 + i * 0.7) * 0.15;
       }
     } else if (joints) {
-      for (const jm of joints) scene.remove(jm);
+      for (const jm of joints) disposeSrvUltMesh(jm);   // dispose geo+mat (var scene.remove → GPU-läcka per ult)
       kostefoMeshTrack.joints.delete(idx);
     }
   }
@@ -24851,6 +24851,16 @@ function applyArenaState(msg) {
       hideArenaEnd();
       hideArenaCountdown();
       showArenaPrep();
+      // Belt-and-suspenders: tvinga reset av ult-visual-state vid prep (om en
+      // round-transition-snap råkar hoppa rg/bz=0-framen → kvar-skalad jätte-hjälte).
+      for (const _i of [1, 2]) {
+        const _s = sides[_i];
+        if (!_s) continue;
+        if (_s.mesh) _s.mesh.scale.set(1, 1, 1);
+        if (_s._srvLaserMesh) { disposeSrvUltMesh(_s._srvLaserMesh); _s._srvLaserMesh = null; }
+        if (_s._srvBerserkMesh) { disposeSrvUltMesh(_s._srvBerserkMesh); _s._srvBerserkMesh = null; }
+        _s._srvRageActive = false; _s._srvRageAccum = 0;
+      }
     } else if (arenaState.phase === 'starting') {
       hideArenaPrep();
       showArenaCountdown(arenaState.startingPhaseShown || '3');
@@ -29883,7 +29893,10 @@ function tickArenaUltVisuals(dt) {
         spawnShieldBurstFx(mx, mz, 0xffaa55);
         triggerCameraShake(0.30, 0.40);
       }
-      s._srvBerserkMesh.position.set(mx + 0.6, 0, mz);
+      // Offset åt hjältens facing-håll (var hårdkodat +X → svärdet hamnade på fel
+      // sida / genom kroppen när hjälten tittade åt -X, t.ex. team B).
+      const _bfx = s.hero.facingX || 0, _bfz = s.hero.facingZ || 1;
+      s._srvBerserkMesh.position.set(mx + _bfx * 0.6, 0, mz + _bfz * 0.6);
       s._srvBerserkMesh.rotation.y = s.mesh.rotation.y;
     } else if (s._srvBerserkMesh) {
       disposeSrvUltMesh(s._srvBerserkMesh);
@@ -29898,25 +29911,30 @@ function tickAragurnVisuals(dt) {
   for (const idx of idxs) {
     const s = sides[idx];
     if (!s || !s.mesh) continue;
+    if (s.heroId !== 'aragurn') continue;   // whirlwind/leap är aragurn-only — hoppa övriga
+    // FX-ankare = mesh-position (motståndarens mesh interpoleras ~100ms bakom
+    // s.hero.x/z; FX vid raw-snap-pos skulle hamna offset framför kroppen).
+    const ax = s.mesh.position.x, az = s.mesh.position.z;
     // Whirlwind: spin hero-mesh snabbt under whirlwindRemaining > 0
     if ((s.whirlwindRemaining || 0) > 0) {
       s.mesh.rotation.y += dt * 18;
-      // Spawn aura-puff då och då för "spin"-känsla
+      // Spawn aura-puff då och då för "spin"-känsla (0.16s = halverad FX-takt mot
+      // tidigare 0.08 → färre combatFx-meshes, ingen frame-spik på mobil).
       s._wwSpawnAccum = (s._wwSpawnAccum || 0) + dt;
-      if (s._wwSpawnAccum > 0.08) {
+      if (s._wwSpawnAccum > 0.16) {
         s._wwSpawnAccum = 0;
-        spawnSkillCastFx(s.hero.x, s.hero.z, 0xffe399, 1.6);
+        spawnSkillCastFx(ax, az, 0xffe399, 1.6);
       }
       // Triggra cast-fx vid start (delta-detection)
       if (!s._wwActive) {
         s._wwActive = true;
-        spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffd34a);
+        spawnShieldBurstFx(ax, az, 0xffd34a);
         triggerCameraShake(0.15, 0.18);
       }
       // Snurra Kenney twirl-disk + sync pos med hero (whirlwind kan röra sig)
       if (s._whirlwindTwirlMesh) {
-        s._whirlwindTwirlMesh.position.x = s.hero.x;
-        s._whirlwindTwirlMesh.position.z = s.hero.z;
+        s._whirlwindTwirlMesh.position.x = ax;
+        s._whirlwindTwirlMesh.position.z = az;
         s._whirlwindTwirlMesh.rotation.z += dt * 6;
       }
     } else if (s._wwActive) {
@@ -29936,8 +29954,8 @@ function tickAragurnVisuals(dt) {
       s.mesh.position.y = Math.sin(u * Math.PI) * peakY;
       if (!s._leapActive) {
         s._leapActive = true;
-        spawnSkillCastFx(s.hero.x, s.hero.z, 0xff8844, 1.4);
-        spawnShieldBurstFx(s.hero.x, s.hero.z, 0xffaa66);
+        spawnSkillCastFx(ax, az, 0xff8844, 1.4);
+        spawnShieldBurstFx(ax, az, 0xffaa66);
         // Landnings-indikator vid målet — bara på joinaren (host:ens
         // aragurnLeap har en egen .indicator; joinarens synkade shape har tx).
         if (s.aragurnLeap && s.aragurnLeap.tx !== undefined) {
@@ -29982,30 +30000,40 @@ function tickProjectileEntitySpins(dt) {
   }
 }
 
+// Dispose en combatFx-entry (GPU geo+mat + fxLight + scene.remove). GC frigör INTE
+// GPU-buffrar — bara .dispose() gör det. Varje fx skapar nya geometrier → säkert.
+function _disposeCombatFxEntry(e) {
+  if (e.kind === 'kenneyFx' && e.mesh) {
+    // Kenney-fx: Sprite-material disposas; geometrin bara om ground-plan
+    // (Sprite delar intern geometri). Textur är shared → ej disposad.
+    if (e.mesh.material) e.mesh.material.dispose();
+    if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
+  } else if (e.mesh) {
+    e.mesh.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+  if (e.fxLight) releaseFxLight(e.fxLight);
+  if (e.mesh) scene.remove(e.mesh);
+}
+
+const COMBAT_FX_CAP = 140;
 function tickCombatFx(dt) {
+  // Hård cap: vid FX-flod (t.ex. Whirlwind-puffar + rage-burst samtidigt) släpp
+  // äldsta entries så combatFx aldrig växer obegränsat → ingen frame-spik på mobil.
+  while (combatFx.length > COMBAT_FX_CAP) {
+    const old = combatFx.shift();
+    if (old) { _disposeCombatFxEntry(old); _leakBump(_leakDiag.disposedByKind, old.kind || 'capped'); }
+  }
   for (let i = combatFx.length - 1; i >= 0; i--) {
     const e = combatFx[i];
     e.life -= dt;
     if (e.life <= 0) {
-      if (e.kind === 'kenneyFx' && e.mesh) {
-        // Kenney-fx: Sprite-material disposas; geometrin bara om ground-plan
-        // (Sprite delar intern geometri). Textur är shared → ej disposad.
-        if (e.mesh.material) e.mesh.material.dispose();
-        if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
-      } else if (e.mesh) {
-        // Alla andra fx-typer: dispose geometry + material. GC frigör INTE
-        // GPU-buffrar — bara .dispose() gör det. Varje fx skapar nya
-        // geometrier/material → säkert att disposa (inget delas mellan fx).
-        e.mesh.traverse(o => {
-          if (o.geometry) o.geometry.dispose();
-          if (o.material) {
-            if (Array.isArray(o.material)) o.material.forEach(m => m && m.dispose());
-            else o.material.dispose();
-          }
-        });
-      }
-      if (e.fxLight) releaseFxLight(e.fxLight);
-      scene.remove(e.mesh);
+      _disposeCombatFxEntry(e);
       combatFx.splice(i, 1);
       _leakBump(_leakDiag.disposedByKind, e.kind || 'unknown');
       continue;
