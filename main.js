@@ -9237,13 +9237,15 @@ function updateShrinkVignette() {
       outside = (ddx * ddx + ddz * ddz) > r * r;
     }
   }
+  // Skriv DOM bara vid förändring (var skrivning 60×/sek annars — onödig DOM-touch).
   if (!outside) {
-    if (shrinkVignetteEl) shrinkVignetteEl.style.opacity = '0';
+    if (shrinkVignetteEl && _shrinkVigState !== '0') { shrinkVignetteEl.style.opacity = '0'; _shrinkVigState = '0'; }
     return;
   }
   ensureShrinkVignette();
-  shrinkVignetteEl.style.opacity = '1';
+  if (_shrinkVigState !== '1') { shrinkVignetteEl.style.opacity = '1'; _shrinkVigState = '1'; }
 }
+let _shrinkVigState = '';
 
 function tickShrinkCircle(dt) {
   // Aktivera efter SHRINK_START_DELAY sekunder i fight-fasen
@@ -16807,6 +16809,11 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
 // → mjukt, ingen gissning. Pris: ~100 ms visuell fördröjning på motspelaren.
 const ARENA_INTERP_DELAY = 0.10;        // sek att rendera motspelaren bakom "nu"
 const ARENA_SNAP_BUFFER_MAX = 16;       // max buffrade snapshots (~0.5 s @ 30 Hz)
+const ARENA_SNAP_PACE = 1 / 30;         // jämn buffert-spacing (server-tick = 30 Hz)
+// Jitter-buffer-klocka: buffert-entries tidsstämplas med en JÄMNT pace:ad klocka
+// i st f rå ankomsttid → nätverks-jitter (snaps som anländer ojämnt) blir inte
+// hackig interpolation. max(prev+pace, now): tidiga snaps pace:as, sena/gap resyncar.
+let _arenaBufClock = 0;
 const ARENA_SNAP_TELEPORT_DIST2 = 6.25; // (2.5 m)² — större hopp = blink/teleport
 
 // Pushar en mottagen hero-snapshot till mesh._snapBuf (ringbuffer). Första
@@ -17936,17 +17943,23 @@ function updateCamera(dt) {
   const off = (APP.gameMode === 'arena1v1') ? ARENA_CAMERA_OFFSET
             : (APP.gameMode === 'bosswars') ? BOSSWARS_CAMERA_OFFSET
             : cameraOffset;
-  const desiredX = hero.x + off.x * sign;
+  // I arena server-auth glider lokala hjältens MESH mjukt över reconErr medan
+  // hero.x hård-sätts vid reconcile → följ mesh.position så kamera+hjälte rör sig
+  // som en enhet (annars mikro-hopp i kameran vid varje liten korrigering).
+  const _lhMesh = sides[APP.localSide].mesh;
+  const srcX = (_lhMesh && APP.gameMode === 'arena1v1') ? _lhMesh.position.x : hero.x;
+  const srcZ = (_lhMesh && APP.gameMode === 'arena1v1') ? _lhMesh.position.z : hero.z;
+  const desiredX = srcX + off.x * sign;
   const desiredY = off.y;
-  const desiredZ = hero.z + off.z * sign;
+  const desiredZ = srcZ + off.z * sign;
   // ~50 ms halflife — kameran följer responsivt men utan ryck
   const lerpK = 1 - Math.pow(0.5, dt / 0.05);
   camera.position.x += (desiredX - camera.position.x) * lerpK;
   camera.position.y += (desiredY - camera.position.y) * lerpK;
   camera.position.z += (desiredZ - camera.position.z) * lerpK;
-  cameraTarget.x += (hero.x - cameraTarget.x) * lerpK;
+  cameraTarget.x += (srcX - cameraTarget.x) * lerpK;
   cameraTarget.y += (0.8 - cameraTarget.y) * lerpK;
-  cameraTarget.z += (hero.z - cameraTarget.z) * lerpK;
+  cameraTarget.z += (srcZ - cameraTarget.z) * lerpK;
   // Camera-shake: random offset som fade:as ut över duration
   if (cameraShake.duration > 0) {
     cameraShake.elapsed += dt;
@@ -18155,7 +18168,11 @@ function tickPerfMeter(dt) {
   const avg = sum / Math.max(1, _perfFrames.length);
   const ms = avg * 1000;
   const fps = avg > 0 ? (1 / avg) : 0;
-  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1);
+  // Värsta frame i fönstret (~60 frames) — avslöjar mikro-stutter/GC-spikar som
+  // medel-ms döljer. Format: "16.7 / 48w" (snitt-ms / värsta-frame-ms).
+  let worst = 0;
+  for (const v of _perfFrames) { if (v > worst) worst = v; }
+  if (perfMsEl) perfMsEl.textContent = ms.toFixed(1) + ' / ' + (worst * 1000).toFixed(0) + 'w';
   if (perfFpsEl) perfFpsEl.textContent = Math.round(fps);
   // Bar-fill: 100% när vi når 60 fps (16.67ms), skalar ner när frame-time växer
   if (perfBarFillEl) {
@@ -22562,6 +22579,20 @@ function refreshShopUI() {
   if (!side) return;
   const inBase = !side.hero.dead && inSideBase(side.idx, side.hero.x, side.hero.z);
 
+  // Tidig retur när shoppen inte ska visas (t.ex. hela arena-fight-fasen) — annars
+  // byggdes ALL shop-HTML (hero-cells, 5 tier-btns, 6 minion-btns, clone) om via
+  // innerHTML 10×/sek i onödan = dyraste DOM-jobbet i hot-path. Perf-fix.
+  {
+    const _isArenaPrep = APP.gameMode === 'arena1v1' && arenaState.phase === 'prep';
+    const _isBossWars = APP.gameMode === 'bosswars';
+    const _showShop = !_isBossWars && (_isArenaPrep || (inBase && APP.gameMode !== 'arena1v1'));
+    if (!_showShop) {
+      if (shopContainerEl) shopContainerEl.classList.remove('visible');
+      collapseShopPanels(); updateShopBackdrop();
+      return;
+    }
+  }
+
   // Auto-byt till lägsta upplåsta tier om vald är låst
   if (!side.tierUnlocks[shopState.selectedTier]) {
     for (let t = 5; t >= 1; t--) if (side.tierUnlocks[t]) { shopState.selectedTier = t; break; }
@@ -24411,7 +24442,8 @@ function applyHeroSnap(side, snap) {
         // Fas 3: buffrad snapshot-interpolation — pusha snapshot till
         // ringbuffer; interpolateHeroSnapBuffer renderar ~100 ms bakom "nu"
         // mellan två faktiskt mottagna positioner (ingen extrapolation).
-        pushHeroSnapToBuffer(side.mesh, _nowSec, snap.x, snap.z, heroRy);
+        // Pace:ad klocka (_arenaBufClock) i st f rå now → jämn buffert-spacing.
+        pushHeroSnapToBuffer(side.mesh, (_arenaBufClock || _nowSec), snap.x, snap.z, heroRy);
       } else {
         // Classic / boss-wars: _target-baserad velocity-extrapolation
         // (decision 044). smoothEntityMeshes lerpar mesh.position mot _target.
@@ -24804,7 +24836,13 @@ function applyArenaState(msg) {
     spawnShieldBurstFx(ARENA_CFG.orb.x, ARENA_CFG.orb.z, 0x88ffdd);
     triggerCameraShake(0.4, 0.45);
   }
-  // Hero-snapshots
+  // Hero-snapshots. Advancera jitter-buffer-klockan EN gång per snap (h1+h2 delar
+  // samma tidsstämpel = samma server-tick). Pace:ad så ojämn ankomst ej ger hack.
+  {
+    const _nowS = performance.now() / 1000;
+    _arenaBufClock = Math.max((_arenaBufClock || 0) + ARENA_SNAP_PACE, _nowS);
+    if (_arenaBufClock > _nowS + 0.15) _arenaBufClock = _nowS;   // resync vid patologisk burst
+  }
   applyHeroSnap(sides[1], msg.h1);
   applyHeroSnap(sides[2], msg.h2);
   // Route B: rendera host:ens riktiga skill-effekt-entiteter. disposeOnRemove=
