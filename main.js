@@ -13693,10 +13693,21 @@ function spawnProjectileTrailPuff(x, y, z, color) {
 
 // Solo skill-helpers
 function soloResolveSkillGroundTarget(side, ev, maxDistance) {
-  if (ev && ev.tap === true && side.targetId) {
+  // Quick-cast (tap): sikta automatiskt enligt prioritet 1→2→3.
+  if (ev && ev.tap === true) {
     const opp = sides[3 - side.idx];
-    const t = resolveTargetEntity(side, opp);
-    if (t && t.mesh) return { x: t.mesh.position.x, z: t.mesh.position.z };
+    // Prioritet 1: aktuellt auto-attack-target (alltid prioriterat).
+    if (side.targetId) {
+      const t = resolveTargetEntity(side, opp);
+      if (t && t.mesh) return { x: t.mesh.position.x, z: t.mesh.position.z };
+    }
+    // Prioritet 2: ingen AA-target → närmaste giltiga fiende inom skill-räckvidd.
+    // Återanvänder findClosestHostile (samma val som Attack-knappen) → förutsägbart.
+    const near = findClosestHostile(side, side.hero.x, side.hero.z, maxDistance);
+    if (near && near.entity && near.entity.mesh) {
+      return { x: near.entity.mesh.position.x, z: near.entity.mesh.position.z };
+    }
+    // Prioritet 3: ingen fiende i range → falla igenom till riktning/facing nedan.
   }
   let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
   const len = Math.hypot(dx, dz);

@@ -2845,11 +2845,21 @@ function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
 // Lös ut cast-mark (x,z) för target-baserade skills (Nova, Black Hole)
 function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
   let tx, tz;
-  // Tap + lock: använd target's position
-  if (ev.tap === true && side.targetId) {
-    const t = resolveTargetEntity(side, opp, state);
-    if (t) { tx = t.x; tz = t.z; }
+  // Quick-cast (tap): sikta automatiskt enligt prioritet 1→2→3.
+  if (ev.tap === true) {
+    // Prioritet 1: aktuellt auto-attack-target (alltid prioriterat).
+    if (side.targetId) {
+      const t = resolveTargetEntity(side, opp, state);
+      if (t) { tx = t.x; tz = t.z; }
+    }
+    // Prioritet 2: ingen AA-target → närmaste giltiga fiende inom skill-räckvidd
+    // (samma val som auto-attack-acquisition → förutsägbart, mode-medvetet).
+    if (tx === undefined) {
+      const near = findClosestHostile(side, opp, side.hero.x, side.hero.z, defaultDistance, state);
+      if (near && near.entity) { tx = near.entity.x; tz = near.entity.z; }
+    }
   }
+  // Prioritet 3: ingen tap-target → riktning/facing (drag eller default framåt).
   if (tx === undefined) {
     // Drag: dir × distance × mag (drag-fraktion 0.3..1) från hero.
     // Min-clamp på 0.3 säkerställer att drag aldrig kastar skill ovanpå
