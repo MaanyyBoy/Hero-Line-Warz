@@ -2021,6 +2021,7 @@ function createBossWarsState(tier) {
     duelActive: false,
     gateClosed: false,        // korridor-gate (stängs när alla inne i boss-rummet, slice 4)
     bossActivated: false,
+    bossProjectiles: [], bossPools: [],   // boss skill-projektiler (directional) + DoT-pooler (slice 2c)
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } } },
     matchState: { gameOver: false, winner: 0 },
   };
@@ -2206,6 +2207,61 @@ function nearestLiveHero(state, x, z) {
   }
   return best;
 }
+// ===== BOSS PROJEKTILER + POOLS (slice 2c) =====
+// Port av main.js spawnBossProjectile/tickBossProjectiles/spawnPoolDot/tickBossPools, mesh-refs
+// borttagna. Ligger på state (boss-global). Serialiseras (bp/bpl) så klienterna ser dem.
+function spawnBossWarsProjectile(state, boss, x, z, dx, dz, skill) {
+  state.bossProjectiles.push({
+    id: state.nextEntityId++, x, z, dx, dz,
+    speed: skill.speed || 14,
+    damage: bossEffectiveDamage(boss) * (skill.dmgMul || 1),
+    radius: skill.radius || 0.8, range: skill.range || 14, traveled: 0,
+  });
+}
+function tickBossWarsProjectiles(state, dt) {
+  const arr = state.bossProjectiles;
+  if (!arr) return;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const p = arr[i];
+    const step = p.speed * dt;
+    p.x += p.dx * step; p.z += p.dz * step; p.traveled += step;
+    let hit = false;
+    for (const tgt of bossWarsTargets(state)) {
+      if (tgt.hero.dead) continue;
+      if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius + 0.45) { damageHero(tgt, p.damage); hit = true; break; }
+    }
+    if (hit || p.traveled > p.range) arr.splice(i, 1);
+  }
+}
+function spawnBossWarsPool(state, boss, x, z, radius, duration, dpsMul, slow) {
+  state.bossPools.push({
+    id: state.nextEntityId++, x, z, radius,
+    life: duration, maxLife: duration,
+    dps: bossEffectiveDamage(boss) * dpsMul, tickAccum: 0, slow: slow || null,
+  });
+}
+function tickBossWarsPools(state, dt) {
+  const arr = state.bossPools;
+  if (!arr) return;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const p = arr[i];
+    p.life -= dt; p.tickAccum += dt;
+    if (p.tickAccum >= 0.5) {
+      p.tickAccum -= 0.5;
+      for (const tgt of bossWarsTargets(state)) {
+        if (tgt.hero.dead) continue;
+        if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius) {
+          damageHero(tgt, p.dps * 0.5);
+          if (p.slow) {
+            tgt.heroSlowMul = Math.min(tgt.heroSlowMul != null ? tgt.heroSlowMul : 1, p.slow.mul);
+            tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, p.slow.dur);
+          }
+        }
+      }
+    }
+    if (p.life <= 0) arr.splice(i, 1);
+  }
+}
 function cancelBossWarsCast(state, boss) { boss.activeCast = null; }
 function finishBossWarsCast(state, boss) {
   const cast = boss.activeCast;
@@ -2264,7 +2320,28 @@ function bossWarsExecuteSkill(state, boss, cast) {
     cast.timer = s.sustainDuration; cast.extras = { done: false, damageTimer: 0 };
     return;
   }
-  // projectile/projectileMulti/poolDot = slice 2c (boss-skapade entiteter) → stub klar nu.
+  if (s.kind === 'projectile') {
+    spawnBossWarsProjectile(state, boss, cast.originX, cast.originZ, cast.dirX, cast.dirZ, s);
+    cast.timer = 0.05; cast.extras = { done: true };
+    return;
+  }
+  if (s.kind === 'projectileMulti') {
+    const count = s.count || 3, spread = s.spreadAngle || Math.PI / 6;
+    const baseAng = Math.atan2(cast.dirX, cast.dirZ);
+    for (let i = 0; i < count; i++) {
+      const off = count === 1 ? 0 : (-spread / 2 + spread * i / (count - 1));
+      const ang = baseAng + off;
+      spawnBossWarsProjectile(state, boss, cast.originX, cast.originZ, Math.sin(ang), Math.cos(ang), s);
+    }
+    cast.timer = 0.05; cast.extras = { done: true };
+    return;
+  }
+  if (s.kind === 'poolDot') {
+    spawnBossWarsPool(state, boss, cast.targetX, cast.targetZ, s.radius, s.duration, s.dpsMul, s.slow);
+    cast.timer = 0.3; cast.extras = { done: true };
+    return;
+  }
+  // Okänd kind → no-op done (boss fastnar ej).
   cast.timer = 0.1; cast.extras = { done: true };
 }
 function tickBossWarsExecute(state, boss, cast, dt) {
@@ -2464,6 +2541,8 @@ function tickBossWars(state, dt) {
   // 3) Boss-aktivering (alla inne → vakna + gate) + boss-AI (rörelse + AA) + boss-projektiler.
   maybeActivateBossWars(state);
   tickBossWarsBoss(state, dt);
+  tickBossWarsProjectiles(state, dt);
+  tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
 }
 
@@ -2482,6 +2561,7 @@ const _bwSnap = {
   h: { 1: null, 2: null, 3: null },
   mr: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   b: null,
+  bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR,   // boss skill-projektiler + pooler (slice 2c)
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -2499,6 +2579,9 @@ function serializeBossWarsState(state) {
   snap.mr[1] = arrOpt(state.sides[1] && state.sides[1].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
   snap.mr[2] = arrOpt(state.sides[2] && state.sides[2].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
   snap.mr[3] = arrOpt(state.sides[3] && state.sides[3].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
+  // Boss skill-projektiler (directional) + DoT-pooler → klient reconciliear + renderar (slice 2c-client).
+  snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
+  snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
   const boss = state.boss;
   if (boss) {
     const o = _bwBossBuf;
