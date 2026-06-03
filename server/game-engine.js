@@ -1961,7 +1961,18 @@ function serializeArenaState(state) {
 // sides[1].monsters (isBossWarsBoss) precis som klientens buildBossWarsSnap läser den.
 // ADDITIVT — inget anropar detta än (server.js wirar in i slice 0d). Boss-AI/skills/ads
 // portas slice 2-4; HÄR bara state + STATISK boss för att validera pipelinen (slice 0).
-const BOSSWARS_TIER_HP = { 1: 5000, 2: 8000, 3: 12000, 4: 18000, 5: 26000 };  // bas-hp (×3 raid-buff vid spawn, matchar spawnBossWarsBoss)
+const BOSSWARS_TIER_HP = { 1: 5000, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  // bas-hp (×3 raid-buff vid spawn). MATCHAR BOSS_WARS_DEFS.
+const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.5 };    // matchar BOSS_WARS_DEFS
+const BOSSWARS_TIER_SPEED = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };       // matchar spawnBossWarsBoss
+const BOSSWARS_TIER_PHASE_THRESH = { 1: 0.5, 2: 0.5, 3: 0.5, 4: 0.3, 5: 0.3 };
+const BOSSWARS_TIER_AA = {
+  1: { kind: 'bw_goblinArrow', range: 8.5, interval: 1.2, travel: 0.6 },
+  2: { kind: 'bw_warlockOrb',  range: 8.0, interval: 1.4, travel: 0.9 },
+  3: { kind: 'bw_alienPlasma', range: 7.5, interval: 1.3, travel: 0.8 },
+  4: { kind: 'bw_demonHeart',  range: 7.0, interval: 1.5, travel: 1.0 },
+  5: { kind: 'bw_starshard',   range: 9.0, interval: 1.2, travel: 0.7 },
+};
+const BOSSWARS_TIER_DR = { 1: 0.10, 2: 0.15, 3: 0.20, 4: 0.25, 5: 0.30 };  // base-DR per tier (decision 110)
 const BOSSWARS_HERO_SPAWNS = {
   1: { x: BW_SPAWN_ROOM_CX,     z: BW_SPAWN_ROOM_CZ },
   2: { x: BW_SPAWN_ROOM_CX - 3, z: BW_SPAWN_ROOM_CZ + 4 },
@@ -1998,13 +2009,22 @@ function createBossWarsState(tier) {
   // x/z direkt på objektet (server har ingen mesh); raid-buff ×3 matchar spawnBossWarsBoss.
   const bossHp = Math.round(BOSSWARS_TIER_HP[t] * 3.0);
   const bossId = state.nextEntityId++;
+  const aa = BOSSWARS_TIER_AA[t];
   const boss = {
     id: bossId, isBossWarsBoss: true, isBoss: true,
     x: BOSSWARS_CX, z: BOSSWARS_CZ,
     hp: bossHp, maxHp: bossHp,
     bossPhase: 1, phaseTransitionRemaining: 0, aaCount: 0,
     activeCast: null, bossTier: t,
-    speed: 0, damage: 0, chasing: false,   // statisk tills boss-AI portas
+    // Combat-stats (mirror spawnBossWarsBoss): dmg = 42 × dmgScale × 1.5 (raid +50%).
+    speed: BOSSWARS_TIER_SPEED[t],
+    damage: Math.round(42 * BOSSWARS_TIER_DMGSCALE[t] * 1.5),
+    attackType: 'range', attackRange: aa.range, attackInterval: aa.interval,
+    projTime: aa.travel, projKind: aa.kind, atkCd: 0,
+    phaseThreshold: BOSSWARS_TIER_PHASE_THRESH[t],
+    // Boss-DR-fält (decision 110) — wrapper-applicering wiras slice 2b.
+    dmgReductionBase: BOSSWARS_TIER_DR[t], dmgReductionStep: 0.05,
+    dmgReductionStepIntervalSec: 120, dmgReductionCap: 0.70, spawnTime: 0,
   };
   sides[1].monsters.push(boss);
   sides[1].bossWarsBossId = bossId;
@@ -2030,8 +2050,72 @@ function initBossWarsMatch(heroes, tier) {
   }
   return state;
 }
-// Boss-wars top-tick. SLICE 1a: hjälte-rörelse + AA-combat mot bossen (3 co-op-hjältar).
-// Boss-AI/skills/CC/faser/ads wiras slice 1b-4. Matchar server.js gameLoopTick (tickArena).
+// Boss-rummet (cirkel) — aktiverings-check (alla levande heroes inne → boss vaknar).
+function isInsideBossRoom(x, z) {
+  const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
+  const r = BOSSWARS_RADIUS - 0.5;
+  return (dx * dx + dz * dz) < r * r;
+}
+// Aktivera bossen + stäng korridor-gaten när ALLA levande heroes är inne i boss-rummet.
+function maybeActivateBossWars(state) {
+  if (state.bossActivated) return;
+  let anyAlive = false, allInside = true;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    anyAlive = true;
+    if (!isInsideBossRoom(s.hero.x, s.hero.z)) { allInside = false; break; }
+  }
+  if (anyAlive && allInside) { state.bossActivated = true; state.gateClosed = true; }
+}
+// Boss-AA-projektil mot specifik hjälte (homing via bossTargetIdx i updateMonsterProjectiles).
+// Ligger i sides[1].monsterProjectiles → serialiseras i mr[1], renderas av klient (projKind-mesh).
+function spawnBossAaProjectile(state, boss, targetIdx) {
+  const travel = boss.projTime || 0.8;
+  state.sides[1].monsterProjectiles.push({
+    id: state.nextEntityId++,
+    x: boss.x, y: MONSTER_PROJ_Y, z: boss.z,
+    srcX: boss.x, srcZ: boss.z,
+    damage: boss.damage || 40,
+    timer: travel, totalTime: travel,
+    kind: boss.projKind || 'magic',
+    isBoss: true,
+    bossTargetIdx: targetIdx,
+  });
+}
+// Boss-AI slice 2a: rörelse (jaga närmaste levande hjälte) + AA. Skill-statemaskin = slice 2b,
+// faser = slice 3. Tickas 1× per frame (ej per-side) i tickBossWars.
+function tickBossWarsBoss(state, dt) {
+  const boss = state.boss;
+  if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  let target = null, bestSq = Infinity;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    const dx = s.hero.x - boss.x, dz = s.hero.z - boss.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestSq) { bestSq = d2; target = s; }
+  }
+  if (!target) return;
+  const dist = Math.sqrt(bestSq) || 0.0001;
+  const atkRange = boss.attackRange || 7.5;
+  // Rörelse: jaga om utanför ~90% av attack-range; annars stå och skjut.
+  if (dist > atkRange * 0.9) {
+    const ux = (target.hero.x - boss.x) / dist, uz = (target.hero.z - boss.z) / dist;
+    const nx = boss.x + ux * boss.speed * dt, nz = boss.z + uz * boss.speed * dt;
+    if (isBossWarsWalkable(nx, nz, state.gateClosed)) { boss.x = nx; boss.z = nz; }
+  }
+  // AA (range): homing-projektil mot target-hjälten.
+  boss.atkCd = Math.max(0, (boss.atkCd || 0) - dt);
+  if (dist < atkRange && boss.atkCd <= 0) {
+    boss.atkCd = boss.attackInterval || 1.4;
+    boss.aaCount = (boss.aaCount || 0) + 1;   // delta-detect → klient triggar attack-anim + charge-FX
+    spawnBossAaProjectile(state, boss, target.idx);
+  }
+}
+
+// Boss-wars top-tick. SLICE 1a-2a: hjälte-rörelse/combat + boss-aktivering + boss-rörelse/AA.
+// Boss-skill-statemaskin = slice 2b, faser = slice 3. Matchar server.js gameLoopTick (tickArena).
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
   // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
@@ -2113,6 +2197,10 @@ function tickBossWars(state, dt) {
       s.hero.hp = Math.min(s.hero.maxHp, s.hero.hp + s.hero.maxHp * s.healPerSecPct * dt);
     }
   }
+  // 3) Boss-aktivering (alla inne → vakna + gate) + boss-AI (rörelse + AA) + boss-projektiler.
+  maybeActivateBossWars(state);
+  tickBossWarsBoss(state, dt);
+  updateMonsterProjectiles(state, state.sides[1], dt);
 }
 
 // Persistenta boss-wars-snap-buffrar (muteras, ej allokeras 30 Hz — som arena).
@@ -2976,17 +3064,20 @@ function updateMonsterProjectiles(state, side, dt) {
   if (!side.monsterProjectiles) return;
   for (let i = side.monsterProjectiles.length - 1; i >= 0; i--) {
     const p = side.monsterProjectiles[i];
+    // Boss-wars boss-AA homar mot en SPECIFIK hjälte (bossTargetIdx), ej side.hero.
+    // bossTargetIdx undefined → klassiskt beteende (side.hero), bakåtkompatibelt.
+    const tgt = (p.bossTargetIdx != null) ? state.sides[p.bossTargetIdx] : side;
     // Hjälte död/borta: projektil försvinner utan damage
-    if (!side.hero || side.hero.dead) { side.monsterProjectiles.splice(i, 1); continue; }
+    if (!tgt || !tgt.hero || tgt.hero.dead) { side.monsterProjectiles.splice(i, 1); continue; }
     p.timer = Math.max(0, p.timer - dt);
     // Lerp position från src till hjältens nuvarande pos så missilen ser ut
     // att tracka målet. (Auto-hit — matchar existerande creepProjectile-mönster.)
     const elapsed = p.totalTime - p.timer;
     const t = p.totalTime > 0 ? Math.min(1, elapsed / p.totalTime) : 1;
-    p.x = p.srcX + (side.hero.x - p.srcX) * t;
-    p.z = p.srcZ + (side.hero.z - p.srcZ) * t;
+    p.x = p.srcX + (tgt.hero.x - p.srcX) * t;
+    p.z = p.srcZ + (tgt.hero.z - p.srcZ) * t;
     if (p.timer <= 0) {
-      damageHero(side, p.damage);
+      damageHero(tgt, p.damage);
       side.monsterProjectiles.splice(i, 1);
     }
   }
