@@ -700,6 +700,41 @@ function isCreepPos(x, z) {
   return inLaneWide(14.4) || inLaneWide(4.8) || inLaneWide(-4.8) || inLaneWide(-14.4);
 }
 
+// ===== BOSS WARS — arena-walkability (server-auth Fas 2, decision 122) =====
+// Layout-konstanter speglade EXAKT från main.js (boss-rum + korridor + spawn-rum)
+// så servern matchar klientens isBossWarsPos byte-för-byte — annars rubber-band
+// (buggmönster #9: geometri-antaganden). Samma namn som klienten för port-trohet.
+// ADDITIVT — oanropat tills tickBossWars/applyMovement wirar in det (slice 0/1).
+const BOSSWARS_CX = 0, BOSSWARS_CZ = 90, BOSSWARS_RADIUS = 36, BOSSWARS_FLOOR_Y = 0.42;
+const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;            // -36 (boss-rummets västsida)
+const BW_CORRIDOR_LENGTH = 26, BW_CORRIDOR_WIDTH = 9;
+const BW_CORRIDOR_HALF_W = BW_CORRIDOR_WIDTH / 2;             // 4.5
+const BW_CORRIDOR_X_MIN = BOSS_GATE_X - BW_CORRIDOR_LENGTH;   // -62
+const BW_CORRIDOR_X_MAX = BOSS_GATE_X;                        // -36
+const BW_SPAWN_ROOM_SIZE = 24, BW_SPAWN_ROOM_HALF = BW_SPAWN_ROOM_SIZE / 2;  // 12
+const BW_SPAWN_ROOM_CX = BW_CORRIDOR_X_MIN - BW_SPAWN_ROOM_HALF;  // -74
+const BW_SPAWN_ROOM_CZ = BOSSWARS_CZ;                             // 90
+const BW_GATE_THICKNESS = 0.5;
+// Spegel av main.js isBossWarsPos. gateClosed passas explicit (engine har ingen APP-global).
+function isBossWarsWalkable(x, z, gateClosed) {
+  // 1) Gate-block: stängd gate spärrar korridor-utgången in i boss-rummet.
+  if (gateClosed) {
+    const inGateBand = Math.abs(x - BOSS_GATE_X) < (BW_GATE_THICKNESS / 2 + 0.45);
+    const inGateZ = Math.abs(z - BOSSWARS_CZ) < (BW_CORRIDOR_HALF_W + 0.4);
+    if (inGateBand && inGateZ) return false;
+  }
+  // 2) Spawn-rum (kvadrat västra sidan)
+  const sdx = x - BW_SPAWN_ROOM_CX, sdz = z - BW_SPAWN_ROOM_CZ;
+  if (Math.abs(sdx) < BW_SPAWN_ROOM_HALF - 0.5 && Math.abs(sdz) < BW_SPAWN_ROOM_HALF - 0.5) return true;
+  // 3) Korridor (med 6m overlap in i boss-rummet)
+  if (x >= BW_CORRIDOR_X_MIN - 0.5 && x <= BW_CORRIDOR_X_MAX + 6 &&
+      Math.abs(z - BOSSWARS_CZ) < BW_CORRIDOR_HALF_W - 0.3) return true;
+  // 4) Boss-rum: cirkel oavsett tier-shape
+  const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
+  const r = BOSSWARS_RADIUS - 0.5;
+  return (dx * dx + dz * dz) < r * r;
+}
+
 // === Helpers ===
 function itemDefForEntry(entry) {
   const root = ITEM_TYPES[entry.itemId];
