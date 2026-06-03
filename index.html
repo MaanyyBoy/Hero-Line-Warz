@@ -575,11 +575,11 @@
       min-width: 52px; text-align: right;
     }
     #stats-panel .sp-row .sp-plus {
-      width: 28px; height: 28px;
+      width: 44px; height: 44px;
       border-radius: 50%;
       background: linear-gradient(135deg, #ffd34a 0%, #ff9c1a 100%);
       color: #1a1a2a;
-      font: 800 18px/28px system-ui, sans-serif;
+      font: 800 22px/44px system-ui, sans-serif;
       text-align: center;
       border: none;
       box-shadow: 0 2px 6px rgba(0,0,0,0.5);
@@ -596,13 +596,14 @@
     }
     #stats-panel .sp-row .sp-plus:active:not(:disabled) { transform: scale(0.92); }
     #stats-panel .sp-close {
-      position: absolute; top: 5px; right: 8px;
-      width: 22px; height: 22px;
+      position: absolute; top: 4px; right: 6px;
+      width: 32px; height: 32px;
       border-radius: 50%;
       background: rgba(60,80,140,0.7);
       border: 1px solid rgba(180,200,255,0.55);
       color: #fff;
-      font: 700 12px/1 system-ui, sans-serif;
+      font: 700 16px/30px system-ui, sans-serif;
+      text-align: center;
       cursor: pointer;
       pointer-events: auto;
     }
@@ -3181,6 +3182,7 @@
       transform: translateY(-50%);
       width: min(700px, 68vw);
       max-height: 96vh;
+      max-height: 96dvh;  /* dvh: exkluderar iOS Safari-chrome (vh-fallback ovan) */
       display: none;
       z-index: 250;
     }
@@ -3197,6 +3199,7 @@
       /* Scrollbart innehåll så ALLA talents/items syns även i landscape på phone.
          Begränsa till viewport-höjd, läs förflutna med inner scroll. */
       max-height: 96vh;
+      max-height: 96dvh;
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
@@ -3360,8 +3363,9 @@
       position: fixed;
       top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: min(800px, 95vw);
+      width: min(800px, calc(100vw - var(--sai-left) - var(--sai-right) - 24px), 95vw);
       max-height: 96vh;
+      max-height: 96dvh;
       display: none;
       z-index: 260;
     }
@@ -3377,7 +3381,9 @@
       color: #fff;
       font: 13px/1.4 system-ui, sans-serif;
       max-height: 96vh;
+      max-height: 96dvh;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     #amv-header {
       display: flex; justify-content: space-between; align-items: center;

@@ -263,7 +263,7 @@ function handleArenaMessage(room, fromWs, envelope) {
     }
     if (t === 'a-talent') {
       const sideIdx = (fromWs === room.host) ? 1 : 2;
-      const tal = room.game.talents && room.game.talents[sideIdx];
+      const tal = room.game && room.game.talents && room.game.talents[sideIdx];
       if (tal) {
         const id = payload.talentId;
         if (payload.remove) { const i = tal.chosen.indexOf(id); if (i >= 0) { tal.chosen.splice(i, 1); tal.points++; } }

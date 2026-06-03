@@ -8191,6 +8191,9 @@ function updateArenaPowerUpMeshes(dt) {
     }
     return;
   }
+  // Vanligaste fallet (power-ups avstängda, decision 073): tom lista + inga
+  // meshes → bail innan vi allokerar ett Set varje frame.
+  if (arenaState.powerUps.length === 0 && arenaPowerUpMeshes.size === 0) return;
   const seen = new Set();
   for (const pu of arenaState.powerUps) {
     seen.add(pu.id);
@@ -8935,6 +8938,11 @@ function resetArenaState() {
     4: { points: 0, chosen: [] },
   };
   arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
+  // Power-up-state: teardown ska spegla setup (transitionArenaToFight sätter dem
+  // per fight, men resetArenaState ska nolla så inget leakar mellan matcher).
+  arenaState.powerUps = [];
+  arenaState.powerUpSpawnTimer = 0;
+  arenaState._powerUpNextId = 1;
   arenaState.endTimer = 0;
   arenaState.roundWinner = 0;
   arenaState.matchWinner = 0;
@@ -9042,6 +9050,15 @@ function startArenaRound(roundNum) {
     s.aragurnAllyShoutBuff = 0;
     s.aragurnShoutDebuff = 0;
     s.aragurnShoutHealRemaining = 0;
+    // CC/debuff-fält på hero: nollas vid round-start, annars leakar de in i nästa
+    // fight (frozen/slow/taunt/fear/iceblock/dot/poison tickar inte under prep
+    // eftersom simulateAll pausar utanför fight). Speglar serverns _arenaResetHero.
+    s.hero.frozenTime = 0;
+    s.hero.tauntedTime = 0; s.hero.tauntedBy = 0;
+    s.hero.dotRemaining = 0; s.hero.poisonRemaining = 0; s.hero.poisonStacks = 0;
+    s.heroFearTime = 0;
+    s.heroSlowTime = 0; s.heroSlowMul = 1;
+    s.iceBlockRemaining = 0;
     if (s.mesh) s.mesh.scale.set(1, 1, 1);
     // Rensa kvar-stående projektiler/aktiva ult-effekter från förra rundan
     if (s.bigArrows && s.bigArrows.length) {
@@ -9174,7 +9191,7 @@ function checkArenaRoundEnd() {
   const aAlive = aMembers.some(s => !s.hero.dead);
   const bAlive = bMembers.some(s => !s.hero.dead);
   if (!aAlive && !bAlive) { transitionArenaRoundEnd(0); return; }
-  if (!aAlive) { transitionArenaRoundEnd(2); return; }     // team B vinner (rep idx)
+  if (!aAlive && aMembers.length > 0) { transitionArenaRoundEnd(2); return; }  // team B vinner (rep idx)
   if (!bAlive && bMembers.length > 0) { transitionArenaRoundEnd(1); return; }  // team A vinner
 }
 
@@ -24767,8 +24784,14 @@ function applyArenaState(msg) {
   if (msg.sr !== undefined) arenaState.shrinkRadius = msg.sr;
   if (msg.ft !== undefined) arenaState.fightTimer = msg.ft;
   // Power-ups: ersätt hela listan från snap (host-auth). Klient mesh-render
-  // i updateArenaPowerUpMeshes per frame reconciliear via id.
-  arenaState.powerUps = (msg.pu || []).map(p => ({ id: p.id, x: p.x, z: p.z, type: p.t }));
+  // i updateArenaPowerUpMeshes per frame reconciliear via id. Undvik att
+  // allokera en ny array varje snapshot (30 Hz) när listan är tom (avstängt).
+  if (!Array.isArray(arenaState.powerUps)) arenaState.powerUps = [];
+  if (msg.pu && msg.pu.length) {
+    arenaState.powerUps = msg.pu.map(p => ({ id: p.id, x: p.x, z: p.z, type: p.t }));
+  } else if (arenaState.powerUps.length) {
+    arenaState.powerUps.length = 0;
+  }
   // Använd numeriska keys för wins/ready så vi inte blandar med strings efter JSON-roundtrip
   arenaState.wins[1] = (msg.w && msg.w[1]) || 0;
   arenaState.wins[2] = (msg.w && msg.w[2]) || 0;
@@ -24926,7 +24949,9 @@ function applyArenaState(msg) {
       }
     } else if (arenaState.phase === 'starting') {
       hideArenaPrep();
-      showArenaCountdown(arenaState.startingPhaseShown || '3');
+      // -1 = intern sentinel ("visa 3 först") → får aldrig renderas som "-1".
+      const _spl = arenaState.startingPhaseShown;
+      showArenaCountdown((_spl == null || _spl === -1 || _spl === '') ? '3' : _spl);
     } else if (arenaState.phase === 'starting-end') {
       // FIGHT! visas
       showArenaCountdown('FIGHT!', true);
