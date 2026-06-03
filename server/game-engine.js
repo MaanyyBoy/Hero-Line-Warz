@@ -2619,6 +2619,24 @@ function tickBossWars(state, dt) {
   tickBossWarsProjectiles(state, dt);
   tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
+  checkBossWarsEnd(state);   // boss död → spelarna vinner (server.js stoppar loop + skickar b-end)
+}
+// Match-slut: boss död → spelarna vinner. (Lose-villkor = slice 4: wipe/time.)
+// OBS: classic checkMatchEnd (torn-logik) får EJ anropas för boss wars.
+function checkBossWarsEnd(state) {
+  if (state.matchState.gameOver) return;
+  if (state.boss && state.boss.hp <= 0) {
+    state.matchState.gameOver = true;
+    state.matchState.winner = 1;   // 1 = spelarna vann (boss död)
+    return;
+  }
+  // Lose: ALLA levande sides döda (wipe). OBS: hero-respawn = slice 4 → utan respawn
+  // triggar detta vid första tillfälle alla 3 är döda samtidigt.
+  const heroes = [state.sides[1], state.sides[2], state.sides[3]].filter(Boolean);
+  if (heroes.length > 0 && heroes.every(h => h.hero.dead)) {
+    state.matchState.gameOver = true;
+    state.matchState.winner = 2;   // 2 = bossen vann
+  }
 }
 
 // Persistenta boss-wars-snap-buffrar (muteras, ej allokeras 30 Hz — som arena).

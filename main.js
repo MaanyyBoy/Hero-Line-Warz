@@ -17929,7 +17929,8 @@ function checkMatchEnd() {
     if (!s) return;
     if (!s.bossWarsBossId) return;
     // MP co-op: förlust = ALLA hjältar är döda (klassisk raid). Vinst = boss död.
-    if (bossMpState.matchActive) {
+    // Server-auth: servern (checkBossWarsEnd) äger match-slut + skickar b-end → skippa lokalt.
+    if (bossMpState.matchActive && !APP.bossServerAuth) {
       const heroes = [sides[1], sides[2], sides[3]].filter(Boolean);
       const allDead = heroes.length > 0 && heroes.every(h => h.hero.dead);
       const bossAlive = s.monsters.some(m => m.isBossWarsBoss);
@@ -24244,9 +24245,9 @@ function handleNetworkMessage(msg) {
     if (idx === 2 || idx === 3) bossMpState.remoteInput[idx] = msg;
     return;
   }
-  if (msg.t === 'b-end' && bossMpState.active && bossMpState.role === 'client') {
-    // Host detekterade match-slut → klient triggar samma end-screen.
-    // Konvention: winner=1 = spelaren vann, winner=2 = bossen vann.
+  if (msg.t === 'b-end' && bossMpState.active && (bossMpState.role === 'client' || APP.bossServerAuth)) {
+    // Server (eller host-auth-host) detekterade match-slut → end-screen. Server-auth: ALLA peers
+    // (inkl host) får b-end från servern. Konvention: winner=1 = spelaren vann, winner=2 = bossen.
     matchState.gameOver = true;
     matchState.gameWon = !!msg.won;
     matchState.winner = msg.won ? 1 : 2;

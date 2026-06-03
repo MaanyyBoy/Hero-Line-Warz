@@ -173,7 +173,17 @@ function gameLoopTick(room) {
   // Arena: matchen slut → stoppa loopen (slut-staten broadcastades just ovan, så
   // klienterna fick phase='matchEnd'). Utan detta tickar ett avslutat arena-rum i
   // 30 Hz tills spelarna lämnar = onödig CPU. (Bug-hunter-fynd, decision 120.)
-  if ((_isArena || _isBoss) && room.game && room.game.matchState.gameOver) { stopGame(room); return; }
+  if ((_isArena || _isBoss) && room.game && room.game.matchState.gameOver) {
+    // Boss wars: signalera match-slut till ALLA peers innan simmen stoppas (server-auth).
+    if (_isBoss && !room.bossEndSent) {
+      room.bossEndSent = true;
+      const endMsg = JSON.stringify({ t: 'msg', d: { t: 'b-end', won: room.game.matchState.winner === 1 } });
+      if (room.host && room.host.readyState === 1) { try { room.host.send(endMsg); } catch (_) {} }
+      if (room.client && room.client.readyState === 1) { try { room.client.send(endMsg); } catch (_) {} }
+      if (room.clients) for (const c of room.clients) { if (c && c.readyState === 1) { try { c.send(endMsg); } catch (_) {} } }
+    }
+    stopGame(room); return;
+  }
   room.nextTickAt += TICK_INTERVAL_MS;
   if (room.nextTickAt < now - TICK_INTERVAL_MS * 2) room.nextTickAt = now + TICK_INTERVAL_MS;
   scheduleNextTick(room);
