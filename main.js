@@ -23487,8 +23487,7 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
   // SAMMA vine trap/dash en gång till → dubbla cirklar 2-3 m isär. Skippa den
   // i det fallet — den explicita spawnen nedan gör hela visualen (inkl cast-fx).
   const isArenaLegolasQE = isArenaMpClient && side.heroId === 'legolas' && (key === 'q' || key === 'e');
-  if (!isArenaLegolasQE && (isArenaMpClient || isClassicMp ||
-      (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))) {
+  if (!isArenaLegolasQE && (isArenaMpClient || isClassicMp || bossActsAsClient())) {
     triggerClientVisualSkill(side, key);
   }
   // Klient-prediktion i arena MP för Legolas Q (vine trap) + E (dash). Host broadcastar
@@ -23666,12 +23665,12 @@ function spawnClientLocalDash(side, worldDx, worldDz) {
 }
 
 function sendOrApplyEvent(ev) {
-  // Boss Wars MP-klient: events buffras och skickas till host i b-input
-  if (bossMpState.matchActive && bossMpState.role === 'client') {
+  // Boss Wars MP-klient ELLER server-auth-host (agerar klient): buffra → b-input till servern.
+  if (bossMpState.matchActive && (bossMpState.role === 'client' || APP.bossServerAuth)) {
     bossMpState.pendingEvents.push(ev);
     return;
   }
-  // Boss Wars MP-host: applicera lokalt (host kör auth-sim)
+  // Boss Wars MP-host (HOST-AUTH): applicera lokalt (host kör auth-sim)
   if (bossMpState.matchActive && bossMpState.role === 'host') {
     applyEvent(sides[APP.localSide], ev);
     return;
@@ -23743,6 +23742,9 @@ function isArenaMp() { return APP.gameMode === 'arena1v1' && (APP.mode === 'host
 // servern simulerar, så de skickar input/casts + följer a-state och kör INGEN lokal sim.
 // (I host-auth är bara den faktiska klienten "client"; host simulerar.)
 function arenaActsAsClient() { return isArenaMp() && (APP.mode === 'client' || APP.arenaServerAuth); }
+function isBossMp() { return APP.gameMode === 'bosswars' && bossMpState.matchActive; }
+// Server-auth boss (Fas 2): host agerar klient (input+prediction+apply, ingen lokal sim/broadcast).
+function bossActsAsClient() { return isBossMp() && (bossMpState.role === 'client' || APP.bossServerAuth); }
 
 function flushClientInput() {
   if (!isMpMode() || !wsOpen()) return;
@@ -23881,8 +23883,8 @@ function broadcastBossWarsState() {
 }
 
 function applyBossWarsState(msg) {
-  // Bara klienter applicerar denna; host kör auth-sim
-  if (bossMpState.role !== 'client' || !bossMpState.matchActive) return;
+  // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
+  if (!bossActsAsClient()) return;
   // Boss-aktivering + gate-state (synkad från host)
   if (msg.ba !== undefined || msg.gc !== undefined) {
     applyBossWarsActivationFromSnap(msg.ba, msg.gc);
@@ -24031,7 +24033,7 @@ function applyBossWarsState(msg) {
 
 // Klient → host: skicka local input (joystick + events) ~45 Hz
 function sendBossWarsInput() {
-  if (bossMpState.role !== 'client' || !bossMpState.matchActive) return;
+  if (!bossActsAsClient()) return;   // server-auth-host skickar också input till servern
   if (!wsOpen()) {
     // WS nere — släng buffrade events så pendingEvents inte växer obegränsat
     bossMpState.pendingEvents = [];
@@ -24065,7 +24067,7 @@ function sendBossWarsInput() {
 
 // Host: applicera mottagen klient-input i simulateAll-loopen
 function applyBossWarsRemoteInputs(dt) {
-  if (bossMpState.role !== 'host' || !bossMpState.matchActive) return;
+  if (bossMpState.role !== 'host' || !bossMpState.matchActive || APP.bossServerAuth) return;
   for (const idx of [2, 3]) {
     const ri = bossMpState.remoteInput[idx];
     const s = sides[idx];
@@ -24201,8 +24203,8 @@ function handleNetworkMessage(msg) {
     maybeLaunchBossMp();
     return;
   }
-  if (msg.t === 'b-state' && bossMpState.active && bossMpState.role === 'client' && bossMpState.matchActive) {
-    _netPending.boss = msg;   // teknik E: buffra (latest-wins), applicera i tick()
+  if (msg.t === 'b-state' && bossMpState.active && (bossMpState.role === 'client' || APP.bossServerAuth) && bossMpState.matchActive) {
+    _netPending.boss = msg;   // teknik E: buffra (latest-wins), applicera i tick() — server-auth-host konsumerar också
     _netDiag.recv++; _netDiag._frameRecv++;
     return;
   }
@@ -24359,7 +24361,7 @@ function applyHeroSnap(side, snap) {
   const isLocalMpClient = (
     side.idx === APP.localSide &&
     (arenaActsAsClient() ||     // decision 120: server-auth host predikterar egen hjälte (ingen rubber-band)
-     (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars'))
+     bossActsAsClient())        // decision 122 Fas 2: server-auth boss-host reconciliar egen hjälte (annars rubber-band)
   );
   // isMpClientForVisuals = true om vi inte kör simuleringen lokalt och därför
   // behöver delta-detection för att visa fx från andra spelares casts. Gäller
@@ -24368,7 +24370,7 @@ function applyHeroSnap(side, snap) {
   const isClassicMpForVis = (APP.mode === 'host' || APP.mode === 'client') && APP.gameMode === 'classic';
   const isMpClientForVisuals = (
     arenaActsAsClient() ||      // decision 120: server-auth host behöver också delta-FX
-    (bossMpState && bossMpState.matchActive && bossMpState.role === 'client' && APP.gameMode === 'bosswars') ||
+    bossActsAsClient() ||       // decision 122 Fas 2: server-auth boss-host behöver delta-FX (andras casts)
     isClassicMpForVis
   );
   // Capture prev values för delta-detection (AA-fire, skill-cast, ult-cast)
@@ -27344,6 +27346,7 @@ function enterPlayPhase() {
   matchState._startTime = performance.now();
   matchState._lbReported = false;
   APP.arenaServerAuth = false;   // decision 120: sätts true nedan bara för arena MP (server-auth)
+  APP.bossServerAuth = false;    // decision 122 Fas 2: sätts true nedan bara för boss wars MP (server-auth)
   document.body.classList.add('in-game');
   // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
@@ -27472,6 +27475,18 @@ function enterPlayPhase() {
         swapHeroMeshIfNeeded(s);
       }
     }
+    // Server-auth (Fas 2, decision 122): servern kör boss-simmen. Host blir klient
+    // (ingen lokal sim/broadcast); alla peers konsumerar serverns b-state. Mirror av arena.
+    if (bossMpState.matchActive) {
+      APP.bossServerAuth = true;
+      if (bossMpState.role === 'host') {
+        sendGameMsg({ t: 'b-sim-start', tier: APP.bossWars.tier || 1, heroes: {
+          1: (sides[1] && sides[1].heroId) || 'magiker',
+          2: sides[2] && sides[2].heroId,
+          3: sides[3] && sides[3].heroId,
+        } });
+      }
+    }
     // Spawn-positioner: alla 3 hjältar i spawn-rummet, nära varandra.
     // Triangulär uppställning så de inte överlappar. Bossen är öster om
     // korridor + gate och inaktiv tills alla 3 är inne i boss-rummet.
@@ -27530,8 +27545,9 @@ function enterPlayPhase() {
         s.mesh.userData.bossWarsScaled = true;
       }
     }
-    // Spawna boss — bara host (eller solo) gör det. Klienter får boss via b-state.
-    const isMpClient = bossMpState.matchActive && bossMpState.role === 'client';
+    // Spawna boss — bara solo (host-auth) gör det lokalt. Klienter OCH server-auth-host
+    // får bossen via b-state (applyBossWarsState → spawnBossWarsBoss från serverns msg.b).
+    const isMpClient = bossMpState.matchActive && (bossMpState.role === 'client' || APP.bossServerAuth);
     if (!isMpClient) {
       spawnBossWarsBoss(sides[1], APP.bossWars.tier || 1);
     }
@@ -30673,8 +30689,9 @@ function tick() {
   // Boss Wars MP-klient: ingen lokal sim, bara input + render av host's state.
   // MEN: klient kör applyMovement lokalt för EGEN hjälte (prediction) så
   // input-rörelse känns omedelbar trots ~150 ms RTT till host.
-  const isBossMpClient = bossMpState.matchActive && bossMpState.role === 'client';
-  const isBossMpHost = bossMpState.matchActive && bossMpState.role === 'host';
+  // Server-auth (Fas 2): host agerar klient (ingen lokal sim, ingen broadcast) → isBossMpClient.
+  const isBossMpClient = bossMpState.matchActive && (bossMpState.role === 'client' || APP.bossServerAuth);
+  const isBossMpHost = bossMpState.matchActive && bossMpState.role === 'host' && !APP.bossServerAuth;
   if (isBossMpClient) {
     tickLocalPrediction(dt);
     if (now - bossMpState.lastInputSent > INPUT_SEND_INTERVAL) {
