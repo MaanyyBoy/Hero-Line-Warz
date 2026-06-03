@@ -2027,6 +2027,27 @@ function tickBossWars(state, dt) {
     updateSkillCooldowns(s, dt);
     if (!s.hero.dead) updateHeroAttack(state, s, null, dt);
     updateProjectiles(state, s, null, dt);
+    // Self-state-tick (mirror tickArenaCombat 1483-1506): ult-energy, lockout, buff-
+    // timers, CC-nedräkning (boss CC:ar heroes i slice 2 — utan detta fastnar CC permanent),
+    // regen (healPerSecPct-talent/item). Allt opp-oberoende → säkert i co-op.
+    if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
+    if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
+    if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
+    if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
+    if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
+    if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
+    if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
+    if ((s.hero.dotRemaining || 0) > 0) s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt);
+    if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
+    if ((s.heroSlowTime || 0) > 0) {
+      s.heroSlowTime = Math.max(0, s.heroSlowTime - dt);
+      if (s.heroSlowTime <= 0) { s.heroSlowTime = 0; s.heroSlowMul = 1; }
+    }
+    if ((s.heroFearTime || 0) > 0) s.heroFearTime = Math.max(0, s.heroFearTime - dt);
+    if ((s.iceBlockRemaining || 0) > 0) s.iceBlockRemaining = Math.max(0, s.iceBlockRemaining - dt);
+    if (!s.hero.dead && (s.healPerSecPct || 0) > 0 && s.hero.hp < s.hero.maxHp) {
+      s.hero.hp = Math.min(s.hero.maxHp, s.hero.hp + s.hero.maxHp * s.healPerSecPct * dt);
+    }
   }
 }
 
@@ -3239,7 +3260,7 @@ function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
   // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block).
-  if (side.inArena1v1 && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
   const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
@@ -5426,7 +5447,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
-  if (side.inArena1v1 && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   const strength = Math.min(1, mag);
@@ -5435,7 +5456,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   side.hero.facingZ = ndz;
   // Slow (Kostefo Slider / Aragurn Shout / Gimlu Hammer lvl5) — appliceras nu på
   // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
-  const slowMul = (side.inArena1v1 && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
+  const slowMul = ((side.inArena1v1 || side.inBossWars) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
