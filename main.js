@@ -23882,6 +23882,34 @@ function broadcastBossWarsState() {
   sendGameMsg(snap);
 }
 
+// Boss skill-projektil-mesh (slice 2c-client) — head+tail, pekar i färdriktningen (e.dx/dz).
+function makeBossWarsProjectileMesh(e) {
+  const grp = new THREE.Group();
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0xff4422, emissive: 0xff3311, emissiveIntensity: 1.4 }));
+  grp.add(head);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.7, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7 }));
+  tail.rotation.x = Math.PI / 2; tail.position.z = -0.5;
+  grp.add(tail);
+  if (e && e.dx !== undefined) grp.rotation.y = Math.atan2(e.dx, e.dz);
+  grp.position.y = 1.5;
+  return grp;
+}
+// Boss DoT-pool-mesh (slice 2c-client) — ring + disk, dimensionerad av e.r (radius).
+function makeBossWarsPoolMesh(e) {
+  const radius = (e && e.r) || 4;
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.85, radius, 36),
+    new THREE.MeshBasicMaterial({ color: 0x66dd33, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; grp.add(ring);
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius, 32),
+    new THREE.MeshBasicMaterial({ color: 0x66dd33, transparent: true, opacity: 0.40, side: THREE.DoubleSide, depthWrite: false }));
+  disk.rotation.x = -Math.PI / 2; grp.add(disk);
+  grp.position.y = 0.48;   // boss-wars-golv (0.42) + liten offset
+  return grp;
+}
+
 function applyBossWarsState(msg) {
   // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
   if (!bossActsAsClient()) return;
@@ -23911,6 +23939,9 @@ function applyBossWarsState(msg) {
       }, true);
     }
   }
+  // Boss skill-projektiler (bp) + DoT-pooler (bpl) — slice 2c-client. Boss-globala → idx 1.
+  if (msg.bp) clientReconcileEntities(1, 'bossProjectiles', msg.bp, makeBossWarsProjectileMesh, true);
+  if (msg.bpl) clientReconcileEntities(1, 'bossPools', msg.bpl, makeBossWarsPoolMesh, true);
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
   if (msg.b && sides[1]) {
     const hostSide = sides[1];
