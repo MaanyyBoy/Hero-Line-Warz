@@ -1973,15 +1973,17 @@ function createBossWarsState(tier) {
   // x/z direkt på objektet (server har ingen mesh); raid-buff ×3 matchar spawnBossWarsBoss.
   const bossHp = Math.round(BOSSWARS_TIER_HP[t] * 3.0);
   const bossId = state.nextEntityId++;
-  sides[1].monsters.push({
+  const boss = {
     id: bossId, isBossWarsBoss: true, isBoss: true,
     x: BOSSWARS_CX, z: BOSSWARS_CZ,
     hp: bossHp, maxHp: bossHp,
     bossPhase: 1, phaseTransitionRemaining: 0, aaCount: 0,
     activeCast: null, bossTier: t,
     speed: 0, damage: 0, chasing: false,   // statisk tills boss-AI portas
-  });
+  };
+  sides[1].monsters.push(boss);
   sides[1].bossWarsBossId = bossId;
+  state.boss = boss;   // direkt-ref för serialisering (undviker .find per 30 Hz-tick)
   return state;
 }
 function initBossWarsMatch(heroes, tier) {
@@ -2010,6 +2012,51 @@ function tickBossWars(state, dt) {
     const j = (inp && inp.j) || { x: 0, z: 0 };
     applyMovement(s, j.x, j.z, dt);
   }
+}
+
+// Persistenta boss-wars-snap-buffrar (muteras, ej allokeras 30 Hz — som arena).
+const _bwHeroBuf1 = _makeHeroSnapBuf();
+const _bwHeroBuf2 = _makeHeroSnapBuf();
+const _bwHeroBuf3 = _makeHeroSnapBuf();
+const _bwMapMr = (p) => ({ id: p.id, x: r2(p.x), z: r2(p.z), kind: p.kind });
+const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, c: undefined };
+const _bwSnap = {
+  t: 'b-state',
+  ba: false, gc: false, tr: 1,
+  h: { 1: null, 2: null, 3: null },
+  mr: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  b: null,
+};
+// Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
+// FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
+// oförändrat: ba/gc, h[1..3] (serializeArenaHero=applyHeroSnap-form), mr[1..3] projektiler,
+// b{x,z,hp,mh,ph,pt,aac,c}, tr. Boss-cast (c) serialiseras i slice 2 (telegraph/execute);
+// här undefined (statisk boss). Muterar _bwSnap på plats (ingen 30 Hz-allokering).
+function serializeBossWarsState(state) {
+  const snap = _bwSnap;
+  snap.ba = !!state.bossActivated;
+  snap.gc = !!state.gateClosed;
+  snap.tr = state.tier || 1;
+  snap.h[1] = serializeArenaHero(state.sides[1], _bwHeroBuf1);
+  snap.h[2] = serializeArenaHero(state.sides[2], _bwHeroBuf2);
+  snap.h[3] = serializeArenaHero(state.sides[3], _bwHeroBuf3);
+  snap.mr[1] = arrOpt(state.sides[1] && state.sides[1].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
+  snap.mr[2] = arrOpt(state.sides[2] && state.sides[2].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
+  snap.mr[3] = arrOpt(state.sides[3] && state.sides[3].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
+  const boss = state.boss;
+  if (boss) {
+    const o = _bwBossBuf;
+    o.x = r2(boss.x); o.z = r2(boss.z);
+    o.hp = ri(boss.hp); o.mh = boss.maxHp;
+    o.ph = boss.bossPhase || 1;
+    o.pt = nzr2(boss.phaseTransitionRemaining);
+    o.aac = boss.aaCount || 0;
+    o.c = undefined;   // slice 2: serialiseras från boss.activeCast (telegraph/execute-fält)
+    snap.b = o;
+  } else {
+    snap.b = null;
+  }
+  return snap;
 }
 
 function checkMatchEnd(state) {
