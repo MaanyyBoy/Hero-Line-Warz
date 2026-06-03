@@ -1984,6 +1984,11 @@ function createBossWarsState(tier) {
   sides[1].monsters.push(boss);
   sides[1].bossWarsBossId = bossId;
   state.boss = boss;   // direkt-ref för serialisering (undviker .find per 30 Hz-tick)
+  // Co-op: dela monster-array-REFERENSEN så ALLA 3 hjältars findClosestHostile/
+  // updateHeroAttack/updateProjectiles hittar bossen (mirror klientens enterPlayPhase 27559).
+  // Boss-AI tickas bara 1× (via state.boss i slice 2), ej per-side → ingen trippel-tick.
+  sides[2].monsters = sides[1].monsters;
+  sides[3].monsters = sides[1].monsters;
   return state;
 }
 function initBossWarsMatch(heroes, tier) {
@@ -2000,10 +2005,11 @@ function initBossWarsMatch(heroes, tier) {
   }
   return state;
 }
-// Boss-wars top-tick. SLICE 0: bara hjälte-rörelse (statisk boss). Combat/boss-AI/CC/
-// faser/ads wiras i slice 1-4. Matchar server.js gameLoopTick-mönstret (tickArena).
+// Boss-wars top-tick. SLICE 1a: hjälte-rörelse + AA-combat mot bossen (3 co-op-hjältar).
+// Boss-AI/skills/CC/faser/ads wiras slice 1b-4. Matchar server.js gameLoopTick (tickArena).
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
+  // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
     if (!s) continue;
@@ -2011,6 +2017,16 @@ function tickBossWars(state, dt) {
     const inp = state.lastInputs[idx];
     const j = (inp && inp.j) || { x: 0, z: 0 };
     applyMovement(s, j.x, j.z, dt);
+  }
+  // 2) Hjälte-combat (CO-OP vs boss). opp=null → ingen hero-vs-hero (friendly fire).
+  // Bossen ligger i sides[1].monsters (delad ref) → updateHeroAttack/updateProjectiles
+  // riktar mot den för alla 3 hjältar. updateHeroAttack/updateProjectiles är opp-null-säkra.
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    updateSkillCooldowns(s, dt);
+    if (!s.hero.dead) updateHeroAttack(state, s, null, dt);
+    updateProjectiles(state, s, null, dt);
   }
 }
 
