@@ -2057,6 +2057,7 @@ function createBossWarsState(tier) {
     gateClosed: false,        // korridor-gate (stängs när alla inne i boss-rummet, slice 4)
     bossActivated: false,
     bossProjectiles: [], bossPools: [],   // boss skill-projektiler (directional) + DoT-pooler (slice 2c)
+    bossWarsMinions: [], bossWarsWave: { countdown: 0, active: false },   // boss-1 minion-vågor (slice 3b)
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } } },
     matchState: { gameOver: false, winner: 0 },
   };
@@ -2493,6 +2494,11 @@ function triggerBossWarsPhaseTransition(state, boss) {
 function tickBossWarsBoss(state, dt) {
   const boss = state.boss;
   if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  // Absorption-buff timeout (minion-absorption +20%/5s, decision 116) — bossEffectiveDamage läser damageBuffMul.
+  if ((boss.damageBuffRemaining || 0) > 0) {
+    boss.damageBuffRemaining -= dt;
+    if (boss.damageBuffRemaining <= 0) { boss.damageBuffRemaining = 0; boss.damageBuffMul = 1; }
+  }
   // Fas-övergång: trigga vid phaseThreshold; under flyup (2.5s) ingen AI (boss immun via bossWarsDmgMod).
   if (boss.bossPhase === 1 && boss.phase2Skills && boss.hp <= boss.maxHp * (boss.phaseThreshold || 0.5)) {
     triggerBossWarsPhaseTransition(state, boss);
@@ -2536,8 +2542,122 @@ function tickBossWarsBoss(state, dt) {
   }
 }
 
-// Boss-wars top-tick. SLICE 1a-2a: hjälte-rörelse/combat + boss-aktivering + boss-rörelse/AA.
-// Boss-skill-statemaskin = slice 2b, faser = slice 3. Matchar server.js gameLoopTick (tickArena).
+// ===== BOSS 1 MINION-VÅGOR (slice 3b-i, decisions 116-117) — bara tier 1 =====
+// Port av main.js. Minions = entiteter i sides[1].monsters (DELAD ref → alla 3 hjältar AA/skill:ar dem)
+// + state.bossWarsMinions (minion-AI). Rör sig mot bossen → absorberas (heal+buff+AoE). Aura skadar
+// heroes som står nära. Killable. Inga mesh (klient renderar från serialiserad `bm`).
+const BOSSWARS_MINION_HP_P1 = 150, BOSSWARS_MINION_HP_P2 = 300, BOSSWARS_MINION_SPEED = 1.5;
+const BOSSWARS_MINION_ABSORB_DIST = 1.5;
+const BOSSWARS_MINION_ABSORB_AOE_PCT_P1 = 0.30, BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
+const BOSSWARS_MINION_AURA_RADIUS = 13.5, BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
+const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5, BOSSWARS_MINION_AURA_RESET_TIME = 7.0, BOSSWARS_MINION_AURA_START_PCT = 1;
+const BOSSWARS_MINION_WAVE_FIRST_DELAY = 5.0, BOSSWARS_MINION_WAVE_INTERVAL = 20.0;
+const BOSSWARS_MINION_WAVE_SIZE_P1 = 3, BOSSWARS_MINION_WAVE_SIZE_P2 = 6, BOSSWARS_MINION_WAVE_SPEED_MUL_P2 = 1.0;
+function bossWarsMinionsActive(state) { return state.tier === 1; }   // mirror bossWarsMinionsEnabled (bara boss 1)
+function healBossWarsBoss(boss, amount) { if (boss) boss.hp = Math.min(boss.maxHp, boss.hp + amount); }
+function spawnBossWarsMinionEngine(state, ang, speedMul, hp) {
+  const r = BOSSWARS_RADIUS - 2;
+  const m = {
+    id: state.nextEntityId++, hp, maxHp: hp,
+    x: BOSSWARS_CX + Math.cos(ang) * r, z: BOSSWARS_CZ + Math.sin(ang) * r,
+    moveSpeed: BOSSWARS_MINION_SPEED * (speedMul || 1),
+    isMinion: true, isMonster: false, isBoss: false, isBossWarsBoss: false,
+    attackType: 'none', damage: 0,
+  };
+  state.sides[1].monsters.push(m);   // delad ref → alla 3 hjältars AA/skill träffar
+  state.bossWarsMinions.push(m);
+  return m;
+}
+function spawnBossWarsMinionWaveEngine(state, size, speedMul, hp) {
+  for (let i = 0; i < size; i++) spawnBossWarsMinionEngine(state, (i / size) * Math.PI * 2, speedMul, hp);
+}
+function tickBossWarsMinionWavesEngine(state, dt) {
+  if (!bossWarsMinionsActive(state) || !state.bossActivated) return;
+  const boss = state.boss;
+  if (!boss || boss.hp <= 0) { state.bossWarsWave.active = false; return; }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;   // pausa under fas-flyup
+  if (!state.bossWarsWave.active) { state.bossWarsWave.active = true; state.bossWarsWave.countdown = BOSSWARS_MINION_WAVE_FIRST_DELAY; }
+  state.bossWarsWave.countdown -= dt;
+  if (state.bossWarsWave.countdown <= 0) {
+    const isP2 = boss.bossPhase === 2;
+    spawnBossWarsMinionWaveEngine(state,
+      isP2 ? BOSSWARS_MINION_WAVE_SIZE_P2 : BOSSWARS_MINION_WAVE_SIZE_P1,
+      isP2 ? BOSSWARS_MINION_WAVE_SPEED_MUL_P2 : 1.0,
+      isP2 ? BOSSWARS_MINION_HP_P2 : BOSSWARS_MINION_HP_P1);
+    state.bossWarsWave.countdown += BOSSWARS_MINION_WAVE_INTERVAL;
+  }
+}
+function despawnBossWarsMinionEngine(state, m) {
+  let k = state.bossWarsMinions.indexOf(m);
+  if (k >= 0) state.bossWarsMinions.splice(k, 1);
+  k = state.sides[1].monsters.indexOf(m);
+  if (k >= 0) state.sides[1].monsters.splice(k, 1);
+}
+function applyMinionAbsorptionEngine(state, boss) {
+  if (!boss || boss.hp <= 0) return;
+  healBossWarsBoss(boss, boss.maxHp * 0.10);
+  boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
+  boss.damageBuffRemaining = 5.0;
+  const aoePct = (boss.bossPhase === 2) ? BOSSWARS_MINION_ABSORB_AOE_PCT_P2 : BOSSWARS_MINION_ABSORB_AOE_PCT_P1;
+  for (const tgt of bossWarsTargets(state)) {
+    if (!tgt || !tgt.hero || tgt.hero.dead) continue;
+    damageHero(tgt, tgt.hero.maxHp * aoePct);
+  }
+}
+function updateBossWarsMinionsEngine(state, dt) {
+  const arr = state.bossWarsMinions;
+  if (!arr || arr.length === 0) return;
+  const boss = state.boss;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    // Hero-kill/DoT (borttagen från monsters) ELLER hp<=0 → despawn (ingen absorption).
+    if (m.hp <= 0 || !state.sides[1].monsters.includes(m)) { despawnBossWarsMinionEngine(state, m); continue; }
+    if ((m.frozenTime || 0) > 0) continue;
+    if (!boss) continue;
+    const dx = boss.x - m.x, dz = boss.z - m.z;
+    const dist = Math.hypot(dx, dz) || 0.0001;
+    if (dist < BOSSWARS_MINION_ABSORB_DIST) {   // nådde bossen → absorption
+      applyMinionAbsorptionEngine(state, boss);
+      despawnBossWarsMinionEngine(state, m);
+      continue;
+    }
+    const step = m.moveSpeed * dt;
+    m.x += (dx / dist) * step; m.z += (dz / dist) * step;
+  }
+}
+function tickBossWarsMinionAuraEngine(state, dt) {
+  if (!bossWarsMinionsActive(state)) return;
+  const minions = state.bossWarsMinions;
+  if (!minions || minions.length === 0) return;
+  const r2 = BOSSWARS_MINION_AURA_RADIUS * BOSSWARS_MINION_AURA_RADIUS;
+  for (const side of bossWarsTargets(state)) {
+    if (!side || !side.hero) continue;
+    if (side.auraStacks == null) { side.auraStacks = 0; side.auraTickAccum = 0; side.auraResetTimer = 0; }
+    let inAura = false;
+    if (!side.hero.dead) {
+      const hx = side.hero.x, hz = side.hero.z;
+      for (const mm of minions) {
+        const dxh = hx - mm.x, dzh = hz - mm.z;
+        if (dxh * dxh + dzh * dzh < r2) { inAura = true; break; }
+      }
+    }
+    if (inAura) {
+      side.auraResetTimer = 0;
+      side.auraTickAccum += dt;
+      while (side.auraTickAccum >= BOSSWARS_MINION_AURA_TICK_INTERVAL) {
+        side.auraTickAccum -= BOSSWARS_MINION_AURA_TICK_INTERVAL;
+        const pct = (BOSSWARS_MINION_AURA_START_PCT + side.auraStacks * BOSSWARS_MINION_AURA_ESCALATION_PER_TICK) / 100;
+        damageHero(side, side.hero.maxHp * pct);
+        side.auraStacks += 1;
+      }
+    } else {
+      side.auraResetTimer += dt;
+      if (side.auraResetTimer >= BOSSWARS_MINION_AURA_RESET_TIME) { side.auraStacks = 0; side.auraTickAccum = 0; side.auraResetTimer = 0; }
+    }
+  }
+}
+
+// Boss-wars top-tick. SLICE 1a-3b: hjälte + boss-AI + minion-vågor/aura.
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
   // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
@@ -2629,6 +2749,9 @@ function tickBossWars(state, dt) {
   // 3) Boss-aktivering (alla inne → vakna + gate) + boss-AI (rörelse + AA) + boss-projektiler.
   maybeActivateBossWars(state);
   tickBossWarsBoss(state, dt);
+  tickBossWarsMinionWavesEngine(state, dt);   // boss-1 minion-vågor (slice 3b)
+  updateBossWarsMinionsEngine(state, dt);     // minion-rörelse mot boss + absorption
+  tickBossWarsMinionAuraEngine(state, dt);    // minion-aura skadar närstående heroes
   tickBossWarsProjectiles(state, dt);
   tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
@@ -2667,7 +2790,7 @@ const _bwSnap = {
   h: { 1: null, 2: null, 3: null },
   mr: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   b: null,
-  bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR,   // boss skill-projektiler + pooler (slice 2c)
+  bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR, bm: _ARENA_EMPTY_ARR,   // projektiler/pooler (2c) + minions (3b)
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -2688,6 +2811,7 @@ function serializeBossWarsState(state) {
   // Boss skill-projektiler (directional) + DoT-pooler → klient reconciliear + renderar (slice 2c-client).
   snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
+  snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b)
   const boss = state.boss;
   if (boss) {
     const o = _bwBossBuf;

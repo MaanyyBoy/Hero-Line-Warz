@@ -16636,6 +16636,7 @@ const clientMeshes = {
   ironWillExplosions: new Map(),
   bossProjectiles: new Map(),
   bossPools: new Map(),
+  bossWarsMinions: new Map(),
   thornPools: new Map(),
   kostefoSliders: new Map(),
   kostefoGooseWaves: new Map(),
@@ -23911,6 +23912,22 @@ function makeBossWarsPoolMesh(e) {
   return grp;
 }
 
+// Boss-1 minion-mesh (slice 3b-i) — blå kropp + aura-fara-zon (radie 13.5). Boss=tier 1.
+function makeBossWarsMinionMesh(e) {
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.6, 8),
+    new THREE.MeshStandardMaterial({ color: 0x6699ff, emissive: 0x224488, emissiveIntensity: 0.5, roughness: 0.7 }));
+  body.position.y = 0.8;
+  grp.add(body);
+  // Aura-fara-zon (radie 13.5) — låg opacity så spelaren ser skadezonen utan att skärmen dränks.
+  const aura = new THREE.Mesh(new THREE.RingGeometry(13.0, 13.5, 48),
+    new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+  aura.rotation.x = -Math.PI / 2; aura.position.y = 0.06;
+  grp.add(aura);
+  grp.position.y = BOSSWARS_FLOOR_Y;
+  return grp;
+}
+
 function applyBossWarsState(msg) {
   // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
   if (!bossActsAsClient()) return;
@@ -23943,6 +23960,7 @@ function applyBossWarsState(msg) {
   // Boss skill-projektiler (bp) + DoT-pooler (bpl) — slice 2c-client. Boss-globala → idx 1.
   if (msg.bp) clientReconcileEntities(1, 'bossProjectiles', msg.bp, makeBossWarsProjectileMesh, true);
   if (msg.bpl) clientReconcileEntities(1, 'bossPools', msg.bpl, makeBossWarsPoolMesh, true);
+  if (msg.bm) clientReconcileEntities(1, 'bossWarsMinions', msg.bm, makeBossWarsMinionMesh, true);   // boss-1 minions (3b)
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
   if (msg.b && sides[1]) {
     const hostSide = sides[1];
