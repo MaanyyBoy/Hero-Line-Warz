@@ -1087,8 +1087,14 @@ function respawnHero(side) {
   const cfg = SIDE_CFG[side.idx];
   side.hero.dead = false;
   side.hero.hp = side.hero.maxHp;
-  side.hero.x = cfg.heroSpawn.x;
-  side.hero.z = cfg.heroSpawn.z;
+  if (side.inBossWars) {
+    // Boss wars: respawna vid boss-rummets västkant (nära fighten, inom walkable cirkel).
+    side.hero.x = BOSSWARS_CX - BOSSWARS_RADIUS + 4;
+    side.hero.z = BOSSWARS_CZ;
+  } else {
+    side.hero.x = cfg.heroSpawn.x;
+    side.hero.z = cfg.heroSpawn.z;
+  }
   // Lvl-5 cleanup: rensa Gimlu taunt-state + iron-will reflect-queue så
   // explosion inte fyrar på respawn-position. tauntHealAccum-tracker mätte
   // hp-delta som lvl5 healing under taunt — utan respawn-rensning räknas
@@ -2538,6 +2544,13 @@ function tickBossWars(state, dt) {
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
     if (!s) continue;
+    // Respawn (boss wars): död hjälte tickar respawnTimer → respawnHero vid boss-rummet.
+    // Körs FÖRE checkBossWarsEnd så en respawnad hjälte ej räknas som död (korrekt wipe-semantik).
+    if (s.hero.dead) {
+      s.hero.respawnTimer = Math.max(0, (s.hero.respawnTimer || 0) - dt);
+      if (s.hero.respawnTimer <= 0) respawnHero(s);
+      continue;
+    }
     s._bwGateClosed = state.gateClosed;   // sync till heroWalk/applyMovement
     const inp = state.lastInputs[idx];
     const j = (inp && inp.j) || { x: 0, z: 0 };
