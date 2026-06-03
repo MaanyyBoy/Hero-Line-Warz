@@ -2191,11 +2191,167 @@ function spawnBossAaProjectile(state, boss, targetIdx) {
     bossTargetIdx: targetIdx,
   });
 }
-// Boss-AI slice 2a: rörelse (jaga närmaste levande hjälte) + AA. Skill-statemaskin = slice 2b,
-// faser = slice 3. Tickas 1× per frame (ej per-side) i tickBossWars.
+// ===== BOSS CAST-STATEMASKIN (slice 2b-ii) =====
+// Port av main.js tickBossSkills/startBossCast/tickBossCast/bossExecuteSkill/tickBossExecute.
+// Distinkta namn (engine har tickBossSkillsServer för classic). boss=state.boss (x/z, ingen mesh);
+// visual-spawns skippade (klienten ritar telegraph från serialiserad b.c).
+function nearestLiveHero(state, x, z) {
+  let best = null, bestSq = Infinity;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    const dx = s.hero.x - x, dz = s.hero.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestSq) { bestSq = d2; best = s; }
+  }
+  return best;
+}
+function cancelBossWarsCast(state, boss) { boss.activeCast = null; }
+function finishBossWarsCast(state, boss) {
+  const cast = boss.activeCast;
+  if (!cast) return;
+  boss.skillCds[cast.skillIdx] = cast.skill.cd;
+  boss.activeCast = null;
+}
+function startBossWarsCast(state, boss, skill, skillIdx) {
+  const target = nearestLiveHero(state, boss.x, boss.z);
+  const hero = target ? target.hero : null;
+  const bx = boss.x, bz = boss.z;
+  let dirX = 0, dirZ = 1;
+  if (hero) { const dx = hero.x - bx, dz = hero.z - bz; const dl = Math.hypot(dx, dz) || 1; dirX = dx / dl; dirZ = dz / dl; }
+  boss.activeCast = {
+    skill, skillIdx, phase: 'telegraph', timer: skill.telegraph,
+    dirX, dirZ, originX: bx, originZ: bz,
+    targetX: (skill.targetHero && hero) ? hero.x : (skill.originSelf ? bx : bx + dirX * (skill.length || 5) / 2),
+    targetZ: (skill.targetHero && hero) ? hero.z : (skill.originSelf ? bz : bz + dirZ * (skill.length || 5) / 2),
+    extras: null,
+  };
+  boss.aaCount = (boss.aaCount || 0) + 1;   // delta-detect → klient triggar cast-anim + FX
+}
+function bossWarsExecuteSkill(state, boss, cast) {
+  const s = cast.skill;
+  cast.phase = 'execute';
+  boss.aaCount = (boss.aaCount || 0) + 1;   // re-trigga anim vid execute (skadan landar)
+  if (s.kind === 'groundCircle') {
+    cast.timer = 0.45; cast.extras = { done: true };
+    applyBossCircleDmg(state, boss, cast);
+    if (s.knockback) applyBossKnockback(state, cast.targetX, cast.targetZ, s.radius, s.knockback);
+    return;
+  }
+  if (s.kind === 'cone') {
+    cast.timer = 0.4; cast.extras = { done: true };
+    applyBossConeDmg(state, boss, cast);
+    return;
+  }
+  if (s.kind === 'lineDash') {
+    cast.timer = s.execTime || 0.5;
+    cast.extras = { done: false, dashStartX: cast.originX, dashStartZ: cast.originZ,
+      dashEndX: cast.originX + cast.dirX * s.length, dashEndZ: cast.originZ + cast.dirZ * s.length, damaged: new Set() };
+    return;
+  }
+  if (s.kind === 'multiCircle') {
+    cast.timer = (s.count || 5) * (s.spawnInterval || 0.6) + 0.5;
+    cast.extras = { done: false, spawned: 0, spawnTimer: 0, circles: [] };
+    return;
+  }
+  if (s.kind === 'sweepBeam') {
+    cast.timer = s.sweepDuration;
+    const base = Math.atan2(cast.dirX, cast.dirZ);
+    cast.extras = { done: false, startAng: base - s.halfAngle, endAng: base + s.halfAngle, damageTimer: 0 };
+    return;
+  }
+  if (s.kind === 'sustainedCone') {
+    cast.timer = s.sustainDuration; cast.extras = { done: false, damageTimer: 0 };
+    return;
+  }
+  // projectile/projectileMulti/poolDot = slice 2c (boss-skapade entiteter) → stub klar nu.
+  cast.timer = 0.1; cast.extras = { done: true };
+}
+function tickBossWarsExecute(state, boss, cast, dt) {
+  const s = cast.skill, e = cast.extras;
+  if (s.kind === 'lineDash') {
+    const u = Math.min(1, 1 - cast.timer / (s.execTime || 0.5));
+    const cx = e.dashStartX + (e.dashEndX - e.dashStartX) * u;
+    const cz = e.dashStartZ + (e.dashEndZ - e.dashStartZ) * u;
+    boss.x = cx; boss.z = cz;   // bossen dashar (m.mesh.position → boss.x/z)
+    applyBossLineDmg(state, boss, cast, cx, cz);
+    if (cast.timer <= 0) { boss.x = e.dashEndX; boss.z = e.dashEndZ; e.done = true; }   // snäpp till slutpos
+    return;
+  }
+  if (s.kind === 'multiCircle') {
+    e.spawnTimer -= dt;
+    if (e.spawned < (s.count || 5) && e.spawnTimer <= 0) {
+      let ox = cast.originX, oz = cast.originZ;
+      if (s.targetHero) { const h = nearestLiveHero(state, boss.x, boss.z); if (h) { ox = h.hero.x; oz = h.hero.z; } }
+      const cx = ox + (Math.random() - 0.5) * 2 * (s.spread || 6);
+      const cz = oz + (Math.random() - 0.5) * 2 * (s.spread || 6);
+      e.circles.push({ skill: { kind: 'groundCircle', radius: s.radius, dmgMul: s.dmgMul }, targetX: cx, targetZ: cz, timer: 0.7, phase: 'telegraph' });
+      e.spawnTimer = (s.spawnInterval || 0.6); e.spawned++;
+    }
+    for (let i = e.circles.length - 1; i >= 0; i--) {
+      const sub = e.circles[i];
+      sub.timer -= dt;
+      if (sub.timer <= 0 && sub.phase === 'telegraph') { sub.phase = 'done'; applyBossCircleDmg(state, boss, sub); }
+      if (sub.phase === 'done' && sub.timer < -0.5) e.circles.splice(i, 1);
+    }
+    if (e.spawned >= (s.count || 5) && e.circles.length === 0) e.done = true;
+    return;
+  }
+  if (s.kind === 'sweepBeam') {
+    const u = Math.min(1, 1 - cast.timer / s.sweepDuration);
+    const curAng = e.startAng + (e.endAng - e.startAng) * u;
+    cast.dirX = Math.sin(curAng); cast.dirZ = Math.cos(curAng);
+    e.damageTimer -= dt;
+    if (e.damageTimer <= 0) { e.damageTimer = 0.2; applyBossBeamDmg(state, boss, cast, s.length, 1.4, s.dpsMul * 0.2); }
+    if (cast.timer <= 0) e.done = true;
+    return;
+  }
+  if (s.kind === 'sustainedCone') {
+    e.damageTimer -= dt;
+    if (e.damageTimer <= 0) { e.damageTimer = 0.3; applyBossConeDmgRaw(state, boss, cast, s.length, s.halfAngle, s.dpsMul * 0.3); }
+    if (cast.timer <= 0) e.done = true;
+    return;
+  }
+}
+function tickBossWarsCast(state, boss, dt) {
+  const cast = boss.activeCast;
+  cast.timer -= dt;
+  if (cast.phase === 'telegraph') {
+    if (cast.timer <= 0) bossWarsExecuteSkill(state, boss, cast);
+    return;
+  }
+  if (cast.phase === 'execute') {
+    tickBossWarsExecute(state, boss, cast, dt);
+    if (cast.timer <= 0 && (!cast.extras || cast.extras.done)) finishBossWarsCast(state, boss);
+  }
+}
+function tickBossWarsSkills(state, boss, dt) {
+  if (boss.hp <= 0) { if (boss.activeCast) cancelBossWarsCast(state, boss); return; }
+  if (boss.skillCds) for (let i = 0; i < boss.skillCds.length; i++) boss.skillCds[i] = Math.max(0, boss.skillCds[i] - dt);
+  if (boss.activeCast) { tickBossWarsCast(state, boss, dt); return; }
+  // Casta bara om någon levande hjälte är inom 18m.
+  let best = Infinity;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    const dd = Math.hypot(s.hero.x - boss.x, s.hero.z - boss.z);
+    if (dd < best) best = dd;
+  }
+  if (best > 18 || !boss.bossSkills || !boss.skillCds) return;
+  const ready = [];
+  for (let i = 0; i < boss.skillCds.length; i++) if (boss.skillCds[i] <= 0) ready.push(i);
+  if (ready.length === 0) return;
+  const pick = ready[(Math.random() * ready.length) | 0];
+  startBossWarsCast(state, boss, boss.bossSkills[pick], pick);
+}
+
+// Boss-AI slice 2a-2b: skill-cast (pausar AI) → annars rörelse + AA. Tickas 1× i tickBossWars.
 function tickBossWarsBoss(state, dt) {
   const boss = state.boss;
   if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  // Boss-skills: under cast pausar normal rörelse/AA (lineDash flyttar bossen själv).
+  tickBossWarsSkills(state, boss, dt);
+  if (boss.activeCast) return;
   let target = null, bestSq = Infinity;
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
@@ -2317,6 +2473,9 @@ const _bwHeroBuf2 = _makeHeroSnapBuf();
 const _bwHeroBuf3 = _makeHeroSnapBuf();
 const _bwMapMr = (p) => ({ id: p.id, x: r2(p.x), z: r2(p.z), kind: p.kind });
 const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, c: undefined };
+// Boss-cast-buffer (telegraph/execute) — matchar klientens buildBossWarsSnap cast-fält
+// (applyBossWarsState läser n/k/rad/len/ha/w/ph/t/tg/tx/tz/ox/oz/dx/dz).
+const _bwCastBuf = { n: '', k: 'circle', rad: 0, len: 0, ha: 0, w: 0, ph: 'telegraph', t: 0, tg: 0, tx: null, tz: null, ox: null, oz: null, dx: null, dz: null };
 const _bwSnap = {
   t: 'b-state',
   ba: false, gc: false, tr: 1,
@@ -2348,7 +2507,20 @@ function serializeBossWarsState(state) {
     o.ph = boss.bossPhase || 1;
     o.pt = nzr2(boss.phaseTransitionRemaining);
     o.aac = boss.aaCount || 0;
-    o.c = undefined;   // slice 2: serialiseras från boss.activeCast (telegraph/execute-fält)
+    // Boss-cast → klient ritar telegraph-varning (slice 2b). Matchar buildBossWarsSnap.
+    const ac = boss.activeCast;
+    if (ac && ac.skill) {
+      const c = _bwCastBuf, sk = ac.skill;
+      c.n = sk.id || ''; c.k = sk.kind || 'circle';
+      c.rad = sk.radius || 0; c.len = sk.length || 0; c.ha = sk.halfAngle || 0; c.w = sk.width || 0;
+      c.ph = ac.phase || 'telegraph'; c.t = r2(ac.timer || 0); c.tg = r2(sk.telegraph || 0);
+      c.tx = ac.targetX != null ? r2(ac.targetX) : null; c.tz = ac.targetZ != null ? r2(ac.targetZ) : null;
+      c.ox = ac.originX != null ? r2(ac.originX) : null; c.oz = ac.originZ != null ? r2(ac.originZ) : null;
+      c.dx = ac.dirX != null ? r3(ac.dirX) : null; c.dz = ac.dirZ != null ? r3(ac.dirZ) : null;
+      o.c = c;
+    } else {
+      o.c = undefined;
+    }
     snap.b = o;
   } else {
     snap.b = null;
