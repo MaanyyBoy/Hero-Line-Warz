@@ -1973,6 +1973,36 @@ const BOSSWARS_TIER_AA = {
   5: { kind: 'bw_starshard',   range: 9.0, interval: 1.2, travel: 0.7 },
 };
 const BOSSWARS_TIER_DR = { 1: 0.10, 2: 0.15, 3: 0.20, 4: 0.25, 5: 0.30 };  // base-DR per tier (decision 110)
+// Boss-skills phase 1 per tier (port av BOSS_DEFS[wave].skills i main.js). Slice 2b cast-machine
+// castar dessa. Skill-kinds: groundCircle/cone/lineDash/multiCircle/sweepBeam/sustainedCone (skada)
+// + projectile/projectileMulti/poolDot (= slice 2c, boss-skapade entiteter).
+const BOSSWARS_TIER_SKILLS = {
+  1: [
+    { id: 'shieldBash', kind: 'lineDash', telegraph: 1.4, length: 11, width: 3.2, execTime: 0.5, dmgMul: 2.2, cd: 7.5 },
+    { id: 'throwingAxe', kind: 'projectile', telegraph: 0.5, speed: 14, dmgMul: 1.8, radius: 1.0, range: 18, cd: 5.0 },
+    { id: 'battleRoar', kind: 'groundCircle', telegraph: 1.4, radius: 7.5, dmgMul: 1.6, originSelf: true, slow: { dur: 2.5, mul: 0.5 }, cd: 9.0 },
+  ],
+  2: [
+    { id: 'lightningStrike', kind: 'groundCircle', telegraph: 1.0, radius: 4.2, dmgMul: 2.4, targetHero: true, cd: 5.5 },
+    { id: 'spearVolley', kind: 'projectileMulti', telegraph: 0.7, count: 4, spreadAngle: Math.PI / 6, speed: 18, dmgMul: 1.6, radius: 1.0, range: 18, cd: 6.5 },
+    { id: 'warStomp', kind: 'groundCircle', telegraph: 1.3, radius: 9, dmgMul: 2.0, originSelf: true, knockback: 3.5, cd: 10.0 },
+  ],
+  3: [
+    { id: 'cleaveWave', kind: 'cone', telegraph: 1.0, length: 12, halfAngle: Math.PI / 3, dmgMul: 2.6, cd: 6.0 },
+    { id: 'poisonPool', kind: 'poolDot', telegraph: 1.0, radius: 4.5, duration: 7, dpsMul: 0.6, slow: { dur: 0.8, mul: 0.6 }, targetHero: true, cd: 7.5 },
+    { id: 'earthquake', kind: 'multiCircle', telegraph: 0.7, count: 6, spawnInterval: 0.5, radius: 3.5, dmgMul: 1.7, spread: 9, cd: 11.0 },
+  ],
+  4: [
+    { id: 'hellfireBeam', kind: 'sweepBeam', telegraph: 1.3, sweepDuration: 2.2, length: 16, halfAngle: Math.PI / 1.8, dpsMul: 1.8, cd: 10.0 },
+    { id: 'infernoStrike', kind: 'groundCircle', telegraph: 0.8, radius: 3.2, dmgMul: 2.8, targetHero: true, leaveBurn: true, cd: 5.0 },
+    { id: 'meteorShower', kind: 'multiCircle', telegraph: 0.9, count: 6, spawnInterval: 0.7, radius: 4.5, dmgMul: 2.4, spread: 13, cd: 13.0 },
+  ],
+  5: [
+    { id: 'dragonBreath', kind: 'sustainedCone', telegraph: 1.3, sustainDuration: 2.8, length: 16, halfAngle: Math.PI / 2.8, dpsMul: 2.0, cd: 8.5 },
+    { id: 'wingSlam', kind: 'groundCircle', telegraph: 1.0, radius: 7.5, dmgMul: 3.0, originSelf: true, knockback: 5.0, cd: 7.0 },
+    { id: 'skyfireRain', kind: 'multiCircle', telegraph: 0.7, count: 10, spawnInterval: 0.6, radius: 4.0, dmgMul: 2.2, spread: 15, cd: 15.0 },
+  ],
+};
 const BOSSWARS_HERO_SPAWNS = {
   1: { x: BW_SPAWN_ROOM_CX,     z: BW_SPAWN_ROOM_CZ },
   2: { x: BW_SPAWN_ROOM_CX - 3, z: BW_SPAWN_ROOM_CZ + 4 },
@@ -2022,6 +2052,9 @@ function createBossWarsState(tier) {
     attackType: 'range', attackRange: aa.range, attackInterval: aa.interval,
     projTime: aa.travel, projKind: aa.kind, atkCd: 0,
     phaseThreshold: BOSSWARS_TIER_PHASE_THRESH[t],
+    // Skill-data (slice 2b cast-machine castar dessa). Initial-CD 40% (mirror spawnBossWarsBoss).
+    bossSkills: BOSSWARS_TIER_SKILLS[t],
+    skillCds: BOSSWARS_TIER_SKILLS[t].map(s => s.cd * 0.4),
     // Boss-DR-fält (decision 110) — wrapper-applicering wiras slice 2b.
     dmgReductionBase: BOSSWARS_TIER_DR[t], dmgReductionStep: 0.05,
     dmgReductionStepIntervalSec: 120, dmgReductionCap: 0.70, spawnTime: 0,
@@ -2050,6 +2083,81 @@ function initBossWarsMatch(heroes, tier) {
   }
   return state;
 }
+// ===== BOSS SKILL DAMAGE-PRIMITIVER (slice 2b) =====
+// Boss-skills träffar ALLA 3 co-op-hjältar inom AoE. Port av main.js applyBoss*-funktioner;
+// mesh-refs borttagna (boss = state.boss x/z), isHeroWalkable → isBossWarsWalkable.
+// ADDITIVT — anropas av cast-machinen (slice 2b-ii).
+function bossWarsTargets(state) {
+  return [state.sides[1], state.sides[2], state.sides[3]].filter(s => s);
+}
+function bossEffectiveDamage(m) {
+  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1);
+}
+function applyBossCircleDmg(state, m, cast) {
+  const s = cast.skill;
+  const dmg = bossEffectiveDamage(m) * (s.dmgMul || 1);
+  for (const tgt of bossWarsTargets(state)) {
+    if (tgt.hero.dead) continue;
+    if (Math.hypot(tgt.hero.x - cast.targetX, tgt.hero.z - cast.targetZ) < s.radius) {
+      damageHero(tgt, dmg);
+      if (s.slow) {
+        tgt.heroSlowMul = Math.min(tgt.heroSlowMul != null ? tgt.heroSlowMul : 1, s.slow.mul);
+        tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, s.slow.dur);
+      }
+    }
+  }
+}
+function applyBossConeDmgRaw(state, m, cast, length, halfAngle, dmgMul) {
+  const dmg = bossEffectiveDamage(m) * (dmgMul || 1);
+  for (const tgt of bossWarsTargets(state)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.001 && d < length) {
+      const dot = (dx * cast.dirX + dz * cast.dirZ) / d;
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (ang < halfAngle) damageHero(tgt, dmg);
+    }
+  }
+}
+function applyBossConeDmg(state, m, cast) {
+  applyBossConeDmgRaw(state, m, cast, cast.skill.length, cast.skill.halfAngle, cast.skill.dmgMul);
+}
+function applyBossLineDmg(state, m, cast, cx, cz) {
+  const s = cast.skill;
+  const dmg = bossEffectiveDamage(m) * (s.dmgMul || 1);
+  const e = cast.extras;
+  for (const tgt of bossWarsTargets(state)) {
+    if (tgt.hero.dead) continue;
+    const key = 'hero' + tgt.idx;
+    if (e.damaged.has(key)) continue;
+    const d = Math.hypot(tgt.hero.x - cx, tgt.hero.z - cz);
+    if (d < (s.width || 2) * 0.6) { damageHero(tgt, dmg); e.damaged.add(key); }
+  }
+}
+function applyBossBeamDmg(state, m, cast, length, width, dmg) {
+  const realDmg = bossEffectiveDamage(m) * dmg;
+  for (const tgt of bossWarsTargets(state)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - cast.originX, dz = tgt.hero.z - cast.originZ;
+    const along = dx * cast.dirX + dz * cast.dirZ;
+    if (along > 0 && along < length) {
+      const perp = Math.abs(dx * (-cast.dirZ) + dz * cast.dirX);
+      if (perp < width) damageHero(tgt, realDmg);
+    }
+  }
+}
+function applyBossKnockback(state, x, z, radius, force) {
+  for (const tgt of bossWarsTargets(state)) {
+    if (tgt.hero.dead) continue;
+    const dx = tgt.hero.x - x, dz = tgt.hero.z - z;
+    const d = Math.hypot(dx, dz);
+    if (d >= radius || d < 0.01) continue;
+    const nx = tgt.hero.x + (dx / d) * force, nz = tgt.hero.z + (dz / d) * force;
+    if (isBossWarsWalkable(nx, nz, state.gateClosed)) { tgt.hero.x = nx; tgt.hero.z = nz; }
+  }
+}
+
 // Boss-rummet (cirkel) — aktiverings-check (alla levande heroes inne → boss vaknar).
 function isInsideBossRoom(x, z) {
   const dx = x - BOSSWARS_CX, dz = z - BOSSWARS_CZ;
