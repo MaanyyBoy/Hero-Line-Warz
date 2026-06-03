@@ -1374,6 +1374,19 @@ function createArenaState() {
 function applyLaserBeamTickServer(state, side) {
   const lb = side.laserBeam;
   if (!lb || side.hero.dead) return;
+  // Boss wars (co-op): lasern träffar boss-monstret i st f motståndar-hjälte.
+  // (%-av-boss-maxHp ärver arena-formeln — balans/boss-DR tunas i slice 2.)
+  if (state.mode === 'bosswars') {
+    const boss = state.boss;
+    if (!boss || boss.hp <= 0) return;
+    const ddx = boss.x - side.hero.x, ddz = boss.z - side.hero.z;
+    const along = ddx * lb.dx + ddz * lb.dz;
+    if (along < 0 || along > LASER_RANGE) return;
+    const perp = Math.abs(ddx * (-lb.dz) + ddz * lb.dx);
+    if (perp >= LASER_WIDTH) return;
+    boss.hp = Math.max(0, boss.hp - boss.maxHp * LASER_TICK_DMG_PCT);   // clamp (boss-death = slice 4)
+    return;
+  }
   const opp = state.sides[3 - side.idx];
   if (!opp || opp.hero.dead) return;
   const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
@@ -1421,9 +1434,21 @@ function tickGimluRageServer(state, side, dt) {
   side.iceBlockRemaining = 0;
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
   const opp = state.sides[3 - side.idx];
+  // Boss wars (co-op): rage-pulserna träffar boss-monstret i st f motståndar-hjälte.
+  const bossTarget = (state.mode === 'bosswars') ? state.boss : null;
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
     side.rageTickAccum -= RAGE_TICK_INTERVAL;
-    if (opp && !opp.hero.dead) {
+    if (bossTarget && bossTarget.hp > 0) {
+      const d = Math.hypot(bossTarget.x - side.hero.x, bossTarget.z - side.hero.z);
+      if (d < RAGE_PULSE_RADIUS) {
+        const dmg = bossTarget.maxHp * RAGE_PULSE_DMG_PCT;
+        const dealt = Math.min(dmg, bossTarget.hp);
+        bossTarget.hp = Math.max(0, bossTarget.hp - dmg);   // clamp; boss-DR slice 2, death slice 4
+        if (dealt > 0 && !side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
+        }
+      }
+    } else if (opp && !opp.hero.dead) {
       const d = Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z);
       if (d < RAGE_PULSE_RADIUS) {
         const dmg = opp.hero.maxHp * RAGE_PULSE_DMG_PCT;
@@ -2059,6 +2084,13 @@ function tickBossWars(state, dt) {
     }
     updateNovaEffects(s, dt);
     updateActiveBuffs(s, dt);
+    // Ults (slice 1d): laser/rage träffar boss-monstret; berserk = AA-modifier (decrement här).
+    if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
+    if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+    if ((s.berserkRemaining || 0) > 0) {
+      if (s.hero.dead) s.berserkRemaining = 0;
+      else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt);
+    }
     // Self-state-tick (mirror tickArenaCombat 1483-1506): ult-energy, lockout, buff-
     // timers, CC-nedräkning (boss CC:ar heroes i slice 2 — utan detta fastnar CC permanent),
     // regen (healPerSecPct-talent/item). Allt opp-oberoende → säkert i co-op.
@@ -3322,7 +3354,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Aragurn Berserk (R): +150% AA-dmg + 25% lifesteal under 5s. (AS oförändrad.)
   // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
   // skulle ett oavsiktligt satt fält ge permanent buff.
-  const berserkActive = side.inArena1v1 && (side.berserkRemaining || 0) > 0;
+  const berserkActive = (side.inArena1v1 || side.inBossWars) && (side.berserkRemaining || 0) > 0;
   let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
@@ -5634,7 +5666,7 @@ function applyEvent(state, sideIdx, ev) {
         // no-ops och rörs inte här.
         // Magiker Master Beam: 3s svängande laser (AoE-tick mot opp hero). Riktning
         // från ev.dx/dz (cast-aim) med facing-fallback. Klient renderar via lz-snap.
-        if (side.inArena1v1 && side.heroId === 'magiker' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'magiker' && !side.hero.dead) {
           let ldx = ev.dx, ldz = ev.dz;
           const lm = Math.hypot(ldx || 0, ldz || 0);
           if (lm < 0.01) { ldx = side.hero.facingX || 0; ldz = side.hero.facingZ || 1; }
@@ -5643,12 +5675,12 @@ function applyEvent(state, sideIdx, ev) {
           applyLaserBeamTickServer(state, side);   // initial tick direkt (matchar klientens host-fn)
         }
         // Gimlu Rage: 5s AoE-pulser + 20% lifesteal + CC-immun
-        if (side.inArena1v1 && side.heroId === 'gimlu' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'gimlu' && !side.hero.dead) {
           side.rageRemaining = RAGE_DURATION;
           side.rageTickAccum = 0;
         }
         // Aragurn Berserk: 5s +150% AA-dmg + 25% lifesteal (AA-modifier i updateHeroAttack)
-        if (side.inArena1v1 && side.heroId === 'aragurn' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'aragurn' && !side.hero.dead) {
           side.berserkRemaining = BERSERK_DURATION;
         }
       }
