@@ -243,7 +243,7 @@ const FIREWAVE_EFFECT_LIFE = 0.6;          // hur länge cone-mesh visas på kli
 // Frost Nova (F): target-AoE freeze + shatter
 const NOVA_RADIUS = 3.8;
 const NOVA_DAMAGE = 10;
-const NOVA_FREEZE_TIME = 2.0;
+const NOVA_FREEZE_TIME = 1.5;   // nerf från 2.0: 2s hard-freeze/8s CD var för pressande i 1v1 (matchar klient)
 const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8)
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
@@ -300,7 +300,7 @@ const KOSTEFO_CLOUD_CD = 12.0;
 // R (ult): Joint Avengers — 8 joints copy AA, 10% dmg, 50% lifesteal, 5s
 const KOSTEFO_ULT_DURATION = 5.0;
 const KOSTEFO_ULT_JOINT_COUNT = 8;
-const KOSTEFO_ULT_DMG_RATIO = 0.10;      // 10% av kostefos AA-dmg
+const KOSTEFO_ULT_DMG_RATIO = 0.25;      // buff från 0.10: ulten gjorde ~0.5 dmg/joint = död ult i 1v1 (matchar klient)
 const KOSTEFO_ULT_LIFESTEAL = 0.50;
 const KOSTEFO_ULT_ORBIT_RADIUS = 1.8;
 const KOSTEFO_ULT_ORBIT_SPEED = 1.8;     // rad/sec
@@ -1267,12 +1267,12 @@ const A_SHRINK_TICK_INTERVAL = 0.25;
 const LASER_DURATION = 3.0;
 const LASER_TURN_RATE = 4.5;
 const LASER_TICK_INTERVAL = 0.5;
-const LASER_TICK_DMG_PCT = 0.15;
+const LASER_TICK_DMG_PCT = 0.08;   // nerf från 0.15: var 90% maxHP-one-shot över 3s → nu ~48% (matchar klient)
 const LASER_RANGE = 60;
 const LASER_WIDTH = 2.2;
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
-const RAGE_PULSE_RADIUS = 5.5;       // buff från 4.5: realistiskt hålla kiter inom radien
+const RAGE_PULSE_RADIUS = 7.0;       // buff från 5.5: rage-ulten var nästan oduglig i 1v1 (matchar klient)
 const RAGE_PULSE_DMG_PCT = 0.05;     // buff från 0.035: rage var svagast i 1v1 (~35%→50% maxHP-ceiling)
 const RAGE_HEAL_PCT = 0.20;
 const BERSERK_DURATION = 5.0;
@@ -1647,7 +1647,7 @@ function tickArenaShrink(state, dt) {
         const stacks = s.shrinkHitStacks || 0;
         const dmg = s.hero.maxHp * (A_SHRINK_DMG_PCT + stacks * 0.01) * A_SHRINK_TICK_INTERVAL;
         damageHero(s, dmg);
-        s.shrinkHitStacks = stacks + 1;
+        s.shrinkHitStacks = Math.min(10, stacks + 1);   // cap 10 → max zon-DPS 15%/s (matchar klient)
       }
     }
   }

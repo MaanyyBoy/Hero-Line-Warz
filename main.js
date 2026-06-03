@@ -2563,7 +2563,7 @@ const FIREWAVE_DOT_DURATION = 3.0;
 const FIREWAVE_EFFECT_LIFE = 0.6;
 const NOVA_RADIUS = 3.8 * 1.3 * 0.8;       // +30% → -20% = 4.94 → 3.95
 const NOVA_DAMAGE = 10;
-const NOVA_FREEZE_TIME = 2.0;
+const NOVA_FREEZE_TIME = 1.5;   // nerf från 2.0: 2s hard-freeze/8s CD var för pressande i 1v1 (matchar server)
 const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8), matchar server
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
@@ -9300,7 +9300,7 @@ function tickShrinkCircle(dt) {
         const dmgPctTotal = SHRINK_DMG_PCT + stacks * 0.01;   // bas + 1% per stack
         const dmg = s.hero.maxHp * dmgPctTotal * SHRINK_TICK_INTERVAL;
         damageHero(s, dmg);
-        s.shrinkHitStacks = stacks + 1;   // ökar för nästa tick
+        s.shrinkHitStacks = Math.min(10, stacks + 1);   // cap 10 → max zon-DPS 15%/s (var obegränsat → kvadratisk död) (matchar server)
       }
     }
   }
@@ -13114,6 +13114,14 @@ function killHero(side) {
   // I arena: behåll mesh synlig så GLTF death-animationen syns
   if (APP.gameMode !== 'arena1v1') {
     side.mesh.visible = false;
+  } else {
+    // Arena kill-juice: en kill är rondens hela poäng men hade ingen punch
+    // (att skada orben skakade kameran mer än att döda motståndaren). Lägg
+    // dödsburst + kamera-shake så killen landar. Kör host/solo-sidan; MP-klient
+    // ser death via snapshot men juicen räcker för solo (vs bot) + host.
+    spawnSkillCastFx(side.hero.x, side.hero.z, 0xff4422, 3.4);
+    if (typeof spawnGroundImpact === 'function') spawnGroundImpact(side.hero.x, side.hero.z, 2.6, 0xff5533);
+    triggerCameraShake(0.5, 0.45);
   }
 }
 
@@ -20177,7 +20185,7 @@ function tickUltimates(side, dt) {
 const LASER_DURATION = 3.0;
 const LASER_TURN_RATE = 4.5;       // rad/s — hur snabbt strålen kan svänga med facing
 const LASER_TICK_INTERVAL = 0.5;
-const LASER_TICK_DMG_PCT = 0.15;    // 15% av target maxHP per tick = 90% över 3s
+const LASER_TICK_DMG_PCT = 0.08;    // nerf från 0.15: var 90% maxHP-one-shot över 3s → nu ~48% (matchar server)
 const LASER_RANGE = 60;             // jätte långt
 const LASER_WIDTH = 2.2;            // perpendicular bredd för träff
 const LASER_DR_MUL = 0.10;          // 90% DR
@@ -20814,7 +20822,7 @@ const _K_CLOUD_AS_BONUS = 0.20;
 const _K_CLOUD_CD = 12.0;
 const _K_ULT_DURATION = 5.0;
 const _K_ULT_JOINT_COUNT = 8;
-const _K_ULT_DMG_RATIO = 0.10;
+const _K_ULT_DMG_RATIO = 0.25;   // buff från 0.10: ulten gjorde ~0.5 dmg/joint-träff = död ult i 1v1 (matchar server)
 const _K_ULT_LIFESTEAL = 0.50;
 const _K_ULT_ORBIT_SPEED = 1.8;
 const _K_COMPANION_DMG_RATIO = 0.25;
@@ -21590,7 +21598,7 @@ function onLegolasUltHit(side, hit, arr) {
 // === Kryx ult: Rage ===
 const RAGE_DURATION = 5.0;
 const RAGE_TICK_INTERVAL = 0.5;
-const RAGE_PULSE_RADIUS = 5.5;       // buff från 4.5 (matchar server)
+const RAGE_PULSE_RADIUS = 7.0;       // buff från 5.5: rage-ulten var nästan oduglig i 1v1 (motståndaren kitade ut) (matchar server)
 const RAGE_PULSE_DMG_PCT = 0.05;     // buff från 0.035 (matchar server — rage var svagast i 1v1)
 const RAGE_DR_MUL = 0.50;             // 50% DR
 const RAGE_HEAL_PCT = 0.20;           // 20% lifesteal från all skada utdelad
@@ -23333,6 +23341,11 @@ function updateSkillButtonStyles() {
     if (!locked && cd > 0) {
       el.classList.add('cooling');
       el.querySelector('.cd').textContent = cd.toFixed(1);
+      // Radiell sweep: sätt --cd-frac = återstående fraktion (cd / cd.max).
+      const cdMax = (side && side.skills[key] && side.skills[key].max) || 0;
+      let mask = el.querySelector('.cd-mask');
+      if (!mask) { mask = document.createElement('div'); mask.className = 'cd-mask'; el.appendChild(mask); }
+      mask.style.setProperty('--cd-frac', cdMax > 0 ? Math.max(0, Math.min(1, cd / cdMax)) : 0);
     } else {
       el.classList.remove('cooling');
       el.querySelector('.cd').textContent = '';
