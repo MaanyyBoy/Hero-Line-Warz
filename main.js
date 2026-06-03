@@ -9255,12 +9255,14 @@ function ensureShrinkVignette() {
 // shrink-cirkeln är aktiv OCH lokala hjälten är utanför den.
 function updateShrinkVignette() {
   let outside = false;
+  let stacks = 0;
   if (APP.gameMode === 'arena1v1' && arenaState.phase === 'fight') {
     const r = arenaState.shrinkRadius || 0;
     const ls = sides[APP.localSide];
     if (r > 0 && ls && ls.hero && !ls.hero.dead) {
       const ddx = ls.hero.x, ddz = ls.hero.z - ARENA_Z_OFFSET;
       outside = (ddx * ddx + ddz * ddz) > r * r;
+      stacks = ls.shrinkHitStacks || 0;
     }
   }
   // Skriv DOM bara vid förändring (var skrivning 60×/sek annars — onödig DOM-touch).
@@ -9269,7 +9271,10 @@ function updateShrinkVignette() {
     return;
   }
   ensureShrinkVignette();
-  if (_shrinkVigState !== '1') { shrinkVignetteEl.style.opacity = '1'; _shrinkVigState = '1'; }
+  // Intensiteten rampar med stacks (skadan eskalerar +1%/stack): 0.45 → 1.0 vid cap 10.
+  // Visar att zon-skadan ACCELERERAR — var binär röd kant → kändes som orättvis död.
+  const intensity = (0.45 + Math.min(1, stacks / 10) * 0.55).toFixed(2);
+  if (_shrinkVigState !== intensity) { shrinkVignetteEl.style.opacity = intensity; _shrinkVigState = intensity; }
 }
 let _shrinkVigState = '';
 
@@ -9423,18 +9428,23 @@ function updateArenaOrb(dt) {
   if (arenaOrbMesh) {
     const now = performance.now() / 1000;
     updateEntityHpBar(arenaOrbMesh, orb.hp, orb.maxHp, now);
-    // Orb-animation: pulserande halo + roterande core
+    // Orb-animation: pulserande halo + roterande core. Låg-HP-nudge: när lokala
+    // hjälten är under 50% HP "kallar" orben starkare/snabbare (den ger +30% HP +
+    // shield = comeback-verktyg, men spelaren förstod aldrig det). Modulerar bara
+    // befintligt halo/ljus — INGEN PointLight add/remove (iOS-fällan undviken).
     const t = now;
+    const ls = sides[APP.localSide];
+    const localLow = !!(ls && ls.hero && !ls.hero.dead && ls.hero.hp < ls.hero.maxHp * 0.5);
     if (arenaOrbMesh.userData.core) {
       arenaOrbMesh.userData.core.rotation.y = t * 0.8;
       arenaOrbMesh.userData.core.position.y = 1.3 + Math.sin(t * 2.4) * 0.10;
     }
     if (arenaOrbMesh.userData.halo) {
-      const pulse = 0.18 + Math.sin(t * 3.2) * 0.08;
-      arenaOrbMesh.userData.halo.material.opacity = pulse;
+      const base = localLow ? 0.34 : 0.18, amp = localLow ? 0.16 : 0.08, spd = localLow ? 5.0 : 3.2;
+      arenaOrbMesh.userData.halo.material.opacity = base + Math.sin(t * spd) * amp;
     }
     if (arenaOrbLight) {
-      arenaOrbLight.intensity = 1.0 + Math.sin(t * 2.6) * 0.4;
+      arenaOrbLight.intensity = (localLow ? 1.8 : 1.0) + Math.sin(t * (localLow ? 4.5 : 2.6)) * (localLow ? 0.7 : 0.4);
     }
   }
 }
@@ -19756,9 +19766,9 @@ function buildArenaItemModalContent(itemId, def, action) {
   const side = sides[APP.localSide];
   const existing = side && side.inventory && side.inventory.find(it => it.itemId === itemId);
   if (action === 'buy') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Buy: ${ITEM_BUY_COST}g</div>`;
-  else if (action === 'upgrade' && existing) cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera lvl ${existing.level} → ${existing.level + 1}: ${itemUpgradeCost(existing.level)}g</div>`;
-  else if (action === 'upgrade') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Uppgradera: ${itemUpgradeCost(1)}g</div>`;
-  else cost = `<div style="color:#88dd88;font-weight:700;margin-bottom:8px">MAX LEVEL — kan inte uppgraderas</div>`;
+  else if (action === 'upgrade' && existing) cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Upgrade lvl ${existing.level} → ${existing.level + 1}: ${itemUpgradeCost(existing.level)}g</div>`;
+  else if (action === 'upgrade') cost = `<div style="color:#ffd34a;font-weight:700;margin-bottom:8px">Upgrade: ${itemUpgradeCost(1)}g</div>`;
+  else cost = `<div style="color:#88dd88;font-weight:700;margin-bottom:8px">MAX LEVEL — cannot upgrade further</div>`;
   // Variant-blocks (eller single-block för items utan varianter)
   let blocks = '';
   if (def.variants) {
@@ -19766,7 +19776,7 @@ function buildArenaItemModalContent(itemId, def, action) {
   } else if (def.statsAtLevel) {
     blocks = renderApVariantBlock({ name: def.name, icon: def.icon, description: '', statsAtLevel: def.statsAtLevel, activeAtMax: def.activeAtMax });
   } else {
-    blocks = `<div class="api-desc">${def.description || '(detaljer kommer)'}</div>`;
+    blocks = `<div class="api-desc">${def.description || '(details coming)'}</div>`;
   }
   return `<h4>${def.icon || ''} ${def.name}</h4>
     <div class="api-desc">${def.description || ''}</div>
@@ -23152,7 +23162,7 @@ function showItemTooltipForSlot(slotEl) {
     tooltipCostEl.classList.add('max');
   } else {
     tooltipCostEl.classList.remove('max');
-    tooltipCostEl.textContent = `Uppgradera till lvl ${level + 1}: ${itemUpgradeCost(level)}g`;
+    tooltipCostEl.textContent = `Upgrade to lvl ${level + 1}: ${itemUpgradeCost(level)}g`;
   }
   // Position ovanför slot
   tooltipEl.classList.remove('hidden');
