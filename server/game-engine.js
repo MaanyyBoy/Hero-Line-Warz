@@ -6488,6 +6488,9 @@ module.exports = {
   initArenaMatch,          // skapa+initiera arena-match (sätt hjältar + round 1)
   tickArena,               // arena fas-maskin + combat-tick
   serializeArenaState,     // arena → a-state-meddelande
+  initBossWarsMatch,       // decision 122 Fas 2 (boss wars server-auth): skapa 3-co-op-match
+  tickBossWars,            // boss wars top-tick (slice 0: hjälte-rörelse; AI/ads slice 1-4)
+  serializeBossWarsState,  // boss wars → b-state-meddelande
   tickGame,
   serializeState,
   applyEvent,

@@ -120,8 +120,10 @@ function gameLoopTick(room) {
   // Mät simuleringskostnad separat från serialize för bättre spike-diagnostik.
   const _simStart = Date.now();
   const _isArena = !!room.arenaSim;          // decision 120: server-auth arena
+  const _isBoss = !!room.bossSim;            // decision 122 Fas 2: server-auth boss wars (3-peer)
   try {
     if (_isArena) engine.tickArena(room.game, dt);
+    else if (_isBoss) engine.tickBossWars(room.game, dt);
     else engine.tickGame(room.game, dt);
   } catch (e) {
     console.error(`[${room.code}] tick error:`, e && e.stack || e);
@@ -130,7 +132,9 @@ function gameLoopTick(room) {
   if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
     room.lastStateMs = now;
     try {
-      const stateMsg = _isArena ? engine.serializeArenaState(room.game) : engine.serializeState(room.game);
+      const stateMsg = _isArena ? engine.serializeArenaState(room.game)
+                     : _isBoss ? engine.serializeBossWarsState(room.game)
+                     : engine.serializeState(room.game);
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
@@ -147,6 +151,14 @@ function gameLoopTick(room) {
       if (room.client && room.client.readyState === 1 && room.client.bufferedAmount < BACKPRESSURE_LIMIT) {
         try { room.client.send(payload); } catch (_) {}
       }
+      // 3-peer (boss wars): broadcasta även till extra-klienterna i room.clients[].
+      if (_isBoss && room.clients) {
+        for (const c of room.clients) {
+          if (c && c.readyState === 1 && c.bufferedAmount < BACKPRESSURE_LIMIT) {
+            try { c.send(payload); } catch (_) {}
+          }
+        }
+      }
     } catch (e) {
       console.error(`[${room.code}] serialize/send error:`, e && e.stack || e);
     }
@@ -161,7 +173,7 @@ function gameLoopTick(room) {
   // Arena: matchen slut → stoppa loopen (slut-staten broadcastades just ovan, så
   // klienterna fick phase='matchEnd'). Utan detta tickar ett avslutat arena-rum i
   // 30 Hz tills spelarna lämnar = onödig CPU. (Bug-hunter-fynd, decision 120.)
-  if (_isArena && room.game && room.game.matchState.gameOver) { stopGame(room); return; }
+  if ((_isArena || _isBoss) && room.game && room.game.matchState.gameOver) { stopGame(room); return; }
   room.nextTickAt += TICK_INTERVAL_MS;
   if (room.nextTickAt < now - TICK_INTERVAL_MS * 2) room.nextTickAt = now + TICK_INTERVAL_MS;
   scheduleNextTick(room);
@@ -241,6 +253,60 @@ function applyArenaInput(room, ws, payload) {
       catch (e) { console.warn('arena applyEvent error', e); }
     }
   }
+}
+
+// ── Decision 122 Fas 2: server-auktoritativ boss wars (opt-in via b-sim-start) ──
+// Bakåtkompatibelt: en boss-klient som INTE skickar b-sim-start får gammalt host-auth
+// relä-beteende (relayBossWarsMessage) → deploy bryter inget. När den nya klientens host
+// skickar b-sim-start startar servern boss-engine:n + äger b-state. 3-peer broadcast.
+function startBossWarsSim(room, heroes, tier) {
+  if (room.game || room.tickHandle) return;        // redan igång
+  room.bossSim = true;
+  room.game = engine.initBossWarsMatch(heroes, tier);
+  room.lastStateMs = 0;
+  room.lastTickMs = Date.now();
+  room.nextTickAt = Date.now();
+  scheduleNextTick(room);
+  console.log(`[${room.code}] boss wars sim started (server-auth, tier ${tier})`);
+}
+
+function applyBossWarsInput(room, ws, payload) {
+  if (!room.game) return;
+  const sideIdx = ws.peerIdx;                       // 1=host, 2/3=klienter (satt vid join, spoof-skydd)
+  if (!(sideIdx >= 1 && sideIdx <= 3)) return;
+  const inp = room.game.lastInputs[sideIdx];
+  if (inp) {
+    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    const mag = Math.hypot(jx, jz);
+    if (mag > 1) { jx /= mag; jz /= mag; }
+    inp.j = { x: jx, z: jz };
+  }
+  // OBS: boss-klienten skickar events i fältet `ev` (inte `events` som arena).
+  if (Array.isArray(payload.ev) && payload.ev.length) {
+    for (const ev of payload.ev) {
+      if (!ev || typeof ev !== 'object') continue;
+      try { engine.applyEvent(room.game, sideIdx, ev); }
+      catch (e) { console.warn('boss applyEvent error', e); }
+    }
+  }
+}
+
+function handleBossMessage(room, fromWs, envelope) {
+  const payload = envelope.d;
+  const t = payload && payload.t;
+  // Host begär server-auth boss-sim (skickas vid match-launch). Bara host.
+  if (t === 'b-sim-start') {
+    if (fromWs === room.host) startBossWarsSim(room, payload.heroes, payload.tier);
+    return;
+  }
+  if (room.bossSim) {
+    // Server-auth aktivt: input → engine, b-state ägs av servern (ignorera host:ens).
+    if (t === 'b-input') { applyBossWarsInput(room, fromWs, payload); return; }
+    if (t === 'b-state') return;
+    // Övriga b- (b-tier/b-ready/b-pick/b-launch/b-end lobby-flöde) reläas — de skickas
+    // före sim-start, eller är match-flödes-signaler host fortf. äger.
+  }
+  relayBossWarsMessage(room, fromWs, envelope);
 }
 
 function handleArenaMessage(room, fromWs, envelope) {
@@ -339,7 +405,7 @@ wss.on('connection', (ws) => {
         // webbläsaren → servern ska INTE köra den klassiska engine:n för
         // arena-rum (se 'join'-handlern nedan). Saniteras: bara 'arena1v1'
         // eller 'classic'. Gammal klient utan fältet → 'classic' (oförändrat).
-        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : 'classic',
+        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : 'classic',
         game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
       };
       rooms.set(code, room);
@@ -430,7 +496,7 @@ wss.on('connection', (ws) => {
       if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
         handleArenaMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
-        relayBossWarsMessage(room, ws, msg);
+        handleBossMessage(room, ws, msg);
       } else {
         handleGameInput(room, ws, payload);
       }
