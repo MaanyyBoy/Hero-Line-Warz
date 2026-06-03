@@ -1245,7 +1245,7 @@ function heroWalk(side, x, z, opts) {
   return isHeroWalkable(side.idx, x, z, opts);
 }
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
-const ARENA_PREP_TIME = 25;        // nerf från 60 (ready-knappen finns; 60s dödtid/runda var för långt)
+const ARENA_PREP_TIME = 18;        // nerf 25→18: ~2.5min meny/Bo5 var för mycket dödtid; ready-knappen skippar ändå (matchar klient)
 const ARENA_ROUND_END_PAUSE = 5;   // +1s så utfallet hinner läsas
 const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_START = 400;
