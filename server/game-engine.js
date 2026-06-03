@@ -1384,7 +1384,7 @@ function applyLaserBeamTickServer(state, side) {
     if (along < 0 || along > LASER_RANGE) return;
     const perp = Math.abs(ddx * (-lb.dz) + ddz * lb.dx);
     if (perp >= LASER_WIDTH) return;
-    boss.hp = Math.max(0, boss.hp - boss.maxHp * LASER_TICK_DMG_PCT);   // clamp (boss-death = slice 4)
+    boss.hp = Math.max(0, boss.hp - bossWarsDmgMod(boss, boss.maxHp * LASER_TICK_DMG_PCT));   // fas-immunitet+DR; clamp (death=slice 4)
     return;
   }
   const opp = state.sides[3 - side.idx];
@@ -1441,9 +1441,9 @@ function tickGimluRageServer(state, side, dt) {
     if (bossTarget && bossTarget.hp > 0) {
       const d = Math.hypot(bossTarget.x - side.hero.x, bossTarget.z - side.hero.z);
       if (d < RAGE_PULSE_RADIUS) {
-        const dmg = bossTarget.maxHp * RAGE_PULSE_DMG_PCT;
+        const dmg = bossWarsDmgMod(bossTarget, bossTarget.maxHp * RAGE_PULSE_DMG_PCT);   // fas-immunitet + DR
         const dealt = Math.min(dmg, bossTarget.hp);
-        bossTarget.hp = Math.max(0, bossTarget.hp - dmg);   // clamp; boss-DR slice 2, death slice 4
+        bossTarget.hp = Math.max(0, bossTarget.hp - dmg);   // clamp; death slice 4
         if (dealt > 0 && !side.hero.dead) {
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
         }
@@ -2003,6 +2003,35 @@ const BOSSWARS_TIER_SKILLS = {
     { id: 'skyfireRain', kind: 'multiCircle', telegraph: 0.7, count: 10, spawnInterval: 0.6, radius: 4.0, dmgMul: 2.2, spread: 15, cd: 15.0 },
   ],
 };
+// Phase 2 skill-sets (port av BOSS_WARS_PHASE2_SKILLS, re-keyad wave→tier). Boss byter
+// skill-array vid phaseThreshold-HP (slice 3a). Nya skills hårdare/mer komplexa.
+const BOSSWARS_TIER_PHASE2_SKILLS = {
+  1: [
+    { id: 'berserkerCharge', kind: 'lineDash', telegraph: 0.9, length: 14, width: 3.5, execTime: 0.5, dmgMul: 3.0, cd: 5.5 },
+    { id: 'whirlwindStrike', kind: 'groundCircle', telegraph: 1.0, radius: 6.5, dmgMul: 1.8, originSelf: true, slow: { dur: 1.8, mul: 0.5 }, cd: 6.5 },
+    { id: 'warCry', kind: 'groundCircle', telegraph: 1.6, radius: 13, dmgMul: 2.2, originSelf: true, knockback: 3.0, cd: 12.0 },
+  ],
+  2: [
+    { id: 'stormCall', kind: 'multiCircle', telegraph: 0.8, count: 10, spawnInterval: 0.4, radius: 4.0, dmgMul: 1.8, spread: 11, cd: 13.0 },
+    { id: 'heavyArtillery', kind: 'projectileMulti', telegraph: 0.6, count: 6, spreadAngle: Math.PI / 4, speed: 20, dmgMul: 2.0, radius: 1.2, range: 22, cd: 7.5 },
+    { id: 'shieldWall', kind: 'groundCircle', telegraph: 1.0, radius: 10, dmgMul: 2.4, originSelf: true, knockback: 4.5, cd: 9.0 },
+  ],
+  3: [
+    { id: 'tectonicSlam', kind: 'groundCircle', telegraph: 1.2, radius: 13, dmgMul: 3.0, originSelf: true, knockback: 3.0, cd: 10.0 },
+    { id: 'toxicCloud', kind: 'poolDot', telegraph: 0.9, radius: 7, duration: 9, dpsMul: 0.8, slow: { dur: 1.2, mul: 0.5 }, targetHero: true, cd: 8.0 },
+    { id: 'boulderHurl', kind: 'projectile', telegraph: 0.5, speed: 22, dmgMul: 2.6, radius: 2.0, range: 26, cd: 5.5 },
+  ],
+  4: [
+    { id: 'demonicEruption', kind: 'multiCircle', telegraph: 0.8, count: 10, spawnInterval: 0.4, radius: 5, dmgMul: 2.8, spread: 15, cd: 12.0 },
+    { id: 'soulBurn', kind: 'poolDot', telegraph: 0.7, radius: 8, duration: 10, dpsMul: 1.0, slow: { dur: 1.5, mul: 0.5 }, targetHero: true, cd: 7.0 },
+    { id: 'hellfireStorm', kind: 'sweepBeam', telegraph: 1.0, sweepDuration: 3.0, length: 20, halfAngle: Math.PI / 1.6, dpsMul: 2.2, cd: 9.0 },
+  ],
+  5: [
+    { id: 'infernalRoar', kind: 'groundCircle', telegraph: 1.1, radius: 14, dmgMul: 3.5, originSelf: true, knockback: 6.0, cd: 8.5 },
+    { id: 'dragonDive', kind: 'lineDash', telegraph: 0.8, length: 22, width: 4.0, execTime: 0.6, dmgMul: 4.0, cd: 7.0 },
+    { id: 'meteorApocalypse', kind: 'multiCircle', telegraph: 0.6, count: 16, spawnInterval: 0.35, radius: 4.5, dmgMul: 2.8, spread: 18, cd: 14.0 },
+  ],
+};
 const BOSSWARS_HERO_SPAWNS = {
   1: { x: BW_SPAWN_ROOM_CX,     z: BW_SPAWN_ROOM_CZ },
   2: { x: BW_SPAWN_ROOM_CX - 3, z: BW_SPAWN_ROOM_CZ + 4 },
@@ -2056,6 +2085,7 @@ function createBossWarsState(tier) {
     // Skill-data (slice 2b cast-machine castar dessa). Initial-CD 40% (mirror spawnBossWarsBoss).
     bossSkills: BOSSWARS_TIER_SKILLS[t],
     skillCds: BOSSWARS_TIER_SKILLS[t].map(s => s.cd * 0.4),
+    phase2Skills: BOSSWARS_TIER_PHASE2_SKILLS[t], _pendingPhase2: false, phaseTransitionTotal: 2.5,
     // Boss-DR-fält (decision 110) — wrapper-applicering wiras slice 2b.
     dmgReductionBase: BOSSWARS_TIER_DR[t], dmgReductionStep: 0.05,
     dmgReductionStepIntervalSec: 120, dmgReductionCap: 0.70, spawnTime: 0,
@@ -2422,10 +2452,55 @@ function tickBossWarsSkills(state, boss, dt) {
   startBossWarsCast(state, boss, boss.bossSkills[pick], pick);
 }
 
-// Boss-AI slice 2a-2b: skill-cast (pausar AI) → annars rörelse + AA. Tickas 1× i tickBossWars.
+// Boss-skade-modifierare (slice 3a): fas-flyup-IMMUNITET (decision 117) + boss-DR (decision 110).
+// Returnerar effektiv skada (0 = immun). Anropas i ALLA boss-skadevägar; no-op för icke-boss-monster.
+function bossWarsDmgMod(m, dmg) {
+  if (!m || !m.isBossWarsBoss) return dmg;
+  if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
+  const dr = Math.min(m.dmgReductionCap || 0.70, m.dmgReductionBase || 0);
+  return dmg * (1 - dr);
+}
+// Fas-övergång (slice 3a): vid phaseThreshold-HP → bossPhase 2. Stun+push heroes, immun flyup 2.5s,
+// cleanse boss-debuffs (behåll positiv buff), swap till phase2-skills vid landning. Port av main.js.
+function triggerBossWarsPhaseTransition(state, boss) {
+  if (!boss || boss.bossPhase !== 1 || !boss.phase2Skills) return;
+  boss.bossPhase = 2;
+  boss.activeCast = null;   // avbryt pågående cast
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    s.hero.frozenTime = Math.max(s.hero.frozenTime || 0, 3.0);   // 3s stun
+    const dx = s.hero.x - boss.x, dz = s.hero.z - boss.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const nx = s.hero.x + (dx / d) * 6, nz = s.hero.z + (dz / d) * 6;   // push 6m
+    if (isBossWarsWalkable(nx, nz, state.gateClosed)) { s.hero.x = nx; s.hero.z = nz; }
+  }
+  boss.phaseTransitionRemaining = 2.5; boss.phaseTransitionTotal = 2.5;
+  // CLEANSE negativa debuffs (positiv damageBuffMul lämnas orörd).
+  boss.dotRemaining = 0; boss.dotPerSec = 0;
+  boss.poisonRemaining = 0; boss.poisonStacks = 0;
+  boss.frozenTime = 0; boss.slowTime = 0; boss.slowMul = 1.0; boss.legolasMarked = 0;
+  boss._pendingPhase2 = true;
+}
+
+// Boss-AI slice 2a-3a: fas-övergång → skill-cast (pausar AI) → annars rörelse + AA. Tickas 1× i tickBossWars.
 function tickBossWarsBoss(state, dt) {
   const boss = state.boss;
   if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  // Fas-övergång: trigga vid phaseThreshold; under flyup (2.5s) ingen AI (boss immun via bossWarsDmgMod).
+  if (boss.bossPhase === 1 && boss.phase2Skills && boss.hp <= boss.maxHp * (boss.phaseThreshold || 0.5)) {
+    triggerBossWarsPhaseTransition(state, boss);
+  }
+  if ((boss.phaseTransitionRemaining || 0) > 0) {
+    boss.phaseTransitionRemaining = Math.max(0, boss.phaseTransitionRemaining - dt);
+    if (boss.phaseTransitionRemaining <= 0 && boss._pendingPhase2) {
+      boss._pendingPhase2 = false;
+      boss.bossSkills = boss.phase2Skills;
+      boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4);
+      boss.damage = Math.round(boss.damage * 1.25);   // phase-2 dmg-boost (raid-känsla)
+    }
+    return;
+  }
   // Boss-skills: under cast pausar normal rörelse/AA (lineDash flyttar bossen själv).
   tickBossWarsSkills(state, boss, dt);
   if (boss.activeCast) return;
@@ -3506,7 +3581,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  const finalDmg = dmg * dmgTakenDebuffMul(m);
+  const finalDmg = bossWarsDmgMod(m, dmg * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   aragurnLifestealHeal(side, actualDealt);
@@ -3951,8 +4026,9 @@ function updateProjectiles(state, side, opp, dt) {
           if (!state.orb.alive) killedTarget = true;
         }
       } else {
-        aaDmgDealt = Math.min(p.target.hp, _primaryDmg);
-        p.target.hp -= _primaryDmg;
+        const _eff = bossWarsDmgMod(p.target, _primaryDmg);   // boss: fas-immunitet + DR (no-op annars)
+        aaDmgDealt = Math.min(p.target.hp, _eff);
+        p.target.hp -= _eff;
         if (p.target.hp <= 0) {
           killedTarget = true;
           if (p.targetIsMonster) {
