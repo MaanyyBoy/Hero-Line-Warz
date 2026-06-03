@@ -4709,11 +4709,11 @@ const ARENA_TALENTS = {
   ],
   gimlu: [
     // Stat-talents
-    { id: 'g_hp',      icon: '💪', name: 'Iron Body',         desc: '+20% max HP',           stats: { maxHpPct: 0.20 } },
-    { id: 'g_dr',      icon: '🪨', name: 'Stone Skin',        desc: '+15% damage reduction', stats: { dmgReductionPct: 0.15 } },
+    { id: 'g_hp',      icon: '💪', name: 'Iron Body',         desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
+    { id: 'g_dr',      icon: '🪨', name: 'Stone Skin',        desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
     { id: 'g_dmg',     icon: '🔨', name: 'Forged Strength',   desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'g_as',      icon: '⚔', name: 'Battle Rhythm',     desc: '+10% attack speed',     stats: { attackSpeedPct: 0.10 } },
-    { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+1% HP regen per sec',  stats: { healPerSecPct: 0.01 } },
+    { id: 'g_regen',   icon: '✨', name: 'Stalwart Vigor',    desc: '+2% HP regen per sec',  stats: { healPerSecPct: 0.02 } },
     // Skill-modifiers
     { id: 'g_taunt_heal', icon: '📢', name: 'Vengeful Roar',   desc: 'Titan\'s Taunt heal +50% (20% → 30% of maxHP/s)' },
     { id: 'g_iron_radius',icon: '🛡', name: 'Wrath Unleashed', desc: 'Iron Will explosion radius +30%' },
@@ -4732,13 +4732,18 @@ const ARENA_TALENTS = {
     { id: 'a_leap_heal',   icon: '🩹', name: 'Battle Lust',    desc: 'Hero Leap heals +50% per enemy hit (25%→37.5% of lost HP)' },
   ],
   kostefo: [
-    // Stat-talents — använder befintliga stat-systemet (recomputeArenaSideStats).
-    // Inga skill-modifiers tills skill-mekanik specas (skill-pipeline = no-touch).
+    // 8 stat-talents (lika många som övriga hjältar) — alla via befintliga
+    // stat-systemet (recomputeArenaSideStats). De 3 extra (k_dmg/k_as/k_crit)
+    // buffar Kostefos AA/companion/joints. ÄKTA skill-modifier-talents
+    // (cloud-heal/slider-radie/joint-slow) kräver skill-pipeline-wiring → framtida task.
     { id: 'k_skill',  icon: '✦', name: 'Cannabis Potency', desc: '+10% skill damage',     stats: { skillDmgPct: 0.10 } },
     { id: 'k_cdr',    icon: '⏱', name: 'Rolling Practice',  desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
     { id: 'k_hp',     icon: '❤', name: 'Iron Lungs',         desc: '+15% max HP',           stats: { maxHpPct: 0.15 } },
     { id: 'k_dr',     icon: '🛡', name: 'Smoke Veil',         desc: '+10% damage reduction', stats: { dmgReductionPct: 0.10 } },
     { id: 'k_ms',     icon: '💨', name: 'Quick Feet',         desc: '+10% movement speed', stats: { moveSpeedPct: 0.10 } },
+    { id: 'k_dmg',    icon: '🌬', name: 'Heavy Exhale',       desc: '+5 attack damage',      stats: { attackDmg: 5 } },
+    { id: 'k_as',     icon: '⚡', name: 'Rapid Puffs',        desc: '+12% attack speed',     stats: { attackSpeedPct: 0.12 } },
+    { id: 'k_crit',   icon: '🎯', name: 'Pinpoint Haze',      desc: '+10% crit chance',      stats: { critChancePct: 0.10 } },
   ],
 };
 

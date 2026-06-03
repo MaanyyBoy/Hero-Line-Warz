@@ -836,11 +836,11 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'l_dash_buff' },  // Shadow Dash lifesteal 20% → 50%
   ],
   gimlu: [
-    { id: 'g_hp',           stats: { maxHpPct: 0.20 } },
-    { id: 'g_dr',           stats: { dmgReductionPct: 0.15 } },
+    { id: 'g_hp',           stats: { maxHpPct: 0.15 } },
+    { id: 'g_dr',           stats: { dmgReductionPct: 0.10 } },
     { id: 'g_dmg',          stats: { attackDmg: 5 } },
     { id: 'g_as',           stats: { attackSpeedPct: 0.10 } },
-    { id: 'g_regen',        stats: { healPerSecPct: 0.01 } },
+    { id: 'g_regen',        stats: { healPerSecPct: 0.02 } },
     { id: 'g_taunt_heal' }, // Titan's Taunt heal +50%
     { id: 'g_iron_radius' }, // Iron Will explosion +30%
     { id: 'g_hammer_full' }, // Hammer return 100% damage
@@ -861,6 +861,9 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'k_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'k_dr',           stats: { dmgReductionPct: 0.10 } },
     { id: 'k_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'k_dmg',          stats: { attackDmg: 5 } },
+    { id: 'k_as',           stats: { attackSpeedPct: 0.12 } },
+    { id: 'k_crit',         stats: { critChancePct: 0.10 } },
   ],
 };
 
