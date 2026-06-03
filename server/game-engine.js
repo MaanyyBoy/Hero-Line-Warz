@@ -1124,7 +1124,10 @@ function respawnHero(side) {
 }
 
 function createSide(idx) {
-  const cfg = SIDE_CFG[idx];
+  // SIDE_CFG har bara idx 1+2 (classic/arena). Boss wars (3 co-op) + 2v2 behöver
+  // idx 3/4 → fallback till side 1:s cfg (tower/lane/spawn används ej i de lägena;
+  // hero-spawn överrids av createBossWarsState). Oförändrat för idx 1/2.
+  const cfg = SIDE_CFG[idx] || SIDE_CFG[1];
   const side = {
     idx,
     hero: {
@@ -1275,6 +1278,7 @@ function isArena1v1Walkable(x, z) {
 // teleport/leap-skills (dash/leap/hammer-tp/slider-tp) — annars använder de classic
 // isHeroWalkable som avvisar arena1v1-positioner (z≈80) → teleport-skills misslyckas.
 function heroWalk(side, x, z, opts) {
+  if (side.inBossWars) return isBossWarsWalkable(x, z, side._bwGateClosed);
   if (side.inArena1v1) return isArena1v1Walkable(x, z);
   if (side.inDuel) return isArenaWalkable(x, z);
   return isHeroWalkable(side.idx, x, z, opts);
@@ -1925,6 +1929,87 @@ function serializeArenaState(state) {
   snap.iwe[1] = arrOpt(s1.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
   snap.iwe[2] = arrOpt(s2.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
   return snap;
+}
+
+// ===== BOSS WARS — server-auth state + tick (Fas 2, decision 122) =====
+// 3-spelar co-op mot EN boss. Speglar createArenaState-mönstret men 3 sides + boss i
+// sides[1].monsters (isBossWarsBoss) precis som klientens buildBossWarsSnap läser den.
+// ADDITIVT — inget anropar detta än (server.js wirar in i slice 0d). Boss-AI/skills/ads
+// portas slice 2-4; HÄR bara state + STATISK boss för att validera pipelinen (slice 0).
+const BOSSWARS_TIER_HP = { 1: 5000, 2: 8000, 3: 12000, 4: 18000, 5: 26000 };  // bas-hp (×3 raid-buff vid spawn, matchar spawnBossWarsBoss)
+const BOSSWARS_HERO_SPAWNS = {
+  1: { x: BW_SPAWN_ROOM_CX,     z: BW_SPAWN_ROOM_CZ },
+  2: { x: BW_SPAWN_ROOM_CX - 3, z: BW_SPAWN_ROOM_CZ + 4 },
+  3: { x: BW_SPAWN_ROOM_CX - 3, z: BW_SPAWN_ROOM_CZ - 4 },
+};
+function createBossWarsState(tier) {
+  const t = Math.max(1, Math.min(5, tier || 1));
+  const sides = { 1: createSide(1), 2: createSide(2), 3: createSide(3) };
+  const state = {
+    mode: 'bosswars',
+    tier: t,
+    sides,
+    nextEntityId: 1,
+    // OBS: INTE duelActive — boss wars är CO-OP, ingen hero-vs-hero PvP (friendly fire).
+    // Heroes targetar bossen (ett monster) via vanlig monster-targeting (slice 1-2).
+    duelActive: false,
+    gateClosed: false,        // korridor-gate (stängs när alla inne i boss-rummet, slice 4)
+    bossActivated: false,
+    lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } } },
+    matchState: { gameOver: false, winner: 0 },
+  };
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    s.inBossWars = true;
+    s._bwGateClosed = false;
+    const sp = BOSSWARS_HERO_SPAWNS[idx];
+    s.hero.x = sp.x; s.hero.z = sp.z;
+    s.hero.facingX = 1; s.hero.facingZ = 0;
+    // Boss wars = full-power lvl 30 + maxade skills (mirror initArenaMatch / klientens enterPlayPhase).
+    s.level = 30; s.xp = 0; s.xpToNext = xpForLevel(30);
+    s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+  }
+  // STATISK boss (slice 0) i sides[1].monsters — full AI/skills/faser portas slice 2-3.
+  // x/z direkt på objektet (server har ingen mesh); raid-buff ×3 matchar spawnBossWarsBoss.
+  const bossHp = Math.round(BOSSWARS_TIER_HP[t] * 3.0);
+  const bossId = state.nextEntityId++;
+  sides[1].monsters.push({
+    id: bossId, isBossWarsBoss: true, isBoss: true,
+    x: BOSSWARS_CX, z: BOSSWARS_CZ,
+    hp: bossHp, maxHp: bossHp,
+    bossPhase: 1, phaseTransitionRemaining: 0, aaCount: 0,
+    activeCast: null, bossTier: t,
+    speed: 0, damage: 0, chasing: false,   // statisk tills boss-AI portas
+  });
+  sides[1].bossWarsBossId = bossId;
+  return state;
+}
+function initBossWarsMatch(heroes, tier) {
+  const state = createBossWarsState(tier);
+  for (const idx of [1, 2, 3]) {
+    const side = state.sides[idx];
+    if (heroes && typeof heroes[idx] === 'string') {
+      side.heroId = heroes[idx];
+      side.heroPickConfirmed = true;
+    }
+    // recomputeArenaSideStats no-op:ar talent-delen (state.talents saknas i boss wars)
+    // men kör recomputeSideStats → bas-stats. Boss-wars talents/items appliceras slice 1.
+    recomputeArenaSideStats(state, side);
+  }
+  return state;
+}
+// Boss-wars top-tick. SLICE 0: bara hjälte-rörelse (statisk boss). Combat/boss-AI/CC/
+// faser/ads wiras i slice 1-4. Matchar server.js gameLoopTick-mönstret (tickArena).
+function tickBossWars(state, dt) {
+  if (state.matchState && state.matchState.gameOver) return;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    s._bwGateClosed = state.gateClosed;   // sync till heroWalk/applyMovement
+    const inp = state.lastInputs[idx];
+    const j = (inp && inp.j) || { x: 0, z: 0 };
+    applyMovement(s, j.x, j.z, dt);
+  }
 }
 
 function checkMatchEnd(state) {
@@ -5301,7 +5386,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  const check = side.inArena1v1 ? isArena1v1Walkable
+  const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
+              : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
               : (x, z) => isHeroWalkable(side.idx, x, z, opts);
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
