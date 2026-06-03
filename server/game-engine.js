@@ -2027,6 +2027,38 @@ function tickBossWars(state, dt) {
     updateSkillCooldowns(s, dt);
     if (!s.hero.dead) updateHeroAttack(state, s, null, dt);
     updateProjectiles(state, s, null, dt);
+    // Skill-ENTITET-updates (slice 1c). Delade med classic line wars → de skadar
+    // monster (= bossen, i delad sides[1].monsters). opp=null (co-op, ingen PvP/friendly
+    // fire). ULTS (laser/rage/berserk) = slice 1d (skrivna mot opp.hero, måste boss-adapteras).
+    // updateBossProjectiles/Pools = slice 2 (boss-AI). Audit: alla opp-null-säkra.
+    updateFireballs(state, s, null, dt);
+    updateBlackHoles(state, s, null, dt);
+    updateVineTraps(state, s, null, dt);
+    updateHammers(state, s, null, dt);
+    updateIronWill(state, s, null, dt);
+    updateAragurnWhirlwind(state, s, null, dt);
+    updateAragurnLeap(state, s, null, dt);
+    updateAragurnShoutHeal(s, dt);
+    updateSoulDrain(state, s, null, dt);
+    tickLegolusInvis(s, dt);
+    tickThornPools(state, s, dt);
+    tickKostefoSkills(state, s, null, dt);
+    tickGimluTauntLvl5(state, s, null, dt);
+    flushIronWillReflectLvl5(state, s, null);
+    tickAragurnBannersLvl5(s, dt);
+    if (s.heroId === 'aragurn') {
+      s._aragurnCountTickAccum = (s._aragurnCountTickAccum || 0) + dt;
+      if (s._aragurnCountTickAccum >= 0.2 || s.aragurnNearbyCount == null) {
+        s._aragurnCountTickAccum = 0;
+        s.aragurnNearbyCount = aragurnNearbyCount(state, s);
+      }
+    }
+    if (s.ironWillExplosions) for (let k = s.ironWillExplosions.length - 1; k >= 0; k--) {
+      s.ironWillExplosions[k].life -= dt;
+      if (s.ironWillExplosions[k].life <= 0) s.ironWillExplosions.splice(k, 1);
+    }
+    updateNovaEffects(s, dt);
+    updateActiveBuffs(s, dt);
     // Self-state-tick (mirror tickArenaCombat 1483-1506): ult-energy, lockout, buff-
     // timers, CC-nedräkning (boss CC:ar heroes i slice 2 — utan detta fastnar CC permanent),
     // regen (healPerSecPct-talent/item). Allt opp-oberoende → säkert i co-op.
@@ -3540,7 +3572,9 @@ function tickLegolusInvis(side, dt) {
 // Skadar motståndarens minions + hero + monsterwaves i sin egen sida.
 function tickThornPools(state, side, dt) {
   if (!side.thornPools || side.thornPools.length === 0) return;
-  const opp = state.sides[3 - side.idx];
+  // Boss wars: co-op (3 sides) → `3 - side.idx` ger en MEDSPELARE/undefined (sides[0]).
+  // Inget krasch (opp guardas nedan) men opp ska vara null i co-op (ingen fiende-hjälte/creeps).
+  const opp = (state.mode === 'bosswars') ? null : state.sides[3 - side.idx];
   for (let i = side.thornPools.length - 1; i >= 0; i--) {
     const p = side.thornPools[i];
     p.remaining -= dt;
@@ -4506,7 +4540,8 @@ function aragurnNearbyCount(state, side) {
     const dx = m.x - hx, dz = m.z - hz;
     if (dx * dx + dz * dz < r2) count++;
   }
-  const opp = state.sides[3 - side.idx];
+  // Boss wars co-op: `3 - side.idx` ger medspelare/undefined → null (bossen räknas redan via side.monsters ovan).
+  const opp = (state.mode === 'bosswars') ? null : state.sides[3 - side.idx];
   if (opp) {
     for (const c of opp.playerCreeps) {
       const dx = c.x - hx, dz = c.z - hz;
