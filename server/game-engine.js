@@ -23,7 +23,7 @@ const HERO_DEFS = {
     name: 'Zyro',
     baseHp: 100,
     baseDmg: 5,
-    attackRange: 4.0,
+    attackRange: 6.3,     // mage AA = 70% av archer (Legolas 9.0). Var 4.0 (användarbeslut 2026-06-04)
     attackInterval: 1.0,
     baseMoveSpeed: 6.0,
   },
@@ -51,7 +51,7 @@ const HERO_DEFS = {
     name: 'Kostef',
     baseHp: 95,           // medium HP
     baseDmg: 5,           // medium dmg
-    attackRange: 5.4,     // AA-range +20% (4.5 → 5.4)
+    attackRange: 6.3,     // mage AA = 70% av archer (Legolas 9.0). Var 5.4 (användarbeslut 2026-06-04)
     attackInterval: 0.9,  // något snabbare
     baseMoveSpeed: 6.2,
   },

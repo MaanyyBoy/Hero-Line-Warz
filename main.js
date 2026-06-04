@@ -2152,11 +2152,11 @@ const HERO_ATTACK_INTERVAL = 1.0;
 
 // Per-hero baseline stats (matchar server/game-engine.js HERO_DEFS).
 const HERO_DEFS = {
-  magiker: { name: 'Zyro', baseHp: 100, baseDmg: 5, attackRange: 4.0, attackInterval: 1.0, baseMoveSpeed: 6.0 },
+  magiker: { name: 'Zyro', baseHp: 100, baseDmg: 5, attackRange: 6.3, attackInterval: 1.0, baseMoveSpeed: 6.0 },   // AA-range = 70% av archer (Legolas 9.0). Var 4.0
   legolas: { name: 'Nyro', baseHp: 85,  baseDmg: 6, attackRange: 9.0, attackInterval: 0.7, baseMoveSpeed: 7.0 },   // AA-range +50% (6.0 → 9.0)
   gimlu:   { name: 'Kryx',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Elar', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
-  kostefo: { name: 'Kostef', baseHp: 95,  baseDmg: 5, attackRange: 5.4, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range +20% (4.5 → 5.4)
+  kostefo: { name: 'Kostef', baseHp: 95,  baseDmg: 5, attackRange: 6.3, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range = 70% av archer (Legolas 9.0). Var 5.4
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const PROJECTILE_SPEED = 18;
