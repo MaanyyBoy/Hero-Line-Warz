@@ -16708,6 +16708,7 @@ const clientMeshes = {
   thornPools: new Map(),
   kostefoSliders: new Map(),
   kostefoGooseWaves: new Map(),
+  warlordSymbols: new Map(),   // boss 3 mark-symboler + puls-ring + reveal-symbol
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -24255,6 +24256,128 @@ function makeBoss2AdMesh(e) {
   return grp;
 }
 
+// ===== BOSS 3 (WARLORD) SYMBOL-MEKANIK — KLIENT-RENDERING =====
+// Server äger logiken; klienten renderar serialiserat state (msg.b.wl): reveal-symbol över
+// huvudet (1s minnesspel), 5 mark-symboler i ring under challenge, puls-telegraf-ring + shockwave.
+const WARLORD_SYMBOL_RADIUS_C = 1.9;
+const WARLORD_SYMBOL_COLORS = { triangle: 0xff5544, square: 0x4499ff, circle: 0x44dd66, pentagon: 0xffcc33, star: 0xcc66ff };
+function warlordStarGeometry(r) {
+  const shape = new THREE.Shape();
+  const spikes = 5, inner = r * 0.45;
+  for (let i = 0; i < spikes * 2; i++) {
+    const rad = (i % 2 === 0) ? r : inner;
+    const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+    const x = Math.cos(a) * rad, y = Math.sin(a) * rad;
+    if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return new THREE.ShapeGeometry(shape);
+}
+function warlordShapeGeometry(shape, r) {
+  switch (shape) {
+    case 'triangle': return new THREE.CircleGeometry(r, 3);
+    case 'square':   return new THREE.CircleGeometry(r, 4);
+    case 'pentagon': return new THREE.CircleGeometry(r, 5);
+    case 'star':     return warlordStarGeometry(r);
+    case 'circle':
+    default:         return new THREE.CircleGeometry(r, 40);
+  }
+}
+function makeWarlordSymbolMesh(shape) {
+  const color = WARLORD_SYMBOL_COLORS[shape] || 0xffffff;
+  const grp = new THREE.Group();
+  const fill = new THREE.Mesh(warlordShapeGeometry(shape, WARLORD_SYMBOL_RADIUS_C),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
+  fill.rotation.x = -Math.PI / 2;
+  fill.userData.isWarlordFill = true;
+  grp.add(fill);
+  const outline = new THREE.LineSegments(new THREE.EdgesGeometry(warlordShapeGeometry(shape, WARLORD_SYMBOL_RADIUS_C)),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }));
+  outline.rotation.x = -Math.PI / 2;
+  outline.position.y = 0.02;
+  grp.add(outline);
+  grp.userData.shape = shape;
+  return grp;
+}
+function makeWarlordRevealMesh(shape) {
+  const m = makeWarlordSymbolMesh(shape);
+  m.scale.setScalar(0.55);
+  m.userData.shape = shape;
+  return m;
+}
+function makeWarlordPulseRing() {
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1.0, 48),
+    new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  return ring;
+}
+function _warlordDispose(mesh) {
+  mesh.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) { Array.isArray(o.material) ? o.material.forEach(m => m && m.dispose()) : o.material.dispose(); }
+  });
+}
+function updateWarlordVisuals(boss, wl) {
+  if (!clientMeshes.warlordSymbols.has(1)) clientMeshes.warlordSymbols.set(1, new Map());
+  const map = clientMeshes.warlordSymbols.get(1);
+  const seen = new Set();
+  const floorY = BOSSWARS_FLOOR_Y;
+  const bx = boss.mesh ? boss.mesh.position.x : BOSSWARS_CX;
+  const bz = boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
+  if (wl) {
+    // Reveal-symbol över bossen (1s minnesspel)
+    if (wl.rv) {
+      seen.add('_reveal');
+      let rm = map.get('_reveal');
+      if (!rm || rm.userData.shape !== wl.rv) {
+        if (rm) { scene.remove(rm); _warlordDispose(rm); map.delete('_reveal'); }
+        rm = makeWarlordRevealMesh(wl.rv); scene.add(rm); map.set('_reveal', rm);
+      }
+      rm.position.set(bx, floorY + 4.7, bz);
+    }
+    // Challenge: 5 mark-symboler + puls-telegraf-ring
+    if (wl.a && wl.sy && wl.sy.length) {
+      for (const sym of wl.sy) {
+        seen.add(sym.s);
+        let sm = map.get(sym.s);
+        if (!sm) { sm = makeWarlordSymbolMesh(sym.s); scene.add(sm); map.set(sym.s, sm); }
+        sm.position.set(sym.x, floorY + 0.06, sym.z);
+        // glow om någon hjälte står i symbolen (feedback "du är inne")
+        let occ = false;
+        for (const idx of [1, 2, 3]) {
+          const s = sides[idx];
+          if (s && s.mesh && !(s.hero && s.hero.dead)) {
+            const dx = s.mesh.position.x - sym.x, dz = s.mesh.position.z - sym.z;
+            if (dx * dx + dz * dz <= WARLORD_SYMBOL_RADIUS_C * WARLORD_SYMBOL_RADIUS_C) { occ = true; break; }
+          }
+        }
+        sm.traverse(o => { if (o.userData && o.userData.isWarlordFill && o.material) o.material.opacity = occ ? 0.75 : 0.3; });
+      }
+      // puls-telegraf-ring: krymper mot mitten när pulsen närmar sig (0 = puls)
+      seen.add('_pulse');
+      let pr = map.get('_pulse');
+      if (!pr) { pr = makeWarlordPulseRing(); scene.add(pr); map.set('_pulse', pr); }
+      const frac = wl.pv > 0 ? Math.max(0, Math.min(1, wl.pt / wl.pv)) : 0;
+      const rad = 1.4 + frac * (BOSSWARS_RADIUS * 0.85);
+      pr.scale.set(rad, rad, 1);
+      pr.position.set(bx, floorY + 0.04, bz);
+      if (pr.material) pr.material.opacity = 0.35 + 0.45 * (1 - frac);
+    }
+    // Puls-event (delta-detect på pulseCounter) → shockwave + skärmskak
+    const pc = wl.pc || 0;
+    if (boss._warlordPc == null) boss._warlordPc = pc;
+    if (pc > boss._warlordPc) {
+      spawnGroundImpact(bx, bz, BOSSWARS_RADIUS * 0.85, 0xff2222);
+      triggerCameraShake(0.5, 0.4);
+      boss._warlordPc = pc;
+    }
+  }
+  // Cleanup ej-sedda meshes (challenge slut / reveal försvann)
+  for (const [id, mesh] of map) {
+    if (!seen.has(id)) { scene.remove(mesh); _warlordDispose(mesh); map.delete(id); }
+  }
+}
+
 function applyBossWarsState(msg) {
   // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
   if (!bossActsAsClient()) return;
@@ -24455,6 +24578,9 @@ function applyBossWarsState(msg) {
         }
       }
       boss._prevSyncedPhase = boss.bossPhase;
+      // Warlord (boss 3) symbol-mekanik-visuals. wl serialiseras varje tick för tier 3.
+      if (msg.b.wl) { boss._wl = msg.b.wl; updateWarlordVisuals(boss, msg.b.wl); }
+      else if (boss._wl) { boss._wl = null; updateWarlordVisuals(boss, null); }   // cleanup vid match-slut/byte
     }
   }
 }
@@ -28097,6 +28223,7 @@ function returnToLobby() {
     'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads',
     'aragurnBanners', 'heroCopyFireballs', 'fireWaves', 'blackHoles', 'shatters',
     'vineTraps', 'hammers', 'ironWillExplosions', 'thornPools', 'kostefoSliders', 'kostefoGooseWaves',
+    'warlordSymbols',
   ]);
   for (const key of Object.keys(clientMeshes)) {
     if (!clientMeshes[key]) continue;
