@@ -19032,13 +19032,44 @@ function _tickBossPhaseBanner() {
     _bossPhaseBannerEl.style.display = 'none';
   }
 }
+// Obligatorisk mekanik-toast vid fight-start (playtest HÖGT-1): mekanik-texten låg gömd bakom
+// ett frivilligt klick → spelare gick in blinda och wipade laget. Visas under gate-walk-in
+// (innan combat), auto-döljs efter 8s. Bara tier 1 (minion-race) + tier 2 (ad-wipe-pussel).
+let _bossMechToastEl = null, _bossMechToastHideAt = 0;
+function _showBossMechanicToast(tier) {
+  const mech = {
+    1: '🎯 MINIONS march to the boss — kill them fast or it HEALS and grows stronger. Don\'t linger in their aura.',
+    2: '🎯 ADDS chase you. DON\'T kill them too fast — when an add glows RED, killing it WIPES the team. Watch the HOLD-FIRE timer.',
+  }[tier];
+  if (!mech) return;
+  if (!_bossMechToastEl) {
+    const el = document.createElement('div');
+    el.id = 'boss-mech-toast';
+    el.style.cssText = 'position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);z-index:95;' +
+      'max-width:min(86vw,620px);padding:12px 22px;border-radius:12px;background:rgba(30,16,40,0.94);' +
+      'border:2px solid #ffaa44;box-shadow:0 6px 28px rgba(0,0,0,0.7);' +
+      'font:600 14px/1.45 system-ui,"Segoe UI",sans-serif;color:#ffeedd;text-align:center;pointer-events:none;';
+    document.body.appendChild(el);
+    _bossMechToastEl = el;
+  }
+  _bossMechToastEl.textContent = mech;
+  _bossMechToastEl.style.display = 'block';
+  _bossMechToastHideAt = performance.now() + 8000;
+}
+function _tickBossMechToast() {
+  if (_bossMechToastEl && _bossMechToastEl.style.display !== 'none' && performance.now() > _bossMechToastHideAt) {
+    _bossMechToastEl.style.display = 'none';
+  }
+}
 function updateBossHpBar() {
   if (!bossHpWrapEl) return;
   _tickBossPhaseBanner();
+  _tickBossMechToast();
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) {
     bossHpWrapEl.classList.add('hidden');
     _updateKillCdBanner(false);
     if (_bossPhaseBannerEl) _bossPhaseBannerEl.style.display = 'none';
+    if (_bossMechToastEl) _bossMechToastEl.style.display = 'none';
     return;
   }
   // Hitta boss-meshen — bor i sides[1].monsters med isBossWarsBoss=true
@@ -19069,6 +19100,9 @@ function updateBossHpBar() {
   }
   // Phase 2 styling
   bossHpWrapEl.classList.toggle('phase2', boss.bossPhase === 2);
+  // Absorption-flash (playtest HÖGT-3): röd glow på HP-baren när bossen just absorberat en minion.
+  const _absFlash = (APP._bossAbsorbFlashUntil || 0) > performance.now();
+  bossHpWrapEl.style.boxShadow = _absFlash ? '0 0 22px 5px rgba(255,70,70,0.95)' : '';
 }
 
 const duelInfoEl = document.getElementById('duel-info');
@@ -24049,6 +24083,15 @@ function makeBoss2AdMesh(e) {
   body.position.y = 1.0;
   body.userData.isBoss2AdBody = true;
   grp.add(body);
+  // Varnings-ring under ad:en (playtest HÖGT-2): röd-pulsande NÄR kill-cooldown löper (döda = wipe).
+  // Body-färgskiftet lila→röd är för svagt på mobil mitt i kaos; ringen är en starkare signal.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.95, 1.4, 24),
+    new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  ring.visible = false;
+  ring.userData.isBoss2AdRing = true;
+  grp.add(ring);
   grp.position.y = BOSSWARS_FLOOR_Y;
   return grp;
 }
@@ -24095,11 +24138,17 @@ function applyBossWarsState(msg) {
   if (msg.bm) clientReconcileEntities(1, 'bossWarsMinions', msg.bm, makeBossWarsMinionMesh, true);   // boss-1 minions (3b)
   if (msg.ba2) {
     clientReconcileEntities(1, 'boss2Ads', msg.ba2, makeBoss2AdMesh, true);   // boss-2 ads (3b-ii)
-    // Färgskift: röd när kill-cooldown löper (döda ad nu = wipe), annars lila.
+    // Färgskift + varnings-ring: röd när kill-cooldown löper (döda ad nu = wipe), annars lila.
     const _adMap = clientMeshes.boss2Ads.get(1);
     if (_adMap) {
-      const _col = msg.b2r ? 0xff3333 : 0xaa66ff;
-      for (const _mesh of _adMap.values()) _mesh.traverse(o => { if (o.userData && o.userData.isBoss2AdBody && o.material && o.material.color) o.material.color.setHex(_col); });
+      const _red = !!msg.b2r;
+      const _col = _red ? 0xff3333 : 0xaa66ff;
+      const _ringOp = 0.5 + 0.4 * Math.abs(Math.sin(performance.now() * 0.012));
+      for (const _mesh of _adMap.values()) _mesh.traverse(o => {
+        if (!o.userData) return;
+        if (o.userData.isBoss2AdBody && o.material && o.material.color) o.material.color.setHex(_col);
+        if (o.userData.isBoss2AdRing) { o.visible = _red; if (_red && o.material) o.material.opacity = _ringOp; }
+      });
     }
   }
   // Kill-cooldown-WIPE-varning (playtest #1): b2r = återstående cooldown-sekunder (>0 = döda
@@ -24157,6 +24206,12 @@ function applyBossWarsState(msg) {
       const prevHp = boss._prevSyncedHp != null ? boss._prevSyncedHp : msg.b.hp;
       if (msg.b.hp < prevHp - 0.5 && boss.mesh) {
         spawnDamageText(boss.mesh, prevHp - msg.b.hp);
+      }
+      // Absorption-cue (playtest HÖGT-3): boss-HP HOPPAR UPP = minion absorberad. Gör kausaliteten
+      // läsbar — annars undrar spelaren "varför helar bossen?". Heal >5% maxHp = absorption.
+      if (msg.b.hp > prevHp + (boss.maxHp || 1) * 0.05 && boss.mesh) {
+        spawnFloatingText(boss.mesh.position.x, 3.6, boss.mesh.position.z, '⚠ ABSORBED', 'crit');
+        APP._bossAbsorbFlashUntil = performance.now() + 700;   // → HP-bar-flash i updateBossHpBar
       }
       boss._prevSyncedHp = msg.b.hp;
 
@@ -27787,6 +27842,8 @@ function enterPlayPhase() {
     }
     // Markera match som startad — först nu får checkMatchEnd avgöra utgång
     APP.bossWars.started = true;
+    // Obligatorisk mekanik-toast under walk-in (playtest HÖGT-1) — tier 1/2 har special-mekanik.
+    _showBossMechanicToast((APP.bossWars && APP.bossWars.tier) || 1);
     // Boss-fight aktiv → byt body-class fran prep till fight (CSS doljer
     // gold-display + andra UI).
     document.body.classList.add('bw-fighting');
