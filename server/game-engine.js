@@ -1130,6 +1130,14 @@ function activateInventoryItem(side, slotIdx) {
 
 function killHero(side) {
   if (side.hero.dead) return;
+  // Boss Wars Phoenix Amulet (Phase B): revive EN gång vid 50% HP istället för att dö.
+  // Intar ALLA dödskällor (boss-skada, ad-wipe, etc) eftersom alla går via killHero.
+  // FX visas klient-sida via hp-hoppet i b-state (ingen explicit FX-sync i Phase B).
+  if (side.inBossWars && side.phoenixReviveAvailable) {
+    side.phoenixReviveAvailable = false;
+    side.hero.hp = Math.round(side.hero.maxHp * 0.5);
+    return;   // överlever — INTE dead
+  }
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
 }
@@ -4411,6 +4419,11 @@ function updateProjectiles(state, side, opp, dt) {
       }
       // Aragurn passive lifesteal: 0.5% per 1% HP loss på AA-damage också
       aragurnLifestealHeal(side, aaDmgDealt);
+      // Boss Wars AA-lifesteal (Phase B): talent Bloodthirst / item Berserker Gauntlet.
+      // aaLifestealPct sätts bara för boss-wars-sides → no-op i arena/classic.
+      if ((side.aaLifestealPct || 0) > 0 && aaDmgDealt > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + aaDmgDealt * side.aaLifestealPct);
+      }
       // Ult-energy gain per AA-hit (3%)
       if (aaDmgDealt > 0) gainUltEnergy(side, ULT_GAIN_AA_HIT);
       // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill
