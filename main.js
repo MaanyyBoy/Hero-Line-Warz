@@ -16637,6 +16637,7 @@ const clientMeshes = {
   bossProjectiles: new Map(),
   bossPools: new Map(),
   bossWarsMinions: new Map(),
+  boss2Ads: new Map(),
   thornPools: new Map(),
   kostefoSliders: new Map(),
   kostefoGooseWaves: new Map(),
@@ -23928,6 +23929,18 @@ function makeBossWarsMinionMesh(e) {
   return grp;
 }
 
+// Boss-2-ad-mesh (slice 3b-ii) — lila kropp (Warlock-tema), recolor:ad röd vid kill-cooldown.
+function makeBoss2AdMesh(e) {
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.7, 2.0, 8),
+    new THREE.MeshStandardMaterial({ color: 0xaa66ff, emissive: 0x551188, emissiveIntensity: 0.6, roughness: 0.6 }));
+  body.position.y = 1.0;
+  body.userData.isBoss2AdBody = true;
+  grp.add(body);
+  grp.position.y = BOSSWARS_FLOOR_Y;
+  return grp;
+}
+
 function applyBossWarsState(msg) {
   // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
   if (!bossActsAsClient()) return;
@@ -23961,6 +23974,15 @@ function applyBossWarsState(msg) {
   if (msg.bp) clientReconcileEntities(1, 'bossProjectiles', msg.bp, makeBossWarsProjectileMesh, true);
   if (msg.bpl) clientReconcileEntities(1, 'bossPools', msg.bpl, makeBossWarsPoolMesh, true);
   if (msg.bm) clientReconcileEntities(1, 'bossWarsMinions', msg.bm, makeBossWarsMinionMesh, true);   // boss-1 minions (3b)
+  if (msg.ba2) {
+    clientReconcileEntities(1, 'boss2Ads', msg.ba2, makeBoss2AdMesh, true);   // boss-2 ads (3b-ii)
+    // Färgskift: röd när kill-cooldown löper (döda ad nu = wipe), annars lila.
+    const _adMap = clientMeshes.boss2Ads.get(1);
+    if (_adMap) {
+      const _col = msg.b2r ? 0xff3333 : 0xaa66ff;
+      for (const _mesh of _adMap.values()) _mesh.traverse(o => { if (o.userData && o.userData.isBoss2AdBody && o.material && o.material.color) o.material.color.setHex(_col); });
+    }
+  }
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
   if (msg.b && sides[1]) {
     const hostSide = sides[1];

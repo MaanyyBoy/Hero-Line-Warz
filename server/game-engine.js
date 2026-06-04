@@ -2058,6 +2058,7 @@ function createBossWarsState(tier) {
     bossActivated: false,
     bossProjectiles: [], bossPools: [],   // boss skill-projektiler (directional) + DoT-pooler (slice 2c)
     bossWarsMinions: [], bossWarsWave: { countdown: 0, active: false },   // boss-1 minion-vågor (slice 3b)
+    boss2Ads: [], boss2KillCooldown: { remaining: 0 }, boss2AdWaveTimer: { remaining: 0, active: false }, boss2AdWaveSpawn: { countdown: 0, active: false },   // boss-2 ads (3b-ii)
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } } },
     matchState: { gameOver: false, winner: 0 },
   };
@@ -2488,6 +2489,13 @@ function triggerBossWarsPhaseTransition(state, boss) {
   boss.poisonRemaining = 0; boss.poisonStacks = 0;
   boss.frozenTime = 0; boss.slowTime = 0; boss.slowMul = 1.0; boss.legolasMarked = 0;
   boss._pendingPhase2 = true;
+  // Decision 118 "Val B": rensa kvarvarande P1-minions/ads + nollställ spawn-schemat
+  // så heroes får fresh grace (10s) efter P2 startar. Speglar klientens transition.
+  if (state.bossWarsMinions) for (let i = state.bossWarsMinions.length - 1; i >= 0; i--) despawnBossWarsMinionEngine(state, state.bossWarsMinions[i]);
+  if (state.boss2Ads) for (let i = state.boss2Ads.length - 1; i >= 0; i--) despawnBoss2AdEngine(state, state.boss2Ads[i]);
+  if (state.bossWarsWave) { state.bossWarsWave.active = false; state.bossWarsWave.countdown = 0; }
+  if (state.boss2AdWaveSpawn) { state.boss2AdWaveSpawn.active = false; state.boss2AdWaveSpawn.countdown = 0; }
+  if (state.boss2AdWaveTimer) { state.boss2AdWaveTimer.active = false; state.boss2AdWaveTimer.remaining = 0; }
 }
 
 // Boss-AI slice 2a-3a: fas-övergång → skill-cast (pausar AI) → annars rörelse + AA. Tickas 1× i tickBossWars.
@@ -2657,7 +2665,130 @@ function tickBossWarsMinionAuraEngine(state, dt) {
   }
 }
 
-// Boss-wars top-tick. SLICE 1a-3b: hjälte + boss-AI + minion-vågor/aura.
+// ===== BOSS 2 ADS (slice 3b-ii, decision 118) — bara tier 2 =====
+// Separat mekanik: ads JAGAR hjältar + homing-distansattack (stacking-slow vid impact) +
+// våg-gemensam dödstimer → explosion + kill-cooldown-WIPE (döda ad medan cooldown löper = laget dör).
+const BOSS2_AD_HP = 120, BOSS2_AD_SPEED = 5.25, BOSS2_AD_DAMAGE = 10;
+const BOSS2_AD_RANGE = 8.0, BOSS2_AD_ATK_INTERVAL = 1.5, BOSS2_AD_PROJ_TIME = 0.8;
+const BOSS2_AD_LIFETIME = 10, BOSS2_AD_EXPLODE_PCT_P1 = 0.25, BOSS2_AD_EXPLODE_PCT_P2 = 0.50;
+const BOSS2_AD_KILL_COOLDOWN_P1 = 2.0, BOSS2_AD_KILL_COOLDOWN_P2 = 3.0;
+const BOSS2_AD_WAVE_FIRST_DELAY = 10, BOSS2_AD_WAVE_INTERVAL_P1 = 40, BOSS2_AD_WAVE_INTERVAL_P2 = 30;
+const BOSS2_AD_STACK_DMG_PCT = 0.05, BOSS2_AD_STACK_SLOW_PCT = 0.10;
+const BOSS2_AD_STACK_MAX_P1 = 5, BOSS2_AD_STACK_MAX_P2 = 10, BOSS2_AD_STACK_DECAY = 5, BOSS2_AD_WAVE_SIZE = 3;
+function boss2AdsActive(state) { return state.tier === 2; }
+function spawnBoss2AdEngine(state, ang) {
+  const r = BOSSWARS_RADIUS - 2;
+  const m = {
+    id: state.nextEntityId++, hp: BOSS2_AD_HP, maxHp: BOSS2_AD_HP,
+    x: BOSSWARS_CX + Math.cos(ang) * r, z: BOSSWARS_CZ + Math.sin(ang) * r,
+    moveSpeed: BOSS2_AD_SPEED, isBoss2Ad: true, isMinion: false, isMonster: false, isBoss: false, isBossWarsBoss: false,
+    attackType: 'range', damage: BOSS2_AD_DAMAGE, attackRange: BOSS2_AD_RANGE,
+    attackInterval: BOSS2_AD_ATK_INTERVAL, projTime: BOSS2_AD_PROJ_TIME, atkCd: 0, _bwState: state,
+  };
+  state.sides[1].monsters.push(m);   // delad ref → hero-targeting/AA/skill
+  state.boss2Ads.push(m);
+  return m;
+}
+function spawnBoss2AdWaveEngine(state, size) {
+  for (let i = 0; i < size; i++) spawnBoss2AdEngine(state, (i / size) * Math.PI * 2);
+  state.boss2AdWaveTimer.remaining = BOSS2_AD_LIFETIME; state.boss2AdWaveTimer.active = true;
+}
+function despawnBoss2AdEngine(state, m) {
+  let k = state.boss2Ads.indexOf(m); if (k >= 0) state.boss2Ads.splice(k, 1);
+  k = state.sides[1].monsters.indexOf(m); if (k >= 0) state.sides[1].monsters.splice(k, 1);
+}
+function applyBoss2AdExplosionEngine(state, boss) {
+  const pct = (boss && boss.bossPhase === 2) ? BOSS2_AD_EXPLODE_PCT_P2 : BOSS2_AD_EXPLODE_PCT_P1;
+  for (const tgt of bossWarsTargets(state)) { if (!tgt || !tgt.hero || tgt.hero.dead) continue; damageHero(tgt, tgt.hero.maxHp * pct); }
+}
+function triggerBoss2AdWipeEngine(state) {
+  for (const tgt of bossWarsTargets(state)) { if (!tgt || !tgt.hero || tgt.hero.dead) continue; killHero(tgt); }
+}
+// Anropas från killMonster när en hero dödar en boss-2-ad: wipe om kill-cooldown löper, annars starta den.
+function onBoss2AdHeroKill(state, ad) {
+  const k = state.boss2Ads.indexOf(ad); if (k >= 0) state.boss2Ads.splice(k, 1);
+  if (state.boss2KillCooldown.remaining > 0) {
+    triggerBoss2AdWipeEngine(state);
+  } else {
+    const boss = state.boss;
+    state.boss2KillCooldown.remaining = (boss && boss.bossPhase === 2) ? BOSS2_AD_KILL_COOLDOWN_P2 : BOSS2_AD_KILL_COOLDOWN_P1;
+  }
+}
+function applyBoss2AdStackHitEngine(state, side) {
+  if (!side || !side.hero || side.hero.dead) return;
+  const boss = state.boss;
+  const maxStacks = (boss && boss.bossPhase === 2) ? BOSS2_AD_STACK_MAX_P2 : BOSS2_AD_STACK_MAX_P1;
+  side.adStacks = Math.min(maxStacks, (side.adStacks || 0) + 1);
+  side.adStackTimer = BOSS2_AD_STACK_DECAY;
+  damageHero(side, side.adStacks * BOSS2_AD_STACK_DMG_PCT * side.hero.maxHp);
+  const slowMul = 1 - side.adStacks * BOSS2_AD_STACK_SLOW_PCT;
+  side.heroSlowMul = Math.min(side.heroSlowMul != null ? side.heroSlowMul : 1, slowMul);
+  side.heroSlowTime = Math.max(side.heroSlowTime || 0, BOSS2_AD_STACK_DECAY);
+}
+function tickBoss2AdStacksEngine(state, dt) {
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    if ((s.adStackTimer || 0) > 0) { s.adStackTimer -= dt; if (s.adStackTimer <= 0) { s.adStackTimer = 0; s.adStacks = 0; } }
+  }
+}
+function spawnBoss2AdProjectileEngine(state, ad, targetIdx) {
+  state.sides[1].monsterProjectiles.push({
+    id: state.nextEntityId++, x: ad.x, y: MONSTER_PROJ_Y, z: ad.z, srcX: ad.x, srcZ: ad.z,
+    damage: ad.damage, timer: ad.projTime, totalTime: ad.projTime, kind: 'darkOrb',
+    bossTargetIdx: targetIdx, isBoss2AdProj: true,   // impact → applyBoss2AdStackHitEngine
+  });
+}
+function tickBoss2AdWavesEngine(state, dt) {
+  if (!boss2AdsActive(state) || !state.bossActivated) return;
+  const boss = state.boss;
+  if (!boss || boss.hp <= 0) { state.boss2AdWaveSpawn.active = false; return; }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;
+  if (!state.boss2AdWaveSpawn.active) { state.boss2AdWaveSpawn.active = true; state.boss2AdWaveSpawn.countdown = BOSS2_AD_WAVE_FIRST_DELAY; }
+  state.boss2AdWaveSpawn.countdown -= dt;
+  if (state.boss2AdWaveSpawn.countdown <= 0) {
+    spawnBoss2AdWaveEngine(state, BOSS2_AD_WAVE_SIZE);
+    state.boss2AdWaveSpawn.countdown += (boss.bossPhase === 2) ? BOSS2_AD_WAVE_INTERVAL_P2 : BOSS2_AD_WAVE_INTERVAL_P1;
+  }
+}
+function updateBoss2AdsEngine(state, dt) {
+  if (!boss2AdsActive(state)) return;
+  if (state.boss2KillCooldown.remaining > 0) state.boss2KillCooldown.remaining = Math.max(0, state.boss2KillCooldown.remaining - dt);
+  const arr = state.boss2Ads;
+  // Våg tömd av hero-kills → deaktivera dödstimer (ingen explosion).
+  if (state.boss2AdWaveTimer.active && (!arr || arr.length === 0)) { state.boss2AdWaveTimer.remaining = 0; state.boss2AdWaveTimer.active = false; }
+  if (!arr || arr.length === 0) return;
+  const boss = state.boss;
+  const inTransition = !!(boss && (boss.phaseTransitionRemaining || 0) > 0);
+  // Våg-gemensam dödstimer → ALLA kvarvarande ads exploderar samma frame (skada per ad).
+  if (state.boss2AdWaveTimer.active && !inTransition) {
+    state.boss2AdWaveTimer.remaining -= dt;
+    if (state.boss2AdWaveTimer.remaining <= 0) {
+      for (let i = arr.length - 1; i >= 0; i--) { const ad = arr[i]; if (!ad) continue; applyBoss2AdExplosionEngine(state, boss); despawnBoss2AdEngine(state, ad); }
+      state.boss2AdWaveTimer.remaining = 0; state.boss2AdWaveTimer.active = false;
+      return;
+    }
+  }
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (!m) continue;
+    if (m.hp <= 0 || !state.sides[1].monsters.includes(m)) { despawnBoss2AdEngine(state, m); continue; }
+    const target = nearestLiveHero(state, m.x, m.z);
+    if (!target) continue;
+    const dx = target.hero.x - m.x, dz = target.hero.z - m.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    m.atkCd = Math.max(0, (m.atkCd || 0) - dt);
+    if (dist > m.attackRange) {   // utanför räckvidd → jaga
+      const step = m.moveSpeed * dt;
+      m.x += (dx / dist) * step; m.z += (dz / dist) * step;
+    } else if (m.atkCd <= 0) {    // inom räckvidd → skjut homing-projektil
+      spawnBoss2AdProjectileEngine(state, m, target.idx);
+      m.atkCd = m.attackInterval;
+    }
+  }
+}
+
+// Boss-wars top-tick. SLICE 1a-3b: hjälte + boss-AI + minion-vågor/aura + boss-2-ads.
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
   // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
@@ -2752,6 +2883,9 @@ function tickBossWars(state, dt) {
   tickBossWarsMinionWavesEngine(state, dt);   // boss-1 minion-vågor (slice 3b)
   updateBossWarsMinionsEngine(state, dt);     // minion-rörelse mot boss + absorption
   tickBossWarsMinionAuraEngine(state, dt);    // minion-aura skadar närstående heroes
+  tickBoss2AdWavesEngine(state, dt);          // boss-2 ad-vågor (slice 3b-ii)
+  updateBoss2AdsEngine(state, dt);            // boss-2 ad-AI (jakt/distansattack/explosion/wipe)
+  tickBoss2AdStacksEngine(state, dt);         // boss-2 ad-stack-decay
   tickBossWarsProjectiles(state, dt);
   tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
@@ -2790,7 +2924,7 @@ const _bwSnap = {
   h: { 1: null, 2: null, 3: null },
   mr: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   b: null,
-  bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR, bm: _ARENA_EMPTY_ARR,   // projektiler/pooler (2c) + minions (3b)
+  bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR, bm: _ARENA_EMPTY_ARR, ba2: _ARENA_EMPTY_ARR, b2r: false,   // 2c+3b+3b-ii
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -2812,6 +2946,8 @@ function serializeBossWarsState(state) {
   snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
   snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b)
+  snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
+  snap.b2r = state.boss2KillCooldown.remaining > 0;   // röd-state: kill-cooldown löper = WIPE-risk
   const boss = state.boss;
   if (boss) {
     const o = _bwBossBuf;
@@ -2898,6 +3034,8 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   const m = arenaSide.monsters[idx];
   if (!m) return;
   arenaSide.monsters.splice(idx, 1);
+  // Boss-2-ad hero-kill (decision 118): wipe om kill-cooldown löper, annars starta den. Ingen reward.
+  if (m.isBoss2Ad && m._bwState) { onBoss2AdHeroKill(m._bwState, m); return; }
   // Mini-bosses ger 2× belöning eftersom de är ~4.5x stark som vanliga minions
   const mul = m.isMiniBoss ? 2 : 1;
   const recv = byPlayerSide || arenaSide;
@@ -3670,7 +3808,8 @@ function updateMonsterProjectiles(state, side, dt) {
     p.x = p.srcX + (tgt.hero.x - p.srcX) * t;
     p.z = p.srcZ + (tgt.hero.z - p.srcZ) * t;
     if (p.timer <= 0) {
-      damageHero(tgt, p.damage);
+      if (p.isBoss2AdProj) applyBoss2AdStackHitEngine(state, tgt);   // boss-2-ad: stacking-slow i st f flat dmg
+      else damageHero(tgt, p.damage);
       side.monsterProjectiles.splice(i, 1);
     }
   }
