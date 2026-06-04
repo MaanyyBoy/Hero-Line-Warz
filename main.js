@@ -19551,6 +19551,8 @@ const skillEls = {
 };
 const ultFillEl = skillEls.r ? skillEls.r.querySelector('.ult-fill') : null;
 const ultPctEl = skillEls.r ? skillEls.r.querySelector('.ult-pct') : null;
+// Cancel-skill ✕-cirkel (visas bredvid ult medan en skill hålls; släpp över = avbryt).
+const skillCancelEl = document.getElementById('skill-cancel');
 
 // Skill-point UI
 const statsToggleEl = document.getElementById('stats-toggle');
@@ -20206,6 +20208,7 @@ const joyState = {
 const aimState = {
   touchId: null, key: null, active: false,
   btnCx: 0, btnCy: 0, dx: 0, dz: 0, dragMag: 0,
+  overCancel: false,   // true när tummen är över cancel-✕ (avbryter cast vid release)
 };
 const AIM_THRESHOLD = 16;
 // Max drag-distans i pixlar för full-range cast. Linjär skalning däremellan
@@ -22525,6 +22528,15 @@ function skillKeyFromTarget(target) {
   return null;
 }
 
+// True om tummen (touch) är över cancel-✕-cirkeln. +12px marginal för lättare träff.
+function touchOverSkillCancel(touch) {
+  if (!skillCancelEl || !skillCancelEl.classList.contains('visible')) return false;
+  const r = skillCancelEl.getBoundingClientRect();
+  const m = 12;
+  return touch.clientX >= r.left - m && touch.clientX <= r.right + m
+      && touch.clientY >= r.top - m && touch.clientY <= r.bottom + m;
+}
+
 function startSkillTouch(touch, key) {
   const side = sides[APP.localSide];
   if (!side) return;
@@ -22539,7 +22551,10 @@ function startSkillTouch(touch, key) {
   aimState.dx = side.hero.facingX;
   aimState.dz = side.hero.facingZ;
   aimState.dragMag = 0;
+  aimState.overCancel = false;
   skillEls[key].classList.add('active');
+  // Visa cancel-✕-cirkeln bredvid ult medan skillen hålls.
+  if (skillCancelEl) { skillCancelEl.classList.add('visible'); skillCancelEl.classList.remove('armed'); }
   // Starta 500ms-timer för tooltip
   startSkillLongPress(key);
 }
@@ -22556,10 +22571,19 @@ function moveSkillTouch(touch) {
     clearSkillLongPress();
     if (skillTooltipState.shown) hideSkillTooltip();
   }
+  // Cancel-zon: markera ✕ när tummen är över den.
+  aimState.overCancel = touchOverSkillCancel(touch);
+  if (skillCancelEl) skillCancelEl.classList.toggle('armed', aimState.overCancel);
 }
 function endSkillTouch(touch, cancelled) {
   const key = aimState.key;
   if (!key) return;
+  // Avbröts via cancel-✕? Beräkna FÖRE cirkeln döljs (helpern kräver .visible).
+  // Gäller alla skills inkl ult. Ett avbrutet cast skickar aldrig något event →
+  // ingen cast server-side → ingen CD/energi/resurs förbrukas (helt ogjort).
+  const overCancel = aimState.overCancel || touchOverSkillCancel(touch);
+  if (skillCancelEl) skillCancelEl.classList.remove('visible', 'armed');
+  aimState.overCancel = false;
   skillEls[key].classList.remove('active');
   const wasShowingTooltip = skillTooltipState.shown;
   clearSkillLongPress();
@@ -22568,7 +22592,7 @@ function endSkillTouch(touch, cancelled) {
   // Om tooltipen visades = användaren ville läsa, INTE casta
   // ULT (r) har ingen CD — kolla energi i hostCastUlt i stället
   const skillCdOK = key === 'r' ? true : (side && side.skills[key].cd <= 0);
-  if (!cancelled && !wasShowingTooltip && side && skillCdOK) {
+  if (!cancelled && !overCancel && !wasShowingTooltip && side && skillCdOK) {
     let dx, dz;
     const isDrag = SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD;
     if (isDrag) {

@@ -370,6 +370,33 @@
     }
     #skill-tooltip .stt-desc { opacity: 0.92; }
 
+    /* Cancel-skill cirkel (✕) — visas bredvid (vänster om) ult-cirkeln medan
+       en skill hålls. Dra tummen hit + släpp = avbryt cast (ingen CD/förbrukning).
+       Default dold; .visible vid skill-touch; .armed när tummen är över den. */
+    #skill-cancel {
+      position: absolute;
+      right: 110px; bottom: 222px;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(40,20,24,0.78);
+      border: 2px dashed rgba(255,120,110,0.85);
+      color: #ff9a90;
+      font: 800 26px/1 system-ui, sans-serif;
+      pointer-events: none;
+      z-index: 5;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.45);
+    }
+    #skill-cancel.visible { display: flex; }
+    #skill-cancel.armed {
+      background: rgba(200,40,40,0.92);
+      border-style: solid;
+      border-color: #fff;
+      color: #fff;
+      transform: scale(1.12);
+      box-shadow: 0 0 16px rgba(255,80,70,0.8);
+    }
     /* Ult-knapp — större (88px), ovanför Q. Energy-fill animeras bottom→top.
        bottom: 210px → ult-underkant (210) ligger 8.5px ovanför Q:s överkant
        (Q bottom 129.5 + size 72 = 201.5) så cirklarna inte krockar längre. */
@@ -4360,6 +4387,7 @@
         <span class="ult-pct">0%</span>
         <span class="sk-lock-text"></span>
       </button>
+      <div id="skill-cancel" aria-hidden="true">✕</div>
       <button id="aa-btn" data-key="aa" aria-label="Auto attack">ATK</button>
     </div>
     <button id="stats-toggle" class="hidden" aria-label="Spend skill points">
