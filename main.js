@@ -2448,12 +2448,14 @@ const MINION_COST_MUL = 1.5;
 // ---- Minion-arketyper och tiers ----
 // 6 arketyper × 5 tiers = 30 unika minions.
 const ARCHETYPE_BASE = {
-  slasher:  { cost: 10, hp: 18, speed: 1.6, damage: 3, range: 1.0, interval: 0.8, attackType: 'melee' },
-  archer:   { cost: 14, hp: 15, speed: 1.4, damage: 4, range: 3.5, interval: 1.2, attackType: 'arrow' },
-  bruiser:  { cost: 18, hp: 32, speed: 1.3, damage: 5, range: 1.2, interval: 1.3, attackType: 'melee' },
-  mage:     { cost: 22, hp: 20, speed: 1.3, damage: 5, range: 3.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
-  tank:     { cost: 26, hp: 60, speed: 1.15, damage: 2, range: 1.0, interval: 1.4, attackType: 'melee' },
-  champion: { cost: 35, hp: 48, speed: 1.3, damage: 8, range: 1.5, interval: 1.5, attackType: 'melee' },
+  // Range-justering (användarbeslut 2026-06-04): ranged (archer/mage) 3.5→5.5, melee +0.3.
+  // Speglar engine ARCHETYPE_BASE (server-auth combat). Se engine-kommentar för detalj.
+  slasher:  { cost: 10, hp: 18, speed: 1.6, damage: 3, range: 1.3, interval: 0.8, attackType: 'melee' },
+  archer:   { cost: 14, hp: 15, speed: 1.4, damage: 4, range: 5.5, interval: 1.2, attackType: 'arrow' },
+  bruiser:  { cost: 18, hp: 32, speed: 1.3, damage: 5, range: 1.5, interval: 1.3, attackType: 'melee' },
+  mage:     { cost: 22, hp: 20, speed: 1.3, damage: 5, range: 5.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
+  tank:     { cost: 26, hp: 60, speed: 1.15, damage: 2, range: 1.3, interval: 1.4, attackType: 'melee' },
+  champion: { cost: 35, hp: 48, speed: 1.3, damage: 8, range: 1.8, interval: 1.5, attackType: 'melee' },
 };
 const ARCHETYPE_ORDER = ['slasher', 'archer', 'bruiser', 'mage', 'tank', 'champion'];
 const ARCHETYPE_NAMES = {
