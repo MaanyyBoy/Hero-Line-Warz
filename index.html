@@ -370,10 +370,12 @@
     }
     #skill-tooltip .stt-desc { opacity: 0.92; }
 
-    /* Ult-knapp — större (88px), ovanför Q. Energy-fill animeras bottom→top. */
+    /* Ult-knapp — större (88px), ovanför Q. Energy-fill animeras bottom→top.
+       bottom: 210px → ult-underkant (210) ligger 8.5px ovanför Q:s överkant
+       (Q bottom 129.5 + size 72 = 201.5) så cirklarna inte krockar längre. */
     .skill.skill-ult {
       width: 88px; height: 88px;
-      right: 4px; bottom: 180px;
+      right: 4px; bottom: 210px;
       background: rgba(60,30,80,0.7);
       border: 3px solid rgba(180,140,255,0.7);
       overflow: hidden;

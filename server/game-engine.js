@@ -2141,7 +2141,8 @@ function createBossWarsState(tier) {
   }
   // STATISK boss (slice 0) i sides[1].monsters — full AI/skills/faser portas slice 2-3.
   // x/z direkt på objektet (server har ingen mesh); raid-buff ×3 matchar spawnBossWarsBoss.
-  const bossHp = Math.round(BOSSWARS_TIER_HP[t] * 3.0);
+  // Raid-buff ×3.0, sedan användar-buff +150% (×2.5) = ×7.5 total.
+  const bossHp = Math.round(BOSSWARS_TIER_HP[t] * 3.0 * 2.5);
   const bossId = state.nextEntityId++;
   const aa = BOSSWARS_TIER_AA[t];
   const boss = {
@@ -2150,9 +2151,11 @@ function createBossWarsState(tier) {
     hp: bossHp, maxHp: bossHp,
     bossPhase: 1, phaseTransitionRemaining: 0, aaCount: 0,
     activeCast: null, bossTier: t,
-    // Combat-stats (mirror spawnBossWarsBoss): dmg = 42 × dmgScale × 1.5 (raid +50%).
+    // Combat-stats (mirror spawnBossWarsBoss): dmg = 42 × dmgScale × 1.5 (raid +50%)
+    // × 1.25 (användar-buff +25% all damage). bossEffectiveDamage läser boss.damage →
+    // täcker AA + alla skills + DoT-pooler. Ads har egna konstanter (orörda).
     speed: BOSSWARS_TIER_SPEED[t],
-    damage: Math.round(42 * BOSSWARS_TIER_DMGSCALE[t] * 1.5),
+    damage: Math.round(42 * BOSSWARS_TIER_DMGSCALE[t] * 1.5 * 1.25),
     attackType: 'range', attackRange: aa.range, attackInterval: aa.interval,
     projTime: aa.travel, projKind: aa.kind, atkCd: 0,
     phaseThreshold: BOSSWARS_TIER_PHASE_THRESH[t],
@@ -6919,14 +6922,9 @@ function startDuel(state) {
   state.duelArenaTime = 0;
   state.duelOrbs = [];
   state.duelOrbIdCounter = 0;
-  // Schemalägg 3 heal + 3 speed orbs på random tider inom första 30s
-  const queue = [];
-  for (let i = 0; i < DUEL_ORB_COUNT_PER_TYPE; i++) {
-    queue.push({ type: 'heal', t: DUEL_ORB_MIN_SPAWN + Math.random() * (DUEL_ORB_SPAWN_WINDOW - DUEL_ORB_MIN_SPAWN) });
-    queue.push({ type: 'speed', t: DUEL_ORB_MIN_SPAWN + Math.random() * (DUEL_ORB_SPAWN_WINDOW - DUEL_ORB_MIN_SPAWN) });
-  }
-  queue.sort((a, b) => a.t - b.t);
-  state.duelOrbQueue = queue;
+  // Pickup-orbs borttagna (användarbeslut 2026-06-04) — endast stora mitt-orben
+  // (duelBigOrb) finns i duel-arenan. Tom kö = inga heal/speed-pickup-orbs spawnar.
+  state.duelOrbQueue = [];
   // Teleportera båda hjältar in i arenan, full HP, rensa CD och projektiler
   // Större arena (radius 14.4) — placera spelarna 8.4m från centrum (skalat 20%)
   const positions = [

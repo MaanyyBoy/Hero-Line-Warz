@@ -7894,9 +7894,10 @@ function spawnBossWarsBoss(side, tier) {
     try { renderer.compile(scene, camera); } catch (_) { /* best-effort */ }
   }
   // HP +200% och damage +50% (raid-buff — bossar tål och slår mycket hårdare).
-  const hp = Math.round(bossInfo.hp * 3.0);
-  // Bumpad bas-dmg: 28 → 42 × dmgScale × 1.5 (+50%).
-  const dmg = Math.round(42 * bossInfo.dmgScale * 1.5);
+  // + användar-buff: HP +150% (×2.5) och all damage +25% (×1.25). Speglar engine.
+  const hp = Math.round(bossInfo.hp * 3.0 * 2.5);
+  // Bumpad bas-dmg: 28 → 42 × dmgScale × 1.5 (+50%) × 1.25 (användar-buff +25%).
+  const dmg = Math.round(42 * bossInfo.dmgScale * 1.5 * 1.25);
   // Speed-skalning per tier — bossar JAGAR nu på riktigt (hero base 5.5–7.0).
   // T2-T4 bumpade men hålls UNDER hero-min (~5.5) så hjältan alltid kan kita.
   // T1 är range-archer (har inget behov av speed); T5 är redan vid max.
@@ -18011,8 +18012,8 @@ const cameraTarget = new THREE.Vector3();
 
 // Arena: zoomad in 15% från tidigare (22,18) → (18.7,15.3)
 const ARENA_CAMERA_OFFSET = new THREE.Vector3(0, 22 * 0.85, 18 * 0.85);
-// Boss Wars: zoomad in 20% från tidigare (21.25,17.5) → (17,14)
-const BOSSWARS_CAMERA_OFFSET = new THREE.Vector3(0, 17 * 1.25 * 0.80, 14 * 1.25 * 0.80);
+// Boss Wars: zoomad in 20% från tidigare (21.25,17.5) → (17,14), sedan utzoomad 10% (×1.10)
+const BOSSWARS_CAMERA_OFFSET = new THREE.Vector3(0, 17 * 1.25 * 0.80 * 1.10, 14 * 1.25 * 0.80 * 1.10);
 
 // Camera-shake: triggas av stora effekter (orb-död, AoE-explosioner)
 const cameraShake = { magnitude: 0, duration: 0, elapsed: 0 };
