@@ -1153,6 +1153,10 @@ function respawnHero(side) {
     // Boss wars: respawna vid boss-rummets västkant (nära fighten, inom walkable cirkel).
     side.hero.x = BOSSWARS_CX - BOSSWARS_RADIUS + 4;
     side.hero.z = BOSSWARS_CZ;
+    // S3/S4: nollställ debuff-stackar — annars respawnar hjälten med maxade aura-/ad-stackar
+    // (omedelbar maxskada vid första kontakt).
+    side.auraStacks = 0; side.auraTickAccum = 0; side.auraResetTimer = 0;
+    side.adStacks = 0; side.adStackTimer = 0;
   } else {
     side.hero.x = cfg.heroSpawn.x;
     side.hero.z = cfg.heroSpawn.z;
@@ -2029,7 +2033,7 @@ function serializeArenaState(state) {
 // sides[1].monsters (isBossWarsBoss) precis som klientens buildBossWarsSnap läser den.
 // ADDITIVT — inget anropar detta än (server.js wirar in i slice 0d). Boss-AI/skills/ads
 // portas slice 2-4; HÄR bara state + STATISK boss för att validera pipelinen (slice 0).
-const BOSSWARS_TIER_HP = { 1: 5000, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  // bas-hp (×3 raid-buff vid spawn). MATCHAR BOSS_WARS_DEFS.
+const BOSSWARS_TIER_HP = { 1: 6500, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  // bas-hp (×3 raid-buff vid spawn). Tier 1: 5000→6500 (crit-comp dödade på ~14s = trivialt, mekanik hann ej aktiveras).
 const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.5 };    // matchar BOSS_WARS_DEFS
 const BOSSWARS_TIER_SPEED = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };       // matchar spawnBossWarsBoss
 const BOSSWARS_TIER_PHASE_THRESH = { 1: 0.5, 2: 0.5, 3: 0.5, 4: 0.3, 5: 0.3 };
@@ -2548,7 +2552,7 @@ function triggerBossWarsPhaseTransition(state, boss) {
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
     if (!s || s.hero.dead) continue;
-    s.hero.frozenTime = Math.max(s.hero.frozenTime || 0, 3.0);   // 3s stun
+    s.hero.frozenTime = Math.max(s.hero.frozenTime || 0, 2.0);   // 2s stun (var 3s — kändes som handlingsförlust)
     const dx = s.hero.x - boss.x, dz = s.hero.z - boss.z;
     const d = Math.hypot(dx, dz) || 1;
     const nx = s.hero.x + (dx / d) * 6, nz = s.hero.z + (dz / d) * 6;   // push 6m
@@ -2567,6 +2571,7 @@ function triggerBossWarsPhaseTransition(state, boss) {
   if (state.bossWarsWave) { state.bossWarsWave.active = false; state.bossWarsWave.countdown = 0; }
   if (state.boss2AdWaveSpawn) { state.boss2AdWaveSpawn.active = false; state.boss2AdWaveSpawn.countdown = 0; }
   if (state.boss2AdWaveTimer) { state.boss2AdWaveTimer.active = false; state.boss2AdWaveTimer.remaining = 0; }
+  if (state.boss2KillCooldown) state.boss2KillCooldown.remaining = 0;   // S2: annars carry-over P1→P2 wipe-risk
 }
 
 // Boss-AI slice 2a-3a: fas-övergång → skill-cast (pausar AI) → annars rörelse + AA. Tickas 1× i tickBossWars.
@@ -2629,7 +2634,9 @@ function tickBossWarsBoss(state, dt) {
 const BOSSWARS_MINION_HP_P1 = 150, BOSSWARS_MINION_HP_P2 = 300, BOSSWARS_MINION_SPEED = 1.5;
 const BOSSWARS_MINION_ABSORB_DIST = 1.5;
 const BOSSWARS_MINION_ABSORB_AOE_PCT_P1 = 0.30, BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
-const BOSSWARS_MINION_AURA_RADIUS = 13.5, BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
+// Aura-radie 9.0 (var 13.5 ≈ halva arenan = ingen positionell motspel, "städa eller dö"). 9.0 ger
+// kite-utrymme: döda minionen snabbt, kliv sen ut ur auran (balans + playtest).
+const BOSSWARS_MINION_AURA_RADIUS = 9.0, BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
 const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5, BOSSWARS_MINION_AURA_RESET_TIME = 7.0, BOSSWARS_MINION_AURA_START_PCT = 1;
 // Stack-tak (agent-fynd S5): utan tak eskalerar aura-skadan obegränsat → exponentiell wipe. Cap = ~13%/tick max.
 const BOSSWARS_MINION_AURA_MAX_STACKS = 8;
@@ -2678,7 +2685,9 @@ function despawnBossWarsMinionEngine(state, m) {
 function applyMinionAbsorptionEngine(state, boss) {
   if (!boss || boss.hp <= 0) return;
   healBossWarsBoss(boss, boss.maxHp * 0.10);
-  boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
+  // Cap +60% (3 stackar) — annars staplar täta absorptioner (6 minions/våg i P2) obegränsat
+  // → boss-dmg 2.2× ostoppbart (server-debug C1).
+  boss.damageBuffMul = Math.min(1.0 + 3 * 0.20, (boss.damageBuffMul || 1) + 0.20);
   boss.damageBuffRemaining = 5.0;
   const aoePct = (boss.bossPhase === 2) ? BOSSWARS_MINION_ABSORB_AOE_PCT_P2 : BOSSWARS_MINION_ABSORB_AOE_PCT_P1;
   for (const tgt of bossWarsTargets(state)) {
@@ -2743,14 +2752,18 @@ function tickBossWarsMinionAuraEngine(state, dt) {
 // ===== BOSS 2 ADS (slice 3b-ii, decision 118) — bara tier 2 =====
 // Separat mekanik: ads JAGAR hjältar + homing-distansattack (stacking-slow vid impact) +
 // våg-gemensam dödstimer → explosion + kill-cooldown-WIPE (döda ad medan cooldown löper = laget dör).
-const BOSS2_AD_HP = 120, BOSS2_AD_SPEED = 5.25, BOSS2_AD_DAMAGE = 10;
+// Ad-HP 600 (var 120): dog på en enda crit-AA (~180) → AoE/multi-fokus = oavsiktlig wipe utan
+// reaktionsfönster (balansagent). 600 kräver flera träffar → spelaren hinner se "nästan död" + stoppa.
+const BOSS2_AD_HP = 600, BOSS2_AD_SPEED = 5.25, BOSS2_AD_DAMAGE = 10;
 const BOSS2_AD_RANGE = 8.0, BOSS2_AD_ATK_INTERVAL = 1.5, BOSS2_AD_PROJ_TIME = 0.8;
 const BOSS2_AD_LIFETIME = 10, BOSS2_AD_EXPLODE_PCT_P1 = 0.25, BOSS2_AD_EXPLODE_PCT_P2 = 0.50;
 // Total-cap på våg-explosion (agent-fynd S1): per-ad-skada × full våg (3×50%=150%) = garanterad wipe utan motspel.
 const BOSS2_AD_EXPLODE_CAP_PCT = 0.75;
 const BOSS2_AD_KILL_COOLDOWN_P1 = 2.0, BOSS2_AD_KILL_COOLDOWN_P2 = 3.0;
 const BOSS2_AD_WAVE_FIRST_DELAY = 10, BOSS2_AD_WAVE_INTERVAL_P1 = 40, BOSS2_AD_WAVE_INTERVAL_P2 = 30;
-const BOSS2_AD_STACK_DMG_PCT = 0.05, BOSS2_AD_STACK_SLOW_PCT = 0.10;
+// Stack-dmg 0.03 (var 0.05): P2 10 stackar gav 50% maxHP/hit medan 65% slowad = dödsspiral för
+// low-HP-builds. 0.03 → max 30% maxHP/hit, behåller hotet utan 2-hit-death (balansagent).
+const BOSS2_AD_STACK_DMG_PCT = 0.03, BOSS2_AD_STACK_SLOW_PCT = 0.10;
 // Golv på rörelse-mult (agent-fynd): utan golv → 10 stacks = 0% rörelse = hard-CC-dödsspiral.
 const BOSS2_AD_STACK_SLOW_FLOOR = 0.35;
 const BOSS2_AD_STACK_MAX_P1 = 5, BOSS2_AD_STACK_MAX_P2 = 10, BOSS2_AD_STACK_DECAY = 5, BOSS2_AD_WAVE_SIZE = 3;

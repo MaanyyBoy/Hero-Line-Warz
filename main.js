@@ -2276,7 +2276,7 @@ const BOSS_WARS_DEFS = [
   {
     tier: 1, wave: 10, name: 'Captain', diff: 'Easy', diffClass: 'easy',
     desc: 'A club-wielding veteran from the front. Relies on direct attacks. A good place to start — but don\'t go in unprepared, he has a surprise at 50% HP.',
-    hp: 5000, dmgScale: 1.5, hasPhase2: true, phaseThreshold: 0.5,
+    hp: 6500, dmgScale: 1.5, hasPhase2: true, phaseThreshold: 0.5,
   },
   {
     tier: 2, wave: 20, name: 'General', diff: 'Medium', diffClass: 'medium',
@@ -12073,7 +12073,7 @@ const BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
 // global per match). Bara hjälten som faktiskt står i en aura tar skada + ökar
 // sin egen stack. Reset till 0 efter 7s utan tick. Match-reset säkrar fresh start
 // (se resetBossWarsAuraState i enterPlayPhase).
-const BOSSWARS_MINION_AURA_RADIUS = 13.5;   // 9.0 → 13.5 (+50% radie, 2.25× yta)
+const BOSSWARS_MINION_AURA_RADIUS = 9.0;   // matchar server-damage-radie (var 13.5 = halva arenan, ingen kite-motspel)
 const BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
 const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5; // +1.5 procentenheter per tick
 const BOSSWARS_MINION_AURA_RESET_TIME = 7.0;          // 3.0 → 7.0 (individuell aura)
@@ -12320,7 +12320,7 @@ function healBossWarsBoss(m, amount) {
 function applyMinionAbsorption(side, boss) {
   if (!boss || boss.hp <= 0) return;
   healBossWarsBoss(boss, boss.maxHp * 0.10);
-  boss.damageBuffMul = (boss.damageBuffMul || 1) + 0.20;
+  boss.damageBuffMul = Math.min(1.0 + 3 * 0.20, (boss.damageBuffMul || 1) + 0.20);   // cap +60% (matchar server)
   boss.damageBuffRemaining = 5.0;
   const aoePct = (boss.bossPhase === 2)
     ? BOSSWARS_MINION_ABSORB_AOE_PCT_P2
@@ -12496,7 +12496,7 @@ function updateBossWarsMinions(side, dt) {
 // Projektilerna syns dock för alla via mr (hostSpawnMonsterProjectile pushar till
 // targetSide.monsterProjectiles som redan broadcastas). Se decision-fil för boss 2.
 // ===========================================================================
-const BOSS2_AD_HP = 120;            // placeholder — tunas i balans-pass
+const BOSS2_AD_HP = 600;            // matchar server (var 120 → dog på en crit-AA = oavsiktlig wipe)
 const BOSS2_AD_SPEED = 5.25;        // snabbare än hjälten (~5.0) → INTE kitebar, jagar ikapp (avsiktligt hotfull; placeholder)
 const BOSS2_AD_DAMAGE = 10;         // flat skada per projektil-träff (placeholder)
 const BOSS2_AD_RANGE = 8.0;         // distansattack-räckvidd
@@ -12565,7 +12565,7 @@ function setBoss2AdColor(m, hex) {
 // stillastående, avsiktligt). DECAY: 5s utan ny träff → HELA stacken nollas på en gång.
 // Strukturell spegel av boss 1:s aura (per-hjälte state, timer som återställs vid varje
 // touch, reset nollar allt) — men trigger = ad-träff, skadan = direkt vid impact.
-const BOSS2_AD_STACK_DMG_PCT  = 0.05;   // per stack, % av hjälte-maxHP (direkt vid träff)
+const BOSS2_AD_STACK_DMG_PCT  = 0.03;   // matchar server (var 0.05 → dödsspiral på low-HP-builds)
 const BOSS2_AD_STACK_SLOW_PCT = 0.10;   // per stack
 const BOSS2_AD_STACK_MAX_P1   = 5;      // tak phase 1 (25% dmg + 50% slow)
 const BOSS2_AD_STACK_MAX_P2   = 10;     // tak phase 2 (50% dmg + 100% slow = stillastående)
@@ -18978,7 +18978,7 @@ function _ensureKillCdBanner() {
   el.id = 'boss-killcd-banner';
   // Safe-area + under boss-HP-baren (mobil #1): HP-baren sitter på env(safe-top)+4px och är
   // ~40px hög → lägg bannern på +60px. z-index 65 > HP-bar (60) så varningen alltid syns överst.
-  el.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 60px);transform:translateX(-50%);z-index:65;' +
+  el.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 60px);transform:translateX(-50%);z-index:90;' +
     'padding:7px 18px;border-radius:8px;background:rgba(170,20,20,0.82);' +
     'border:2px solid #ff5555;box-shadow:0 0 18px rgba(255,40,40,0.7);' +
     'font:800 14px/1 system-ui,"Segoe UI",sans-serif;color:#fff;letter-spacing:0.5px;' +
@@ -18994,7 +18994,9 @@ function _updateKillCdBanner(show) {
   if (show) {
     // Smooth lokal nedräkning mellan b-states (resync vid varje nytt state).
     const rem = Math.max(0, (APP._bossKillCdRemaining || 0) - (performance.now() - (APP._bossKillCdAt || 0)) / 1000);
-    el.innerHTML = `⚠ HOLD FIRE — ${rem.toFixed(1)}s`;
+    // textContent (ingen HTML-parse) + bara skriv när texten ändras (perf: var 60fps innerHTML annars).
+    const txt = `⚠ HOLD FIRE — dodge, don't kill (${rem.toFixed(1)}s)`;
+    if (txt !== el._lastTxt) { el.textContent = txt; el._lastTxt = txt; }
     el.style.display = 'block';
     // Pulsa opaciteten för att dra blicken (CSS-fri, billig).
     el.style.opacity = (0.7 + 0.3 * Math.sin(performance.now() * 0.012)).toFixed(2);
@@ -19009,12 +19011,14 @@ function _showBossPhaseBanner(bossName) {
   if (!_bossPhaseBannerEl) {
     const el = document.createElement('div');
     el.id = 'boss-phase-banner';
-    el.style.cssText = 'position:fixed;left:50%;top:36%;transform:translate(-50%,-50%);z-index:120;' +
+    // top:24% (ej 36%) → krockar ej med respawn-overlay (top:38%). max-width + wrap → klipps ej
+    // av Dynamic Island i landskap. will-change → stabil komposition under kamera-skak (mobil).
+    el.style.cssText = 'position:fixed;left:50%;top:24%;transform:translate(-50%,-50%);z-index:120;' +
       'padding:14px 32px;border-radius:12px;background:rgba(120,20,40,0.88);' +
       'border:2px solid #ff4466;box-shadow:0 0 36px rgba(255,40,80,0.85);' +
       'font:800 24px/1.15 system-ui,"Segoe UI",sans-serif;color:#fff;letter-spacing:1px;' +
-      'text-shadow:0 2px 8px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;' +
-      'text-align:center;display:none;';
+      'text-shadow:0 2px 8px rgba(0,0,0,0.9);white-space:normal;max-width:min(90vw,90dvw);pointer-events:none;' +
+      'will-change:transform,opacity;text-align:center;display:none;';
     document.body.appendChild(el);
     _bossPhaseBannerEl = el;
   }
@@ -19061,7 +19065,7 @@ function updateBossHpBar() {
     const dr = boss._syncedDr || 0;
     // Clean namn-källa (aldrig textContent → undviker att 🛡-suffixet kompoundas per frame).
     const nm = boss.bossName || (getBossWarsDef(APP.bossWars && APP.bossWars.tier || 1) || {}).name || 'Boss';
-    bossHpNameEl.textContent = dr > 0 ? `${nm}   🛡 ${dr}%` : nm;
+    bossHpNameEl.textContent = dr > 0 ? `${nm}  ·  🛡 ${dr}%` : nm;
   }
   // Phase 2 styling
   bossHpWrapEl.classList.toggle('phase2', boss.bossPhase === 2);
@@ -23951,7 +23955,7 @@ function buildBossWarsSnap() {
       if (b.activeCast && b.activeCast.skill) {
         const c = _bossCastBuf, ac = b.activeCast, sk = ac.skill;
         c.n = sk.id || '';
-        c.k = sk.kind || 'circle';
+        c.k = sk.kind || 'groundCircle';   // matchar telegraph-renderaren (ingen 'circle'-gren)
         c.rad = sk.radius || 0;
         c.len = sk.length || 0;
         c.ha = sk.halfAngle || 0;
@@ -24156,13 +24160,18 @@ function applyBossWarsState(msg) {
       }
       boss._prevSyncedHp = msg.b.hp;
 
-      // 2) Boss AA-trigger (för attack-animation) + charge-FX för synlighet
+      // 2) Boss AA-trigger (för attack-animation) + charge-FX för synlighet.
+      // aaCount bumpas BÅDE av riktig AA OCH skill-cast-re-trigger (server). attack-anim ska
+      // spelas i båda fallen, men AA-CHARGE-FX (ranged-windup) ska BARA visas vid riktig AA
+      // — annars poppar en spök-AA-laddning vid varje skill-cast. Gate: ingen aktiv cast.
       const prevAac = boss._prevSyncedAac || 0;
       const newAac = msg.b.aac || 0;
       if (newAac > prevAac && boss.mesh.userData) {
         boss.mesh.userData.attackTrigger = true;
-        const tier = msg.tr || boss.bossTier || 1;
-        spawnBossAaChargeFx(boss.mesh.position.x, boss.mesh.position.z, tier);
+        if (!msg.b.c) {   // c = aktiv cast → då är aac-bumpen skill-anim, ej riktig AA
+          const tier = msg.tr || boss.bossTier || 1;
+          spawnBossAaChargeFx(boss.mesh.position.x, boss.mesh.position.z, tier);
+        }
       }
       boss._prevSyncedAac = newAac;
 
@@ -24184,7 +24193,7 @@ function applyBossWarsState(msg) {
         if (newCast && newCast.ph === 'telegraph' && newCast.n) {
           const pseudoSkill = {
             id: newCast.n,
-            kind: newCast.k || 'circle',
+            kind: newCast.k || 'groundCircle',   // matchar telegraph-renderaren (ingen 'circle'-gren → osynlig varning)
             radius: newCast.rad || 0,
             length: newCast.len || 0,
             halfAngle: newCast.ha || 0,
@@ -24218,15 +24227,18 @@ function applyBossWarsState(msg) {
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
       boss._syncedDr = msg.b.dr || 0;   // härdnings-DR % (playtest #4) → visas i HP-baren
-      const prevPhase = boss._prevSyncedPhase || 1;
+      const prevPhase = boss._prevSyncedPhase;   // undefined på FÖRSTA snapen (ej || 1 — då blir late-join falsk-trigger)
       boss.bossPhase = msg.b.ph || 1;
       boss.phaseTransitionRemaining = msg.b.pt || 0;
-      // Delta-detection: fas växlade 1 → 2 → lägg på phase-2-aura på klienten.
-      // Idempotent — applyBossPhase2Glow returnerar tidigt om aura redan finns.
-      if (boss.bossPhase === 2 && prevPhase !== 2 && boss.mesh) {
+      if (boss.bossPhase === 2 && boss.mesh) {
+        // Glow appliceras alltid i fas 2 (idempotent) — korrekt även för late-joiner vars
+        // första snap redan är fas 2.
         applyBossPhase2Glow(boss.mesh, msg.tr || boss.bossTier || 1);
-        // ENRAGE-banner (playtest #5) — gör fas-2-stunnen till ett moment ist f frys-bugg.
-        _showBossPhaseBanner(boss.bossName || (getBossWarsDef(msg.tr || 1) || {}).name);
+        // ENRAGE-banner BARA vid genuin 1→2-övergång (prevPhase===1). På first-snap är
+        // prevPhase undefined → ingen spök-banner/skak för late-joiner (client-correctness #2).
+        if (prevPhase === 1) {
+          _showBossPhaseBanner(boss.bossName || (getBossWarsDef(msg.tr || 1) || {}).name);
+        }
       }
       boss._prevSyncedPhase = boss.bossPhase;
     }
