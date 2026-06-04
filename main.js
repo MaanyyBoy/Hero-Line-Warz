@@ -23948,6 +23948,13 @@ function applyBossWarsState(msg) {
   if (msg.ba !== undefined || msg.gc !== undefined) {
     applyBossWarsActivationFromSnap(msg.ba, msg.gc);
   }
+  // Perf (slice 5): pace:a jitter-buffer-klockan EN gång per b-state (h[1..3] delar
+  // samma server-tick-tidsstämpel) → jämn buffert-spacing för de 2 andra hjältarna.
+  {
+    const _nowS = performance.now() / 1000;
+    _arenaBufClock = Math.max((_arenaBufClock || 0) + ARENA_SNAP_PACE, _nowS);
+    if (_arenaBufClock > _nowS + 0.15) _arenaBufClock = _nowS;   // resync vid patologisk burst
+  }
   // Hero-snapshots — sätt position, hp, level för alla 3 sides
   if (msg.h) {
     for (const idx of [1, 2, 3]) {
@@ -24582,11 +24589,12 @@ function applyHeroSnap(side, snap) {
     if (!isLocalMpClient) {
       const heroRy = (snap.fx || snap.fz) ? Math.atan2(snap.fx, snap.fz) : (side.mesh._target?.ry ?? side.mesh.rotation.y);
       const _nowSec = performance.now() / 1000;
-      if (isArenaMp()) {
-        // Fas 3: buffrad snapshot-interpolation — pusha snapshot till
+      if (isArenaMp() || bossActsAsClient()) {
+        // Fas 3 / slice 5: buffrad snapshot-interpolation — pusha snapshot till
         // ringbuffer; interpolateHeroSnapBuffer renderar ~100 ms bakom "nu"
         // mellan två faktiskt mottagna positioner (ingen extrapolation).
         // Pace:ad klocka (_arenaBufClock) i st f rå now → jämn buffert-spacing.
+        // Boss wars (3-peer): de 2 ANDRA hjältarna får samma jämna interpolation som arena.
         pushHeroSnapToBuffer(side.mesh, (_arenaBufClock || _nowSec), snap.x, snap.z, heroRy);
       } else {
         // Classic / boss-wars: _target-baserad velocity-extrapolation
