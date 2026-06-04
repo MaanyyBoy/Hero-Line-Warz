@@ -18976,7 +18976,9 @@ function _ensureKillCdBanner() {
   if (_killCdBannerEl) return _killCdBannerEl;
   const el = document.createElement('div');
   el.id = 'boss-killcd-banner';
-  el.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:55;' +
+  // Safe-area + under boss-HP-baren (mobil #1): HP-baren sitter på env(safe-top)+4px och är
+  // ~40px hög → lägg bannern på +60px. z-index 65 > HP-bar (60) så varningen alltid syns överst.
+  el.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 60px);transform:translateX(-50%);z-index:65;' +
     'padding:7px 18px;border-radius:8px;background:rgba(170,20,20,0.82);' +
     'border:2px solid #ff5555;box-shadow:0 0 18px rgba(255,40,40,0.7);' +
     'font:800 14px/1 system-ui,"Segoe UI",sans-serif;color:#fff;letter-spacing:0.5px;' +
@@ -26543,7 +26545,7 @@ function updateBossPrepButton() {
   const okT = (APP.bossWars.selectedTalents || []).length === 3;
   const okI = (APP.bossWars.selectedItems || []).length === 4;
   btn.disabled = !(okT && okI);
-  btn.textContent = (okT && okI) ? '⚔ Starta strid' : `Välj ${3 - (APP.bossWars.selectedTalents || []).length} talents + ${4 - (APP.bossWars.selectedItems || []).length} items`;
+  btn.textContent = (okT && okI) ? '⚔ Start Battle' : `Pick ${3 - (APP.bossWars.selectedTalents || []).length} talents + ${4 - (APP.bossWars.selectedItems || []).length} items`;
 }
 function startBossWarsFightAfterPrep() {
   // MP-läge: skicka b-ready med lokal peers val + visa vänta-status. Host
@@ -28920,7 +28922,7 @@ function openBossDetail(tier) {
   const body = document.getElementById('boss-detail-body');
   const phase2Pct = Math.round((b.phaseThreshold || 0.5) * 100);
   const phase2Hint = b.hasPhase2
-    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 at ${phase2Pct}% HP</strong> — the boss changes tactics: faster casts, harder skills.</div>`
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 13px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 at ${phase2Pct}% HP</strong> — the boss changes tactics: faster casts, harder skills.</div>`
     : '';
   // Per-tier mekanik-förklaring (playtest-fynd #1/#2): wipe-pusslet + minion-racet
   // dödar blinda lag annars. Bara tier 1 (minions) + tier 2 (ads) har special-mekanik.
@@ -28930,7 +28932,7 @@ function openBossDetail(tier) {
   };
   const mech = mechByTier[b.tier];
   const mechBlock = mech
-    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(160,90,20,0.30); border-left: 3px solid #ffaa44; font: 400 12.5px/1.5 system-ui, sans-serif; border-radius: 0 6px 6px 0;">🎯 <strong>Mechanic</strong> — ${mech}</div>`
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(160,90,20,0.30); border-left: 3px solid #ffaa44; font: 400 13px/1.5 system-ui, sans-serif; border-radius: 0 6px 6px 0;">🎯 <strong>Mechanic</strong> — ${mech}</div>`
     : '';
   let html = `
     <h2>${b.name}</h2>
@@ -28963,6 +28965,7 @@ function bossWarsStartFight(tier) {
   matchState.gameOver = false;
   matchState.gameWon = false;
   matchState.winner = 0;
+  APP._bossKillCdActive = false;   // defensiv reset (self-healar annars på första b-state)
   closeBossDetail();
   // MP: host broadcastar tier till klienterna så alla kan gå till hero-pick parallellt
   if (bossMpState.active && bossMpState.role === 'host' && !bossMpState.matchActive) {

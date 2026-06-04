@@ -1146,13 +1146,13 @@
       color: #fff; text-align: center;
       font: 18px/1.4 system-ui, sans-serif;
       z-index: 200;
-      padding: 24px;
+      padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, calc(env(safe-area-inset-bottom) + 12px)) max(24px, env(safe-area-inset-left));
     }
     #endgame.visible { display: flex; }
     #endgame h1 { font-size: 40px; margin: 0 0 8px; }
     #endgame.win h1 { color: #88ffaa; }
     #endgame.lose h1 { color: #ff7766; }
-    #endgame .info { opacity: 0.85; margin-bottom: 18px; }
+    #endgame .info { opacity: 0.85; margin-bottom: 18px; max-width: 540px; }
     #restart-btn {
       padding: 12px 28px; font: 600 16px/1 system-ui, sans-serif;
       background: rgba(60,120,200,0.9); color: #fff;
@@ -2106,7 +2106,7 @@
       background: rgba(0,0,0,0.78);
       display: flex; align-items: center; justify-content: center;
       z-index: 700;
-      padding: 20px;
+      padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
     }
     #boss-detail-modal.hidden { display: none; }
     #boss-detail-card {
@@ -2117,6 +2117,7 @@
       width: min(560px, 94vw);
       max-height: 88vh;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       color: #fff;
       box-shadow: 0 10px 40px rgba(0,0,0,0.8);
     }
