@@ -9797,7 +9797,16 @@ function createSide(idx) {
 function removeSide(side) {
   if (!side) return;
   removeEntityMesh(side.mesh);
-  for (const m of side.monsters) removeEntityMesh(m.mesh);
+  for (const m of side.monsters) {
+    removeEntityMesh(m.mesh);
+    // Boss-wars synkad telegraph (separat scene-mesh, ej child av boss) — städa annars
+    // läcker GPU-geometri vid match-slut mitt under cast.
+    if (m._syncedTelegraph) {
+      scene.remove(m._syncedTelegraph);
+      m._syncedTelegraph.traverse?.(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+      m._syncedTelegraph = null;
+    }
+  }
   for (const c of side.playerCreeps) removeEntityMesh(c.mesh);
   for (const p of side.projectiles) scene.remove(p.mesh);
   for (const f of side.fireballs) scene.remove(f.mesh);
@@ -18002,8 +18011,9 @@ function triggerCameraShake(magnitude, duration) {
 function updateCamera(dt) {
   if (!sides[APP.localSide]) return;
   const hero = sides[APP.localSide].hero;
-  // Klient (sida 2) = kamera spegelvänd
-  const sign = (APP.localSide === 2) ? -1 : 1;
+  // Klient (sida 2) = kamera spegelvänd. C2: EJ i boss wars — där delar alla 3 co-op-hjältar
+  // samma rum/orientering, så side-2-spegeln roterade peer 2:s värld 180° fel.
+  const sign = (APP.gameMode !== 'bosswars' && APP.localSide === 2) ? -1 : 1;
   const off = (APP.gameMode === 'arena1v1') ? ARENA_CAMERA_OFFSET
             : (APP.gameMode === 'bosswars') ? BOSSWARS_CAMERA_OFFSET
             : cameraOffset;
@@ -18089,7 +18099,9 @@ function updateHud() {
     // Match slut: dölj respawn-overlay (var synlig vid hero-död)
     if (respawnOverlayEl) respawnOverlayEl.classList.add('hidden');
     endgameEl.classList.add('visible');
-    const won = matchState.winner === APP.localSide;
+    // C1: Boss Wars = co-op → använd den synkade gameWon, ej side-baserad winner (som bara
+    // är sann för host/localSide 1, så peer 2 & 3 fick fel "DEFEAT" trots seger).
+    const won = (APP.gameMode === 'bosswars') ? !!matchState.gameWon : (matchState.winner === APP.localSide);
     endgameEl.classList.toggle('win', won);
     endgameEl.classList.toggle('lose', !won);
     endgameTitle.textContent = won ? 'VICTORY!' : 'DEFEAT';
@@ -18870,10 +18882,11 @@ function _ensureAdStackUI() {
   _adStackEls = [];
   for (let i = 0; i < 3; i++) {
     const el = document.createElement('div');
-    // Spegel av .fx-popup-basen (position:absolute + center-transform) men grön + ingen
-    // animation (bestående). Egen z inom #fx-overlay (z-index:50).
+    // Spegel av .fx-popup-basen (position:absolute + center-transform) men amber + ingen
+    // animation (bestående). Egen z inom #fx-overlay (z-index:50). P1: amber/röd, EJ grön —
+    // det är ett DEBUFF-värde (stacking slow+dmg), grönt lästes som buff.
     el.style.cssText = 'position:absolute;transform:translate(-50%,-50%);' +
-      'font:800 22px/1 system-ui,"Segoe UI",sans-serif;color:#33ff66;' +
+      'font:800 22px/1 system-ui,"Segoe UI",sans-serif;color:#ff9933;' +
       'text-shadow:0 2px 5px rgba(0,0,0,0.95),0 0 3px #000;white-space:nowrap;' +
       'pointer-events:none;display:none;';
     el._lastShown = null;
@@ -23433,7 +23446,8 @@ function updateStatsToggleAndPanel(side, unspent) {
 // Klientens kamera är speglad 180° runt Y, så screen-koords (joystick, drag-aim)
 // måste konverteras till world-koords. Hjälte-facing lagras redan i world-koords.
 function screenToWorld(sx, sz) {
-  if (APP.localSide === 2) return { x: -sx, z: -sz };
+  // C2: måste matcha updateCamera-spegeln exakt (annars osynkad kamera/input). Ingen spegel i boss wars.
+  if (APP.gameMode !== 'bosswars' && APP.localSide === 2) return { x: -sx, z: -sz };
   return { x: sx, z: sz };
 }
 
@@ -27562,8 +27576,8 @@ function enterPlayPhase() {
       if (bossMpState.role === 'host') {
         sendGameMsg({ t: 'b-sim-start', tier: APP.bossWars.tier || 1, heroes: {
           1: (sides[1] && sides[1].heroId) || 'magiker',
-          2: sides[2] && sides[2].heroId,
-          3: sides[3] && sides[3].heroId,
+          2: (sides[2] && sides[2].heroId) || 'magiker',   // C3: aldrig null → fel heroId i simmen
+          3: (sides[3] && sides[3].heroId) || 'magiker',
         } });
       }
     }

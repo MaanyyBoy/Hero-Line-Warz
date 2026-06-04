@@ -2116,6 +2116,8 @@ function initBossWarsMatch(heroes, tier) {
       side.heroId = heroes[idx];
       side.heroPickConfirmed = true;
     }
+    // C3-försvar: aldrig köra simmen med undefined heroId (peer hann ej bekräfta hjälte) → magiker-fallback.
+    if (!side.heroId) side.heroId = 'magiker';
     // recomputeArenaSideStats no-op:ar talent-delen (state.talents saknas i boss wars)
     // men kör recomputeSideStats → bas-stats. Boss-wars talents/items appliceras slice 1.
     recomputeArenaSideStats(state, side);
@@ -2562,6 +2564,8 @@ const BOSSWARS_MINION_ABSORB_DIST = 1.5;
 const BOSSWARS_MINION_ABSORB_AOE_PCT_P1 = 0.30, BOSSWARS_MINION_ABSORB_AOE_PCT_P2 = 0.50;
 const BOSSWARS_MINION_AURA_RADIUS = 13.5, BOSSWARS_MINION_AURA_TICK_INTERVAL = 0.5;
 const BOSSWARS_MINION_AURA_ESCALATION_PER_TICK = 1.5, BOSSWARS_MINION_AURA_RESET_TIME = 7.0, BOSSWARS_MINION_AURA_START_PCT = 1;
+// Stack-tak (agent-fynd S5): utan tak eskalerar aura-skadan obegränsat → exponentiell wipe. Cap = ~13%/tick max.
+const BOSSWARS_MINION_AURA_MAX_STACKS = 8;
 const BOSSWARS_MINION_WAVE_FIRST_DELAY = 5.0, BOSSWARS_MINION_WAVE_INTERVAL = 20.0;
 const BOSSWARS_MINION_WAVE_SIZE_P1 = 3, BOSSWARS_MINION_WAVE_SIZE_P2 = 6, BOSSWARS_MINION_WAVE_SPEED_MUL_P2 = 1.0;
 function bossWarsMinionsActive(state) { return state.tier === 1; }   // mirror bossWarsMinionsEnabled (bara boss 1)
@@ -2657,9 +2661,10 @@ function tickBossWarsMinionAuraEngine(state, dt) {
       side.auraTickAccum += dt;
       while (side.auraTickAccum >= BOSSWARS_MINION_AURA_TICK_INTERVAL) {
         side.auraTickAccum -= BOSSWARS_MINION_AURA_TICK_INTERVAL;
-        const pct = (BOSSWARS_MINION_AURA_START_PCT + side.auraStacks * BOSSWARS_MINION_AURA_ESCALATION_PER_TICK) / 100;
+        const cappedStacks = Math.min(side.auraStacks, BOSSWARS_MINION_AURA_MAX_STACKS);
+        const pct = (BOSSWARS_MINION_AURA_START_PCT + cappedStacks * BOSSWARS_MINION_AURA_ESCALATION_PER_TICK) / 100;
         damageHero(side, side.hero.maxHp * pct);
-        side.auraStacks += 1;
+        side.auraStacks = Math.min(side.auraStacks + 1, BOSSWARS_MINION_AURA_MAX_STACKS);
       }
     } else {
       side.auraResetTimer += dt;
@@ -2674,9 +2679,13 @@ function tickBossWarsMinionAuraEngine(state, dt) {
 const BOSS2_AD_HP = 120, BOSS2_AD_SPEED = 5.25, BOSS2_AD_DAMAGE = 10;
 const BOSS2_AD_RANGE = 8.0, BOSS2_AD_ATK_INTERVAL = 1.5, BOSS2_AD_PROJ_TIME = 0.8;
 const BOSS2_AD_LIFETIME = 10, BOSS2_AD_EXPLODE_PCT_P1 = 0.25, BOSS2_AD_EXPLODE_PCT_P2 = 0.50;
+// Total-cap på våg-explosion (agent-fynd S1): per-ad-skada × full våg (3×50%=150%) = garanterad wipe utan motspel.
+const BOSS2_AD_EXPLODE_CAP_PCT = 0.75;
 const BOSS2_AD_KILL_COOLDOWN_P1 = 2.0, BOSS2_AD_KILL_COOLDOWN_P2 = 3.0;
 const BOSS2_AD_WAVE_FIRST_DELAY = 10, BOSS2_AD_WAVE_INTERVAL_P1 = 40, BOSS2_AD_WAVE_INTERVAL_P2 = 30;
 const BOSS2_AD_STACK_DMG_PCT = 0.05, BOSS2_AD_STACK_SLOW_PCT = 0.10;
+// Golv på rörelse-mult (agent-fynd): utan golv → 10 stacks = 0% rörelse = hard-CC-dödsspiral.
+const BOSS2_AD_STACK_SLOW_FLOOR = 0.35;
 const BOSS2_AD_STACK_MAX_P1 = 5, BOSS2_AD_STACK_MAX_P2 = 10, BOSS2_AD_STACK_DECAY = 5, BOSS2_AD_WAVE_SIZE = 3;
 function boss2AdsActive(state) { return state.tier === 2; }
 function spawnBoss2AdEngine(state, ang) {
@@ -2693,6 +2702,8 @@ function spawnBoss2AdEngine(state, ang) {
   return m;
 }
 function spawnBoss2AdWaveEngine(state, size) {
+  // Despawn ev. överlevande ads från förra vågen (S2): annars nollställs deras dödstimer.
+  for (let i = state.boss2Ads.length - 1; i >= 0; i--) despawnBoss2AdEngine(state, state.boss2Ads[i]);
   for (let i = 0; i < size; i++) spawnBoss2AdEngine(state, (i / size) * Math.PI * 2);
   state.boss2AdWaveTimer.remaining = BOSS2_AD_LIFETIME; state.boss2AdWaveTimer.active = true;
 }
@@ -2700,9 +2711,11 @@ function despawnBoss2AdEngine(state, m) {
   let k = state.boss2Ads.indexOf(m); if (k >= 0) state.boss2Ads.splice(k, 1);
   k = state.sides[1].monsters.indexOf(m); if (k >= 0) state.sides[1].monsters.splice(k, 1);
 }
-function applyBoss2AdExplosionEngine(state, boss) {
+function applyBoss2AdExplosionEngine(state, boss, adCount) {
   const pct = (boss && boss.bossPhase === 2) ? BOSS2_AD_EXPLODE_PCT_P2 : BOSS2_AD_EXPLODE_PCT_P1;
-  for (const tgt of bossWarsTargets(state)) { if (!tgt || !tgt.hero || tgt.hero.dead) continue; damageHero(tgt, tgt.hero.maxHp * pct); }
+  // Skala med antal kvarvarande ads men cappa total-skadan (S1): annars 3×50%=150% = säker wipe.
+  const totalPct = Math.min(pct * Math.max(1, adCount || 1), BOSS2_AD_EXPLODE_CAP_PCT);
+  for (const tgt of bossWarsTargets(state)) { if (!tgt || !tgt.hero || tgt.hero.dead) continue; damageHero(tgt, tgt.hero.maxHp * totalPct); }
 }
 function triggerBoss2AdWipeEngine(state) {
   for (const tgt of bossWarsTargets(state)) { if (!tgt || !tgt.hero || tgt.hero.dead) continue; killHero(tgt); }
@@ -2724,7 +2737,7 @@ function applyBoss2AdStackHitEngine(state, side) {
   side.adStacks = Math.min(maxStacks, (side.adStacks || 0) + 1);
   side.adStackTimer = BOSS2_AD_STACK_DECAY;
   damageHero(side, side.adStacks * BOSS2_AD_STACK_DMG_PCT * side.hero.maxHp);
-  const slowMul = 1 - side.adStacks * BOSS2_AD_STACK_SLOW_PCT;
+  const slowMul = Math.max(BOSS2_AD_STACK_SLOW_FLOOR, 1 - side.adStacks * BOSS2_AD_STACK_SLOW_PCT);
   side.heroSlowMul = Math.min(side.heroSlowMul != null ? side.heroSlowMul : 1, slowMul);
   side.heroSlowTime = Math.max(side.heroSlowTime || 0, BOSS2_AD_STACK_DECAY);
 }
@@ -2767,7 +2780,8 @@ function updateBoss2AdsEngine(state, dt) {
   if (state.boss2AdWaveTimer.active && !inTransition) {
     state.boss2AdWaveTimer.remaining -= dt;
     if (state.boss2AdWaveTimer.remaining <= 0) {
-      for (let i = arr.length - 1; i >= 0; i--) { const ad = arr[i]; if (!ad) continue; applyBoss2AdExplosionEngine(state, boss); despawnBoss2AdEngine(state, ad); }
+      applyBoss2AdExplosionEngine(state, boss, arr.length);   // EN cappad våg-explosion (ej per-ad)
+      for (let i = arr.length - 1; i >= 0; i--) { const ad = arr[i]; if (ad) despawnBoss2AdEngine(state, ad); }
       state.boss2AdWaveTimer.remaining = 0; state.boss2AdWaveTimer.active = false;
       return;
     }
@@ -2903,8 +2917,9 @@ function checkBossWarsEnd(state) {
     state.matchState.winner = 1;   // 1 = spelarna vann (boss död)
     return;
   }
-  // Lose: ALLA levande sides döda (wipe). OBS: hero-respawn = slice 4 → utan respawn
-  // triggar detta vid första tillfälle alla 3 är döda samtidigt.
+  // Lose: ALLA sides döda samtidigt (wipe). Respawn (slice 4) hanterar partiella dödsfall —
+  // en hjälte som dör ensam tickar respawnTimer (5s, körs FÖRE detta i tickBossWars) och kommer
+  // tillbaka. Endast en FULL samtidig wipe (alla 3 nere i samma tick) = raid-loss. Avsiktligt.
   const heroes = [state.sides[1], state.sides[2], state.sides[3]].filter(Boolean);
   if (heroes.length > 0 && heroes.every(h => h.hero.dead)) {
     state.matchState.gameOver = true;
@@ -3039,6 +3054,8 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   arenaSide.monsters.splice(idx, 1);
   // Boss-2-ad hero-kill (decision 118): wipe om kill-cooldown löper, annars starta den. Ingen reward.
   if (m.isBoss2Ad && m._bwState) { onBoss2AdHeroKill(m._bwState, m); return; }
+  // Boss-wars-bossen själv (S4): död hanteras av checkBossWarsEnd — ingen guld/XP-reward (endgame co-op, ej farming).
+  if (m.isBossWarsBoss) return;
   // Mini-bosses ger 2× belöning eftersom de är ~4.5x stark som vanliga minions
   const mul = m.isMiniBoss ? 2 : 1;
   const recv = byPlayerSide || arenaSide;

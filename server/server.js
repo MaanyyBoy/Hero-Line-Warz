@@ -93,6 +93,11 @@ function stopGame(room) {
     room.tickHandle = null;
   }
   room.game = null;
+  // Defensiv härdning: nollställ server-auth-flaggor så ett ev. återanvänt rum (framtida
+  // rematch utan disconnect) kan skicka b-end/a-end igen och starta ny sim rent.
+  room.bossEndSent = false;
+  room.bossSim = false;
+  room.arenaSim = false;
 }
 
 // Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
