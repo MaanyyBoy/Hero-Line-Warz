@@ -27724,12 +27724,15 @@ function returnToLobby() {
   for (const i of [1, 2, 3, 4]) {
     if (sides[i]) { removeSide(sides[i]); sides[i] = null; }
   }
-  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles', 'monsterProjectiles']) {
+  // Keys med FÄRSKA (ej factory-cachade) geometrier → måste dispose:as (GPU-buffrar).
+  // Boss-wars-entiteter (slice 2c/3b) skapas med nya THREE-geometrier per mesh.
+  const _freshGeoKeys = new Set(['monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads']);
+  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles', 'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads']) {
+    if (!clientMeshes[key]) continue;
     for (const m of clientMeshes[key].values()) for (const mesh of m.values()) {
       scene.remove(mesh);
-      // monsterProjectiles har färska (ej delade) geometrier — dispose för att
-      // frigöra GPU-buffrar. Övriga keys delar geometri/textur via factory-cache.
-      if (key === 'monsterProjectiles') {
+      // Färska geometrier → dispose. Övriga keys delar geometri/textur via factory-cache.
+      if (_freshGeoKeys.has(key)) {
         mesh.traverse(o => {
           if (o.geometry) o.geometry.dispose();
           if (o.material) {

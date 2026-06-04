@@ -2465,7 +2465,9 @@ function tickBossWarsSkills(state, boss, dt) {
 function bossWarsDmgMod(m, dmg) {
   if (!m || !m.isBossWarsBoss) return dmg;
   if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
-  const dr = Math.min(m.dmgReductionCap || 0.70, m.dmgReductionBase || 0);
+  // DR = base + step per intervall (decision 110) över aktiv tid, cap. Annars stallar långa fights.
+  const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
+  const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05));
   return dmg * (1 - dr);
 }
 // Fas-övergång (slice 3a): vid phaseThreshold-HP → bossPhase 2. Stun+push heroes, immun flyup 2.5s,
@@ -2502,6 +2504,7 @@ function triggerBossWarsPhaseTransition(state, boss) {
 function tickBossWarsBoss(state, dt) {
   const boss = state.boss;
   if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  boss.activeTime = (boss.activeTime || 0) + dt;   // tidsbaserad DR-step (decision 110, bossWarsDmgMod)
   // Absorption-buff timeout (minion-absorption +20%/5s, decision 116) — bossEffectiveDamage läser damageBuffMul.
   if ((boss.damageBuffRemaining || 0) > 0) {
     boss.damageBuffRemaining -= dt;
