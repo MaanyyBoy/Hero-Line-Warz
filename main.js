@@ -10585,6 +10585,23 @@ function tickBossTelegraph(side, m, cast, dt) {
   });
 }
 
+// Telegraph time-to-impact (playtest #5): rampa intensiteten 0→1 mot impact så spelaren
+// kan TIMA dodgen istället för att gissa. Shape-agnostiskt (bara opacity) → säkert för alla
+// telegraph-former. Sista 25% snabb-pulsar = "impact NU". Används av server-auth-synkade
+// telegraphs (MP boss wars). p = elapsed-fraktion (0 vid cast-start, 1 vid impact).
+function _setTelegraphProgress(grp, p) {
+  if (!grp) return;
+  p = Math.max(0, Math.min(1, p));
+  let k = 0.4 + 0.6 * p;
+  if (p > 0.75) k *= (0.72 + 0.28 * Math.abs(Math.sin(performance.now() * 0.025)));
+  grp.traverse(o => {
+    if (o.isMesh && o.material && o.material.transparent) {
+      if (o.userData._telBaseOp == null) o.userData._telBaseOp = o.material.opacity;
+      o.material.opacity = Math.min(1, o.userData._telBaseOp * k);
+    }
+  });
+}
+
 // ===== EXECUTE =====
 // Triggar skill-effekten baserat på primitive-typ. Flyttar cast → execute-fas.
 function bossExecuteSkill(side, m, cast) {
@@ -24148,6 +24165,12 @@ function applyBossWarsState(msg) {
         }
       }
       boss._prevSyncedCastKey = newCastKey;
+      // Telegraph time-to-impact (playtest #5): rampa intensiteten varje b-state medan i
+      // telegraph-fas. c.t = REMAINING tid (räknar ner tg→0), så elapsed = 1 - t/tg.
+      if (boss._syncedTelegraph && newCast && newCast.ph === 'telegraph') {
+        const _tg = newCast.tg || 1;
+        _setTelegraphProgress(boss._syncedTelegraph, 1 - (newCast.t || 0) / _tg);
+      }
 
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
