@@ -15767,6 +15767,27 @@ const ITEM_TYPES = {
   item6: { id: 'item6', name: 'Item 6', icon: '⑥', description: '(stats TBD)', statsAtLevel: (level) => ({}) },
 };
 const ITEM_ORDER = ['item1', 'item2', 'item3', 'item4', 'item5', 'item6'];
+// Item-shop-kategorier (användarbeslut 2026-06-04). Nyckel = itemId eller
+// itemId+':'+variantId. Mappad efter items faktiska stats.
+const ITEM_CATEGORY_ORDER = [
+  { id: 'offensive', label: 'Offensive', icon: '⚔️' },
+  { id: 'defensive', label: 'Defensive', icon: '🛡' },
+  { id: 'magic',     label: 'Magic',     icon: '🔮' },
+  { id: 'other',     label: 'Other',     icon: '✦' },
+];
+const ITEM_CATEGORY_MAP = {
+  'item1:speed': 'offensive', 'item1:magic': 'magic',     'item1:tank': 'defensive',  // Boots
+  'item2:haste': 'offensive', 'item2:spell': 'magic',     'item2:tank': 'defensive',  // Glove
+  'item3': 'offensive',  // Ling & Lang (MS/AS/dmg + CC-immunitet)
+  'item4': 'magic',      // Onyx Orb (CDR/skilldmg/lifesteal)
+  'item5': 'defensive',  // Titans Armor (DR/regen/block)
+  'item6': 'other',      // placeholder
+};
+function itemCellCategory(itemId, variantId) {
+  return ITEM_CATEGORY_MAP[variantId ? `${itemId}:${variantId}` : itemId]
+      || ITEM_CATEGORY_MAP[itemId]   // fallback: variant-nyckel saknas → kategorisera på basitem
+      || 'other';
+}
 const ITEM_BUY_COST = 200;
 const ITEM_MAX_LEVEL = 10;
 const INVENTORY_SLOTS = 4;
@@ -22611,7 +22632,7 @@ if (aaBtnEl) {
 const shopContainerEl = document.getElementById('shop-container');
 const shopHeroEl = document.getElementById('shop-hero');
 const shopMinionEl = document.getElementById('shop-minion');
-const shopState = { selectedTier: 1, selectedLane: 1 };
+const shopState = { selectedTier: 1, selectedLane: 1, selectedItemCategory: 'offensive' };
 
 // Shop-knappar: klick på header öppnar modal. Bara EN panel kan vara öppen
 // samtidigt (toggla av andra först). Backdrop synlig medan någon panel är öppen.
@@ -22654,7 +22675,14 @@ function updateShopBackdrop() {
                || (shopMinionEl && shopMinionEl.classList.contains('expanded'));
   shopBackdropEl.classList.toggle('visible', anyOpen);
 }
-const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [], cloneBtn: null };
+const shopRefs = { heroBtns: [], laneBtns: [], tierBtns: [], minionBtns: [], cloneBtn: null, catBtns: [], heroCells: [] };
+
+// Visar bara item-celler i vald kategori + markerar aktiv kategori-knapp.
+function applyItemCategoryFilter() {
+  const sel = shopState.selectedItemCategory || 'offensive';
+  if (shopRefs.catBtns) for (const b of shopRefs.catBtns) b.classList.toggle('active', b.dataset.cat === sel);
+  if (shopRefs.heroCells) for (const c of shopRefs.heroCells) c.style.display = (c.dataset.category === sel) ? '' : 'none';
+}
 
 function getNextLockedTier(side) {
   for (let t = 2; t <= 5; t++) if (!side.tierUnlocks[t]) return t;
@@ -22687,6 +22715,22 @@ function buildShopItemList() {
 function populateShop() {
   // ITEMS — alla varianter visas direkt som separata cells (Glove of Speed,
   // Glove of Magic, Glove of Tank, etc istället för en "Glove"-rad med picker).
+  // Kategori-lista (vänster kolumn) — filtrerar item-cellerna nedan.
+  const catList = document.getElementById('shop-cat-list');
+  shopRefs.catBtns = [];
+  if (catList) {
+    catList.innerHTML = '';
+    for (const cat of ITEM_CATEGORY_ORDER) {
+      const cbtn = document.createElement('button');
+      cbtn.className = 'shop-cat-btn';
+      cbtn.dataset.cat = cat.id;
+      cbtn.innerHTML = `<span>${cat.icon}</span><span>${cat.label}</span>`;
+      cbtn.addEventListener('click', () => { shopState.selectedItemCategory = cat.id; applyItemCategoryFilter(); });
+      catList.appendChild(cbtn);
+      shopRefs.catBtns.push(cbtn);
+    }
+  }
+
   const heroRow = document.getElementById('shop-hero-row');
   heroRow.innerHTML = '';
   shopRefs.heroBtns = [];
@@ -22697,6 +22741,7 @@ function populateShop() {
     cell.className = 'item-cell';
     cell.dataset.item = entry.itemId;
     if (entry.variantId) cell.dataset.variant = entry.variantId;
+    cell.dataset.category = itemCellCategory(entry.itemId, entry.variantId);
 
     const primary = document.createElement('button');
     primary.className = 'shop-btn item-btn primary';
@@ -22709,6 +22754,7 @@ function populateShop() {
     shopRefs.heroBtns.push(primary);
     shopRefs.heroCells.push(cell);
   }
+  applyItemCategoryFilter();
 
   // Lane-toggle
   const laneRow = document.getElementById('shop-lane-row');

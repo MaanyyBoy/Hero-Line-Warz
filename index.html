@@ -707,6 +707,25 @@
     }
     .shop-modal-close:active { transform: scale(0.94); }
     .shop-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-start; }
+    /* Item-shop kategorier: vänster kolumn (Offensive/Defensive/Magic/Other) + filtrerad item-grid */
+    .shop-itemcat-wrap { display: flex; gap: 10px; align-items: flex-start; }
+    .shop-cat-list { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; min-width: 96px; }
+    .shop-cat-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 9px 10px; border-radius: 9px;
+      background: rgba(40,55,90,0.55);
+      border: 1px solid rgba(150,175,230,0.35);
+      color: #cfe0ff; font: 700 12px/1 system-ui, sans-serif;
+      text-align: left; cursor: pointer; touch-action: manipulation;
+      white-space: nowrap;
+    }
+    .shop-cat-btn:active { transform: scale(0.96); }
+    .shop-cat-btn.active {
+      background: rgba(90,120,210,0.85);
+      border-color: #fff; color: #fff;
+      box-shadow: 0 0 10px rgba(120,160,255,0.5);
+    }
+    .shop-itemcat-wrap #shop-hero-row { flex: 1 1 auto; align-content: flex-start; }
     .shop-section-label {
       color: #cfd8ec; font: 700 10px/1 system-ui, sans-serif;
       letter-spacing: 1.5px;
@@ -4392,7 +4411,10 @@
       <div class="shop-body">
         <button class="shop-modal-close" data-modal-close aria-label="Close">×</button>
         <div class="shop-modal-title">ITEMS</div>
-        <div class="shop-row" id="shop-hero-row"></div>
+        <div class="shop-itemcat-wrap">
+          <div class="shop-cat-list" id="shop-cat-list"></div>
+          <div class="shop-row" id="shop-hero-row"></div>
+        </div>
       </div>
     </div>
 
