@@ -1343,8 +1343,9 @@ const ARENA1V1_Z = 80;                 // matchar main.js ARENA_Z_OFFSET
 // Arena Wars 20% mindre (användarbeslut 2026-06-04). MÅSTE matcha main.js ARENA_SCALE
 // exakt — annars clampar servern mot andra bounds än klient-prediction → rubber-banding.
 const ARENA1V1_SCALE = 0.8;
-const ARENA1V1_SPAWN1 = { x: -32 * ARENA1V1_SCALE, z: ARENA1V1_Z };
-const ARENA1V1_SPAWN2 = { x: 32 * ARENA1V1_SCALE, z: ARENA1V1_Z };
+// Spawn nära arena-kanten (walkable-bound = ±44*scale; spawn ±40*scale → ~3 enheter marginal).
+const ARENA1V1_SPAWN1 = { x: -40 * ARENA1V1_SCALE, z: ARENA1V1_Z };
+const ARENA1V1_SPAWN2 = { x: 40 * ARENA1V1_SCALE, z: ARENA1V1_Z };
 // Arena1v1 walkable-bounds (matchar main.js ARENA_CFG.bounds, skalad med ARENA1V1_SCALE).
 // Egen check: duel-arenan (isArenaWalkable) är en cirkel vid z=35 → fel för z=80.
 const ARENA1V1_BOUNDS = { minX: -44 * ARENA1V1_SCALE, maxX: 44 * ARENA1V1_SCALE, minZ: ARENA1V1_Z - 28 * ARENA1V1_SCALE, maxZ: ARENA1V1_Z + 28 * ARENA1V1_SCALE };

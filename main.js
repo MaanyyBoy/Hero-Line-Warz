@@ -4409,15 +4409,16 @@ const ARENA_Z_OFFSET = 80;
 // MÅSTE matcha engine ARENA1V1_SCALE exakt (annars rubber-banding mot server-clamp).
 const ARENA_SCALE = 0.8;
 const ARENA_CFG = {
-  // 1v1 spawns: en hjälte per sida
-  spawn1: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET },
-  spawn2: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET },
+  // 1v1 spawns: en hjälte per sida. Nära kanten (walkable ±44*scale → spawn ±40*scale = ~3 marginal).
+  // MÅSTE matcha engine ARENA1V1_SPAWN1/2.
+  spawn1: { x: -40 * ARENA_SCALE, z: ARENA_Z_OFFSET },
+  spawn2: { x:  40 * ARENA_SCALE, z: ARENA_Z_OFFSET },
   // 2v2 spawns: två hjältar per team, spridda i Z-axeln
   spawns2v2: {
-    1: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team A medlem 1
-    3: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team A medlem 2 (dummy/ally)
-    2: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team B medlem 1 (dummy)
-    4: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team B medlem 2 (dummy)
+    1: { x: -40 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team A medlem 1
+    3: { x: -40 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team A medlem 2 (dummy/ally)
+    2: { x:  40 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team B medlem 1 (dummy)
+    4: { x:  40 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team B medlem 2 (dummy)
   },
   orb:    { x: 0,   z: ARENA_Z_OFFSET },
   bounds: { minX: -44 * ARENA_SCALE, maxX: 44 * ARENA_SCALE, minZ: ARENA_Z_OFFSET - 28 * ARENA_SCALE, maxZ: ARENA_Z_OFFSET + 28 * ARENA_SCALE },
@@ -9016,6 +9017,8 @@ function startArenaRound(roundNum) {
   // Återställ orb
   arenaState.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0 };
   if (arenaOrbMesh) arenaOrbMesh.visible = false;
+  // Defensiv: nollställ AA-range-flaggan vid rundstart (respawnHero-resetten körs ej i arena).
+  APP._aaShowRange = false;
   // Återställ heroes till spawn + full HP, ej dead
   for (const idx of idxs) {
     const s = sides[idx];
@@ -13187,9 +13190,8 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   side.hero.x = cfg.heroSpawn.x;
   side.hero.z = cfg.heroSpawn.z;
-  // Reset klient-side AA-toggle-flagga vid respawn (local-hero) sa cirkel-
-  // visningen kommer i synk med server-aaActive efter death.
-  if (side.idx === APP.localSide) APP._aaWanted = false;
+  // Reset klient-side AA-range-flagga vid respawn (local-hero).
+  if (side.idx === APP.localSide) APP._aaShowRange = false;
   // Y-fix: boss-wars platform är på y=0.42, andra modes på y=0
   const heroY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0;
   side.mesh.position.set(side.hero.x, heroY, side.hero.z);
@@ -18068,9 +18070,27 @@ function triggerCameraShake(magnitude, duration) {
   }
 }
 
+// Arena spectate: returnerar en LEVANDE lagkamrat-side att följa när lokala hjälten
+// är död. 1v1 har ingen lagkamrat → null (rundan slutar ändå vid död).
+function getArenaSpectateSide(localIdx) {
+  const mates = arenaTeamMates(arenaTeamOf(localIdx)).filter(i => i !== localIdx);
+  for (const i of mates) {
+    if (sides[i] && !sides[i].hero.dead) return sides[i];
+  }
+  return null;
+}
+
 function updateCamera(dt) {
   if (!sides[APP.localSide]) return;
-  const hero = sides[APP.localSide].hero;
+  // Arena: död lokal hjälte under fight → följ en levande lagkamrats kamera (spectate)
+  // tills nästa runda. Orienteringen (sign) behålls från lokala spelaren så världen
+  // inte plötsligt speglas; bara kamera-positionen panorerar till lagkamraten.
+  let camSide = sides[APP.localSide];
+  if (APP.gameMode === 'arena1v1' && arenaState.phase === 'fight' && camSide.hero.dead) {
+    const mate = getArenaSpectateSide(APP.localSide);
+    if (mate) camSide = mate;
+  }
+  const hero = camSide.hero;
   // Klient (sida 2) = kamera spegelvänd. C2: EJ i boss wars — där delar alla 3 co-op-hjältar
   // samma rum/orientering, så side-2-spegeln roterade peer 2:s värld 180° fel.
   const sign = (APP.gameMode !== 'bosswars' && APP.localSide === 2) ? -1 : 1;
@@ -18080,7 +18100,7 @@ function updateCamera(dt) {
   // I arena server-auth glider lokala hjältens MESH mjukt över reconErr medan
   // hero.x hård-sätts vid reconcile → följ mesh.position så kamera+hjälte rör sig
   // som en enhet (annars mikro-hopp i kameran vid varje liten korrigering).
-  const _lhMesh = sides[APP.localSide].mesh;
+  const _lhMesh = camSide.mesh;
   const srcX = (_lhMesh && APP.gameMode === 'arena1v1') ? _lhMesh.position.x : hero.x;
   const srcZ = (_lhMesh && APP.gameMode === 'arena1v1') ? _lhMesh.position.z : hero.z;
   const desiredX = srcX + off.x * sign;
@@ -18292,6 +18312,15 @@ function updateHud() {
       showOverlay = true;
       label = 'ELIMINATED';
       timerText = 'Waiting for team';
+      timerSmall = true;
+    } else if (dead && isArena && arenaState.phase === 'fight') {
+      // Arena: död → spectate en lagkamrat tills nästa runda (kameran följer hen i updateCamera).
+      const mate = getArenaSpectateSide(APP.localSide);
+      showOverlay = true;
+      label = 'ELIMINATED';
+      timerText = mate
+        ? ('Spectating ' + (((HERO_DEFS[mate.heroId] && HERO_DEFS[mate.heroId].name)) || 'teammate'))
+        : 'Round over';
       timerSmall = true;
     }
     respawnOverlayEl.classList.toggle('hidden', !showOverlay);
@@ -19387,9 +19416,9 @@ scene.add(aaRangeRing);
 
 function updateAaRangeIndicator() {
   const side = sides[APP.localSide];
-  // Visa cirkeln om _aaWanted ar true ELLER aaActive ar true (server kan ha
-  // triggat aa via auto-target utan att klient-toggle var på).
-  const wanted = !!(APP._aaWanted || (side && side.aaActive));
+  // Range-cirkeln visas ENBART medan AA-knappen hålls nere (_aaShowRange) —
+  // inte medan auto-attack pågår (target-ringen visar då vad man slår på).
+  const wanted = !!(APP._aaShowRange);
   if (!side || !wanted || !side.hero || side.hero.dead) {
     aaRangeRing.visible = false;
     return;
@@ -20215,17 +20244,21 @@ if (aeContinueBtn) aeContinueBtn.addEventListener('click', () => {
   }
 });
 
-function triggerAA() {
+// AA-knapp = HÅLL-för-range, inte on/off-toggle (användarbeslut 2026-06-04).
+// Tryck ner: visa range-cirkel + engagera närmaste fiende (auto-attack). Auto-attack
+// fortsätter sen av sig själv (maintainTargetLock) tills target dör/lämnar range.
+// Släpp: dölj range-cirkeln. INGEN aa-cancel — attacken fortsätter automatiskt.
+function aaPress() {
   if (APP.mode === 'lobby') return;
   const side = sides[APP.localSide];
   if (!side || side.hero.dead) return;
-  // Arena: ingen AA-toggle utanför fight-fasen (bakom prep-panelen).
+  // Arena: ingen AA utanför fight-fasen (bakom prep-panelen).
   if (APP.gameMode === 'arena1v1' && arenaState.phase !== 'fight') return;
-  // Toggle klient-side "AA on/off" sa AA-range-cirkeln syns oavsett om
-  // en fiende finns i range. Server fattar fortfarande aaActive utifran
-  // target-tillgang — _aaWanted styr bara visualindikatorn.
-  APP._aaWanted = !APP._aaWanted;
-  sendOrApplyEvent({ type: APP._aaWanted ? 'aa' : 'aa-cancel' });
+  APP._aaShowRange = true;                 // range-cirkel medan knappen hålls
+  sendOrApplyEvent({ type: 'aa' });         // engagera närmaste fiende i range
+}
+function aaRelease() {
+  APP._aaShowRange = false;                // dölj cirkeln; auto-attack fortsätter tills target borta
 }
 
 const joyState = {
@@ -22510,9 +22543,13 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') castLocalSkill('f', 0, 0, true);
   // Spacebar (eller R) = ultimate
   if (e.code === 'Space' || e.code === 'KeyR') { e.preventDefault?.(); castLocalSkill('r', side.hero.facingX, side.hero.facingZ, true); }
-  if (e.code === 'KeyA') { e.preventDefault?.(); triggerAA(); }
+  // KeyA = håll för range + engagera (matchar AA-knappen). e.repeat-gate mot spam.
+  if (e.code === 'KeyA' && !e.repeat) { e.preventDefault?.(); aaPress(); }
 });
-window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+window.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+  if (e.code === 'KeyA') aaRelease();
+});
 
 function rectOf(el) { return el.getBoundingClientRect(); }
 
@@ -22638,6 +22675,7 @@ function endSkillTouch(touch, cancelled) {
   aimState.active = false;
 }
 
+let aaTouchId = null;   // touch-id som håller AA-knappen nere (range-cirkel medan nedtryckt)
 function onTouchStart(e) {
   for (const touch of e.changedTouches) {
     const target = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -22649,7 +22687,8 @@ function onTouchStart(e) {
     }
     if (target === aaBtnEl || (aaBtnEl && aaBtnEl.contains(target))) {
       e.preventDefault();
-      triggerAA();
+      if (aaTouchId === null) aaTouchId = touch.identifier;
+      aaPress();
       continue;
     }
     const key = skillKeyFromTarget(target);
@@ -22670,6 +22709,7 @@ function onTouchEnd(e) {
   for (const touch of e.changedTouches) {
     if (touch.identifier === joyState.touchId) { e.preventDefault(); endJoystick(); }
     else if (touch.identifier === aimState.touchId) { e.preventDefault(); endSkillTouch(touch, e.type === 'touchcancel'); }
+    else if (touch.identifier === aaTouchId) { e.preventDefault(); aaTouchId = null; aaRelease(); }
   }
 }
 window.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -22677,9 +22717,14 @@ window.addEventListener('touchmove', onTouchMove, { passive: false });
 window.addEventListener('touchend', onTouchEnd, { passive: false });
 window.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
-// Desktop: mouse click på AA-knappen
+// Desktop: håll musknappen för range-cirkel (mousedown→engage, mouseup→släpp).
+// mouseup/mouseleave på window så vi fångar släpp även utanför knappen.
 if (aaBtnEl) {
-  aaBtnEl.addEventListener('click', (e) => { e.preventDefault(); triggerAA(); });
+  aaBtnEl.addEventListener('mousedown', (e) => { e.preventDefault(); aaPress(); });
+  window.addEventListener('mouseup', () => { if (APP._aaShowRange) aaRelease(); });
+  // Säkerhet: tappas fönsterfokus medan AA hålls (alt-tab/app-switch) hinner inte
+  // release-eventet fyra → range-cirkeln skulle fastna. Nollställ vid blur.
+  window.addEventListener('blur', () => { if (APP._aaShowRange) aaRelease(); });
 }
 
 // ---- Shop (lokal UI-state + populate + refresh) ----
@@ -27367,14 +27412,15 @@ function drawArenaMapPreview(canvas, map) {
   ctx.stroke();
   ctx.restore();
 
-  // Spawns (vänster blå, höger röd)
+  // Spawns (vänster blå, höger röd). x=±40 matchar nya spawn-positionerna (nära kanten).
+  // Preview-koordinaterna är o-skalade (rektangeln ±44 är också o-skalad) → proportionellt korrekt.
   const spawnR = 2.2;
   ctx.fillStyle = 'rgba(120,200,255,0.85)';
-  ctx.beginPath(); ctx.arc(x2(-32), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x2(-32), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2(-40), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2(-40), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(255,140,110,0.85)';
-  ctx.beginPath(); ctx.arc(x2( 32), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x2( 32), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2( 40), z2(-10), spawnR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x2( 40), z2( 10), spawnR, 0, Math.PI * 2); ctx.fill();
 
   // Orb (mittpunkt, guld)
   ctx.fillStyle = '#ffd34a';
