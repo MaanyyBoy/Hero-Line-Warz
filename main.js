@@ -8748,58 +8748,62 @@ function buildArenaScene() {
   if (arenaSceneGroup.children.length) clearArenaScene();
   setArenaMap(wantedMapIdx);
   arenaSceneGroup.userData.mapIdx = wantedMapIdx;
-  // Golv — dubbel storlek (100x70) med procedurell sand/sten-textur
-  const tintR = (ARENA_CFG.floorTint >> 16) & 0xff;
-  const tintG = (ARENA_CFG.floorTint >> 8) & 0xff;
-  const tintB = ARENA_CFG.floorTint & 0xff;
-  const floorTex = makeNoiseTexture([tintR + 36, tintG + 32, tintB + 26], 0.22, {
-    w: 256, h: 256, repeatX: 8, repeatY: 6,
-    specks: 1800, speckColor: [40, 32, 24], streaks: false,
-  });
-  // Tillsätt sprickor + större stenar via 2D-canvas-overlay
+  // Golv (arena wars) — ENFÄRGAT mörkt grå/svart med SYMMETRISKA detaljer
+  // (användarbeslut 2026-06-04): kakelrutnät + några stenblock + center-medaljong
+  // + minimal röd accent. Inga slumpade detaljer — allt speglas i 4 kvadranter så
+  // mönstret är symmetriskt över hela golvet. Mappas 1:1 (repeat 1,1) → hela golvet
+  // = en symmetrisk bild. Map-tinten (ARENA_CFG.floorTint) ignoreras avsiktligt.
   const fc = document.createElement('canvas');
-  fc.width = 512; fc.height = 384;
+  fc.width = 512; fc.height = 512;
   const fctx = fc.getContext('2d');
-  // Bas-färg per map (tint från ARENA_CFG.floorTint)
-  fctx.fillStyle = `#${ARENA_CFG.floorTint.toString(16).padStart(6, '0')}`;
-  fctx.fillRect(0, 0, fc.width, fc.height);
-  // Bas-brus
-  const baseTex = floorTex.image;
-  fctx.drawImage(baseTex, 0, 0, fc.width, fc.height);
-  // Sprickor — slumpade tunna mörka linjer
-  fctx.lineCap = 'round';
-  for (let i = 0; i < 22; i++) {
-    fctx.strokeStyle = `rgba(20,16,12,${0.45 + Math.random() * 0.3})`;
-    fctx.lineWidth = 1 + Math.random() * 1.2;
-    const x0 = Math.random() * fc.width, y0 = Math.random() * fc.height;
-    const segs = 3 + (Math.random() * 4 | 0);
-    let cx = x0, cy = y0;
+  const W = fc.width, H = fc.height, CXp = W / 2, CYp = H / 2;
+  // Bas: mörk grå (nästan svart), svag vertikal gradient för djup
+  const grad = fctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#26262b');
+  grad.addColorStop(1, '#191920');
+  fctx.fillStyle = grad;
+  fctx.fillRect(0, 0, W, H);
+  // Symmetriskt kakelrutnät (8×8) — tunna mörka fog-linjer + ljus kant-highlight
+  const N = 8, cell = W / N;
+  fctx.strokeStyle = 'rgba(8,8,11,0.85)';
+  fctx.lineWidth = 2;
+  for (let i = 0; i <= N; i++) {
+    const p = i * cell;
+    fctx.beginPath(); fctx.moveTo(p, 0); fctx.lineTo(p, H); fctx.stroke();
+    fctx.beginPath(); fctx.moveTo(0, p); fctx.lineTo(W, p); fctx.stroke();
+  }
+  fctx.strokeStyle = 'rgba(72,72,84,0.22)';
+  fctx.lineWidth = 1;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    const x = i * cell, y = j * cell;
     fctx.beginPath();
-    fctx.moveTo(cx, cy);
-    for (let s = 0; s < segs; s++) {
-      cx += (Math.random() - 0.5) * 60;
-      cy += (Math.random() - 0.5) * 60;
-      fctx.lineTo(cx, cy);
-    }
+    fctx.moveTo(x + 1.5, y + cell - 1.5); fctx.lineTo(x + 1.5, y + 1.5); fctx.lineTo(x + cell - 1.5, y + 1.5);
     fctx.stroke();
   }
-  // Större stenar (mörka prickar)
-  for (let i = 0; i < 60; i++) {
-    const r = 2 + Math.random() * 5;
-    const x = Math.random() * fc.width, y = Math.random() * fc.height;
-    fctx.fillStyle = `rgba(45,35,26,${0.5 + Math.random() * 0.3})`;
-    fctx.beginPath();
-    fctx.arc(x, y, r, 0, Math.PI * 2);
-    fctx.fill();
-    // Liten highlight på toppen
-    fctx.fillStyle = `rgba(140,118,90,0.4)`;
-    fctx.beginPath();
-    fctx.arc(x - r * 0.3, y - r * 0.3, r * 0.4, 0, Math.PI * 2);
-    fctx.fill();
-  }
+  // Hjälpare: rita i 4 speglade kvadranter kring center (garanterad symmetri)
+  const mirror4 = (drawFn) => {
+    for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      fctx.save(); fctx.translate(CXp, CYp); fctx.scale(sx, sy); drawFn(); fctx.restore();
+    }
+  };
+  // Stenblock — ljusare grå paneler, ett kluster per kvadrant
+  fctx.fillStyle = 'rgba(56,56,64,0.5)';
+  mirror4(() => { fctx.fillRect(cell * 1.15, cell * 1.15, cell * 1.5, cell * 1.5); });
+  fctx.strokeStyle = 'rgba(86,86,98,0.3)'; fctx.lineWidth = 1.5;
+  mirror4(() => { fctx.strokeRect(cell * 1.15, cell * 1.15, cell * 1.5, cell * 1.5); });
+  // Center-medaljong (symmetrisk) — mörkare platta med ljus ring
+  fctx.fillStyle = 'rgba(36,36,42,0.75)';
+  fctx.beginPath(); fctx.arc(CXp, CYp, cell * 1.35, 0, Math.PI * 2); fctx.fill();
+  fctx.strokeStyle = 'rgba(82,82,94,0.4)'; fctx.lineWidth = 3;
+  fctx.beginPath(); fctx.arc(CXp, CYp, cell * 1.35, 0, Math.PI * 2); fctx.stroke();
+  // MINIMAL röd accent — tunn röd ring runt center + 4 små röda streck (symmetriskt)
+  fctx.strokeStyle = 'rgba(168,40,40,0.5)'; fctx.lineWidth = 2;
+  fctx.beginPath(); fctx.arc(CXp, CYp, cell * 1.62, 0, Math.PI * 2); fctx.stroke();
+  fctx.fillStyle = 'rgba(160,36,36,0.5)';
+  mirror4(() => { fctx.fillRect(cell * 3.0, -2.5, cell * 0.55, 5); });
   const detailedFloorTex = new THREE.CanvasTexture(fc);
-  detailedFloorTex.wrapS = detailedFloorTex.wrapT = THREE.RepeatWrapping;
-  detailedFloorTex.repeat.set(3, 2);
+  detailedFloorTex.wrapS = detailedFloorTex.wrapT = THREE.ClampToEdgeWrapping;
+  detailedFloorTex.repeat.set(1, 1);
   detailedFloorTex.colorSpace = THREE.SRGBColorSpace;
 
   const floor = new THREE.Mesh(
