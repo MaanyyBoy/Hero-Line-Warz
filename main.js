@@ -18992,6 +18992,9 @@ function _ensureKillCdBanner() {
 function _updateKillCdBanner(show) {
   const el = _ensureKillCdBanner();
   if (show) {
+    // Smooth lokal nedräkning mellan b-states (resync vid varje nytt state).
+    const rem = Math.max(0, (APP._bossKillCdRemaining || 0) - (performance.now() - (APP._bossKillCdAt || 0)) / 1000);
+    el.innerHTML = `⚠ HOLD FIRE — ${rem.toFixed(1)}s`;
     el.style.display = 'block';
     // Pulsa opaciteten för att dra blicken (CSS-fri, billig).
     el.style.opacity = (0.7 + 0.3 * Math.sin(performance.now() * 0.012)).toFixed(2);
@@ -24095,9 +24098,12 @@ function applyBossWarsState(msg) {
       for (const _mesh of _adMap.values()) _mesh.traverse(o => { if (o.userData && o.userData.isBoss2AdBody && o.material && o.material.color) o.material.color.setHex(_col); });
     }
   }
-  // Kill-cooldown-WIPE-varning (playtest #1): b2r = kill-cooldown löper → döda ad nu wipar laget.
-  // Surface:as som banner i updateBossHpBar. Bara tier 2 har ads, så b2r räcker som villkor.
+  // Kill-cooldown-WIPE-varning (playtest #1): b2r = återstående cooldown-sekunder (>0 = döda
+  // ad nu wipar laget). Surface:as som countdown-banner i updateBossHpBar. _At = mottag-tid
+  // för smooth lokal nedräkning mellan b-states. Bara tier 2 har ads.
   APP._bossKillCdActive = !!msg.b2r;
+  APP._bossKillCdRemaining = msg.b2r || 0;
+  APP._bossKillCdAt = performance.now();
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
   if (msg.b && sides[1]) {
     const hostSide = sides[1];

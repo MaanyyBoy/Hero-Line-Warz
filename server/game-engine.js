@@ -3033,7 +3033,9 @@ function serializeBossWarsState(state) {
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
   snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b)
   snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
-  snap.b2r = state.boss2KillCooldown.remaining > 0;   // röd-state: kill-cooldown löper = WIPE-risk
+  // Kill-cooldown: återstående sekunder (>0 = WIPE-risk, röd-state). Klienten visar countdown
+  // i HOLD-FIRE-bannern + truthy-värdet driver ad-röd-färg (0 = falsy = säkert). Playtest #1.
+  snap.b2r = state.boss2KillCooldown.remaining > 0 ? r2(state.boss2KillCooldown.remaining) : 0;
   const boss = state.boss;
   if (boss) {
     const o = _bwBossBuf;
