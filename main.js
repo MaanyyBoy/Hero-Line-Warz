@@ -18999,11 +18999,39 @@ function _updateKillCdBanner(show) {
     el.style.display = 'none';
   }
 }
+// Fas-2-ENRAGE-banner (playtest #5): vid fas 1→2 frys-stunnas + pushas hela laget — utan
+// callout läses det som en frys-bugg. Stor centrerad banner + kamera-skak = "wow beat".
+let _bossPhaseBannerEl = null, _bossPhaseBannerHideAt = 0;
+function _showBossPhaseBanner(bossName) {
+  if (!_bossPhaseBannerEl) {
+    const el = document.createElement('div');
+    el.id = 'boss-phase-banner';
+    el.style.cssText = 'position:fixed;left:50%;top:36%;transform:translate(-50%,-50%);z-index:120;' +
+      'padding:14px 32px;border-radius:12px;background:rgba(120,20,40,0.88);' +
+      'border:2px solid #ff4466;box-shadow:0 0 36px rgba(255,40,80,0.85);' +
+      'font:800 24px/1.15 system-ui,"Segoe UI",sans-serif;color:#fff;letter-spacing:1px;' +
+      'text-shadow:0 2px 8px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;' +
+      'text-align:center;display:none;';
+    document.body.appendChild(el);
+    _bossPhaseBannerEl = el;
+  }
+  _bossPhaseBannerEl.innerHTML = `⚠ PHASE 2 — ${String(bossName || 'BOSS').toUpperCase()} ENRAGES`;
+  _bossPhaseBannerEl.style.display = 'block';
+  _bossPhaseBannerHideAt = performance.now() + 2600;
+  if (typeof triggerCameraShake === 'function') triggerCameraShake(0.45, 0.55);
+}
+function _tickBossPhaseBanner() {
+  if (_bossPhaseBannerEl && _bossPhaseBannerEl.style.display !== 'none' && performance.now() > _bossPhaseBannerHideAt) {
+    _bossPhaseBannerEl.style.display = 'none';
+  }
+}
 function updateBossHpBar() {
   if (!bossHpWrapEl) return;
+  _tickBossPhaseBanner();
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) {
     bossHpWrapEl.classList.add('hidden');
     _updateKillCdBanner(false);
+    if (_bossPhaseBannerEl) _bossPhaseBannerEl.style.display = 'none';
     return;
   }
   // Hitta boss-meshen — bor i sides[1].monsters med isBossWarsBoss=true
@@ -19024,7 +19052,14 @@ function updateBossHpBar() {
   const pctStr = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
   if (bossHpFillEl) bossHpFillEl.style.width = pct + '%';
   if (bossHpPctEl) bossHpPctEl.textContent = pctStr + '%';
-  if (bossHpNameEl && boss.bossName) bossHpNameEl.textContent = boss.bossName;
+  // Härdnings-DR (playtest #4): visa "🛡 X%" efter namnet så DR-eskaleringen syns
+  // (annars känns krympande dmg-popups som en oförklarad nerf). Synkad via msg.b.dr.
+  if (bossHpNameEl) {
+    const dr = boss._syncedDr || 0;
+    // Clean namn-källa (aldrig textContent → undviker att 🛡-suffixet kompoundas per frame).
+    const nm = boss.bossName || (getBossWarsDef(APP.bossWars && APP.bossWars.tier || 1) || {}).name || 'Boss';
+    bossHpNameEl.textContent = dr > 0 ? `${nm}   🛡 ${dr}%` : nm;
+  }
   // Phase 2 styling
   bossHpWrapEl.classList.toggle('phase2', boss.bossPhase === 2);
 }
@@ -24176,6 +24211,7 @@ function applyBossWarsState(msg) {
 
       boss.hp = msg.b.hp;
       boss.maxHp = msg.b.mh;
+      boss._syncedDr = msg.b.dr || 0;   // härdnings-DR % (playtest #4) → visas i HP-baren
       const prevPhase = boss._prevSyncedPhase || 1;
       boss.bossPhase = msg.b.ph || 1;
       boss.phaseTransitionRemaining = msg.b.pt || 0;
@@ -24183,6 +24219,8 @@ function applyBossWarsState(msg) {
       // Idempotent — applyBossPhase2Glow returnerar tidigt om aura redan finns.
       if (boss.bossPhase === 2 && prevPhase !== 2 && boss.mesh) {
         applyBossPhase2Glow(boss.mesh, msg.tr || boss.bossTier || 1);
+        // ENRAGE-banner (playtest #5) — gör fas-2-stunnen till ett moment ist f frys-bugg.
+        _showBossPhaseBanner(boss.bossName || (getBossWarsDef(msg.tr || 1) || {}).name);
       }
       boss._prevSyncedPhase = boss.bossPhase;
     }

@@ -1053,6 +1053,7 @@ function tickGandulfMark(state, target, dt) {
 
 function damageHero(side, amount) {
   if (side.hero.dead) return;
+  if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
   // Gimlu passive Stalwart Resolve — tröskelbaserad DR + var 3:e instance immune vid <40%
   let gimluDR = 0;
   if (side.heroId === 'gimlu') {
@@ -1136,6 +1137,9 @@ function killHero(side) {
   if (side.inBossWars && side.phoenixReviveAvailable) {
     side.phoenixReviveAvailable = false;
     side.hero.hp = Math.round(side.hero.maxHp * 0.5);
+    // 1.5s immunitet efter revive (balans-fynd): annars äts phoenixen direkt av nästa
+    // boss-burst i tier 4-5 (varje skill one-shottar) → wasted item-slot.
+    side.phoenixImmuneRemaining = 1.5;
     return;   // överlever — INTE dead
   }
   side.hero.dead = true;
@@ -2945,6 +2949,7 @@ function tickBossWars(state, dt) {
     if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
+    if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
     if ((s.hero.dotRemaining || 0) > 0) s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt);
     if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
     if ((s.heroSlowTime || 0) > 0) {
@@ -2995,7 +3000,7 @@ const _bwHeroBuf1 = _makeHeroSnapBuf();
 const _bwHeroBuf2 = _makeHeroSnapBuf();
 const _bwHeroBuf3 = _makeHeroSnapBuf();
 const _bwMapMr = (p) => ({ id: p.id, x: r2(p.x), z: r2(p.z), kind: p.kind });
-const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, c: undefined };
+const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, dr: 0, c: undefined };
 // Boss-cast-buffer (telegraph/execute) — matchar klientens buildBossWarsSnap cast-fält
 // (applyBossWarsState läser n/k/rad/len/ha/w/ph/t/tg/tx/tz/ox/oz/dx/dz).
 const _bwCastBuf = { n: '', k: 'circle', rad: 0, len: 0, ha: 0, w: 0, ph: 'telegraph', t: 0, tg: 0, tx: null, tz: null, ox: null, oz: null, dx: null, dz: null };
@@ -3037,6 +3042,9 @@ function serializeBossWarsState(state) {
     o.ph = boss.bossPhase || 1;
     o.pt = nzr2(boss.phaseTransitionRemaining);
     o.aac = boss.aaCount || 0;
+    // Härdnings-DR (playtest #4): aktuell time-step-DR i % så klienten kan visa "Hardened".
+    const _drSteps = Math.floor((boss.activeTime || 0) / (boss.dmgReductionStepIntervalSec || 120));
+    o.dr = Math.round(Math.min(boss.dmgReductionCap || 0.70, (boss.dmgReductionBase || 0) + _drSteps * (boss.dmgReductionStep || 0.05)) * 100);
     // Boss-cast → klient ritar telegraph-varning (slice 2b). Matchar buildBossWarsSnap.
     const ac = boss.activeCast;
     if (ac && ac.skill) {
