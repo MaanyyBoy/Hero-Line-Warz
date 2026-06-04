@@ -18107,9 +18107,14 @@ function updateHud() {
     endgameTitle.textContent = won ? 'VICTORY!' : 'DEFEAT';
     if (APP.gameMode === 'bosswars') {
       const bossInfo = getBossWarsDef(APP.bossWars && APP.bossWars.tier || 1);
+      // Payoff (playtest #3): vinst ger progressions-hook (nästa tier) ist f platt textrad.
+      const nextTier = (bossInfo.tier || 1) + 1;
+      const nextBoss = nextTier <= 5 ? getBossWarsDef(nextTier) : null;
       endgameInfo.textContent = won
-        ? `You defeated ${bossInfo.name} (Tier ${bossInfo.tier} · ${bossInfo.diff})!`
-        : `${bossInfo.name} defeated you. Try again!`;
+        ? (nextBoss
+            ? `Tier ${bossInfo.tier} cleared — ${bossInfo.name} falls! Next challenge: ${nextBoss.name} (Tier ${nextTier} · ${nextBoss.diff}).`
+            : `Tier ${bossInfo.tier} cleared — ${bossInfo.name} falls! You've conquered the final tier. Legendary.`)
+        : `${bossInfo.name} defeated your team. Regroup and try again!`;
     } else {
       endgameInfo.textContent = won
         ? `You destroyed the enemy tower on wave ${side.wave.current}.`
@@ -18947,10 +18952,39 @@ const bossHpWrapEl = document.getElementById('boss-hp-wrap');
 const bossHpFillEl = document.getElementById('boss-hp-fill');
 const bossHpPctEl = document.getElementById('boss-hp-pct');
 const bossHpNameEl = document.getElementById('boss-hp-name');
+// Kill-cooldown-WIPE-varningsbanner (skapas en gång). Visas när b2r aktivt (tier 2):
+// pulserande röd "HOLD FIRE" så lag inte råkar döda ads under kylningen = wipe.
+let _killCdBannerEl = null;
+function _ensureKillCdBanner() {
+  if (_killCdBannerEl) return _killCdBannerEl;
+  const el = document.createElement('div');
+  el.id = 'boss-killcd-banner';
+  el.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);z-index:55;' +
+    'padding:7px 18px;border-radius:8px;background:rgba(170,20,20,0.82);' +
+    'border:2px solid #ff5555;box-shadow:0 0 18px rgba(255,40,40,0.7);' +
+    'font:800 14px/1 system-ui,"Segoe UI",sans-serif;color:#fff;letter-spacing:0.5px;' +
+    'text-shadow:0 1px 3px rgba(0,0,0,0.9);white-space:nowrap;pointer-events:none;display:none;' +
+    'text-align:center;';
+  el.innerHTML = '⚠ HOLD FIRE — killing adds now WIPES the team';
+  document.body.appendChild(el);
+  _killCdBannerEl = el;
+  return el;
+}
+function _updateKillCdBanner(show) {
+  const el = _ensureKillCdBanner();
+  if (show) {
+    el.style.display = 'block';
+    // Pulsa opaciteten för att dra blicken (CSS-fri, billig).
+    el.style.opacity = (0.7 + 0.3 * Math.sin(performance.now() * 0.012)).toFixed(2);
+  } else if (el.style.display !== 'none') {
+    el.style.display = 'none';
+  }
+}
 function updateBossHpBar() {
   if (!bossHpWrapEl) return;
   if (APP.gameMode !== 'bosswars' || !APP.bossWars || !APP.bossWars.started) {
     bossHpWrapEl.classList.add('hidden');
+    _updateKillCdBanner(false);
     return;
   }
   // Hitta boss-meshen — bor i sides[1].monsters med isBossWarsBoss=true
@@ -18960,9 +18994,12 @@ function updateBossHpBar() {
     : null;
   if (!boss || boss.hp <= 0) {
     bossHpWrapEl.classList.add('hidden');
+    _updateKillCdBanner(false);
     return;
   }
   bossHpWrapEl.classList.remove('hidden');
+  // Wipe-varning bara medan bossen lever + kill-cooldown löper (tier 2).
+  _updateKillCdBanner(!!APP._bossKillCdActive && !matchState.gameOver);
   const pct = Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100));
   // Visa 1 decimal när < 10%, annars heltal (känns mer "epic" på final stretch)
   const pctStr = pct < 10 ? pct.toFixed(1) : Math.round(pct).toString();
@@ -24004,6 +24041,9 @@ function applyBossWarsState(msg) {
       for (const _mesh of _adMap.values()) _mesh.traverse(o => { if (o.userData && o.userData.isBoss2AdBody && o.material && o.material.color) o.material.color.setHex(_col); });
     }
   }
+  // Kill-cooldown-WIPE-varning (playtest #1): b2r = kill-cooldown löper → döda ad nu wipar laget.
+  // Surface:as som banner i updateBossHpBar. Bara tier 2 har ads, så b2r räcker som villkor.
+  APP._bossKillCdActive = !!msg.b2r;
   // Boss: skapa mesh om saknas, annars uppdatera position/hp/phase
   if (msg.b && sides[1]) {
     const hostSide = sides[1];
@@ -28838,26 +28878,36 @@ function openBossDetail(tier) {
     dragonBreath: 'Dragon Breath', wingSlam: 'Wing Slam', skyfireRain: 'Skyfire Rain',
   };
   const skillDescs = {
-    shieldBash: 'Dashar 7m framåt och skadar allt i banan.',
-    throwingAxe: 'Kastar en yxa rakt fram (14m räckvidd).',
-    battleRoar: '5m AoE-radie runt bossen, applicerar 60% slow i 2s.',
-    lightningStrike: 'Targetar din nuvarande position med 2.8m AoE-skada.',
-    spearVolley: 'Kastar 3 spjut i en kon-spread framåt.',
-    warStomp: '6m AoE runt bossen med 2.5m knockback.',
-    cleaveWave: '90° kon framåt, 8m lång.',
-    poisonPool: 'Kastar en pöl på din position som tickar DoT + slow i 6s (3m radie).',
-    earthquake: '5 slumpmässiga AoE-cirklar (2.5m) spawnas i sekvens runt bossen.',
-    hellfireBeam: 'Roterande beam-sweep 180° över 1.8s (12m räckvidd).',
-    infernoStrike: 'Snabb telegraferad AoE-strike på din position + brinnande zon 3s.',
-    meteorShower: '5 meteorer landar slumpvis runt bossen över 4s.',
-    dragonBreath: 'Sustained kon-flam 2.5s (12m räckvidd, smal kon, DPS-tick var 0.3s).',
-    wingSlam: '5m AoE runt bossen + 4m knockback.',
-    skyfireRain: '8 meteorer regnar över 6s (3m radie per meteor).',
+    shieldBash: 'Dashes 11m forward, damaging everything in a 3m-wide path.',
+    throwingAxe: 'Hurls an axe straight ahead (18m range).',
+    battleRoar: '7.5m AoE around the boss, applies 50% slow for 2.5s.',
+    lightningStrike: 'Strikes your current position with a 4.2m AoE.',
+    spearVolley: 'Throws 4 spears in a cone spread (18m range).',
+    warStomp: '9m AoE around the boss with 3.5m knockback.',
+    cleaveWave: '120° cone, 12m long.',
+    poisonPool: 'Drops a 4.5m pool on your position — DoT + slow for 7s.',
+    earthquake: '6 AoE circles (3.5m) erupt in sequence around the boss.',
+    hellfireBeam: 'Rotating beam sweep over 2.2s (16m reach).',
+    infernoStrike: 'Fast telegraphed strike on your position (3.2m) + a burning zone.',
+    meteorShower: '6 meteors land around the boss over ~4s (4.5m each).',
+    dragonBreath: 'Sustained cone of flame for 2.8s (16m reach, narrow cone).',
+    wingSlam: '7.5m AoE around the boss + 5m knockback.',
+    skyfireRain: '10 meteors rain down over ~6s (4m radius each).',
   };
   const body = document.getElementById('boss-detail-body');
   const phase2Pct = Math.round((b.phaseThreshold || 0.5) * 100);
   const phase2Hint = b.hasPhase2
-    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 vid ${phase2Pct}% HP</strong> — bossen byter taktik. Vad som händer får du upptäcka själv.</div>`
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(120,40,160,0.35); border-left: 3px solid #ff66cc; font: 400 12.5px/1.45 system-ui, sans-serif; border-radius: 0 6px 6px 0;">⚠ <strong>Phase 2 at ${phase2Pct}% HP</strong> — the boss changes tactics: faster casts, harder skills.</div>`
+    : '';
+  // Per-tier mekanik-förklaring (playtest-fynd #1/#2): wipe-pusslet + minion-racet
+  // dödar blinda lag annars. Bara tier 1 (minions) + tier 2 (ads) har special-mekanik.
+  const mechByTier = {
+    1: 'Minions march toward the boss. Kill them before they reach it — each one that connects <strong>heals the boss 10% HP and buffs its damage +20%</strong>. Their aura stacks escalating damage, so don\'t camp on top of them.',
+    2: '<strong>Adds chase you</strong> and stack a slow on every hit. ⚠ <strong>Do NOT kill adds too fast:</strong> killing one while the kill-cooldown is active (adds glow <span style="color:#ff5555">RED</span> as the warning) <strong>wipes the entire team</strong>. Space your kills out and let the cooldown reset.',
+  };
+  const mech = mechByTier[b.tier];
+  const mechBlock = mech
+    ? `<div style="margin-top: 14px; padding: 8px 12px; background: rgba(160,90,20,0.30); border-left: 3px solid #ffaa44; font: 400 12.5px/1.5 system-ui, sans-serif; border-radius: 0 6px 6px 0;">🎯 <strong>Mechanic</strong> — ${mech}</div>`
     : '';
   let html = `
     <h2>${b.name}</h2>
@@ -28867,6 +28917,7 @@ function openBossDetail(tier) {
   for (const s of skills) {
     html += `<div class="bd-skill"><div class="bd-skill-name">${skillNames[s.id] || s.id}</div><div class="bd-skill-desc">${skillDescs[s.id] || ''}</div></div>`;
   }
+  html += mechBlock;
   html += phase2Hint;
   body.innerHTML = html;
   // Spara vald tier till fight + test-knapparna
