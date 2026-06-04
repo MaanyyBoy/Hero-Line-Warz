@@ -6461,7 +6461,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
-  const strength = Math.min(1, mag);
+  // Full movement-speed så fort en riktning valts (användarbeslut 2026-06-04) —
+  // ingen graderad hastighet. Speglar klientens applyMovement (annars rubber-band).
+  const strength = 1;
   const ndx = joyX / mag, ndz = joyZ / mag;
   side.hero.facingX = ndx;
   side.hero.facingZ = ndz;
