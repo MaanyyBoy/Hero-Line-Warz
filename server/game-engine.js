@@ -809,6 +809,20 @@ function recomputeSideStats(side) {
     skillDmgPct += (side.statPts.sd || 0) * STAT_PER_POINT.sd;
     dmgReductionPct += (side.statPts.dr || 0) * STAT_PER_POINT.dr;
   }
+  // Boss Wars-loadout: talents + items stat-bonusar (mirror main.js recomputeSideStats
+  // 15834-15842). Foldas in i samma accumulator → läggs på FÖRE level-mult, exakt som klienten.
+  let _bwAaLifesteal = 0, _bwCritDmgBonus = 0, _bwPhoenix = false;
+  if (side.inBossWars) {
+    const _applyBw = (def) => {
+      if (!def) return;
+      if (def.stats) addStats(def.stats);
+      if (def.lifestealOnAa) _bwAaLifesteal += def.lifestealOnAa;
+      if (def.critDmgBonus) _bwCritDmgBonus += def.critDmgBonus;
+      if (def.phoenixRevive) _bwPhoenix = true;
+    };
+    if (side.bossWarsTalents) for (const tid of side.bossWarsTalents) _applyBw(ENGINE_BOSS_WARS_TALENTS[tid]);
+    if (side.bossWarsItems) for (const iid of side.bossWarsItems) _applyBw(ENGINE_BOSS_WARS_ITEMS[iid]);
+  }
   // Per-skill level-mult (för tick-skills som kan läsa skillLvlMul[key] live)
   side.skillLvlMul = {
     q: 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, ((side.skillLvl && side.skillLvl.q) || 1) - 1),
@@ -844,6 +858,13 @@ function recomputeSideStats(side) {
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
   side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
+  // Boss Wars-extras (mirror main.js 15880-15891): crit-dmg läses i combat via side.critDmgMul.
+  // AA-lifesteal + phoenix-revive-BETEENDE = Phase B (fälten sätts här, behavior wiras separat).
+  if (side.inBossWars) {
+    side.critDmgMul = 2.0 + _bwCritDmgBonus;
+    side.aaLifestealPct = _bwAaLifesteal;
+    side.phoenixReviveAvailable = _bwPhoenix && (side.phoenixReviveAvailable !== false);
+  }
 }
 
 // ── Arena-talents (server-side kopia av main.js ARENA_TALENTS) ──
@@ -900,6 +921,35 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'k_as',           stats: { attackSpeedPct: 0.12 } },
     { id: 'k_crit',         stats: { critChancePct: 0.10 } },
   ],
+};
+
+// ── Boss Wars-loadout (server-side kopia av main.js BOSS_WARS_TALENTS/ITEMS) ──
+// Stat-bonusar foldas in i recomputeSideStats (boss-wars-gren, additivt före level-mult,
+// exakt som klienten). critDmgBonus → side.critDmgMul (läses redan i combat). lifestealOnAa +
+// phoenixRevive = beteende (Phase B). Spelaren väljer 3 talents + 4 items i prep.
+const ENGINE_BOSS_WARS_TALENTS = {
+  bwt_hp:    { stats: { maxHpPct: 0.25 } },
+  bwt_as:    { stats: { attackSpeedPct: 0.20 } },
+  bwt_dmg:   { stats: { attackDmg: 12 } },
+  bwt_skill: { stats: { skillDmgPct: 0.20 } },
+  bwt_cdr:   { stats: { cdrPct: 0.15 } },
+  bwt_dr:    { stats: { dmgReductionPct: 0.18 } },
+  bwt_ls:    { stats: {}, lifestealOnAa: 0.12 },
+  bwt_crit:  { stats: { critChancePct: 0.15 }, critDmgBonus: 0.25 },
+  bwt_ms:    { stats: { moveSpeedPct: 0.15 } },
+  bwt_heal:  { stats: { healPerSecPct: 0.02 } },
+};
+const ENGINE_BOSS_WARS_ITEMS = {
+  bwi_blade:    { stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
+  bwi_helm:     { stats: { maxHpPct: 0.35 } },
+  bwi_boots:    { stats: { moveSpeedPct: 0.25 } },
+  bwi_cape:     { stats: { dmgReductionPct: 0.20 } },
+  bwi_amulet:   { stats: { skillDmgPct: 0.30 } },
+  bwi_ring:     { stats: { cdrPct: 0.20, attackSpeedPct: 0.15 } },
+  bwi_tome:     { stats: { skillDmgPct: 0.35, maxHpPct: 0.15 } },
+  bwi_gauntlet: { stats: { attackDmg: 18 }, lifestealOnAa: 0.15 },
+  bwi_crit:     { stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
+  bwi_phoenix:  { stats: { maxHpPct: 0.10 }, phoenixRevive: true },
 };
 
 // Kolla om en side valt en specifik talent (för arena server-auth skill-modifier-logic).
@@ -2108,7 +2158,7 @@ function createBossWarsState(tier) {
   sides[3].monsters = sides[1].monsters;
   return state;
 }
-function initBossWarsMatch(heroes, tier) {
+function initBossWarsMatch(heroes, tier, loadouts) {
   const state = createBossWarsState(tier);
   for (const idx of [1, 2, 3]) {
     const side = state.sides[idx];
@@ -2118,8 +2168,13 @@ function initBossWarsMatch(heroes, tier) {
     }
     // C3-försvar: aldrig köra simmen med undefined heroId (peer hann ej bekräfta hjälte) → magiker-fallback.
     if (!side.heroId) side.heroId = 'magiker';
-    // recomputeArenaSideStats no-op:ar talent-delen (state.talents saknas i boss wars)
-    // men kör recomputeSideStats → bas-stats. Boss-wars talents/items appliceras slice 1.
+    // Boss-wars-loadout per peer (talents + items). Cappas server-side (3 talents / 4 items)
+    // som spoof-skydd mot manipulerade payloads. recomputeSideStats applicerar stat-bonusarna.
+    const lo = loadouts && loadouts[idx];
+    side.bossWarsTalents = (lo && Array.isArray(lo.tals)) ? lo.tals.slice(0, 3) : [];
+    side.bossWarsItems = (lo && Array.isArray(lo.items)) ? lo.items.slice(0, 4) : [];
+    // recomputeArenaSideStats no-op:ar arena-talent-delen (state.talents saknas i boss wars)
+    // men kör recomputeSideStats → bas-stats + boss-wars-loadout (foldas i recomputeSideStats).
     recomputeArenaSideStats(state, side);
   }
   return state;

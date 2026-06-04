@@ -274,10 +274,10 @@ function applyArenaInput(room, ws, payload) {
 // Bakåtkompatibelt: en boss-klient som INTE skickar b-sim-start får gammalt host-auth
 // relä-beteende (relayBossWarsMessage) → deploy bryter inget. När den nya klientens host
 // skickar b-sim-start startar servern boss-engine:n + äger b-state. 3-peer broadcast.
-function startBossWarsSim(room, heroes, tier) {
+function startBossWarsSim(room, heroes, tier, loadouts) {
   if (room.game || room.tickHandle) return;        // redan igång
   room.bossSim = true;
-  room.game = engine.initBossWarsMatch(heroes, tier);
+  room.game = engine.initBossWarsMatch(heroes, tier, loadouts);
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
   room.nextTickAt = Date.now();
@@ -311,7 +311,7 @@ function handleBossMessage(room, fromWs, envelope) {
   const t = payload && payload.t;
   // Host begär server-auth boss-sim (skickas vid match-launch). Bara host.
   if (t === 'b-sim-start') {
-    if (fromWs === room.host) startBossWarsSim(room, payload.heroes, payload.tier);
+    if (fromWs === room.host) startBossWarsSim(room, payload.heroes, payload.tier, payload.loadouts);
     return;
   }
   if (room.bossSim) {

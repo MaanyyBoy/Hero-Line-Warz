@@ -27574,11 +27574,22 @@ function enterPlayPhase() {
     if (bossMpState.matchActive) {
       APP.bossServerAuth = true;
       if (bossMpState.role === 'host') {
-        sendGameMsg({ t: 'b-sim-start', tier: APP.bossWars.tier || 1, heroes: {
-          1: (sides[1] && sides[1].heroId) || 'magiker',
-          2: (sides[2] && sides[2].heroId) || 'magiker',   // C3: aldrig null → fel heroId i simmen
-          3: (sides[3] && sides[3].heroId) || 'magiker',
-        } });
+        // Loadout per peer: peerPayloads[idx] = {hero, tals, items}. Host:ens egen slot (1)
+        // faller tillbaka på lokal selection. Servern applicerar talents/items i engine:n.
+        const _lo = (idx) => {
+          const p = peerPayloads[idx];
+          if (p) return { tals: (p.tals || []).slice(), items: (p.items || []).slice() };
+          if (idx === 1) return { tals: (APP.bossWars.selectedTalents || []).slice(), items: (APP.bossWars.selectedItems || []).slice() };
+          return { tals: [], items: [] };
+        };
+        sendGameMsg({ t: 'b-sim-start', tier: APP.bossWars.tier || 1,
+          heroes: {
+            1: (sides[1] && sides[1].heroId) || 'magiker',
+            2: (sides[2] && sides[2].heroId) || 'magiker',   // C3: aldrig null → fel heroId i simmen
+            3: (sides[3] && sides[3].heroId) || 'magiker',
+          },
+          loadouts: { 1: _lo(1), 2: _lo(2), 3: _lo(3) },
+        });
       }
     }
     // Spawn-positioner: alla 3 hjältar i spawn-rummet, nära varandra.
