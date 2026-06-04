@@ -16796,10 +16796,14 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
 let _meshSpawnsThisFrame = 0;
 const MAX_MESH_SPAWNS_PER_FRAME = 5;
 const STAGGER_KEYS = new Set(['monsters', 'playerCreeps']);
+// Återanvänd ETT scratch-Set istället för new Set() per anrop (~900-1500/sek i MP → GC-press
+// på mobil). Synkron användning inom funktionen → ingen reentrancy-risk.
+const _reconcileSeen = new Set();
 function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
-  const seen = new Set();
+  const seen = _reconcileSeen;
+  seen.clear();
   const interpolate = INTERPOLATED_KEYS.has(key);
   // Sec-precision now för velocity-tracking. En läsning per anrop räcker.
   const _nowSec = interpolate ? (performance.now() / 1000) : 0;
@@ -18129,6 +18133,7 @@ const waveDisplayEl = document.getElementById('wave-display');
 const waveTextEl = document.getElementById('wave-text');
 const respawnOverlayEl = document.getElementById('respawn-overlay');
 const respawnTimerEl = document.getElementById('respawn-timer');
+const respawnLabelEl = document.getElementById('respawn-label');
 const towerHpStackEl = document.getElementById('tower-hp-stack');
 const arenaOrbTimerEl = document.getElementById('arena-orb-timer');
 const arenaOrbTimerTextEl = document.getElementById('arena-orb-timer-text');
@@ -18269,12 +18274,33 @@ function updateHud() {
       goldDisplayEl.classList.add('hidden');
     }
   }
-  // Respawn-overlay: visa "RESPAWN <countdown>" när hero är död i line/boss wars
+  // Respawn-overlay: skiljer på respawn (line wars) vs eliminerad (boss wars co-op).
+  // Boss wars har INGEN auto-respawn (se simulateAll) → den frusna "RESPAWN 5.0"
+  // var en bugg. Solo boss wars = instant game over (ingen overlay). Co-op boss wars =
+  // död spelare väntar på laget → "ELIMINATED / Waiting for team".
   if (respawnOverlayEl) {
-    const showRespawn = side.hero.dead && !isArena;
-    respawnOverlayEl.classList.toggle('hidden', !showRespawn);
-    if (showRespawn && respawnTimerEl) {
-      respawnTimerEl.textContent = side.hero.respawnTimer.toFixed(1);
+    const dead = side.hero.dead;
+    const isBoss = APP.gameMode === 'bosswars';
+    const bossCoOpAlive = isBoss && bossMpState && bossMpState.matchActive && !matchState.gameOver;
+    let showOverlay = false, label = 'RESPAWN', timerText = '', timerSmall = false;
+    if (dead && !isArena && !isBoss) {
+      // Line wars: riktig respawn-countdown
+      showOverlay = true;
+      timerText = side.hero.respawnTimer.toFixed(1);
+    } else if (dead && bossCoOpAlive) {
+      // Boss wars co-op: ingen respawn — vänta på laget
+      showOverlay = true;
+      label = 'ELIMINATED';
+      timerText = 'Waiting for team';
+      timerSmall = true;
+    }
+    respawnOverlayEl.classList.toggle('hidden', !showOverlay);
+    if (showOverlay) {
+      if (respawnLabelEl) respawnLabelEl.textContent = label;
+      if (respawnTimerEl) {
+        respawnTimerEl.textContent = timerText;
+        respawnTimerEl.style.fontSize = timerSmall ? '20px' : '';
+      }
     }
   }
   updateLevelUI(side);
@@ -28015,14 +28041,22 @@ function returnToLobby() {
   for (const i of [1, 2, 3, 4]) {
     if (sides[i]) { removeSide(sides[i]); sides[i] = null; }
   }
-  // Keys med FÄRSKA (ej factory-cachade) geometrier → måste dispose:as (GPU-buffrar).
-  // Boss-wars-entiteter (slice 2c/3b) skapas med nya THREE-geometrier per mesh.
-  const _freshGeoKeys = new Set(['monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads']);
-  for (const key of ['monsters', 'playerCreeps', 'fireballs', 'projectiles', 'novaEffects', 'creepProjectiles', 'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads']) {
+  // Städa ALLA entitets-mesh-register (tidigare rensades bara ~halva → scen-clutter +
+  // GPU-läcka + risk att server-återanvänt entity-id matchade en stale mesh i nästa match).
+  // Itererar Object.keys så framtida keys täcks automatiskt.
+  // _freshGeoKeys = keys med FÄRSKA (ej delade) geometrier → dispose:as (GPU-buffrar).
+  // VIKTIGT: heroCopies + monsters/playerCreeps/fireballs/projectiles/novaEffects/creepProjectiles
+  // delar geometri (GLTF eller factory-cache) → dispose:a ALDRIG (skulle bryta källan).
+  const _freshGeoKeys = new Set([
+    'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads',
+    'aragurnBanners', 'heroCopyFireballs', 'fireWaves', 'blackHoles', 'shatters',
+    'vineTraps', 'hammers', 'ironWillExplosions', 'thornPools', 'kostefoSliders', 'kostefoGooseWaves',
+  ]);
+  for (const key of Object.keys(clientMeshes)) {
     if (!clientMeshes[key]) continue;
     for (const m of clientMeshes[key].values()) for (const mesh of m.values()) {
       scene.remove(mesh);
-      // Färska geometrier → dispose. Övriga keys delar geometri/textur via factory-cache.
+      // Färska geometrier → dispose. Övriga keys delar geometri/textur (factory-cache/GLTF).
       if (_freshGeoKeys.has(key)) {
         mesh.traverse(o => {
           if (o.geometry) o.geometry.dispose();
@@ -28035,6 +28069,8 @@ function returnToLobby() {
     }
     clientMeshes[key].clear();
   }
+  // Töm buffrade nät-states så en stale snap från förra matchen inte appliceras frame 1 i nästa.
+  _netPending.classic = _netPending.arena = _netPending.boss = null;
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
   document.body.classList.remove('arena-mode');

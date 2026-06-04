@@ -1360,7 +1360,7 @@
       max-width: none !important;
       max-height: none !important;
       width: 100vw;
-      height: 100vh;
+      height: 100dvh;
       padding: 0;
       margin: 0;
       display: none;
@@ -3086,6 +3086,7 @@
       z-index: 400;
       font: 14px/1.4 system-ui, sans-serif;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
     #hero-pick.hidden { display: none; }
     .hp-header {
@@ -4312,7 +4313,7 @@
 
   <!-- Respawn-overlay (visas när hjälten är död) -->
   <div id="respawn-overlay" class="hidden">
-    <div class="respawn-label">RESPAWN</div>
+    <div class="respawn-label" id="respawn-label">RESPAWN</div>
     <div class="respawn-timer" id="respawn-timer">5.0</div>
   </div>
 

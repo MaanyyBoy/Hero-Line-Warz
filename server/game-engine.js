@@ -6965,6 +6965,13 @@ function startDuel(state) {
     s.projectiles = [];
     s.fireballs = [];
     s.novaEffects = [];
+    // Rensa ALLA skill-entitets-arrays — annars lever en entitet som castades precis vid
+    // duel-start kvar i duel-arenan (de tickas i duel-branchen) och skadar hjältar.
+    for (const arr of ['blackHoles', 'vineTraps', 'hammers', 'fireWaves', 'shatters', 'thornPools',
+      'kostefoGooseWaves', 'kostefoSliders', 'bossProjectiles', 'bossPools',
+      'ironWillExplosions', 'aragurnBanners', 'heroCopyFireballs']) {
+      if (Array.isArray(s[arr])) s[arr].length = 0;
+    }
     s.inDuel = true;
     s.heroFountainAura = false;
     s.duelSpeedBuffRemaining = 0;
@@ -7072,6 +7079,12 @@ function endDuel(state) {
     s.projectiles = [];
     s.fireballs = [];
     s.novaEffects = [];
+    // Spegla startDuel: rensa alla skill-entiteter så inget följer med ut ur duel-arenan.
+    for (const arr of ['blackHoles', 'vineTraps', 'hammers', 'fireWaves', 'shatters', 'thornPools',
+      'kostefoGooseWaves', 'kostefoSliders', 'bossProjectiles', 'bossPools',
+      'ironWillExplosions', 'aragurnBanners', 'heroCopyFireballs']) {
+      if (Array.isArray(s[arr])) s[arr].length = 0;
+    }
     s.inDuel = false;
     s.duelSpeedBuffRemaining = 0;
   }
@@ -7202,7 +7215,7 @@ function tickGame(state, dt) {
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     if (side.hero.dead) {
-      side.hero.respawnTimer -= dt;
+      side.hero.respawnTimer = Math.max(0, side.hero.respawnTimer - dt);
       if (side.hero.respawnTimer <= 0) respawnHero(side);
     }
   }
