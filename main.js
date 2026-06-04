@@ -4401,19 +4401,24 @@ const sides = { 1: null, 2: null };
 // Stor öppen arena (~88x56) med varierat cover som blockerar projektiler.
 // Heroes spawnar på motsatta östra/västra sidor. Orb alltid mittpunkten.
 const ARENA_Z_OFFSET = 80;
+// Arena Wars 20% mindre spelyta (användarbeslut 2026-06-04). Skalar alla
+// offset-från-center: bounds, spawns, props (placering+visual), cover-kollision,
+// golv/väggar/facklor, shrink-radier. Center (0, ARENA_Z_OFFSET) + orb oförändrade.
+// MÅSTE matcha engine ARENA1V1_SCALE exakt (annars rubber-banding mot server-clamp).
+const ARENA_SCALE = 0.8;
 const ARENA_CFG = {
   // 1v1 spawns: en hjälte per sida
-  spawn1: { x: -32, z: ARENA_Z_OFFSET },
-  spawn2: { x:  32, z: ARENA_Z_OFFSET },
+  spawn1: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET },
+  spawn2: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET },
   // 2v2 spawns: två hjältar per team, spridda i Z-axeln
   spawns2v2: {
-    1: { x: -32, z: ARENA_Z_OFFSET - 10 },  // team A medlem 1
-    3: { x: -32, z: ARENA_Z_OFFSET + 10 },  // team A medlem 2 (dummy/ally)
-    2: { x:  32, z: ARENA_Z_OFFSET - 10 },  // team B medlem 1 (dummy)
-    4: { x:  32, z: ARENA_Z_OFFSET + 10 },  // team B medlem 2 (dummy)
+    1: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team A medlem 1
+    3: { x: -32 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team A medlem 2 (dummy/ally)
+    2: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET - 10 * ARENA_SCALE },  // team B medlem 1 (dummy)
+    4: { x:  32 * ARENA_SCALE, z: ARENA_Z_OFFSET + 10 * ARENA_SCALE },  // team B medlem 2 (dummy)
   },
   orb:    { x: 0,   z: ARENA_Z_OFFSET },
-  bounds: { minX: -44, maxX: 44, minZ: ARENA_Z_OFFSET - 28, maxZ: ARENA_Z_OFFSET + 28 },
+  bounds: { minX: -44 * ARENA_SCALE, maxX: 44 * ARENA_SCALE, minZ: ARENA_Z_OFFSET - 28 * ARENA_SCALE, maxZ: ARENA_Z_OFFSET + 28 * ARENA_SCALE },
   // Cover-props: x/z är relativt arena-mitten. collision = AABB/cirkel som
   // blockar hero-rörelse + projektiler. Rotation påverkar utseendet men
   // collision-formen är axis-aligned (close enough för gameplay).
@@ -8617,13 +8622,14 @@ function isArenaCoverAt(x, z) {
   if (APP.gameMode !== 'arena1v1') return false;
   for (const p of ARENA_CFG.props) {
     if (!p.collision) continue;
-    const dx = x - p.x;
-    const dz = z - (ARENA_Z_OFFSET + p.z);
+    // ARENA_SCALE: props skalas (placering + storlek) i buildArenaScene → matcha här.
+    const dx = x - p.x * ARENA_SCALE;
+    const dz = z - (ARENA_Z_OFFSET + p.z * ARENA_SCALE);
     if (p.collision.shape === 'circle') {
-      const r = p.collision.radius;
+      const r = p.collision.radius * ARENA_SCALE;
       if (dx * dx + dz * dz < r * r) return true;
     } else if (p.collision.shape === 'box') {
-      if (Math.abs(dx) < p.collision.halfX && Math.abs(dz) < p.collision.halfZ) return true;
+      if (Math.abs(dx) < p.collision.halfX * ARENA_SCALE && Math.abs(dz) < p.collision.halfZ * ARENA_SCALE) return true;
     }
   }
   return false;
@@ -8797,7 +8803,7 @@ function buildArenaScene() {
   detailedFloorTex.colorSpace = THREE.SRGBColorSpace;
 
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(100, 70),
+    new THREE.PlaneGeometry(100 * ARENA_SCALE, 70 * ARENA_SCALE),
     new THREE.MeshStandardMaterial({ map: detailedFloorTex, roughness: 0.95 })
   );
   floor.rotation.x = -Math.PI / 2;
@@ -8805,12 +8811,12 @@ function buildArenaScene() {
   floor.receiveShadow = true;
   arenaSceneGroup.add(floor);
 
-  // 4 facklor i arena-hörnen (innanför perimeter-väggarna)
+  // 4 facklor i arena-hörnen (innanför perimeter-väggarna). Skalade med ARENA_SCALE.
   const brazPos = [
-    [-44 + 4, ARENA_Z_OFFSET - 28 + 4],
-    [ 44 - 4, ARENA_Z_OFFSET - 28 + 4],
-    [-44 + 4, ARENA_Z_OFFSET + 28 - 4],
-    [ 44 - 4, ARENA_Z_OFFSET + 28 - 4],
+    [(-44 + 4) * ARENA_SCALE, ARENA_Z_OFFSET + (-28 + 4) * ARENA_SCALE],
+    [( 44 - 4) * ARENA_SCALE, ARENA_Z_OFFSET + (-28 + 4) * ARENA_SCALE],
+    [(-44 + 4) * ARENA_SCALE, ARENA_Z_OFFSET + ( 28 - 4) * ARENA_SCALE],
+    [( 44 - 4) * ARENA_SCALE, ARENA_Z_OFFSET + ( 28 - 4) * ARENA_SCALE],
   ];
   for (const [bx, bz] of brazPos) {
     const br = makeArenaBrazier();
@@ -8823,7 +8829,7 @@ function buildArenaScene() {
   const wallTop = 1.2;
   const wallThickness = 1;
   const wallH = 1.8;
-  const aLen = 100, aDep = 70;
+  const aLen = 100 * ARENA_SCALE, aDep = 70 * ARENA_SCALE;
   // Lång murbit norr och söder
   for (const dz of [-aDep / 2, aDep / 2]) {
     const w = new THREE.Mesh(new THREE.BoxGeometry(aLen, wallH, wallThickness), wallMat);
@@ -8847,7 +8853,9 @@ function buildArenaScene() {
   // material på mesh ger fortfarande visuell glöd; bara dynamic light tas bort.
   for (const p of ARENA_CFG.props) {
     const m = makeArenaProp(p.type);
-    m.position.set(p.x, 0, ARENA_Z_OFFSET + p.z);
+    // ARENA_SCALE: skala placering + visuell storlek (matchar cover i isArenaCoverAt).
+    m.position.set(p.x * ARENA_SCALE, 0, ARENA_Z_OFFSET + p.z * ARENA_SCALE);
+    m.scale.multiplyScalar(ARENA_SCALE);
     m.rotation.y = p.rot;
     const _strip = [];
     m.traverse(o => { if (o.isPointLight) _strip.push(o); });
@@ -8914,8 +8922,8 @@ const arenaState = {
 // Shrink-konfiguration: efter SHRINK_START_DELAY krymper circle linjärt till
 // SHRINK_FINAL_RADIUS över SHRINK_DURATION sekunder. Utanför = 5% maxHP/s skada.
 const SHRINK_START_DELAY = 30;       // nerf från 60 (matchar server A_SHRINK_START_DELAY — zonen formar rundan)
-const SHRINK_INITIAL_RADIUS = 28;    // täcker arenan (bounds 88×56 → 28 ryms)
-const SHRINK_FINAL_RADIUS = 4;
+const SHRINK_INITIAL_RADIUS = 28 * ARENA_SCALE;    // täcker arenan (skalad med ARENA_SCALE)
+const SHRINK_FINAL_RADIUS = 4 * ARENA_SCALE;
 const SHRINK_DURATION = 60;          // krymper över 60s
 const SHRINK_DMG_PCT = 0.05;         // 5% maxHP per sek utanför
 const SHRINK_TICK_INTERVAL = 0.25;

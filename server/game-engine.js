@@ -1337,11 +1337,14 @@ function createGameState() {
 // ADDITIVT: inget anropar detta än (server.js kör fortf. host-auth för arena-rum)
 // förrän hela slice:n + server-wiren är klar och testad. Bryter inget under tiden.
 const ARENA1V1_Z = 80;                 // matchar main.js ARENA_Z_OFFSET
-const ARENA1V1_SPAWN1 = { x: -32, z: ARENA1V1_Z };
-const ARENA1V1_SPAWN2 = { x: 32, z: ARENA1V1_Z };
-// Arena1v1 walkable-bounds (matchar main.js ARENA_CFG.bounds, 88×56 runt z=80).
+// Arena Wars 20% mindre (användarbeslut 2026-06-04). MÅSTE matcha main.js ARENA_SCALE
+// exakt — annars clampar servern mot andra bounds än klient-prediction → rubber-banding.
+const ARENA1V1_SCALE = 0.8;
+const ARENA1V1_SPAWN1 = { x: -32 * ARENA1V1_SCALE, z: ARENA1V1_Z };
+const ARENA1V1_SPAWN2 = { x: 32 * ARENA1V1_SCALE, z: ARENA1V1_Z };
+// Arena1v1 walkable-bounds (matchar main.js ARENA_CFG.bounds, skalad med ARENA1V1_SCALE).
 // Egen check: duel-arenan (isArenaWalkable) är en cirkel vid z=35 → fel för z=80.
-const ARENA1V1_BOUNDS = { minX: -44, maxX: 44, minZ: ARENA1V1_Z - 28, maxZ: ARENA1V1_Z + 28 };
+const ARENA1V1_BOUNDS = { minX: -44 * ARENA1V1_SCALE, maxX: 44 * ARENA1V1_SCALE, minZ: ARENA1V1_Z - 28 * ARENA1V1_SCALE, maxZ: ARENA1V1_Z + 28 * ARENA1V1_SCALE };
 function isArena1v1Walkable(x, z) {
   return x >= ARENA1V1_BOUNDS.minX && x <= ARENA1V1_BOUNDS.maxX
       && z >= ARENA1V1_BOUNDS.minZ && z <= ARENA1V1_BOUNDS.maxZ;
@@ -1370,8 +1373,8 @@ const ARENA_ORB_AA_BIAS_SQ = 6.25;     // auto-AA prioriterar fiende-hjälten: o
 const ARENA_STARTING_DURATION = 3.0;   // 3-2-1-FIGHT countdown
 // Shrink-zon
 const A_SHRINK_START_DELAY = 30;   // nerf från 60: zonen formar rundan i tid (rundor avgjordes ofta innan)
-const A_SHRINK_INITIAL_RADIUS = 28;
-const A_SHRINK_FINAL_RADIUS = 4;
+const A_SHRINK_INITIAL_RADIUS = 28 * ARENA1V1_SCALE;   // skalad med ARENA1V1_SCALE
+const A_SHRINK_FINAL_RADIUS = 4 * ARENA1V1_SCALE;
 const A_SHRINK_DURATION = 60;
 const A_SHRINK_DMG_PCT = 0.05;
 const A_SHRINK_TICK_INTERVAL = 0.25;
