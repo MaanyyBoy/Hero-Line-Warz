@@ -7846,6 +7846,142 @@ function attachBossWarsAccessories(mesh, tier, scale) {
   return grp;
 }
 
+// ===== BOSS 3 (WARLORD) SYMBOL-MEKANIK — KLIENT-SIM (solo) =====
+// Spegel av server/game-engine.js (MP = server-auth via applyBossWarsState; detta körs BARA solo).
+// Boss-position = boss.mesh.position (klienten har ingen separat boss.x/z). Rendering återanvänds
+// via updateWarlordVisuals (adapter updateWarlordSoloVisuals mappar warlord-state → wl-formen).
+const WARLORD_SHAPES = ['triangle', 'square', 'circle', 'pentagon', 'star'];
+const WARLORD_NUM_SYMBOLS = 5;
+const WARLORD_RING_RADIUS = 6.5;
+const WARLORD_GAME_RADIUS = 1.9;          // = WARLORD_SYMBOL_RADIUS_C (gameplay = rendering)
+const WARLORD_REVEAL_TIME = 1.0;
+const WARLORD_PULSE_INTERVAL_P1 = 5.0;    // runda 1+2
+const WARLORD_PULSE_INTERVAL_P2 = 3.0;    // runda 3 (25%)
+const WARLORD_CHALLENGE_THRESH = [0.75, 0.50, 0.25];
+function warlordRevealThresholds(round) {
+  const start = 0.95 - (round - 1) * 0.25;
+  return [start, start - 0.05, start - 0.10, start - 0.15, start - 0.20];
+}
+function warlordShuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; }
+  return a;
+}
+function warlordSameOrder(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function warlordMakeRoundSymbols(prev) {
+  let order = warlordShuffle(WARLORD_SHAPES);
+  let guard = 0;
+  while (warlordSameOrder(order, prev) && guard++ < 20) order = warlordShuffle(WARLORD_SHAPES);
+  return order;
+}
+const _warlordSoloWl = { a: 0, rv: null, pc: 0, pt: 0, pv: 5, sy: null };
+function updateWarlordSoloVisuals(boss) {
+  const w = boss.warlord;
+  _warlordSoloWl.a = w.challengeActive ? 1 : 0;
+  _warlordSoloWl.rv = w.revealDisplay ? w.revealDisplay.shape : null;
+  _warlordSoloWl.pc = w.pulseCounter || 0;
+  _warlordSoloWl.pt = w.challengeActive ? w.pulseTimer : 0;
+  _warlordSoloWl.pv = w.pulseInterval || 5;
+  _warlordSoloWl.sy = (w.challengeActive && w.groundSymbols.length)
+    ? w.groundSymbols.map(g => ({ s: g.shape, x: g.x, z: g.z })) : null;
+  updateWarlordVisuals(boss, _warlordSoloWl);
+}
+// Returnerar true = boss upptagen (immun + AI pausad) denna tick.
+function tickWarlordClient(boss, dt) {
+  const w = boss.warlord;
+  if (!w) return false;
+  if (w.revealDisplay) {
+    w.revealDisplay.remaining -= dt;
+    if (w.revealDisplay.remaining <= 0) w.revealDisplay = null;
+  }
+  if (w.challengeActive) { tickWarlordPulsesClient(boss, dt); return true; }
+  if (w.round <= 3) {
+    const frac = boss.hp / boss.maxHp;
+    const thr = warlordRevealThresholds(w.round);
+    while (w.revealIdx < WARLORD_NUM_SYMBOLS && frac <= thr[w.revealIdx]) {
+      w.revealDisplay = { shape: w.roundSymbols[w.revealIdx], remaining: WARLORD_REVEAL_TIME };
+      w.revealIdx++;
+    }
+    if (w.revealIdx >= WARLORD_NUM_SYMBOLS && frac <= WARLORD_CHALLENGE_THRESH[w.round - 1]) {
+      startWarlordChallengeClient(boss);
+      return true;
+    }
+  }
+  return false;
+}
+function startWarlordChallengeClient(boss) {
+  const w = boss.warlord;
+  w.challengeActive = true;
+  w.challengeRound = w.round;
+  if (boss.mesh) { boss.mesh.position.x = BOSSWARS_CX; boss.mesh.position.z = BOSSWARS_CZ; }
+  if (boss.activeCast) { cleanupTelegraphMesh(boss.activeCast); cleanupExecuteMesh(boss.activeCast); boss.activeCast = null; }
+  // Rensa pågående boss-projektiler/pooler (med GPU-dispose) så bara pulsen är hotet (mirror server).
+  // Solo: bossen lever på sides[1] (jfr spawnBossWarsBoss/checkMatchEnd).
+  const _bs = sides[1];
+  if (_bs) {
+    for (const arr of ['bossProjectiles', 'bossPools']) {
+      const list = _bs[arr];
+      if (!list) continue;
+      for (const p of list) {
+        if (p.mesh) { p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } }); scene.remove(p.mesh); }
+      }
+      list.length = 0;
+    }
+  }
+  const ring = warlordShuffle(w.roundSymbols);   // arrangemang oberoende av svaret
+  w.groundSymbols = ring.map((shape, i) => {
+    const ang = (i / WARLORD_NUM_SYMBOLS) * Math.PI * 2 - Math.PI / 2;
+    return { shape, x: BOSSWARS_CX + Math.cos(ang) * WARLORD_RING_RADIUS, z: BOSSWARS_CZ + Math.sin(ang) * WARLORD_RING_RADIUS };
+  });
+  w.pulseIdx = 0;
+  w.pulseInterval = (w.round === 3) ? WARLORD_PULSE_INTERVAL_P2 : WARLORD_PULSE_INTERVAL_P1;
+  w.pulseTimer = w.pulseInterval;
+}
+function tickWarlordPulsesClient(boss, dt) {
+  const w = boss.warlord;
+  w.pulseTimer -= dt;
+  if (w.pulseTimer > 0) return;
+  const reqShape = w.roundSymbols[w.pulseIdx];
+  const sym = w.groundSymbols.find(s => s.shape === reqShape);
+  const rSq = WARLORD_GAME_RADIUS * WARLORD_GAME_RADIUS;
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx];
+    if (!s || s.hero.dead) continue;
+    let safe = false;
+    if (sym) { const dx = s.hero.x - sym.x, dz = s.hero.z - sym.z; if (dx * dx + dz * dz <= rSq) safe = true; }
+    if (!safe) killHero(s);   // 1-hit (respekterar phoenix-item via killHero)
+  }
+  w.pulseCounter = (w.pulseCounter || 0) + 1;
+  w.pulseIdx++;
+  if (w.pulseIdx >= WARLORD_NUM_SYMBOLS) endWarlordChallengeClient(boss);
+  else w.pulseTimer = w.pulseInterval;
+}
+function endWarlordChallengeClient(boss) {
+  const w = boss.warlord;
+  w.challengeActive = false;
+  w.groundSymbols = [];
+  // Runda 2 (50%) klar → phase-2 (skill-swap + dmg + glow). Ersätter generisk fly-up för tier 3.
+  if (w.challengeRound === 2 && boss.bossPhase === 1 && boss.phase2Skills) {
+    boss.bossPhase = 2;
+    boss.bossSkills = boss.phase2Skills;
+    boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4);
+    boss.damage = Math.round(boss.damage * 1.25);
+    const bx = boss.mesh ? boss.mesh.position.x : BOSSWARS_CX, bz = boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
+    if (boss.mesh) applyBossPhase2Glow(boss.mesh, boss.bossTier);
+    spawnGroundImpact(bx, bz, 8, 0xff44aa);
+    triggerCameraShake(0.5, 0.5);
+  }
+  w.prevRoundSymbols = w.roundSymbols;
+  w.round++;
+  w.revealIdx = 0;
+  w.challengeRound = 0;
+  if (w.round <= 3) w.roundSymbols = warlordMakeRoundSymbols(w.prevRoundSymbols);
+}
+
 function spawnBossWarsBoss(side, tier) {
   if (!side) return;
   const bossInfo = getBossWarsDef(tier);
@@ -7963,6 +8099,18 @@ function spawnBossWarsBoss(side, tier) {
     mesh,
   });
   side.bossWarsBossId = bossId;   // för säker check i checkMatchEnd
+  // Boss 3 (Warlord): symbol-mekanik-state (solo client-sim). MP får motsvarande via server-snap.
+  if (tier === 3) {
+    const _wb = side.monsters[side.monsters.length - 1];
+    _wb.warlord = {
+      round: 1, revealIdx: 0,
+      roundSymbols: warlordMakeRoundSymbols(null), prevRoundSymbols: null,
+      revealDisplay: null,
+      challengeActive: false, challengeRound: 0,
+      groundSymbols: [],
+      pulseIdx: 0, pulseTimer: 0, pulseInterval: WARLORD_PULSE_INTERVAL_P1, pulseCounter: 0,
+    };
+  }
 }
 
 // Boss Wars: kollar om alla aktiva heroes är inne i boss-rummet → aktivera
@@ -11202,6 +11350,14 @@ function updateMonsters(side, dt) {
     if (m.isBossWarsBoss && APP.bossWars && !APP.bossWars.bossActivated) {
       continue;
     }
+    // Boss 3 (Warlord) symbol-mekanik (solo) — körs FÖRE frozen/fear så challenge-pulserna inte
+    // pausas av CC på bossen. Returnerar true = immun + AI pausad (reveal-klar/challenge); annars
+    // (reveal-fas) fortsätter bossen normalt nedan.
+    if (m.isBossWarsBoss && m.warlord) {
+      const _wlBusy = tickWarlordClient(m, dt);
+      updateWarlordSoloVisuals(m);
+      if (_wlBusy) continue;
+    }
     // Frusen: hoppa över movement + attack + boss-skills
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -11213,9 +11369,9 @@ function updateMonsters(side, dt) {
     }
     // Taunted: tvinga chase
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
-    // Boss Wars phase-transition — alla 5 bossar har phase 2 (tier 1-3 vid 50%,
-    // tier 4-5 vid 30%). Invulnerable + flyger upp/landar med nya skills.
-    if (m.isBossWarsBoss && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * (m.phaseThreshold || 0.5)) {
+    // Boss Wars phase-transition — bossar UTAN warlord (tier 1-2,4-5). Tier 3 (warlord) äger sin
+    // egen fas-2 (vid 50%-challenge), hanterad FÖRE frozen/fear-checkarna ovan.
+    if (m.isBossWarsBoss && !m.warlord && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * (m.phaseThreshold || 0.5)) {
       triggerBossPhaseTransition(side, m);
     }
     if ((m.phaseTransitionRemaining || 0) > 0) {
@@ -13004,6 +13160,7 @@ function damageMonster(m, rawDmg) {
   // guarden här täcker ALL inkommande skada. Returnerar 0 → lifesteal får 0,
   // ingen HP-förlust, ingen död. (Punkt-checkar på 13037/13211 visar "IMMUNE"-
   // text på direkthits; vi spammar INTE text per DoT-tick härifrån.)
+  if (m.isBossWarsBoss && m.warlord && m.warlord.challengeActive) return 0;   // immun under symbol-challenge (boss 3)
   if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
   const dmg = rawDmg * (1 - dr);
