@@ -7853,7 +7853,7 @@ function attachBossWarsAccessories(mesh, tier, scale) {
 const WARLORD_SHAPES = ['triangle', 'square', 'circle', 'pentagon', 'star'];
 const WARLORD_NUM_SYMBOLS = 5;
 const WARLORD_RING_RADIUS = 6.5;
-const WARLORD_GAME_RADIUS = 1.9;          // = WARLORD_SYMBOL_RADIUS_C (gameplay = rendering)
+const WARLORD_GAME_RADIUS = 2.28;         // = WARLORD_SYMBOL_RADIUS_C (gameplay = rendering); 20% större → 3 spelare får plats
 const WARLORD_REVEAL_TIME = 1.0;
 const WARLORD_REVEAL_GAP = 0.3;           // blank paus mellan reveals (läsbar sekvens)
 const WARLORD_PULSE_INTERVAL_P1 = 5.0;    // runda 1+2
@@ -24442,7 +24442,7 @@ function makeBoss2AdMesh(e) {
 // ===== BOSS 3 (WARLORD) SYMBOL-MEKANIK — KLIENT-RENDERING =====
 // Server äger logiken; klienten renderar serialiserat state (msg.b.wl): reveal-symbol över
 // huvudet (1s minnesspel), 5 mark-symboler i ring under challenge, puls-telegraf-ring + shockwave.
-const WARLORD_SYMBOL_RADIUS_C = 1.9;
+const WARLORD_SYMBOL_RADIUS_C = 2.28;   // 20% större (1.9→2.28) så 3 spelare får plats i en symbol
 const WARLORD_SYMBOL_COLORS = { triangle: 0xff5544, square: 0x4499ff, circle: 0x44dd66, pentagon: 0xffcc33, star: 0xcc66ff };
 function warlordStarGeometry(r) {
   const shape = new THREE.Shape();
