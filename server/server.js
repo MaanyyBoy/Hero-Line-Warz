@@ -387,7 +387,7 @@ function relayBossWarsMessage(room, fromWs, envelope) {
   // Annars broadcast till alla peers utom avsändaren
   if (room.host && fromWs !== room.host) relayPeerSend(room.host, envelope, isState);
   if (room.client && fromWs !== room.client) relayPeerSend(room.client, envelope, isState);
-  for (const c of room.clients) if (c !== fromWs) relayPeerSend(c, envelope, isState);
+  for (const c of (room.clients || [])) if (c !== fromWs) relayPeerSend(c, envelope, isState);
 }
 
 wss.on('connection', (ws) => {
@@ -503,7 +503,7 @@ wss.on('connection', (ws) => {
       // classic-state (~10-15 KB) 30 ggr/s till båda peers som ändå kastar bort
       // varje paket → mättad nedlänk → jitter/hack trots låg ping.
       // 3-peer-rum (boss wars): host bestämmer själv när matchen startar.
-      if (maxPeers <= 2 && room.mode !== 'arena1v1') startGame(room);
+      if (maxPeers <= 2 && room.mode === 'classic') startGame(room);   // bara classic-rum kör server-engine direkt (ej arena/bosswars)
     } else if (msg.t === 'msg') {
       const room = rooms.get(ws.roomCode);
       if (!room) return;

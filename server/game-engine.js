@@ -1155,8 +1155,9 @@ function respawnHero(side) {
   side.hero.hp = side.hero.maxHp;
   if (side.inBossWars) {
     // Boss wars: respawna vid boss-rummets västkant (nära fighten, inom walkable cirkel).
+    // Sprid per peer (idx 1/2/3 → z -4/0/+4) så de tre co-op-hjältarna inte staplas på exakt samma punkt.
     side.hero.x = BOSSWARS_CX - BOSSWARS_RADIUS + 4;
-    side.hero.z = BOSSWARS_CZ;
+    side.hero.z = BOSSWARS_CZ + (side.idx - 2) * 4;
     // S3/S4: nollställ debuff-stackar — annars respawnar hjälten med maxade aura-/ad-stackar
     // (omedelbar maxskada vid första kontakt).
     side.auraStacks = 0; side.auraTickAccum = 0; side.auraResetTimer = 0;
@@ -2204,7 +2205,8 @@ function engageWarlord(state, boss) {
   w.challengeRound = w.round;
   // Klamp HP upp till fas-tröskeln (75/50/25%) så ingen burst tar bossen under den under
   // symbol-fasen. Bossen är immun under fasen → stannar exakt på tröskeln tills den är klar.
-  boss.hp = Math.max(boss.hp, WARLORD_CHALLENGE_THRESH[w.round - 1] * boss.maxHp);
+  // round är alltid 1-3 här (engage gateas av w.round<=3); clamp:a indexet defensivt mot NaN-HP.
+  boss.hp = Math.max(boss.hp, WARLORD_CHALLENGE_THRESH[Math.min(2, w.round - 1)] * boss.maxHp);
   boss.x = BOSSWARS_CX; boss.z = BOSSWARS_CZ;   // teleport till mitten
   boss.activeCast = null;
   // Rensa pågående boss-projektiler/pooler så bara pulsen är hotet.
