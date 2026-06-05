@@ -24679,7 +24679,7 @@ const BOSS4_MINION_SPAWN_INTERVAL_C = 30, BOSS4_MINION_SPAWN_COUNT_C = 2, BOSS4_
 const BOSS4_MINION_DOT_PCT_C = 0.03, BOSS4_MINION_DOT_DUR_C = 5, BOSS4_MINION_SLOW_MUL_C = 0.80;
 const BOSS4_BAG_GROUND_TIME_C = 5, BOSS4_BAG_PICKUP_TIME_C = 1.0, BOSS4_BAG_PICKUP_RADIUS_C = 1.0, BOSS4_BAG_CARRY_TIME_C = 5;
 const BOSS4_CARRY_SLOW_MUL_C = 0.70, BOSS4_CARRY_DOT_PCT_C = 0.01;
-const BOSS4_POOL_RADIUS_C = 3.0, BOSS4_POOL_TICK_C = 0.5, BOSS4_POOL_DMG_PCT_C = 0.05, BOSS4_POOL_SLOW_MUL_C = 0.50;
+const BOSS4_POOL_RADIUS_C = 6.0, BOSS4_POOL_TICK_C = 0.5, BOSS4_POOL_DMG_PCT_C = 0.05, BOSS4_POOL_SLOW_MUL_C = 0.50;   // radie 6m (12m diam) — dubblad
 const BOSS4_BOSS_HEAL_PCT_C = 0.01, BOSS4_BOSS_DMG_BUFF_C = 1.20;
 function makeBoss4MinionMesh() {
   const grp = new THREE.Group();
@@ -24693,6 +24693,21 @@ function makeBoss4MinionMesh() {
   grp.position.y = BOSSWARS_FLOOR_Y;
   return grp;
 }
+// Delad textur-cache för nedräknings-siffror (0-5) — permanent (6 små texturer, aldrig
+// disposade) så väske-sprites bara byter material.map utan att skapa/läcka CanvasTexture per väska.
+const _boss4TimerTex = {};
+function boss4TimerTex(n) {
+  if (_boss4TimerTex[n]) return _boss4TimerTex[n];
+  const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold 92px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 12; ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+  ctx.fillStyle = (n <= 2) ? '#ff5533' : '#ffe04d';
+  ctx.strokeText(String(n), 64, 70); ctx.fillText(String(n), 64, 70);
+  const tex = new THREE.CanvasTexture(c);
+  _boss4TimerTex[n] = tex;
+  return tex;
+}
 function makeBoss4BagMesh() {
   const grp = new THREE.Group();
   const sack = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10),
@@ -24702,6 +24717,11 @@ function makeBoss4BagMesh() {
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.0, 32),
     new THREE.MeshBasicMaterial({ color: 0xffdd33, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1; ring.userData.isBoss4Ring = true; grp.add(ring);
+  // Numerisk nedräknings-siffra (billboard-sprite ovanför väskan) — delad textur-cache.
+  const tspr = new THREE.Sprite(new THREE.SpriteMaterial({ map: boss4TimerTex(5), transparent: true, depthWrite: false, depthTest: false }));
+  tspr.scale.set(1.7, 1.7, 1); tspr.position.y = 1.8; tspr.renderOrder = 7;
+  tspr.userData.isBoss4Timer = true; tspr.userData.lastN = 5;
+  grp.add(tspr);
   grp.position.y = BOSSWARS_FLOOR_Y;
   return grp;
 }
@@ -24731,6 +24751,9 @@ function boss4StyleBag(mesh, b) {
       if (o.material && o.material.color) o.material.color.setRGB(1, 0.2 + 0.7 * frac, 0.2 * frac);
     } else if (o.userData.isBoss4Sack && o.material) {
       o.material.emissiveIntensity = carried ? 1.1 : 0.85;
+    } else if (o.userData.isBoss4Timer) {
+      const n = Math.max(0, Math.ceil(b.t || 0));
+      if (n !== o.userData.lastN) { o.userData.lastN = n; o.material.map = boss4TimerTex(n); o.material.needsUpdate = true; }
     }
   });
 }
