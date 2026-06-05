@@ -7995,6 +7995,7 @@ function endWarlordChallengeClient(boss) {
     boss.bossSkills = boss.phase2Skills;
     boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4);
     boss.damage = Math.round(boss.damage * 1.25);
+    boss.phase2DrBonus = 0.20;   // +20pp DR i fas 2 (samma som generisk övergång, användarbeslut)
     const bx = boss.mesh ? boss.mesh.position.x : BOSSWARS_CX, bz = boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
     if (boss.mesh) applyBossPhase2Glow(boss.mesh, boss.bossTier);
     spawnGroundImpact(bx, bz, 8, 0xff44aa);
@@ -8266,6 +8267,10 @@ function tickBossPhase2Aura(mesh, dt) {
 function triggerBossPhaseTransition(side, boss) {
   if (!boss || boss.bossPhase !== 1 || !boss.phase2Skills) return;
   boss.bossPhase = 2;
+  // Fas-2-balans (användarbeslut 2026-06-05): klamp HP UPP till tröskeln så bossen aldrig kan
+  // hamna UNDER 50%/30% medan fasen entras + +20pp DR permanent i fas 2 (mirror server).
+  boss.hp = Math.max(boss.hp, boss.maxHp * (boss.phaseThreshold || 0.5));
+  boss.phase2DrBonus = 0.20;
   // Avbryt eventuell pågående cast och rensa dess visuals
   if (boss.activeCast) {
     cleanupTelegraphMesh(boss.activeCast);
@@ -13386,7 +13391,8 @@ function computeBossWarsDmgReduction(m) {
   if (!m || !m.isBossWarsBoss) return 0;
   const elapsedSec = (performance.now() / 1000) - (m.spawnTime || 0);
   const steps = Math.floor(elapsedSec / (m.dmgReductionStepIntervalSec || 120));
-  const dr = (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05);
+  // phase2DrBonus: +20pp DR additivt i fas 2 (sätts vid fas-övergång). Cap 70% totalt.
+  const dr = (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05) + (m.phase2DrBonus || 0);
   return Math.max(0, Math.min(m.dmgReductionCap || 0.70, dr));
 }
 
@@ -14031,10 +14037,9 @@ function updateProjectiles(side, dt) {
       }
       // Lvl 5 Legolas Vine Trap mark: +20% AA-dmg på marked targets (primär hit)
       let _primaryDmg = p.damage * legolasMarkMul(side, p.target);
-      // Cap: max 5% av maxHp i skada per hit på boss-wars-bossar (AA drar HP direkt, ej via damageMonster).
-      if (p.target.isBossWarsBoss) _primaryDmg = Math.min(_primaryDmg, p.target.maxHp * BOSSWARS_MAX_HIT_FRAC);
-      const _dmgApplied = Math.min(_primaryDmg, p.target.hp);
-      p.target.hp -= _primaryDmg;
+      // Boss-wars-bossar: gå via damageMonster så fas-immunitet + DR + 5%-tak gäller AA också
+      // (matchar serverns bossWarsDmgMod-AA-väg). Övriga mål: rå skada (damageMonster = no-op-cap).
+      const _dmgApplied = damageMonster(p.target, _primaryDmg);
       spawnDamageText(p.target.mesh, _dmgApplied, p.isCrit);
       let killedTarget = false;
       if (p.target.hp <= 0) {

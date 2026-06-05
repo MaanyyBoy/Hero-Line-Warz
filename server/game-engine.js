@@ -2260,6 +2260,7 @@ function endWarlordChallenge(state, boss) {
     boss.bossSkills = boss.phase2Skills;
     boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4);
     boss.damage = Math.round(boss.damage * 1.25);
+    boss.phase2DrBonus = 0.20;   // +20pp DR i fas 2 (samma som generisk övergång, användarbeslut)
   }
   w.prevRoundSymbols = w.roundSymbols;
   w.round++;
@@ -2719,7 +2720,8 @@ function bossWarsDmgMod(m, dmg) {
   if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
   // DR = base + step per intervall (decision 110) över aktiv tid, cap. Annars stallar långa fights.
   const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
-  const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05));
+  // phase2DrBonus: +20pp DR additivt i fas 2 (sätts vid fas-övergång). Cap 70% totalt.
+  const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05) + (m.phase2DrBonus || 0));
   // Cap: max 5% av maxHp i skada per hit (alla boss-wars-bossar) — hindrar burst-one-shots.
   return Math.min(dmg * (1 - dr), m.maxHp * BOSSWARS_MAX_HIT_FRAC);
 }
@@ -2728,6 +2730,10 @@ function bossWarsDmgMod(m, dmg) {
 function triggerBossWarsPhaseTransition(state, boss) {
   if (!boss || boss.bossPhase !== 1 || !boss.phase2Skills) return;
   boss.bossPhase = 2;
+  // Fas-2-balans (användarbeslut 2026-06-05): klamp HP UPP till tröskeln så bossen aldrig
+  // kan hamna UNDER 50%/30% medan fasen entras + +20pp DR permanent i fas 2.
+  boss.hp = Math.max(boss.hp, boss.maxHp * (boss.phaseThreshold || 0.5));
+  boss.phase2DrBonus = 0.20;
   boss.activeCast = null;   // avbryt pågående cast
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
@@ -3435,7 +3441,7 @@ function serializeBossWarsState(state) {
     o.aac = boss.aaCount || 0;
     // Härdnings-DR (playtest #4): aktuell time-step-DR i % så klienten kan visa "Hardened".
     const _drSteps = Math.floor((boss.activeTime || 0) / (boss.dmgReductionStepIntervalSec || 120));
-    o.dr = Math.round(Math.min(boss.dmgReductionCap || 0.70, (boss.dmgReductionBase || 0) + _drSteps * (boss.dmgReductionStep || 0.05)) * 100);
+    o.dr = Math.round(Math.min(boss.dmgReductionCap || 0.70, (boss.dmgReductionBase || 0) + _drSteps * (boss.dmgReductionStep || 0.05) + (boss.phase2DrBonus || 0)) * 100);
     // Boss-cast → klient ritar telegraph-varning (slice 2b). Matchar buildBossWarsSnap.
     const ac = boss.activeCast;
     if (ac && ac.skill) {
@@ -4353,7 +4359,7 @@ function updateCreepProjectiles(state, side, opp, dt) {
           const m = opp.monsters[k];
           if (m === p.target) continue;
           if (Math.hypot(m.x - ix, m.z - iz) < p.aoeRadius) {
-            m.hp -= p.damage;
+            m.hp -= bossWarsDmgMod(m, p.damage);   // 5%-tak/immunitet/DR (no-op icke-boss)
             if (m.hp <= 0) killMonster(opp, k, side);
           }
         }
@@ -4425,7 +4431,7 @@ function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
     for (let i = arenaSide.monsters.length - 1; i >= 0; i--) {
       const m = arenaSide.monsters[i];
       if (Math.hypot(m.x - x, m.z - z) < SHATTER_RADIUS) {
-        m.hp -= SHATTER_DAMAGE;
+        m.hp -= bossWarsDmgMod(m, SHATTER_DAMAGE);   // 5%-tak/immunitet/DR (no-op icke-boss)
         if (m.hp <= 0) killMonster(arenaSide, i, sourceSide);
       }
     }
@@ -4864,7 +4870,7 @@ function updateProjectiles(state, side, opp, dt) {
           const m = side.monsters[k];
           if (m === p.target) continue;
           if (Math.hypot(m.x - ix, m.z - iz) < PASSIVE_AOE_RADIUS) {
-            m.hp -= p.damage;
+            m.hp -= bossWarsDmgMod(m, p.damage);   // 5%-tak/immunitet/DR (no-op icke-boss)
             if (m.hp <= 0) killMonster(side, k, side);
           }
         }
@@ -4956,7 +4962,7 @@ function tickThornPools(state, side, dt) {
         const m = side.monsters[k];
         if (Math.hypot(m.x - p.x, m.z - p.z) < p.radius) {
           const dmg = (m.maxHp || m.hp) * p.dmgPct;
-          m.hp -= dmg;
+          m.hp -= bossWarsDmgMod(m, dmg);   // 5%-tak/immunitet/DR (no-op icke-boss)
           if (m.hp <= 0) killMonster(side, k, side);
         }
       }
@@ -5055,7 +5061,7 @@ function updateFireballs(state, side, opp, dt) {
       const d = Math.hypot(m.x - f.x, m.z - f.z);
       if (d < ELDKLOT_RADIUS + 0.45) {
         f.hit.add(m);
-        m.hp -= f.damage;
+        m.hp -= bossWarsDmgMod(m, f.damage);   // 5%-tak/immunitet/DR (no-op icke-boss)
         if (m.hp <= 0) killMonster(side, j, side);
       }
     }
@@ -5301,7 +5307,7 @@ function updateVineTraps(state, side, opp, dt) {
       const dx = m.x - vt.x, dz = m.z - vt.z;
       if (dx * dx + dz * dz < r2) {
         m.frozenTime = Math.max(m.frozenTime || 0, VINE_TRAP_ROOT_REFRESH);
-        m.hp -= vt.dotPerSec * dt;
+        m.hp -= bossWarsDmgMod(m, vt.dotPerSec * dt);   // 5%-tak/immunitet/DR (no-op icke-boss)
         if (vt.lvl5Mark) vt.hitMonsterIds.add(m.id);
         if (m.hp <= 0) killMonster(side, j, side);
       }
@@ -5438,7 +5444,7 @@ function flushIronWillReflectLvl5(state, side, opp) {
     const m = side.monsters[i];
     const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
     if (ddx * ddx + ddz * ddz < r2) {
-      m.hp -= total;
+      m.hp -= bossWarsDmgMod(m, total);   // 5%-tak/immunitet/DR (no-op icke-boss)
       if (m.hp <= 0) killMonster(side, i, side);
     }
   }
@@ -5472,7 +5478,7 @@ function tickGimluTauntLvl5(state, side, opp, dt) {
       const m = side.monsters[i];
       const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
       if (ddx * ddx + ddz * ddz < r2) {
-        m.hp -= dmg;
+        m.hp -= bossWarsDmgMod(m, dmg);   // 5%-tak/immunitet/DR (no-op icke-boss)
         if (m.hp <= 0) killMonster(side, i, side);
       }
     }
@@ -5520,7 +5526,7 @@ function updateIronWill(state, side, opp, dt) {
         const m = side.monsters[i];
         const ddx = m.x - side.hero.x, ddz = m.z - side.hero.z;
         if (ddx * ddx + ddz * ddz < r2) {
-          m.hp -= dmg;
+          m.hp -= bossWarsDmgMod(m, dmg);   // 5%-tak/immunitet/DR (no-op icke-boss)
           if (m.hp <= 0) killMonster(side, i, side);
         }
       }
@@ -5612,7 +5618,7 @@ function updateHammers(state, side, opp, dt) {
       if (h.hit.has(m.id)) continue;
       if (Math.hypot(m.x - h.x, m.z - h.z) < HAMMER_RADIUS) {
         h.hit.add(m.id);
-        m.hp -= dmg;
+        m.hp -= bossWarsDmgMod(m, dmg);   // 5%-tak/immunitet/DR (no-op icke-boss)
         if (h.lvl5Slow) {
           m.slowTime = Math.max(m.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
           m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
@@ -6653,7 +6659,7 @@ function tickKostefoSliderDots(state, side, opp, dt) {
     const m = side.monsters[i];
     if ((m.kostefoDotRemaining || 0) > 0) {
       m.kostefoDotRemaining -= dt;
-      m.hp -= (m.kostefoDotPerSec || 0) * dt;
+      m.hp -= bossWarsDmgMod(m, (m.kostefoDotPerSec || 0) * dt);   // 5%-tak/immunitet/DR (no-op icke-boss)
       if (m.hp <= 0) { killMonster(side, i, side); continue; }
       if (m.kostefoDotRemaining <= 0) { m.kostefoDotRemaining = 0; m.kostefoDotPerSec = 0; }
     }
