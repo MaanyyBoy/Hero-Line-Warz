@@ -2287,6 +2287,7 @@ function createBossWarsState(tier) {
     bossProjectiles: [], bossPools: [],   // boss skill-projektiler (directional) + DoT-pooler (slice 2c)
     bossWarsMinions: [], bossWarsWave: { countdown: 0, active: false },   // boss-1 minion-vågor (slice 3b)
     boss2Ads: [], boss2KillCooldown: { remaining: 0 }, boss2AdWaveTimer: { remaining: 0, active: false }, boss2AdWaveSpawn: { countdown: 0, active: false },   // boss-2 ads (3b-ii)
+    boss4Minions: [], boss4Bags: [], boss4Pools: [], boss4Spawn: { countdown: 0, active: false }, _b4PoolAccum: 0,   // boss-4 poison-bag-mekanik (decision 132)
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } } },
     matchState: { gameOver: false, winner: 0 },
   };
@@ -2379,7 +2380,8 @@ function bossWarsTargets(state) {
   return [state.sides[1], state.sides[2], state.sides[3]].filter(s => s);
 }
 function bossEffectiveDamage(m) {
-  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1);
+  // boss4DmgBuff: +20% utgående skada medan Demon Prince (tier 4) står i en giftpool.
+  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1) * ((m && m.boss4DmgBuff) || 1);
 }
 function applyBossCircleDmg(state, m, cast) {
   const s = cast.skill;
@@ -3067,6 +3069,194 @@ function updateBoss2AdsEngine(state, dt) {
   }
 }
 
+// ===== BOSS 4 (DEMON PRINCE) GIFTVÄSKE-MEKANIK (decision 132) =====
+// Bärar-minions (2 var 30:e sek) jagar närmaste hjälte + lägger en refresh:ande DoT.
+// Dödas en minion → den droppar en väska på marken (5s). Plockas väskan (stå på den 1s) →
+// hjälten bär den 5s (slow + dot + ingen skill-cast, kan ej släppa) → blir en PERMANENT
+// giftpool där hjälten står. Plockas väskan EJ inom 5s → poolen bildas där väskan ligger.
+// Pooler: 5% maxHP/0.5s + 50% slow på hjältar (INGEN stapling), och om bossen står i en
+// pool får den +1% maxHP heal/sek + 20% utgående skada (försvinner direkt när den lämnar).
+const BOSS4_MINION_HP = 600, BOSS4_MINION_SPEED = 5.0, BOSS4_MINION_RANGE = 2.6, BOSS4_MINION_ATK_INTERVAL = 1.5;
+const BOSS4_MINION_SPAWN_INTERVAL = 30, BOSS4_MINION_SPAWN_COUNT = 2, BOSS4_MINION_FIRST_DELAY = 8;
+const BOSS4_MINION_DOT_PCT = 0.03, BOSS4_MINION_DOT_DUR = 5, BOSS4_MINION_SLOW_MUL = 0.80;
+const BOSS4_BAG_GROUND_TIME = 5, BOSS4_BAG_PICKUP_TIME = 1.0, BOSS4_BAG_PICKUP_RADIUS = 1.0, BOSS4_BAG_CARRY_TIME = 5;
+const BOSS4_CARRY_SLOW_MUL = 0.70, BOSS4_CARRY_DOT_PCT = 0.01;
+const BOSS4_POOL_RADIUS = 3.0, BOSS4_POOL_TICK = 0.5, BOSS4_POOL_DMG_PCT = 0.05, BOSS4_POOL_SLOW_MUL = 0.50;
+const BOSS4_BOSS_HEAL_PCT = 0.01, BOSS4_BOSS_DMG_BUFF = 1.20;
+function boss4Active(state) { return state.tier === 4; }
+function spawnBoss4Minion(state, ang) {
+  const r = BOSSWARS_RADIUS - 3;
+  const m = {
+    id: state.nextEntityId++, hp: BOSS4_MINION_HP, maxHp: BOSS4_MINION_HP,
+    x: BOSSWARS_CX + Math.cos(ang) * r, z: BOSSWARS_CZ + Math.sin(ang) * r,
+    moveSpeed: BOSS4_MINION_SPEED, isBoss4Minion: true, isMinion: false, isBoss2Ad: false,
+    isMonster: false, isBoss: false, isBossWarsBoss: false,
+    attackType: 'melee', damage: 0, attackRange: BOSS4_MINION_RANGE,
+    attackInterval: BOSS4_MINION_ATK_INTERVAL, atkCd: 0, _bwState: state,
+  };
+  state.sides[1].monsters.push(m);   // delad ref → hero-targeting/AA/skill kan döda minion
+  state.boss4Minions.push(m);
+  return m;
+}
+function despawnBoss4Minion(state, m) {
+  let k = state.boss4Minions.indexOf(m); if (k >= 0) state.boss4Minions.splice(k, 1);
+  k = state.sides[1].monsters.indexOf(m); if (k >= 0) state.sides[1].monsters.splice(k, 1);
+}
+function tickBoss4MinionSpawns(state, dt) {
+  if (!state.bossActivated) return;
+  const boss = state.boss;
+  if (!boss || boss.hp <= 0) { state.boss4Spawn.active = false; return; }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;   // pausa under fas-övergång (matchar ads)
+  if (!state.boss4Spawn.active) { state.boss4Spawn.active = true; state.boss4Spawn.countdown = BOSS4_MINION_FIRST_DELAY; }
+  state.boss4Spawn.countdown -= dt;
+  if (state.boss4Spawn.countdown <= 0) {
+    for (let i = 0; i < BOSS4_MINION_SPAWN_COUNT; i++) spawnBoss4Minion(state, Math.random() * Math.PI * 2);
+    state.boss4Spawn.countdown += BOSS4_MINION_SPAWN_INTERVAL;
+  }
+}
+function updateBoss4Minions(state, dt) {
+  const arr = state.boss4Minions;
+  if (!arr || arr.length === 0) return;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (!m) continue;
+    // Death-sweep: hp<=0, ELLER redan removed ur side.monsters av killMonster (hero-kill → drop bag).
+    if (m.hp <= 0 || !state.sides[1].monsters.includes(m)) { despawnBoss4Minion(state, m); continue; }
+    const target = nearestLiveHero(state, m.x, m.z);
+    if (!target) continue;
+    const dx = target.hero.x - m.x, dz = target.hero.z - m.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    m.atkCd = Math.max(0, (m.atkCd || 0) - dt);
+    if (dist > m.attackRange) {
+      const step = m.moveSpeed * dt;
+      m.x += (dx / dist) * step; m.z += (dz / dist) * step;
+    } else if (m.atkCd <= 0) {
+      applyBoss4MinionHit(target);
+      m.atkCd = m.attackInterval;
+    }
+  }
+}
+// Minion-AA = refresh:ande DoT (3% maxHP/sek i 5s) + 20% slow. Träff nollställer timern (refresh).
+function applyBoss4MinionHit(side) {
+  if (!side || !side.hero || side.hero.dead) return;
+  side.b4DotRem = BOSS4_MINION_DOT_DUR;
+  side.b4DotPs = BOSS4_MINION_DOT_PCT * side.hero.maxHp;
+}
+function tickBoss4MinionDot(state, dt) {
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s) continue;
+    if ((s.b4DotRem || 0) > 0) {
+      s.b4DotRem = Math.max(0, s.b4DotRem - dt);
+      if (!s.hero.dead) {
+        damageHero(s, (s.b4DotPs || 0) * dt);
+        s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_MINION_SLOW_MUL);
+        s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
+      }
+    }
+  }
+}
+// Hero-kill på bärar-minion → droppa väska. Anropas från killMonster (monstret redan ur monsters).
+function onBoss4MinionKill(state, m) {
+  const k = state.boss4Minions.indexOf(m); if (k >= 0) state.boss4Minions.splice(k, 1);
+  spawnBoss4Bag(state, m.x, m.z);
+}
+function spawnBoss4Bag(state, x, z) {
+  state.boss4Bags.push({ id: state.nextEntityId++, x, z, st: 'ground', timer: BOSS4_BAG_GROUND_TIME, ci: 0, pk: 0, pkT: 0 });
+}
+function spawnBoss4Pool(state, x, z) {
+  state.boss4Pools.push({ id: state.nextEntityId++, x, z });   // permanent (ingen life)
+}
+function tickBoss4Bags(state, dt) {
+  const arr = state.boss4Bags;
+  if (!arr || arr.length === 0) return;
+  const rSq = BOSS4_BAG_PICKUP_RADIUS * BOSS4_BAG_PICKUP_RADIUS;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const b = arr[i];
+    if (b.st === 'ground') {
+      // Pickup-detektering: en hjälte (som inte redan bär) måste stå inom radie i 1s sammanhängande.
+      let cand = 0;
+      for (const idx of [1, 2, 3]) {
+        const s = state.sides[idx];
+        if (!s || s.hero.dead || s.boss4Carrying) continue;
+        const dx = s.hero.x - b.x, dz = s.hero.z - b.z;
+        if (dx * dx + dz * dz <= rSq) { cand = idx; break; }
+      }
+      if (cand && cand === b.pk) {
+        b.pkT += dt;
+        if (b.pkT >= BOSS4_BAG_PICKUP_TIME) {
+          b.st = 'carried'; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME; b.pk = 0; b.pkT = 0;
+          state.sides[cand].boss4Carrying = b.id;
+          continue;
+        }
+      } else { b.pk = cand; b.pkT = 0; }   // bytt/lämnat kandidat → nollställ 1s-timern
+      b.timer -= dt;
+      if (b.timer <= 0) { spawnBoss4Pool(state, b.x, b.z); arr.splice(i, 1); }
+    } else {   // carried
+      const s = state.sides[b.ci];
+      if (!s || s.hero.dead) {
+        // Bärare död → väskan droppar som upplockbar väska igen, ny 5s-timer (svar 8C).
+        if (s) s.boss4Carrying = 0;
+        b.st = 'ground'; b.timer = BOSS4_BAG_GROUND_TIME; b.ci = 0; b.pk = 0; b.pkT = 0;
+        continue;
+      }
+      b.x = s.hero.x; b.z = s.hero.z;   // väskan följer bäraren
+      damageHero(s, BOSS4_CARRY_DOT_PCT * s.hero.maxHp * dt);   // 1% maxHP/sek
+      s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_CARRY_SLOW_MUL);   // 30% slow
+      s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
+      if (s.hero.dead) {   // dog av carry-dot denna tick → droppa väska
+        s.boss4Carrying = 0;
+        b.st = 'ground'; b.timer = BOSS4_BAG_GROUND_TIME; b.ci = 0; b.pk = 0; b.pkT = 0;
+        continue;
+      }
+      b.timer -= dt;
+      if (b.timer <= 0) { spawnBoss4Pool(state, s.hero.x, s.hero.z); s.boss4Carrying = 0; arr.splice(i, 1); }
+    }
+  }
+}
+function tickBoss4Pools(state, dt) {
+  const arr = state.boss4Pools;
+  const boss = state.boss;
+  // Boss-buff/heal: utvärderas VARJE frame (försvinner direkt när bossen lämnar poolen).
+  if (boss && boss.hp > 0) {
+    let bossInPool = false;
+    if (arr) for (const p of arr) {
+      const dx = boss.x - p.x, dz = boss.z - p.z;
+      if (dx * dx + dz * dz < BOSS4_POOL_RADIUS * BOSS4_POOL_RADIUS) { bossInPool = true; break; }
+    }
+    boss.boss4DmgBuff = bossInPool ? BOSS4_BOSS_DMG_BUFF : 1;
+    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * BOSS4_BOSS_HEAL_PCT * dt);
+  }
+  // Hero DOT/slow: var 0.5s. INGEN stapling — en hjälte i flera pooler tar EN tick (svar 4).
+  if (!arr || arr.length === 0) return;
+  state._b4PoolAccum = (state._b4PoolAccum || 0) + dt;
+  if (state._b4PoolAccum < BOSS4_POOL_TICK) return;
+  state._b4PoolAccum -= BOSS4_POOL_TICK;
+  const rSq = BOSS4_POOL_RADIUS * BOSS4_POOL_RADIUS;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    let inPool = false;
+    for (const p of arr) {
+      const dx = s.hero.x - p.x, dz = s.hero.z - p.z;
+      if (dx * dx + dz * dz < rSq) { inPool = true; break; }
+    }
+    if (inPool) {
+      damageHero(s, s.hero.maxHp * BOSS4_POOL_DMG_PCT);
+      s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_POOL_SLOW_MUL);
+      s.heroSlowTime = Math.max(s.heroSlowTime || 0, BOSS4_POOL_TICK + 0.1);
+    }
+  }
+}
+function tickBoss4(state, dt) {
+  if (!boss4Active(state)) return;
+  tickBoss4MinionSpawns(state, dt);
+  updateBoss4Minions(state, dt);
+  tickBoss4MinionDot(state, dt);
+  tickBoss4Bags(state, dt);
+  tickBoss4Pools(state, dt);
+}
+
 // Boss-wars top-tick. SLICE 1a-3b: hjälte + boss-AI + minion-vågor/aura + boss-2-ads.
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
@@ -3162,6 +3352,7 @@ function tickBossWars(state, dt) {
   tickBoss2AdWavesEngine(state, dt);          // boss-2 ad-vågor (slice 3b-ii)
   updateBoss2AdsEngine(state, dt);            // boss-2 ad-AI (jakt/distansattack/explosion/wipe)
   tickBoss2AdStacksEngine(state, dt);         // boss-2 ad-stack-decay
+  tickBoss4(state, dt);                        // boss-4 giftväske-mekanik (decision 132)
   tickBossWarsProjectiles(state, dt);
   tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
@@ -3204,6 +3395,7 @@ const _bwSnap = {
   mr: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   b: null,
   bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR, bm: _ARENA_EMPTY_ARR, ba2: _ARENA_EMPTY_ARR, b2r: false,   // 2c+3b+3b-ii
+  b4m: _ARENA_EMPTY_ARR, b4b: _ARENA_EMPTY_ARR, b4p: _ARENA_EMPTY_ARR,   // boss-4 minions/väskor/pooler (decision 132)
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -3226,6 +3418,10 @@ function serializeBossWarsState(state) {
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
   snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b)
   snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
+  // Boss-4 (decision 132): bärar-minions, väskor (st 0=mark/1=buren, t=timer-sek, ci=bärar-idx), pooler.
+  snap.b4m = arrOpt(state.boss4Minions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;
+  snap.b4b = arrOpt(state.boss4Bags, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), st: b.st === 'carried' ? 1 : 0, t: r2(b.timer), ci: b.ci || 0 })) || _ARENA_EMPTY_ARR;
+  snap.b4p = arrOpt(state.boss4Pools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z) })) || _ARENA_EMPTY_ARR;
   // Kill-cooldown: återstående sekunder (>0 = WIPE-risk, röd-state). Klienten visar countdown
   // i HOLD-FIRE-bannern + truthy-värdet driver ad-röd-färg (0 = falsy = säkert). Playtest #1.
   snap.b2r = state.boss2KillCooldown.remaining > 0 ? r2(state.boss2KillCooldown.remaining) : 0;
@@ -3345,6 +3541,8 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   arenaSide.monsters.splice(idx, 1);
   // Boss-2-ad hero-kill (decision 118): wipe om kill-cooldown löper, annars starta den. Ingen reward.
   if (m.isBoss2Ad && m._bwState) { onBoss2AdHeroKill(m._bwState, m); return; }
+  // Boss-4 bärar-minion hero-kill (decision 132): droppa giftväska där den dog. Ingen reward.
+  if (m.isBoss4Minion && m._bwState) { onBoss4MinionKill(m._bwState, m); return; }
   // Boss-wars-bossen själv (S4): död hanteras av checkBossWarsEnd — ingen guld/XP-reward (endgame co-op, ej farming).
   if (m.isBossWarsBoss) return;
   // Mini-bosses ger 2× belöning eftersom de är ~4.5x stark som vanliga minions
@@ -6773,6 +6971,7 @@ function applyEvent(state, sideIdx, ev) {
     return;
   }
   if (ev.type === 'skill') {
+    if (side.boss4Carrying) return;   // bär giftväska (boss 4) → kan inte casta skills (decision 132)
     // R-cast (ult): server-side consume + lockout. Per-hero ult-effekter
     // implementeras separat (klient-side endast just nu). Här säkerställs
     // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,

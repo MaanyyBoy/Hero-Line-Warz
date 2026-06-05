@@ -8139,6 +8139,8 @@ function spawnBossWarsBoss(side, tier) {
       pulseIdx: 0, pulseTimer: 0, pulseInterval: WARLORD_PULSE_INTERVAL_P1, pulseCounter: 0,
     };
   }
+  // Boss 4 (decision 132): nollställ solo-spawn-schemat per match (modul-global persisterar annars).
+  boss4SpawnStateSolo.active = false; boss4SpawnStateSolo.countdown = 0;
 }
 
 // Boss Wars: kollar om alla aktiva heroes är inne i boss-rummet → aktivera
@@ -9972,6 +9974,9 @@ function createSide(idx) {
     heroCopyFireballs: [],   // (decision 107) skill-projektiler från hero-kloner
     bossWarsMinions: [],     // Boss 1 (tier 1) minion-mekanik — delar ref med side.monsters (isMinion:true)
     boss2Ads: [],            // Boss 2 (tier 2) ad-mekanik — delar ref med side.monsters (isBoss2Ad:true)
+    boss4Minions: [],        // Boss 4 (tier 4) bärar-minions (solo) — delar ref med side.monsters (isBoss4Minion:true)
+    boss4Bags: [],           // Boss 4 giftväskor (solo) — egna meshes, ej i side.monsters
+    boss4Pools: [],          // Boss 4 permanenta giftpooler (solo) — egna meshes
     // Wave-system
     wave: {
       current: 0,
@@ -10011,6 +10016,11 @@ function removeSide(side) {
   }
   for (const cp of side.creepProjectiles) scene.remove(cp.mesh);
   if (side.monsterProjectiles) for (const mp of side.monsterProjectiles) scene.remove(mp.mesh);
+  // Boss 4 (decision 132): minion-meshes ligger i side.monsters (removeEntityMesh ovan tar dem ur
+  // scenen men disposear ej fresh-geo) + väskor/pooler har EGNA meshes → dispose fullt här.
+  for (const m of side.monsters) if (m.isBoss4Minion && m.mesh) m.mesh.traverse(o => { o.geometry?.dispose?.(); if (o.material) Array.isArray(o.material) ? o.material.forEach(mm => mm && mm.dispose()) : o.material.dispose(); });
+  if (side.boss4Bags) for (const b of side.boss4Bags) if (b.mesh) { b.mesh.traverse(o => { o.geometry?.dispose?.(); if (o.material) Array.isArray(o.material) ? o.material.forEach(mm => mm && mm.dispose()) : o.material.dispose(); }); scene.remove(b.mesh); }
+  if (side.boss4Pools) for (const p of side.boss4Pools) if (p.mesh) { p.mesh.traverse(o => { o.geometry?.dispose?.(); if (o.material) Array.isArray(o.material) ? o.material.forEach(mm => mm && mm.dispose()) : o.material.dispose(); }); scene.remove(p.mesh); }
   // Lämna tillbaka ev. lånade pool-ljus från souldrain-FX.
   if (side.soulDrainBeam && side.soulDrainBeam.auraLight) releaseFxLight(side.soulDrainBeam.auraLight);
   if (side.soulExplosions) for (const e of side.soulExplosions) if (e.light) releaseFxLight(e.light);
@@ -10990,7 +11000,8 @@ function bossWarsTargets(side) {
 // creeps, minions): damageBuffMul är undefined → `|| 1` → no-op. Säker fallback
 // på samtliga 8 call-sites.
 function bossEffectiveDamage(m) {
-  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1);
+  // boss4DmgBuff: +20% medan Demon Prince (tier 4) står i en giftpool (decision 132).
+  return (m && m.damage ? m.damage : 0) * ((m && m.damageBuffMul) || 1) * ((m && m.boss4DmgBuff) || 1);
 }
 
 function applyBossCircleDmg(side, m, cast) {
@@ -11359,7 +11370,7 @@ function updateMonsters(side, dt) {
     // de DUBBEL AI och faller in i wave-monster-targeting (tgt = path[idx2]) →
     // "tgt.x" undefined-krasch när en ad skjuter. Targetbarhet kommer från
     // side.monsters-medlemskap, inte härifrån → oförändrad.
-    if (m.isMinion || m.isBoss2Ad) continue;
+    if (m.isMinion || m.isBoss2Ad || m.isBoss4Minion) continue;   // egna AI-tickar (boss 1/2/4)
     // Boss/miniboss: aura-tick varje frame
     if (m.isBoss || m.isMiniBoss) tickBossAura(m.mesh, dt);
     // Phase 2-aura (egen tick — endast aktiv när bossen gått in i phase 2)
@@ -13166,6 +13177,209 @@ function updateMonsterProjectiles(side, dt) {
   }
 }
 
+// ===== BOSS 4 (DEMON PRINCE) GIFTVÄSKE-MEKANIK — SOLO KLIENT-SIM (decision 132) =====
+// Spegel av server/game-engine.js boss4-blocket. MP = server-auth (updateBoss4Visuals via
+// applyBossWarsState); detta körs BARA solo (simulateAll är solo-only för boss wars). Minions är
+// mesh-monster i side.monsters (hero kan döda dem → hostKillMonster droppar väska). Väskor +
+// pooler har EGNA meshes (ej i side.monsters → ej targetbara).
+const boss4SpawnStateSolo = { active: false, countdown: 0 };
+function boss4SoloEnabled() {
+  return !!(APP && APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.tier === 4);
+}
+function spawnBoss4MinionSolo(side, ang) {
+  if (!side || !side.monsters || !side.boss4Minions) return null;
+  const mesh = makeBoss4MinionMesh();
+  const r = BOSSWARS_RADIUS - 3;
+  const x = BOSSWARS_CX + Math.cos(ang) * r, z = BOSSWARS_CZ + Math.sin(ang) * r;
+  mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
+  attachHpBar(mesh, 2.2);
+  scene.add(mesh);
+  const m = {
+    id: nextEntityId++, hp: BOSS4_MINION_HP_C, maxHp: BOSS4_MINION_HP_C,
+    moveSpeed: BOSS4_MINION_SPEED_C,
+    isBoss4Minion: true, isMinion: false, isBoss2Ad: false,
+    isMonster: false, isBoss: false, isMiniBoss: false, isBossWarsBoss: false,
+    attackType: 'melee', damage: 0, attackRange: BOSS4_MINION_RANGE_C,
+    attackInterval: BOSS4_MINION_ATK_INTERVAL_C, atkCd: 0,
+    mesh,
+  };
+  side.monsters.push(m);   // delad targeting (hero AA/skill kan döda → hostKillMonster droppar väska)
+  side.boss4Minions.push(m);
+  return m;
+}
+function tickBoss4MinionSpawnsSolo(dt) {
+  if (!boss4SoloEnabled() || !APP.bossWars.bossActivated) return;
+  const side1 = sides[1];
+  if (!side1) return;
+  const boss = side1.monsters.find(x => x.isBossWarsBoss);
+  if (!boss || boss.hp <= 0) { boss4SpawnStateSolo.active = false; return; }
+  if ((boss.phaseTransitionRemaining || 0) > 0) return;
+  if (!boss4SpawnStateSolo.active) { boss4SpawnStateSolo.active = true; boss4SpawnStateSolo.countdown = BOSS4_MINION_FIRST_DELAY_C; }
+  boss4SpawnStateSolo.countdown -= dt;
+  if (boss4SpawnStateSolo.countdown <= 0) {
+    for (let i = 0; i < BOSS4_MINION_SPAWN_COUNT_C; i++) spawnBoss4MinionSolo(side1, Math.random() * Math.PI * 2);
+    boss4SpawnStateSolo.countdown += BOSS4_MINION_SPAWN_INTERVAL_C;
+  }
+}
+function updateBoss4MinionsSolo(side, dt) {
+  const arr = side.boss4Minions;
+  if (!arr || arr.length === 0) return;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const m = arr[i];
+    if (!m) continue;
+    // Death-sweep: hp<=0 ELLER redan removed ur side.monsters (hero-kill via hostKillMonster).
+    if (m.hp <= 0 || !side.monsters.includes(m)) { const k = arr.indexOf(m); if (k >= 0) arr.splice(k, 1); continue; }
+    const target = nearestLivingHeroSide(m.mesh.position.x, m.mesh.position.z);
+    if (!target) continue;
+    const dx = target.hero.x - m.mesh.position.x, dz = target.hero.z - m.mesh.position.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    m.mesh.rotation.y = Math.atan2(dx / dist, dz / dist);
+    m.atkCd = Math.max(0, (m.atkCd || 0) - dt);
+    if (dist > m.attackRange) {
+      const step = m.moveSpeed * dt;
+      m.mesh.position.x += (dx / dist) * step; m.mesh.position.z += (dz / dist) * step;
+    } else if (m.atkCd <= 0) {
+      applyBoss4MinionHitSolo(target);
+      m.atkCd = m.attackInterval;
+    }
+  }
+}
+function applyBoss4MinionHitSolo(side) {
+  if (!side || !side.hero || side.hero.dead) return;
+  side.b4DotRem = BOSS4_MINION_DOT_DUR_C;
+  side.b4DotPs = BOSS4_MINION_DOT_PCT_C * side.hero.maxHp;
+}
+function tickBoss4MinionDotSolo(dt) {
+  for (const s of bossWarsTargets(sides[1])) {
+    if (!s) continue;
+    if ((s.b4DotRem || 0) > 0) {
+      s.b4DotRem = Math.max(0, s.b4DotRem - dt);
+      if (!s.hero.dead) {
+        damageHero(s, (s.b4DotPs || 0) * dt);
+        s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_MINION_SLOW_MUL_C);
+        s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
+      }
+    }
+  }
+}
+// Hero-kill på bärar-minion (solo) → droppa väska. Anropas från hostKillMonster.
+function onBoss4MinionKillSolo(side, m) {
+  const k = side.boss4Minions ? side.boss4Minions.indexOf(m) : -1;
+  if (k >= 0) side.boss4Minions.splice(k, 1);
+  spawnBoss4BagSolo(side, m.mesh.position.x, m.mesh.position.z);
+}
+function spawnBoss4BagSolo(side, x, z) {
+  const mesh = makeBoss4BagMesh();
+  mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
+  scene.add(mesh);
+  side.boss4Bags.push({ id: nextEntityId++, x, z, st: 0, timer: BOSS4_BAG_GROUND_TIME_C, ci: 0, pk: 0, pkT: 0, mesh });
+}
+function spawnBoss4PoolSolo(side, x, z) {
+  const mesh = makeBoss4PoolMesh();
+  mesh.position.set(x, BOSSWARS_FLOOR_Y + 0.05, z);
+  scene.add(mesh);
+  side.boss4Pools.push({ id: nextEntityId++, x, z, mesh });
+}
+function disposeBoss4MeshSolo(mesh) {
+  if (!mesh) return;
+  mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { Array.isArray(o.material) ? o.material.forEach(mm => mm && mm.dispose()) : o.material.dispose(); } });
+  scene.remove(mesh);
+}
+function tickBoss4BagsSolo(side, dt) {
+  const arr = side.boss4Bags;
+  if (!arr || arr.length === 0) return;
+  const rSq = BOSS4_BAG_PICKUP_RADIUS_C * BOSS4_BAG_PICKUP_RADIUS_C;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const b = arr[i];
+    if (b.st === 0) {   // på marken
+      let cand = 0;
+      for (const s of bossWarsTargets(sides[1])) {
+        if (!s || s.hero.dead || s.boss4Carrying) continue;
+        const dx = s.hero.x - b.x, dz = s.hero.z - b.z;
+        if (dx * dx + dz * dz <= rSq) { cand = s.idx; break; }
+      }
+      if (cand && cand === b.pk) {
+        b.pkT += dt;
+        if (b.pkT >= BOSS4_BAG_PICKUP_TIME_C) {
+          b.st = 1; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME_C; b.pk = 0; b.pkT = 0;
+          sides[cand].boss4Carrying = b.id;
+          boss4StyleBag(b.mesh, { st: 1, t: b.timer });
+          continue;
+        }
+      } else { b.pk = cand; b.pkT = 0; }
+      b.timer -= dt;
+      b.mesh.position.set(b.x, BOSSWARS_FLOOR_Y, b.z);
+      boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+      if (b.timer <= 0) { spawnBoss4PoolSolo(side, b.x, b.z); disposeBoss4MeshSolo(b.mesh); arr.splice(i, 1); }
+    } else {   // buren
+      const s = sides[b.ci];
+      if (!s || s.hero.dead) {
+        if (s) s.boss4Carrying = 0;
+        b.st = 0; b.timer = BOSS4_BAG_GROUND_TIME_C; b.ci = 0; b.pk = 0; b.pkT = 0;
+        boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+        continue;
+      }
+      b.x = s.hero.x; b.z = s.hero.z;
+      damageHero(s, BOSS4_CARRY_DOT_PCT_C * s.hero.maxHp * dt);
+      s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_CARRY_SLOW_MUL_C);
+      s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
+      if (s.hero.dead) {
+        s.boss4Carrying = 0;
+        b.st = 0; b.timer = BOSS4_BAG_GROUND_TIME_C; b.ci = 0; b.pk = 0; b.pkT = 0;
+        boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+        continue;
+      }
+      b.timer -= dt;
+      b.mesh.position.set(b.x, BOSSWARS_FLOOR_Y, b.z);
+      boss4StyleBag(b.mesh, { st: 1, t: b.timer });
+      if (b.timer <= 0) { spawnBoss4PoolSolo(side, s.hero.x, s.hero.z); s.boss4Carrying = 0; disposeBoss4MeshSolo(b.mesh); arr.splice(i, 1); }
+    }
+  }
+}
+function tickBoss4PoolsSolo(side, dt) {
+  const arr = side.boss4Pools;
+  const boss = side.monsters.find(x => x.isBossWarsBoss);
+  // Boss-buff/heal varje frame (försvinner direkt när bossen lämnar poolen).
+  if (boss && boss.hp > 0 && boss.mesh) {
+    let bossInPool = false;
+    if (arr) for (const p of arr) {
+      const dx = boss.mesh.position.x - p.x, dz = boss.mesh.position.z - p.z;
+      if (dx * dx + dz * dz < BOSS4_POOL_RADIUS_C * BOSS4_POOL_RADIUS_C) { bossInPool = true; break; }
+    }
+    boss.boss4DmgBuff = bossInPool ? BOSS4_BOSS_DMG_BUFF_C : 1;
+    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * BOSS4_BOSS_HEAL_PCT_C * dt);
+  }
+  if (!arr || arr.length === 0) return;
+  side._b4PoolAccum = (side._b4PoolAccum || 0) + dt;
+  if (side._b4PoolAccum < BOSS4_POOL_TICK_C) return;
+  side._b4PoolAccum -= BOSS4_POOL_TICK_C;
+  const rSq = BOSS4_POOL_RADIUS_C * BOSS4_POOL_RADIUS_C;
+  for (const s of bossWarsTargets(sides[1])) {
+    if (!s || s.hero.dead) continue;
+    let inPool = false;
+    for (const p of arr) {
+      const dx = s.hero.x - p.x, dz = s.hero.z - p.z;
+      if (dx * dx + dz * dz < rSq) { inPool = true; break; }
+    }
+    if (inPool) {
+      damageHero(s, s.hero.maxHp * BOSS4_POOL_DMG_PCT_C);
+      s.heroSlowMul = Math.min(s.heroSlowMul != null ? s.heroSlowMul : 1, BOSS4_POOL_SLOW_MUL_C);
+      s.heroSlowTime = Math.max(s.heroSlowTime || 0, BOSS4_POOL_TICK_C + 0.1);
+    }
+  }
+}
+// Solo-orkestrering: anropas en gång/frame i simulateAll boss-wars-grenen.
+function tickBoss4Solo(dt) {
+  if (!boss4SoloEnabled()) return;
+  const side1 = sides[1];
+  if (!side1) return;
+  tickBoss4MinionSpawnsSolo(dt);
+  updateBoss4MinionsSolo(side1, dt);
+  tickBoss4MinionDotSolo(dt);
+  tickBoss4BagsSolo(side1, dt);
+  tickBoss4PoolsSolo(side1, dt);
+}
+
 // Boss Wars damage reduction: base per tier + +5% per 2 min sedan spawn (cap 70%).
 // Övriga monster: ingen reduction (returns 0).
 function computeBossWarsDmgReduction(m) {
@@ -13250,6 +13464,12 @@ function hostKillMonster(side, idx, byPlayerSide) {
           ? BOSS2_AD_KILL_COOLDOWN_P2 : BOSS2_AD_KILL_COOLDOWN_P1;
       }
     }
+    return;
+  }
+  // Boss 4-bärar-minions (decision 132): droppa giftväska + dispose fresh-geo + ingen reward.
+  if (m.isBoss4Minion) {
+    onBoss4MinionKillSolo(side, m);   // läser mesh.position → spawnar väska där minion dog
+    m.mesh?.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { Array.isArray(o.material) ? o.material.forEach(mm => mm && mm.dispose()) : o.material.dispose(); } });
     return;
   }
   // Boss-belöning: 5× guld + XP
@@ -16703,6 +16923,7 @@ function applyEvent(side, ev) {
     // (R) tillåts under leap-flygning eftersom det vore frustrerande att blockas helt.
     // Whirlwind blockerar dock allt utom när whirl själv expirerat.
     if (side.hero.dead || channelLocked || feared || frozen || laserLocked || taunted) return;
+    if (side.boss4Carrying) return;   // bär giftväska (boss 4) → kan inte casta skills (decision 132)
     if (whirlLocked && ev.key !== 'q') return;   // bara den pågående Q tickar; ny cast skippas via cd
     if (leapLocked && ev.key !== 'r') return;
     // Skill-point-lock-gate: Q/F/E kräver skillLvl > 0, R kräver hero-level >= 10
@@ -16895,6 +17116,9 @@ const clientMeshes = {
   bossPools: new Map(),
   bossWarsMinions: new Map(),
   boss2Ads: new Map(),
+  boss4Minions: new Map(),     // boss 4 bärar-minions (decision 132)
+  boss4Bags: new Map(),        // boss 4 giftväskor (mark + buren)
+  boss4Pools: new Map(),       // boss 4 permanenta giftpooler
   thornPools: new Map(),
   kostefoSliders: new Map(),
   kostefoGooseWaves: new Map(),
@@ -24448,6 +24672,85 @@ function makeBoss2AdMesh(e) {
   return grp;
 }
 
+// ===== BOSS 4 (DEMON PRINCE) GIFTVÄSKE-MEKANIK — KONSTANTER + RENDERING (decision 132) =====
+// Delas av MP-rendering (updateBoss4Visuals via applyBossWarsState) OCH solo-sim (tickBoss4Solo).
+const BOSS4_MINION_HP_C = 600, BOSS4_MINION_SPEED_C = 5.0, BOSS4_MINION_RANGE_C = 2.6, BOSS4_MINION_ATK_INTERVAL_C = 1.5;
+const BOSS4_MINION_SPAWN_INTERVAL_C = 30, BOSS4_MINION_SPAWN_COUNT_C = 2, BOSS4_MINION_FIRST_DELAY_C = 8;
+const BOSS4_MINION_DOT_PCT_C = 0.03, BOSS4_MINION_DOT_DUR_C = 5, BOSS4_MINION_SLOW_MUL_C = 0.80;
+const BOSS4_BAG_GROUND_TIME_C = 5, BOSS4_BAG_PICKUP_TIME_C = 1.0, BOSS4_BAG_PICKUP_RADIUS_C = 1.0, BOSS4_BAG_CARRY_TIME_C = 5;
+const BOSS4_CARRY_SLOW_MUL_C = 0.70, BOSS4_CARRY_DOT_PCT_C = 0.01;
+const BOSS4_POOL_RADIUS_C = 3.0, BOSS4_POOL_TICK_C = 0.5, BOSS4_POOL_DMG_PCT_C = 0.05, BOSS4_POOL_SLOW_MUL_C = 0.50;
+const BOSS4_BOSS_HEAL_PCT_C = 0.01, BOSS4_BOSS_DMG_BUFF_C = 1.20;
+function makeBoss4MinionMesh() {
+  const grp = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.65, 1.8, 8),
+    new THREE.MeshStandardMaterial({ color: 0x88aa33, emissive: 0x335511, emissiveIntensity: 0.5, roughness: 0.7 }));
+  body.position.y = 0.9; grp.add(body);
+  // Giftväska på ryggen (visuell cue att den bär gift)
+  const bag = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8),
+    new THREE.MeshStandardMaterial({ color: 0x66cc44, emissive: 0x224400, emissiveIntensity: 0.7, roughness: 0.5 }));
+  bag.position.set(0, 1.25, -0.42); bag.scale.set(1, 1.2, 1); grp.add(bag);
+  grp.position.y = BOSSWARS_FLOOR_Y;
+  return grp;
+}
+function makeBoss4BagMesh() {
+  const grp = new THREE.Group();
+  const sack = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 10),
+    new THREE.MeshStandardMaterial({ color: 0x77dd33, emissive: 0x336611, emissiveIntensity: 0.85, roughness: 0.5 }));
+  sack.scale.set(1, 1.25, 1); sack.position.y = 0.55; sack.userData.isBoss4Sack = true; grp.add(sack);
+  // Krympande nedräknings-ring (radial countdown): full vid 5s, liten + röd nära 0.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.0, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffdd33, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.1; ring.userData.isBoss4Ring = true; grp.add(ring);
+  grp.position.y = BOSSWARS_FLOOR_Y;
+  return grp;
+}
+function makeBoss4PoolMesh() {
+  const radius = BOSS4_POOL_RADIUS_C;
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.82, radius, 40),
+    new THREE.MeshBasicMaterial({ color: 0x55cc22, transparent: true, opacity: 0.78, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; grp.add(ring);
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius, 36),
+    new THREE.MeshBasicMaterial({ color: 0x336611, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+  disk.rotation.x = -Math.PI / 2; grp.add(disk);
+  grp.position.y = BOSSWARS_FLOOR_Y + 0.05;
+  return grp;
+}
+// Styla en väske-mesh från snap-data: höjd (mark vs ovanför bärarens huvud) + nedräknings-ring.
+function boss4StyleBag(mesh, b) {
+  const carried = (b.st === 1);
+  const maxT = carried ? BOSS4_BAG_CARRY_TIME_C : BOSS4_BAG_GROUND_TIME_C;
+  const frac = Math.max(0, Math.min(1, (b.t || 0) / maxT));
+  mesh.position.y = carried ? (BOSSWARS_FLOOR_Y + 2.7) : BOSSWARS_FLOOR_Y;
+  mesh.traverse(o => {
+    if (!o.userData) return;
+    if (o.userData.isBoss4Ring) {
+      const sc = 0.4 + 1.2 * frac;
+      o.scale.set(sc, sc, 1);
+      if (o.material && o.material.color) o.material.color.setRGB(1, 0.2 + 0.7 * frac, 0.2 * frac);
+    } else if (o.userData.isBoss4Sack && o.material) {
+      o.material.emissiveIntensity = carried ? 1.1 : 0.85;
+    }
+  });
+}
+// MP-rendering: reconcile minions/väskor/pooler + nedräknings-ringar + carry-flaggor.
+// Server-auth → klienten ritar bara serialiserat state. Anropas från applyBossWarsState.
+function updateBoss4Visuals(msg) {
+  clientReconcileEntities(1, 'boss4Minions', msg.b4m || [], makeBoss4MinionMesh, true);
+  clientReconcileEntities(1, 'boss4Pools', msg.b4p || [], makeBoss4PoolMesh, true);
+  clientReconcileEntities(1, 'boss4Bags', msg.b4b || [], makeBoss4BagMesh, true);
+  // Carry-flaggor: nollställ + sätt från snap (driver klientens skill-gate + render-höjd).
+  for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s) s.boss4Carrying = 0; }
+  const bagMap = clientMeshes.boss4Bags.get(1);
+  const bags = msg.b4b || [];
+  for (const b of bags) {
+    if (b.st === 1 && b.ci >= 1 && b.ci <= 3 && sides[b.ci]) sides[b.ci].boss4Carrying = b.id;
+    const mesh = bagMap && bagMap.get(b.id);
+    if (mesh) boss4StyleBag(mesh, b);
+  }
+}
+
 // ===== BOSS 3 (WARLORD) SYMBOL-MEKANIK — KLIENT-RENDERING =====
 // Server äger logiken; klienten renderar serialiserat state (msg.b.wl): reveal-symbol över
 // huvudet (1s minnesspel), 5 mark-symboler i ring under challenge, puls-telegraf-ring + shockwave.
@@ -24638,6 +24941,9 @@ function applyBossWarsState(msg) {
       });
     }
   }
+  // Boss-4 (decision 132): bärar-minions + giftväskor + permanenta pooler. Server-auth →
+  // klienten renderar serialiserat state + sätter carry-flaggor (skill-gate). Tom för tier 1-3.
+  updateBoss4Visuals(msg);
   // Kill-cooldown-WIPE-varning (playtest #1): b2r = återstående cooldown-sekunder (>0 = döda
   // ad nu wipar laget). Surface:as som countdown-banner i updateBossHpBar. _At = mottag-tid
   // för smooth lokal nedräkning mellan b-states. Bara tier 2 har ads.
@@ -28490,7 +28796,7 @@ function returnToLobby() {
     'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads',
     'aragurnBanners', 'heroCopyFireballs', 'fireWaves', 'blackHoles', 'shatters',
     'vineTraps', 'hammers', 'ironWillExplosions', 'thornPools', 'kostefoSliders', 'kostefoGooseWaves',
-    'warlordSymbols',
+    'warlordSymbols', 'boss4Minions', 'boss4Bags', 'boss4Pools',
   ]);
   for (const key of Object.keys(clientMeshes)) {
     if (!clientMeshes[key]) continue;
@@ -30117,6 +30423,7 @@ function simulateAll(dt) {
     tickBossWarsMinionAura(dt);
     tickBossWarsMinionWaves(dt);
     tickBoss2AdWaves(dt);   // AUTO-VÅGSYSTEM boss 2 (tier 2) — global per-match, host-auth
+    tickBoss4Solo(dt);      // boss 4 (tier 4) giftväske-mekanik — solo (decision 132)
   }
   if (!isArena) checkMatchEnd();
   // Game-over-prompt visas via befintliga options-UI'n; spara att vi vunnit
