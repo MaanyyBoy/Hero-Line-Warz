@@ -552,7 +552,7 @@ function handleDisconnect(ws) {
     }
     if (removed) {
       const newTotal = 1 + (room.client ? 1 : 0) + room.clients.length;
-      const leftMsg = { t: 'peer-left', peersTotal: newTotal, maxPeers: room.maxPeers };
+      const leftMsg = { t: 'peer-left', peersTotal: newTotal, maxPeers: room.maxPeers, leftPeerIdx: ws.peerIdx };
       if (room.host) send(room.host, leftMsg);
       if (room.client) send(room.client, leftMsg);
       for (const c of room.clients) send(c, leftMsg);

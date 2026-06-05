@@ -3074,13 +3074,9 @@ function tickBossWars(state, dt) {
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
     if (!s) continue;
-    // Respawn (boss wars): död hjälte tickar respawnTimer → respawnHero vid boss-rummet.
-    // Körs FÖRE checkBossWarsEnd så en respawnad hjälte ej räknas som död (korrekt wipe-semantik).
-    if (s.hero.dead) {
-      s.hero.respawnTimer = Math.max(0, (s.hero.respawnTimer || 0) - dt);
-      if (s.hero.respawnTimer <= 0) respawnHero(s);
-      continue;
-    }
+    // Boss wars: INGEN respawn under boss-fights (användarbeslut 2026-06-05) — död hjälte stannar
+    // död tills matchen tar slut när HELA laget är dött (wipe, checkBossWarsEnd). Matchar solo.
+    if (s.hero.dead) continue;
     s._bwGateClosed = state.gateClosed;   // sync till heroWalk/applyMovement
     const inp = state.lastInputs[idx];
     const j = (inp && inp.j) || { x: 0, z: 0 };
@@ -3180,9 +3176,8 @@ function checkBossWarsEnd(state) {
     state.matchState.winner = 1;   // 1 = spelarna vann (boss död)
     return;
   }
-  // Lose: ALLA sides döda samtidigt (wipe). Respawn (slice 4) hanterar partiella dödsfall —
-  // en hjälte som dör ensam tickar respawnTimer (5s, körs FÖRE detta i tickBossWars) och kommer
-  // tillbaka. Endast en FULL samtidig wipe (alla 3 nere i samma tick) = raid-loss. Avsiktligt.
+  // Lose: ALLA sides döda (wipe). INGEN respawn i boss wars (användarbeslut 2026-06-05) — döda
+  // hjältar stannar döda, så matchen tar slut när hela laget ligger nere (ej nödvändigtvis samma tick).
   const heroes = [state.sides[1], state.sides[2], state.sides[3]].filter(Boolean);
   if (heroes.length > 0 && heroes.every(h => h.hero.dead)) {
     state.matchState.gameOver = true;

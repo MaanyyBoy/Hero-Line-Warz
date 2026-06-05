@@ -18387,6 +18387,8 @@ function updateHud() {
             ? `Tier ${bossInfo.tier} cleared — ${bossInfo.name} falls! Next challenge: ${nextBoss.name} (Tier ${nextTier} · ${nextBoss.diff}).`
             : `Tier ${bossInfo.tier} cleared — ${bossInfo.name} falls! You've conquered the final tier. Legendary.`)
         : `${bossInfo.name} defeated your team. Regroup and try again!`;
+    } else if (matchState.forfeit) {
+      endgameInfo.textContent = 'Opponent left the match — you win!';
     } else {
       endgameInfo.textContent = won
         ? `You destroyed the enemy tower on wave ${side.wave.current}.`
@@ -27244,6 +27246,7 @@ function bossMpClientEnterMatch(msg) {
   };
   heroPickState.selected = myPayload.hero || 'magiker';
   matchState.gameOver = false;
+  matchState.forfeit = false;
   matchState.gameWon = false;
   matchState.winner = 0;
   // Dölj lobby + ev. pick/prep + wait-status
@@ -27434,6 +27437,63 @@ function showLobbyError(msg) {
   lobbyJoinMsgEl.innerHTML = `<span class="err">${msg}</span>`;
 }
 
+// Motståndaren lämnade ett 1v1-läge (Line Wars / Arena). Mitt i en aktiv match = vinst på
+// walkover (visa victory + kreditera), annars normal lobby-retur med felmeddelande.
+function handleOpponentForfeit() {
+  const inActiveMatch = document.body.classList.contains('in-game') && !matchState.gameOver
+    && !(APP.gameMode === 'arena1v1' && arenaState.phase === 'matchEnd');
+  if (!inActiveMatch) {
+    showLobbyError('Motståndaren lämnade matchen.');
+    returnToLobby();
+    return;
+  }
+  closeRelay();   // motståndaren är borta — sluta lyssna på relät
+  if (APP.gameMode === 'arena1v1') {
+    recordArenaResult(true);
+    arenaState.phase = 'matchEnd';
+    showArenaEnd(APP.localSide, true);
+    if (aeInfoEl) aeInfoEl.textContent = 'Opponent left the match — you win!';
+  } else {
+    // Line Wars (classic): forfeit-flagga driver victory-overlayn i updateHud.
+    matchState.forfeit = true;
+    matchState.gameOver = true;
+    matchState.winner = APP.localSide;
+    matchState.gameWon = true;
+  }
+}
+
+// Boss Wars co-op: en lagkamrat tappade anslutningen mitt i fighten. In-game-toast + gråa
+// den frusna hjältens mesh så de kvarvarande spelarna ser att laget är kortare.
+let _teammateToastEl = null;
+function showTeammateLeftToast() {
+  if (!_teammateToastEl) {
+    const el = document.createElement('div');
+    el.id = 'teammate-left-toast';
+    el.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:96;' +
+      'max-width:min(86vw,560px);padding:11px 20px;border-radius:12px;background:rgba(40,16,16,0.94);' +
+      'border:2px solid #ff5544;box-shadow:0 6px 28px rgba(0,0,0,0.7);' +
+      'font:600 14px/1.4 system-ui,"Segoe UI",sans-serif;color:#ffdede;text-align:center;pointer-events:none;';
+    document.body.appendChild(el);
+    _teammateToastEl = el;
+  }
+  _teammateToastEl.textContent = '⚠ A teammate disconnected — you are now short-handed!';
+  _teammateToastEl.style.display = 'block';
+  clearTimeout(_teammateToastEl._hideT);
+  _teammateToastEl._hideT = setTimeout(() => { if (_teammateToastEl) _teammateToastEl.style.display = 'none'; }, 6000);
+}
+function greyOutHero(side) {
+  if (!side || !side.mesh || side._dcGreyed) return;
+  side._dcGreyed = true;
+  // KLONA materialet innan vi gråar — GLTF-hjältar kan dela material (samma heroId), så
+  // in-place-mutation skulle gråa ALLA hjältar med samma material. Klonen disposeas med meshen.
+  side.mesh.traverse(o => {
+    if (o.isMesh && o.material) {
+      const grey = m => { if (!m) return m; const c = m.clone(); if (c.color) c.color.setHex(0x555555); c.transparent = true; c.opacity = 0.45; return c; };
+      o.material = Array.isArray(o.material) ? o.material.map(grey) : grey(o.material);
+    }
+  });
+}
+
 // ---- WebSocket relay-anslutning ----
 // Öppnar en WS till relay-servern och registrerar en envelope-handler.
 // Server-protokoll:
@@ -27527,7 +27587,11 @@ function handleRelayEnvelope(e) {
           bossMpState.peersReady = {};
           updateBossPrepWaitingStatus();
         }
-        if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
+        if (bossMpState.matchActive) {
+          // Mitt i boss-fighten: in-game-feedback + gråmarkera den frusna (DC:ade) hjälten.
+          showTeammateLeftToast();
+          if (env.leftPeerIdx && sides[env.leftPeerIdx]) greyOutHero(sides[env.leftPeerIdx]);
+        } else if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
           bossMpState.hostMsgEl.textContent = `A player left. Waiting for ${bossMpState.maxPeers - bossMpState.peersTotal} more...`;
         }
         return;
@@ -27563,8 +27627,7 @@ function handleRelayEnvelope(e) {
     console.log('Host återansluten');
   } else if (env.t === 'peer-left') {
     if (APP.mode === 'host' || APP.mode === 'client') {
-      showLobbyError('Motståndaren lämnade matchen.');
-      returnToLobby();
+      handleOpponentForfeit();   // mitt i match = vinst på walkover, annars lobby-retur
     }
   } else if (env.t === 'reclaimed') {
     // Lyckad reclaim — host fortsätter visa rumkoden, ev. med "Återansluten"
@@ -28089,6 +28152,7 @@ function setupMatch(mode) {
     sides[3] = null; sides[4] = null;
   }
   matchState.gameOver = false;
+  matchState.forfeit = false;
   matchState.gameWon = false;
   matchState.winner = 0;
   resetIncomeTickTracking();
@@ -29576,6 +29640,7 @@ function bossWarsStartFight(tier) {
   APP.bossWars = { active: true, tier, started: false };
   // Force-reset så ev. gammal matchState från tidigare match inte hänger kvar
   matchState.gameOver = false;
+  matchState.forfeit = false;
   matchState.gameWon = false;
   matchState.winner = 0;
   APP._bossKillCdActive = false;   // defensiv reset (self-healar annars på första b-state)
@@ -29602,6 +29667,7 @@ function bossWarsStartTest(tier) {
     selectedItems: [],
   };
   matchState.gameOver = false;
+  matchState.forfeit = false;
   matchState.gameWon = false;
   matchState.winner = 0;
   closeBossDetail();
