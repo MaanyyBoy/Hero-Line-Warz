@@ -2126,7 +2126,8 @@ const WARLORD_SHAPES = ['triangle', 'square', 'circle', 'pentagon', 'star'];
 const WARLORD_NUM_SYMBOLS = 5;
 const WARLORD_RING_RADIUS = 6.5;          // symboler 6.5m från mitten (inom BOSSWARS_RADIUS 36)
 const WARLORD_SYMBOL_RADIUS = 1.9;        // hjälte måste vara inom denna av symbolen för immunitet
-const WARLORD_REVEAL_TIME = 1.0;          // visningstid per reveal-symbol
+const WARLORD_REVEAL_TIME = 1.0;          // visningstid per reveal-symbol (stor, mitt på golvet)
+const WARLORD_REVEAL_GAP = 0.3;           // blank paus mellan reveals (så sekvensen blir läsbar)
 const WARLORD_PULSE_INTERVAL_P1 = 5.0;    // runda 1+2
 const WARLORD_PULSE_INTERVAL_P2 = 3.0;    // runda 3 (25%)
 const WARLORD_CHALLENGE_THRESH = [0.75, 0.50, 0.25];   // challenge-trösklar (fraktion av maxHp)
@@ -2152,37 +2153,63 @@ function warlordMakeRoundSymbols(prev) {
   return order;
 }
 // Returnerar true = bossen är upptagen (immun + AI pausad) denna tick.
+// State-maskin: reveal-ackumulering (boss slåss, symboler köas+visas på golvet) →
+// engaged (alla 5 avslöjade → boss immun+mitten, kvarvarande köade reveals visas klart) →
+// challengeActive (pulser). Köning gör att burst-skada inte missar symbol-ordningen, och
+// immuniteten startar vid full reveal så bossen aldrig kan dödas innan utmaningen.
 function tickWarlordChallenge(state, dt, boss) {
   const w = boss.warlord;
   if (!w) return false;
-  if (w.revealDisplay) {
-    w.revealDisplay.remaining -= dt;
-    if (w.revealDisplay.remaining <= 0) w.revealDisplay = null;
+  warlordTickRevealDisplay(w, dt);
+  if (w.engaged) {
+    if (w.challengeActive) {
+      tickWarlordPulses(state, dt, boss);
+    } else if (!w.revealDisplay && w.revealQueue.length === 0 && (w.revealGap || 0) <= 0) {
+      // Alla köade reveals visade → starta pulserna.
+      beginWarlordPulses(state, boss);
+    }
+    return true;   // immun + AI pausad genom hela symbol-fasen
   }
-  if (w.challengeActive) { tickWarlordPulses(state, dt, boss); return true; }
+  // Reveal-ackumulering: boss slåss normalt; trösklar köar symboler (1 per 5% HP).
   if (w.round <= 3) {
     const frac = boss.hp / boss.maxHp;
     const thresholds = warlordRevealThresholds(w.round);
     while (w.revealIdx < WARLORD_NUM_SYMBOLS && frac <= thresholds[w.revealIdx]) {
-      w.revealDisplay = { shape: w.roundSymbols[w.revealIdx], remaining: WARLORD_REVEAL_TIME };
+      w.revealQueue.push(w.roundSymbols[w.revealIdx]);   // köa (burst → flera på en tick, ordning bevaras)
       w.revealIdx++;
     }
-    if (w.revealIdx >= WARLORD_NUM_SYMBOLS && frac <= WARLORD_CHALLENGE_THRESH[w.round - 1]) {
-      startWarlordChallenge(state, boss);
+    if (w.revealIdx >= WARLORD_NUM_SYMBOLS) {
+      engageWarlord(state, boss);   // alla avslöjade → immun + mitten; pulser efter att kön tömts
       return true;
     }
   }
   return false;
 }
-function startWarlordChallenge(state, boss) {
+// Avancera den stora golv-reveal-symbolen (en i taget från kön, med blank paus emellan).
+function warlordTickRevealDisplay(w, dt) {
+  if (w.revealDisplay) {
+    w.revealDisplay.remaining -= dt;
+    if (w.revealDisplay.remaining <= 0) { w.revealDisplay = null; w.revealGap = WARLORD_REVEAL_GAP; }
+    return;
+  }
+  if ((w.revealGap || 0) > 0) { w.revealGap = Math.max(0, w.revealGap - dt); return; }
+  if (w.revealQueue.length) w.revealDisplay = { shape: w.revealQueue.shift(), remaining: WARLORD_REVEAL_TIME };
+}
+// Alla 5 avslöjade → boss immun + teleport till mitten. Pulserna börjar FÖRST när kön tömts
+// (beginWarlordPulses) så spelarna hinner se hela sekvensen även vid burst.
+function engageWarlord(state, boss) {
   const w = boss.warlord;
-  w.challengeActive = true;
+  w.engaged = true;
   w.challengeRound = w.round;
   boss.x = BOSSWARS_CX; boss.z = BOSSWARS_CZ;   // teleport till mitten
   boss.activeCast = null;
-  // Rensa pågående boss-projektiler/pooler så bara pulsen är hotet under challengen.
+  // Rensa pågående boss-projektiler/pooler så bara pulsen är hotet.
   if (state.bossProjectiles) state.bossProjectiles.length = 0;
   if (state.bossPools) state.bossPools.length = 0;
+}
+function beginWarlordPulses(state, boss) {
+  const w = boss.warlord;
+  w.challengeActive = true;
   // 5 symboler i ring; arrangemang OBEROENDE av reveal-ordningen (position avslöjar ej svaret).
   const ringShapes = warlordShuffle(w.roundSymbols);
   w.groundSymbols = ringShapes.map((shape, i) => {
@@ -2219,6 +2246,7 @@ function tickWarlordPulses(state, dt, boss) {
 function endWarlordChallenge(state, boss) {
   const w = boss.warlord;
   w.challengeActive = false;
+  w.engaged = false;             // boss sårbar igen
   w.groundSymbols = [];
   // Runda 2 (50%) klar → phase-2 (skill-swap + dmg-boost). Ersätter generisk fly-up för tier 3.
   if (w.challengeRound === 2 && boss.bossPhase === 1 && boss.phase2Skills) {
@@ -2231,6 +2259,9 @@ function endWarlordChallenge(state, boss) {
   w.round++;
   w.revealIdx = 0;
   w.challengeRound = 0;
+  w.revealQueue.length = 0;
+  w.revealDisplay = null;
+  w.revealGap = 0;
   if (w.round <= 3) w.roundSymbols = warlordMakeRoundSymbols(w.prevRoundSymbols);
 }
 
@@ -2297,8 +2328,8 @@ function createBossWarsState(tier) {
     boss.warlord = {
       round: 1, revealIdx: 0,
       roundSymbols: warlordMakeRoundSymbols(null), prevRoundSymbols: null,
-      revealDisplay: null,
-      challengeActive: false, challengeRound: 0,
+      revealQueue: [], revealDisplay: null, revealGap: 0,
+      engaged: false, challengeActive: false, challengeRound: 0,
       groundSymbols: [],
       pulseIdx: 0, pulseTimer: 0, pulseInterval: WARLORD_PULSE_INTERVAL_P1, pulseCounter: 0,
     };
@@ -2676,7 +2707,7 @@ function tickBossWarsSkills(state, boss, dt) {
 // Returnerar effektiv skada (0 = immun). Anropas i ALLA boss-skadevägar; no-op för icke-boss-monster.
 function bossWarsDmgMod(m, dmg) {
   if (!m || !m.isBossWarsBoss) return dmg;
-  if (m.warlord && m.warlord.challengeActive) return 0;  // immun under symbol-challenge (boss 3)
+  if (m.warlord && m.warlord.engaged) return 0;          // immun hela symbol-fasen (boss 3): full reveal → pulser klart
   if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
   // DR = base + step per intervall (decision 110) över aktiv tid, cap. Annars stallar långa fights.
   const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
