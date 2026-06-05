@@ -7933,6 +7933,8 @@ function engageWarlordClient(boss) {
   const w = boss.warlord;
   w.engaged = true;
   w.challengeRound = w.round;
+  // Klamp HP upp till fas-tröskeln (75/50/25%) så ingen burst tar bossen under den (mirror server).
+  boss.hp = Math.max(boss.hp, WARLORD_CHALLENGE_THRESH[w.round - 1] * boss.maxHp);
   if (boss.mesh) { boss.mesh.position.x = BOSSWARS_CX; boss.mesh.position.z = BOSSWARS_CZ; }   // teleport mitten
   if (boss.activeCast) { cleanupTelegraphMesh(boss.activeCast); cleanupExecuteMesh(boss.activeCast); boss.activeCast = null; }
   // Rensa pågående boss-projektiler/pooler (med GPU-dispose). Solo: bossen lever på sides[1].

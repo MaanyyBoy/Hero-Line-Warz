@@ -2201,6 +2201,9 @@ function engageWarlord(state, boss) {
   const w = boss.warlord;
   w.engaged = true;
   w.challengeRound = w.round;
+  // Klamp HP upp till fas-tröskeln (75/50/25%) så ingen burst tar bossen under den under
+  // symbol-fasen. Bossen är immun under fasen → stannar exakt på tröskeln tills den är klar.
+  boss.hp = Math.max(boss.hp, WARLORD_CHALLENGE_THRESH[w.round - 1] * boss.maxHp);
   boss.x = BOSSWARS_CX; boss.z = BOSSWARS_CZ;   // teleport till mitten
   boss.activeCast = null;
   // Rensa pågående boss-projektiler/pooler så bara pulsen är hotet.
