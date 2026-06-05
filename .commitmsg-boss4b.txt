@@ -1,8 +1,0 @@
-Boss 4: dubbla giftpool-radie (3->6m) + numerisk nedraknings-siffra
-
-Pool-radie 3.0->6.0 (6m->12m diameter) i server + klient pa
-anvandarbegaran. Vaskan far en billboard-sprite med nedraknings-
-siffra (5..0, rod <=2s) ovanpa den krympande ringen. Delad textur-
-cache (0-5) -> inga per-vaska CanvasTexture-lackor.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

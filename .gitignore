@@ -20,3 +20,4 @@ assets/enemies/quaternius_monsters_raw/
 # OS/IDE-skräp
 .DS_Store
 Thumbs.db
+.commitmsg*.txt
