@@ -4775,6 +4775,7 @@ scene.add(arenaSceneGroup);
 // Decision 049: 5 tematiska maps (en per boss), större arena (radius 36),
 // per-tier theme-props (träd/lava/eld/etc) + korridor-facklor.
 const BOSSWARS_CX = 0;
+const BOSSWARS_MAX_HIT_FRAC = 0.05;   // tak: max 5% av maxHp i skada per hit på boss-wars-bossar
 const BOSSWARS_CZ = 90;
 const BOSSWARS_RADIUS = 36;   // 30 → 36 (20% större, mer rörelseutrymme för boss-fight)
 
@@ -7879,10 +7880,11 @@ function warlordMakeRoundSymbols(prev) {
   while (warlordSameOrder(order, prev) && guard++ < 20) order = warlordShuffle(WARLORD_SHAPES);
   return order;
 }
-const _warlordSoloWl = { a: 0, rv: null, pc: 0, pt: 0, pv: 5, sy: null };
+const _warlordSoloWl = { a: 0, r: 1, rv: null, pc: 0, pt: 0, pv: 5, sy: null };
 function updateWarlordSoloVisuals(boss) {
   const w = boss.warlord;
   _warlordSoloWl.a = w.challengeActive ? 1 : 0;
+  _warlordSoloWl.r = w.challengeRound || w.round;
   _warlordSoloWl.rv = w.revealDisplay ? w.revealDisplay.shape : null;
   _warlordSoloWl.pc = w.pulseCounter || 0;
   _warlordSoloWl.pt = w.challengeActive ? w.pulseTimer : 0;
@@ -13188,7 +13190,9 @@ function damageMonster(m, rawDmg) {
   if (m.isBossWarsBoss && m.warlord && m.warlord.engaged) return 0;   // immun hela symbol-fasen (boss 3): full reveal → pulser klart
   if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
-  const dmg = rawDmg * (1 - dr);
+  let dmg = rawDmg * (1 - dr);
+  // Cap: max 5% av maxHp i skada per hit (alla boss-wars-bossar) — hindrar burst-one-shots.
+  if (m.isBossWarsBoss) dmg = Math.min(dmg, m.maxHp * BOSSWARS_MAX_HIT_FRAC);
   const actual = Math.min(dmg, Math.max(0, m.hp));
   m.hp -= dmg;
   return actual;
@@ -13805,7 +13809,9 @@ function updateProjectiles(side, dt) {
         p.target.poisonRemaining = POISON_DURATION;
       }
       // Lvl 5 Legolas Vine Trap mark: +20% AA-dmg på marked targets (primär hit)
-      const _primaryDmg = p.damage * legolasMarkMul(side, p.target);
+      let _primaryDmg = p.damage * legolasMarkMul(side, p.target);
+      // Cap: max 5% av maxHp i skada per hit på boss-wars-bossar (AA drar HP direkt, ej via damageMonster).
+      if (p.target.isBossWarsBoss) _primaryDmg = Math.min(_primaryDmg, p.target.maxHp * BOSSWARS_MAX_HIT_FRAC);
       const _dmgApplied = Math.min(_primaryDmg, p.target.hp);
       p.target.hp -= _primaryDmg;
       spawnDamageText(p.target.mesh, _dmgApplied, p.isCrit);
@@ -24444,6 +24450,7 @@ function makeBoss2AdMesh(e) {
 // huvudet (1s minnesspel), 5 mark-symboler i ring under challenge, puls-telegraf-ring + shockwave.
 const WARLORD_SYMBOL_RADIUS_C = 2.28;   // 20% större (1.9→2.28) så 3 spelare får plats i en symbol
 const WARLORD_SYMBOL_COLORS = { triangle: 0xff5544, square: 0x4499ff, circle: 0x44dd66, pentagon: 0xffcc33, star: 0xcc66ff };
+const WARLORD_NOCOLOR = 0xe6e6e6;   // runda 3 (25%): färglösa symboler → måste minnas FORM, inte färg
 function warlordStarGeometry(r) {
   const shape = new THREE.Shape();
   const spikes = 5, inner = r * 0.45;
@@ -24467,10 +24474,10 @@ function warlordShapeGeometry(shape, r) {
   }
 }
 const WARLORD_REVEAL_FLOOR_RADIUS = 18;   // stor reveal-symbol mitt på golvet (~50% av arenan, radie 36)
-function makeWarlordSymbolMesh(shape, radius, fillOpacity) {
+function makeWarlordSymbolMesh(shape, radius, fillOpacity, colorOverride) {
   const r = radius || WARLORD_SYMBOL_RADIUS_C;
   const op = fillOpacity != null ? fillOpacity : 0.3;
-  const color = WARLORD_SYMBOL_COLORS[shape] || 0xffffff;
+  const color = colorOverride != null ? colorOverride : (WARLORD_SYMBOL_COLORS[shape] || 0xffffff);
   const grp = new THREE.Group();
   const fill = new THREE.Mesh(warlordShapeGeometry(shape, r),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, side: THREE.DoubleSide, depthWrite: false }));
@@ -24487,8 +24494,8 @@ function makeWarlordSymbolMesh(shape, radius, fillOpacity) {
 }
 // Stor reveal-symbol som visas mitt på arena-golvet (minnesspelet). depthWrite:false +
 // renderOrder så den ritas tydligt ovanpå golvet.
-function makeWarlordRevealMesh(shape) {
-  const m = makeWarlordSymbolMesh(shape, WARLORD_REVEAL_FLOOR_RADIUS, 0.45);
+function makeWarlordRevealMesh(shape, colorOverride) {
+  const m = makeWarlordSymbolMesh(shape, WARLORD_REVEAL_FLOOR_RADIUS, 0.45, colorOverride);
   m.renderOrder = 5;
   m.traverse(o => { o.renderOrder = 5; });
   m.userData.shape = shape;
@@ -24514,13 +24521,16 @@ function updateWarlordVisuals(boss, wl) {
   const bx = boss.mesh ? boss.mesh.position.x : BOSSWARS_CX;
   const bz = boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
   if (wl) {
+    // Runda 3 (25%): färglösa symboler → spelaren måste minnas FORM, inte färg (svårare).
+    const nocolor = (wl.r === 3);
+    const colOv = nocolor ? WARLORD_NOCOLOR : null;
     // Reveal-symbol: STOR, platt, mitt på arena-golvet (minnesspel). Inte över bossen.
     if (wl.rv) {
       seen.add('_reveal');
       let rm = map.get('_reveal');
-      if (!rm || rm.userData.shape !== wl.rv) {
+      if (!rm || rm.userData.shape !== wl.rv || rm.userData.nocolor !== nocolor) {
         if (rm) { scene.remove(rm); _warlordDispose(rm); map.delete('_reveal'); }
-        rm = makeWarlordRevealMesh(wl.rv); scene.add(rm); map.set('_reveal', rm);
+        rm = makeWarlordRevealMesh(wl.rv, colOv); rm.userData.nocolor = nocolor; scene.add(rm); map.set('_reveal', rm);
       }
       rm.position.set(BOSSWARS_CX, floorY + 0.08, BOSSWARS_CZ);
     }
@@ -24529,7 +24539,10 @@ function updateWarlordVisuals(boss, wl) {
       for (const sym of wl.sy) {
         seen.add(sym.s);
         let sm = map.get(sym.s);
-        if (!sm) { sm = makeWarlordSymbolMesh(sym.s); scene.add(sm); map.set(sym.s, sm); }
+        if (!sm || sm.userData.nocolor !== nocolor) {
+          if (sm) { scene.remove(sm); _warlordDispose(sm); map.delete(sym.s); }
+          sm = makeWarlordSymbolMesh(sym.s, undefined, undefined, colOv); sm.userData.nocolor = nocolor; scene.add(sm); map.set(sym.s, sm);
+        }
         sm.position.set(sym.x, floorY + 0.06, sym.z);
         // glow om någon hjälte står i symbolen (feedback "du är inne")
         let occ = false;

@@ -709,6 +709,7 @@ function isCreepPos(x, z) {
 // (buggmönster #9: geometri-antaganden). Samma namn som klienten för port-trohet.
 // ADDITIVT — oanropat tills tickBossWars/applyMovement wirar in det (slice 0/1).
 const BOSSWARS_CX = 0, BOSSWARS_CZ = 90, BOSSWARS_RADIUS = 36, BOSSWARS_FLOOR_Y = 0.42;
+const BOSSWARS_MAX_HIT_FRAC = 0.05;   // tak: max 5% av maxHp i skada per hit på boss-wars-bossar
 const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;            // -36 (boss-rummets västsida)
 const BW_CORRIDOR_LENGTH = 26, BW_CORRIDOR_WIDTH = 9;
 const BW_CORRIDOR_HALF_W = BW_CORRIDOR_WIDTH / 2;             // 4.5
@@ -2715,7 +2716,8 @@ function bossWarsDmgMod(m, dmg) {
   // DR = base + step per intervall (decision 110) över aktiv tid, cap. Annars stallar långa fights.
   const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
   const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05));
-  return dmg * (1 - dr);
+  // Cap: max 5% av maxHp i skada per hit (alla boss-wars-bossar) — hindrar burst-one-shots.
+  return Math.min(dmg * (1 - dr), m.maxHp * BOSSWARS_MAX_HIT_FRAC);
 }
 // Fas-övergång (slice 3a): vid phaseThreshold-HP → bossPhase 2. Stun+push heroes, immun flyup 2.5s,
 // cleanse boss-debuffs (behåll positiv buff), swap till phase2-skills vid landning. Port av main.js.
