@@ -3082,7 +3082,7 @@ function updateBoss2AdsEngine(state, dt) {
 // giftpool där hjälten står. Plockas väskan EJ inom 5s → poolen bildas där väskan ligger.
 // Pooler: 5% maxHP/0.5s + 50% slow på hjältar (INGEN stapling), och om bossen står i en
 // pool får den +1% maxHP heal/sek + 20% utgående skada (försvinner direkt när den lämnar).
-const BOSS4_MINION_HP = 600, BOSS4_MINION_SPEED = 5.0, BOSS4_MINION_RANGE = 2.6, BOSS4_MINION_ATK_INTERVAL = 1.5;
+const BOSS4_MINION_HP = 420, BOSS4_MINION_SPEED = 5.0, BOSS4_MINION_RANGE = 2.6, BOSS4_MINION_ATK_INTERVAL = 1.5;
 const BOSS4_MINION_SPAWN_INTERVAL = 30, BOSS4_MINION_SPAWN_COUNT = 2, BOSS4_MINION_FIRST_DELAY = 8;
 const BOSS4_MINION_DOT_PCT = 0.03, BOSS4_MINION_DOT_DUR = 5, BOSS4_MINION_SLOW_MUL = 0.80;
 const BOSS4_BAG_GROUND_TIME = 5, BOSS4_BAG_PICKUP_TIME = 1.0, BOSS4_BAG_PICKUP_RADIUS = 1.0, BOSS4_BAG_CARRY_TIME = 5;
