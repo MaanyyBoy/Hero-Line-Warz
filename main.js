@@ -30098,7 +30098,7 @@ function simulateAll(dt) {
     tickClientLegolusInvis(side, dt);
     tickClientThornPools(side, dt);
     tickClientKostefoSkills(side, dt);
-    if (!isArena) tickIncome(side, dt);
+    if (!isArena && !isBossWars) tickIncome(side, dt);   // income bara i Line Wars (ej arena/boss wars)
     // Decision 105: tornet helar 5% av max-HP per sek (Line Wars + solo).
     if (!isArena && !isBossWars && side.tower.hp > 0 && side.tower.hp < side.tower.maxHp) {
       side._towerHealAccum = (side._towerHealAccum || 0) + side.tower.maxHp * 0.05 * dt;
@@ -30137,8 +30137,8 @@ const incomeDisplayEl = document.getElementById('income-display');
 
 function updateIncomeDisplay() {
   if (!incomeDisplayEl) return;
-  // Dölj income-display i arena (ingen income-mekanik där)
-  if (APP.gameMode === 'arena1v1') {
+  // Dölj income-display i arena OCH boss wars (ingen income-mekanik i något av dem)
+  if (APP.gameMode === 'arena1v1' || APP.gameMode === 'bosswars') {
     incomeDisplayEl.style.display = 'none';
     return;
   }
