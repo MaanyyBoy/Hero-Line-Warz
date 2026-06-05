@@ -13191,6 +13191,10 @@ const boss4SpawnStateSolo = { active: false, countdown: 0 };
 function boss4SoloEnabled() {
   return !!(APP && APP.gameMode === 'bosswars' && APP.bossWars && APP.bossWars.tier === 4);
 }
+function boss4SoloP2(side) {
+  const b = side && side.monsters && side.monsters.find(x => x.isBossWarsBoss);
+  return !!(b && b.bossPhase === 2);
+}
 function spawnBoss4MinionSolo(side, ang) {
   if (!side || !side.monsters || !side.boss4Minions) return null;
   const mesh = makeBoss4MinionMesh();
@@ -13199,8 +13203,9 @@ function spawnBoss4MinionSolo(side, ang) {
   mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
   attachHpBar(mesh, 2.2);
   scene.add(mesh);
+  const hp = boss4SoloP2(side) ? BOSS4_MINION_HP_P2_C : BOSS4_MINION_HP_P1_C;
   const m = {
-    id: nextEntityId++, hp: BOSS4_MINION_HP_C, maxHp: BOSS4_MINION_HP_C,
+    id: nextEntityId++, hp, maxHp: hp,
     moveSpeed: BOSS4_MINION_SPEED_C,
     isBoss4Minion: true, isMinion: false, isBoss2Ad: false,
     isMonster: false, isBoss: false, isMiniBoss: false, isBossWarsBoss: false,
@@ -13229,6 +13234,7 @@ function tickBoss4MinionSpawnsSolo(dt) {
 function updateBoss4MinionsSolo(side, dt) {
   const arr = side.boss4Minions;
   if (!arr || arr.length === 0) return;
+  const isP2 = boss4SoloP2(side);
   for (let i = arr.length - 1; i >= 0; i--) {
     const m = arr[i];
     if (!m) continue;
@@ -13244,15 +13250,15 @@ function updateBoss4MinionsSolo(side, dt) {
       const step = m.moveSpeed * dt;
       m.mesh.position.x += (dx / dist) * step; m.mesh.position.z += (dz / dist) * step;
     } else if (m.atkCd <= 0) {
-      applyBoss4MinionHitSolo(target);
+      applyBoss4MinionHitSolo(target, isP2);
       m.atkCd = m.attackInterval;
     }
   }
 }
-function applyBoss4MinionHitSolo(side) {
+function applyBoss4MinionHitSolo(side, isP2) {
   if (!side || !side.hero || side.hero.dead) return;
   side.b4DotRem = BOSS4_MINION_DOT_DUR_C;
-  side.b4DotPs = BOSS4_MINION_DOT_PCT_C * side.hero.maxHp;
+  side.b4DotPs = (isP2 ? BOSS4_MINION_DOT_PCT_P2_C : BOSS4_MINION_DOT_PCT_P1_C) * side.hero.maxHp;
 }
 function tickBoss4MinionDotSolo(dt) {
   for (const s of bossWarsTargets(sides[1])) {
@@ -13277,7 +13283,8 @@ function spawnBoss4BagSolo(side, x, z) {
   const mesh = makeBoss4BagMesh();
   mesh.position.set(x, BOSSWARS_FLOOR_Y, z);
   scene.add(mesh);
-  side.boss4Bags.push({ id: nextEntityId++, x, z, st: 0, timer: BOSS4_BAG_GROUND_TIME_C, ci: 0, pk: 0, pkT: 0, mesh });
+  const gt = boss4SoloP2(side) ? BOSS4_BAG_GROUND_TIME_P2_C : BOSS4_BAG_GROUND_TIME_P1_C;
+  side.boss4Bags.push({ id: nextEntityId++, x, z, st: 0, timer: gt, maxTimer: gt, ci: 0, pk: 0, pkT: 0, mesh });
 }
 function spawnBoss4PoolSolo(side, x, z) {
   const mesh = makeBoss4PoolMesh();
@@ -13306,22 +13313,23 @@ function tickBoss4BagsSolo(side, dt) {
       if (cand && cand === b.pk) {
         b.pkT += dt;
         if (b.pkT >= BOSS4_BAG_PICKUP_TIME_C) {
-          b.st = 1; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME_C; b.pk = 0; b.pkT = 0;
+          b.st = 1; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME_C; b.maxTimer = BOSS4_BAG_CARRY_TIME_C; b.pk = 0; b.pkT = 0;
           sides[cand].boss4Carrying = b.id;
-          boss4StyleBag(b.mesh, { st: 1, t: b.timer });
+          boss4StyleBag(b.mesh, { st: 1, t: b.timer, tm: b.maxTimer });
           continue;
         }
       } else { b.pk = cand; b.pkT = 0; }
       b.timer -= dt;
       b.mesh.position.set(b.x, BOSSWARS_FLOOR_Y, b.z);
-      boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+      boss4StyleBag(b.mesh, { st: 0, t: b.timer, tm: b.maxTimer });
       if (b.timer <= 0) { spawnBoss4PoolSolo(side, b.x, b.z); disposeBoss4MeshSolo(b.mesh); arr.splice(i, 1); }
     } else {   // buren
       const s = sides[b.ci];
       if (!s || s.hero.dead) {
         if (s) s.boss4Carrying = 0;
-        b.st = 0; b.timer = BOSS4_BAG_GROUND_TIME_C; b.ci = 0; b.pk = 0; b.pkT = 0;
-        boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+        { const gt = boss4SoloP2(side) ? BOSS4_BAG_GROUND_TIME_P2_C : BOSS4_BAG_GROUND_TIME_P1_C; b.st = 0; b.timer = gt; b.maxTimer = gt; }
+        b.ci = 0; b.pk = 0; b.pkT = 0;
+        boss4StyleBag(b.mesh, { st: 0, t: b.timer, tm: b.maxTimer });
         continue;
       }
       b.x = s.hero.x; b.z = s.hero.z;
@@ -13330,13 +13338,14 @@ function tickBoss4BagsSolo(side, dt) {
       s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
       if (s.hero.dead) {
         s.boss4Carrying = 0;
-        b.st = 0; b.timer = BOSS4_BAG_GROUND_TIME_C; b.ci = 0; b.pk = 0; b.pkT = 0;
-        boss4StyleBag(b.mesh, { st: 0, t: b.timer });
+        { const gt = boss4SoloP2(side) ? BOSS4_BAG_GROUND_TIME_P2_C : BOSS4_BAG_GROUND_TIME_P1_C; b.st = 0; b.timer = gt; b.maxTimer = gt; }
+        b.ci = 0; b.pk = 0; b.pkT = 0;
+        boss4StyleBag(b.mesh, { st: 0, t: b.timer, tm: b.maxTimer });
         continue;
       }
       b.timer -= dt;
       b.mesh.position.set(b.x, BOSSWARS_FLOOR_Y, b.z);
-      boss4StyleBag(b.mesh, { st: 1, t: b.timer });
+      boss4StyleBag(b.mesh, { st: 1, t: b.timer, tm: b.maxTimer });
       if (b.timer <= 0) { spawnBoss4PoolSolo(side, s.hero.x, s.hero.z); s.boss4Carrying = 0; disposeBoss4MeshSolo(b.mesh); arr.splice(i, 1); }
     }
   }
@@ -13351,8 +13360,9 @@ function tickBoss4PoolsSolo(side, dt) {
       const dx = boss.mesh.position.x - p.x, dz = boss.mesh.position.z - p.z;
       if (dx * dx + dz * dz < BOSS4_POOL_RADIUS_C * BOSS4_POOL_RADIUS_C) { bossInPool = true; break; }
     }
-    boss.boss4DmgBuff = bossInPool ? BOSS4_BOSS_DMG_BUFF_C : 1;
-    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * BOSS4_BOSS_HEAL_PCT_C * dt);
+    const p2 = (boss.bossPhase === 2);
+    boss.boss4DmgBuff = bossInPool ? (p2 ? BOSS4_BOSS_DMG_BUFF_P2_C : BOSS4_BOSS_DMG_BUFF_P1_C) : 1;
+    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * (p2 ? BOSS4_BOSS_HEAL_PCT_P2_C : BOSS4_BOSS_HEAL_PCT_P1_C) * dt);
   }
   if (!arr || arr.length === 0) return;
   side._b4PoolAccum = (side._b4PoolAccum || 0) + dt;
@@ -24679,13 +24689,17 @@ function makeBoss2AdMesh(e) {
 
 // ===== BOSS 4 (DEMON PRINCE) GIFTVÄSKE-MEKANIK — KONSTANTER + RENDERING (decision 132) =====
 // Delas av MP-rendering (updateBoss4Visuals via applyBossWarsState) OCH solo-sim (tickBoss4Solo).
-const BOSS4_MINION_HP_C = 420, BOSS4_MINION_SPEED_C = 5.0, BOSS4_MINION_RANGE_C = 2.6, BOSS4_MINION_ATK_INTERVAL_C = 1.5;
+// Fas 1 / Fas 2-eskalering (matchar server): HP 420→600, DoT 3%→5%/s, mark-tid 5s→4s, boss-heal 1%→2%/s, buff +20%→+40%.
+const BOSS4_MINION_HP_P1_C = 420, BOSS4_MINION_HP_P2_C = 600;
+const BOSS4_MINION_SPEED_C = 5.0, BOSS4_MINION_RANGE_C = 2.6, BOSS4_MINION_ATK_INTERVAL_C = 1.5;
 const BOSS4_MINION_SPAWN_INTERVAL_C = 30, BOSS4_MINION_SPAWN_COUNT_C = 2, BOSS4_MINION_FIRST_DELAY_C = 8;
-const BOSS4_MINION_DOT_PCT_C = 0.03, BOSS4_MINION_DOT_DUR_C = 5, BOSS4_MINION_SLOW_MUL_C = 0.80;
-const BOSS4_BAG_GROUND_TIME_C = 5, BOSS4_BAG_PICKUP_TIME_C = 1.0, BOSS4_BAG_PICKUP_RADIUS_C = 1.0, BOSS4_BAG_CARRY_TIME_C = 5;
+const BOSS4_MINION_DOT_PCT_P1_C = 0.03, BOSS4_MINION_DOT_PCT_P2_C = 0.05, BOSS4_MINION_DOT_DUR_C = 5, BOSS4_MINION_SLOW_MUL_C = 0.80;
+const BOSS4_BAG_GROUND_TIME_P1_C = 5, BOSS4_BAG_GROUND_TIME_P2_C = 4, BOSS4_BAG_PICKUP_TIME_C = 1.0, BOSS4_BAG_PICKUP_RADIUS_C = 1.0, BOSS4_BAG_CARRY_TIME_C = 5;
+// Bakåtkompat-alias (fallback i boss4StyleBag när b.tm saknas).
+const BOSS4_BAG_GROUND_TIME_C = 5;
 const BOSS4_CARRY_SLOW_MUL_C = 0.70, BOSS4_CARRY_DOT_PCT_C = 0.01;
-const BOSS4_POOL_RADIUS_C = 6.0, BOSS4_POOL_TICK_C = 0.5, BOSS4_POOL_DMG_PCT_C = 0.05, BOSS4_POOL_SLOW_MUL_C = 0.50;   // radie 6m (12m diam) — dubblad
-const BOSS4_BOSS_HEAL_PCT_C = 0.01, BOSS4_BOSS_DMG_BUFF_C = 1.20;
+const BOSS4_POOL_RADIUS_C = 6.0, BOSS4_POOL_TICK_C = 0.5, BOSS4_POOL_DMG_PCT_C = 0.05, BOSS4_POOL_SLOW_MUL_C = 0.50;   // radie 6m (12m diam)
+const BOSS4_BOSS_HEAL_PCT_P1_C = 0.01, BOSS4_BOSS_HEAL_PCT_P2_C = 0.02, BOSS4_BOSS_DMG_BUFF_P1_C = 1.20, BOSS4_BOSS_DMG_BUFF_P2_C = 1.40;
 function makeBoss4MinionMesh() {
   const grp = new THREE.Group();
   const body = new THREE.Mesh(new THREE.ConeGeometry(0.65, 1.8, 8),
@@ -24730,22 +24744,71 @@ function makeBoss4BagMesh() {
   grp.position.y = BOSSWARS_FLOOR_Y;
   return grp;
 }
+// Procedural poison-textur (mottlad toxisk grön) — delad + permanent (aldrig disposad;
+// material.dispose rör ej .map). Ger pölen ett giftigt, ojämnt utseende istället för platt fyllning.
+let _boss4PoolTex = null;
+function boss4PoolTex() {
+  if (_boss4PoolTex) return _boss4PoolTex;
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#173309'; ctx.fillRect(0, 0, 256, 256);
+  const greens = ['#3a7a18', '#4e9c22', '#6fc936', '#2a5a12', '#8ef04a', '#235010'];
+  for (let i = 0; i < 70; i++) {
+    const x = Math.random() * 256, y = Math.random() * 256, r = 6 + Math.random() * 34;
+    ctx.fillStyle = greens[(Math.random() * greens.length) | 0];
+    ctx.globalAlpha = 0.3 + Math.random() * 0.45;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  _boss4PoolTex = tex; return tex;
+}
+// Animera bubblorna (stiger + poppar) — anropas via disk.onBeforeRender (frustum-cullas → 0 kostnad off-screen).
+function animateBoss4Bubbles(grp) {
+  const bubbles = grp.userData.boss4Bubbles;
+  if (!bubbles) return;
+  const t = performance.now() * 0.001;
+  for (const b of bubbles) {
+    const u = (t * b.userData.spd + b.userData.phase) % 1;   // 0..1 livscykel
+    b.position.y = 0.12 + u * 1.1;                            // stiger
+    const s = b.userData.size * Math.sin(u * Math.PI);        // 0 i ändar, max mitt → "poppar"
+    b.scale.setScalar(Math.max(0.0001, s));
+    if (b.material) b.material.opacity = 0.75 * Math.sin(u * Math.PI);
+  }
+}
 function makeBoss4PoolMesh() {
   const radius = BOSS4_POOL_RADIUS_C;
   const grp = new THREE.Group();
-  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.82, radius, 40),
-    new THREE.MeshBasicMaterial({ color: 0x55cc22, transparent: true, opacity: 0.78, side: THREE.DoubleSide, depthWrite: false }));
-  ring.rotation.x = -Math.PI / 2; grp.add(ring);
-  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius, 36),
-    new THREE.MeshBasicMaterial({ color: 0x336611, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+  // Murky giftpuss med mottlad poison-textur (ej platt ifylld cirkel).
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(radius, 44),
+    new THREE.MeshBasicMaterial({ map: boss4PoolTex(), transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
   disk.rotation.x = -Math.PI / 2; grp.add(disk);
+  // Mörk giftig kant.
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.9, radius, 44),
+    new THREE.MeshBasicMaterial({ color: 0x2c5413, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.015; grp.add(ring);
+  // Bubblor som stiger + poppar (egen geometri/material per bubbla → disponeras rent).
+  const bubbles = [];
+  for (let i = 0; i < 7; i++) {
+    const bub = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0x9be84a, transparent: true, opacity: 0.7, depthWrite: false }));
+    const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * radius * 0.82;
+    bub.userData.bx = Math.cos(a) * rr; bub.userData.bz = Math.sin(a) * rr;
+    bub.userData.phase = Math.random();
+    bub.userData.spd = 0.35 + Math.random() * 0.5;
+    bub.userData.size = 0.22 + Math.random() * 0.3;
+    bub.position.set(bub.userData.bx, 0.12, bub.userData.bz);
+    grp.add(bub); bubbles.push(bub);
+  }
+  grp.userData.boss4Bubbles = bubbles;
+  disk.onBeforeRender = () => animateBoss4Bubbles(grp);   // auto-animeras per frame när pölen syns
   grp.position.y = BOSSWARS_FLOOR_Y + 0.05;
   return grp;
 }
 // Styla en väske-mesh från snap-data: höjd (mark vs ovanför bärarens huvud) + nedräknings-ring.
 function boss4StyleBag(mesh, b) {
   const carried = (b.st === 1);
-  const maxT = carried ? BOSS4_BAG_CARRY_TIME_C : BOSS4_BAG_GROUND_TIME_C;
+  const maxT = b.tm || (carried ? BOSS4_BAG_CARRY_TIME_C : BOSS4_BAG_GROUND_TIME_C);   // fas-2-väskor = 4s mark
   const frac = Math.max(0, Math.min(1, (b.t || 0) / maxT));
   mesh.position.y = carried ? (BOSSWARS_FLOOR_Y + 2.7) : BOSSWARS_FLOOR_Y;
   mesh.traverse(o => {

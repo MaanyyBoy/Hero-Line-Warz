@@ -3082,18 +3082,24 @@ function updateBoss2AdsEngine(state, dt) {
 // giftpool där hjälten står. Plockas väskan EJ inom 5s → poolen bildas där väskan ligger.
 // Pooler: 5% maxHP/0.5s + 50% slow på hjältar (INGEN stapling), och om bossen står i en
 // pool får den +1% maxHP heal/sek + 20% utgående skada (försvinner direkt när den lämnar).
-const BOSS4_MINION_HP = 420, BOSS4_MINION_SPEED = 5.0, BOSS4_MINION_RANGE = 2.6, BOSS4_MINION_ATK_INTERVAL = 1.5;
+// Fas 1 / Fas 2 (eskalering vid fasbyte 30% HP, användarbeslut 2026-06-05):
+// minion-HP 420→600, DoT 3%→5% maxHP/s, mark-pickup-tid 5s→4s, boss-heal 1%→2%/s, boss-buff +20%→+40%.
+const BOSS4_MINION_HP_P1 = 420, BOSS4_MINION_HP_P2 = 600;
+const BOSS4_MINION_SPEED = 5.0, BOSS4_MINION_RANGE = 2.6, BOSS4_MINION_ATK_INTERVAL = 1.5;
 const BOSS4_MINION_SPAWN_INTERVAL = 30, BOSS4_MINION_SPAWN_COUNT = 2, BOSS4_MINION_FIRST_DELAY = 8;
-const BOSS4_MINION_DOT_PCT = 0.03, BOSS4_MINION_DOT_DUR = 5, BOSS4_MINION_SLOW_MUL = 0.80;
-const BOSS4_BAG_GROUND_TIME = 5, BOSS4_BAG_PICKUP_TIME = 1.0, BOSS4_BAG_PICKUP_RADIUS = 1.0, BOSS4_BAG_CARRY_TIME = 5;
+const BOSS4_MINION_DOT_PCT_P1 = 0.03, BOSS4_MINION_DOT_PCT_P2 = 0.05, BOSS4_MINION_DOT_DUR = 5, BOSS4_MINION_SLOW_MUL = 0.80;
+const BOSS4_BAG_GROUND_TIME_P1 = 5, BOSS4_BAG_GROUND_TIME_P2 = 4, BOSS4_BAG_PICKUP_TIME = 1.0, BOSS4_BAG_PICKUP_RADIUS = 1.0, BOSS4_BAG_CARRY_TIME = 5;
 const BOSS4_CARRY_SLOW_MUL = 0.70, BOSS4_CARRY_DOT_PCT = 0.01;
-const BOSS4_POOL_RADIUS = 6.0, BOSS4_POOL_TICK = 0.5, BOSS4_POOL_DMG_PCT = 0.05, BOSS4_POOL_SLOW_MUL = 0.50;   // radie 6m (12m diam) — dubblad på användarbegäran
-const BOSS4_BOSS_HEAL_PCT = 0.01, BOSS4_BOSS_DMG_BUFF = 1.20;
+const BOSS4_POOL_RADIUS = 6.0, BOSS4_POOL_TICK = 0.5, BOSS4_POOL_DMG_PCT = 0.05, BOSS4_POOL_SLOW_MUL = 0.50;   // radie 6m (12m diam)
+const BOSS4_BOSS_HEAL_PCT_P1 = 0.01, BOSS4_BOSS_HEAL_PCT_P2 = 0.02, BOSS4_BOSS_DMG_BUFF_P1 = 1.20, BOSS4_BOSS_DMG_BUFF_P2 = 1.40;
 function boss4Active(state) { return state.tier === 4; }
+function boss4IsP2(state) { return !!(state.boss && state.boss.bossPhase === 2); }
+function boss4GroundTime(state) { return boss4IsP2(state) ? BOSS4_BAG_GROUND_TIME_P2 : BOSS4_BAG_GROUND_TIME_P1; }
 function spawnBoss4Minion(state, ang) {
   const r = BOSSWARS_RADIUS - 3;
+  const hp = boss4IsP2(state) ? BOSS4_MINION_HP_P2 : BOSS4_MINION_HP_P1;
   const m = {
-    id: state.nextEntityId++, hp: BOSS4_MINION_HP, maxHp: BOSS4_MINION_HP,
+    id: state.nextEntityId++, hp, maxHp: hp,
     x: BOSSWARS_CX + Math.cos(ang) * r, z: BOSSWARS_CZ + Math.sin(ang) * r,
     moveSpeed: BOSS4_MINION_SPEED, isBoss4Minion: true, isMinion: false, isBoss2Ad: false,
     isMonster: false, isBoss: false, isBossWarsBoss: false,
@@ -3137,16 +3143,16 @@ function updateBoss4Minions(state, dt) {
       const step = m.moveSpeed * dt;
       m.x += (dx / dist) * step; m.z += (dz / dist) * step;
     } else if (m.atkCd <= 0) {
-      applyBoss4MinionHit(target);
+      applyBoss4MinionHit(state, target);
       m.atkCd = m.attackInterval;
     }
   }
 }
-// Minion-AA = refresh:ande DoT (3% maxHP/sek i 5s) + 20% slow. Träff nollställer timern (refresh).
-function applyBoss4MinionHit(side) {
+// Minion-AA = refresh:ande DoT (3%/5% maxHP/sek i 5s, fas-beroende) + 20% slow. Träff refreshar.
+function applyBoss4MinionHit(state, side) {
   if (!side || !side.hero || side.hero.dead) return;
   side.b4DotRem = BOSS4_MINION_DOT_DUR;
-  side.b4DotPs = BOSS4_MINION_DOT_PCT * side.hero.maxHp;
+  side.b4DotPs = (boss4IsP2(state) ? BOSS4_MINION_DOT_PCT_P2 : BOSS4_MINION_DOT_PCT_P1) * side.hero.maxHp;
 }
 function tickBoss4MinionDot(state, dt) {
   for (const idx of [1, 2, 3]) {
@@ -3168,7 +3174,8 @@ function onBoss4MinionKill(state, m) {
   spawnBoss4Bag(state, m.x, m.z);
 }
 function spawnBoss4Bag(state, x, z) {
-  state.boss4Bags.push({ id: state.nextEntityId++, x, z, st: 'ground', timer: BOSS4_BAG_GROUND_TIME, ci: 0, pk: 0, pkT: 0 });
+  const gt = boss4GroundTime(state);
+  state.boss4Bags.push({ id: state.nextEntityId++, x, z, st: 'ground', timer: gt, maxTimer: gt, ci: 0, pk: 0, pkT: 0 });
 }
 function spawnBoss4Pool(state, x, z) {
   state.boss4Pools.push({ id: state.nextEntityId++, x, z });   // permanent (ingen life)
@@ -3191,7 +3198,7 @@ function tickBoss4Bags(state, dt) {
       if (cand && cand === b.pk) {
         b.pkT += dt;
         if (b.pkT >= BOSS4_BAG_PICKUP_TIME) {
-          b.st = 'carried'; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME; b.pk = 0; b.pkT = 0;
+          b.st = 'carried'; b.ci = cand; b.timer = BOSS4_BAG_CARRY_TIME; b.maxTimer = BOSS4_BAG_CARRY_TIME; b.pk = 0; b.pkT = 0;
           state.sides[cand].boss4Carrying = b.id;
           continue;
         }
@@ -3201,9 +3208,9 @@ function tickBoss4Bags(state, dt) {
     } else {   // carried
       const s = state.sides[b.ci];
       if (!s || s.hero.dead) {
-        // Bärare död → väskan droppar som upplockbar väska igen, ny 5s-timer (svar 8C).
+        // Bärare död → väskan droppar som upplockbar väska igen, ny mark-timer (svar 8C).
         if (s) s.boss4Carrying = 0;
-        b.st = 'ground'; b.timer = BOSS4_BAG_GROUND_TIME; b.ci = 0; b.pk = 0; b.pkT = 0;
+        b.st = 'ground'; b.timer = boss4GroundTime(state); b.maxTimer = b.timer; b.ci = 0; b.pk = 0; b.pkT = 0;
         continue;
       }
       b.x = s.hero.x; b.z = s.hero.z;   // väskan följer bäraren
@@ -3212,7 +3219,7 @@ function tickBoss4Bags(state, dt) {
       s.heroSlowTime = Math.max(s.heroSlowTime || 0, 0.2);
       if (s.hero.dead) {   // dog av carry-dot denna tick → droppa väska
         s.boss4Carrying = 0;
-        b.st = 'ground'; b.timer = BOSS4_BAG_GROUND_TIME; b.ci = 0; b.pk = 0; b.pkT = 0;
+        b.st = 'ground'; b.timer = boss4GroundTime(state); b.maxTimer = b.timer; b.ci = 0; b.pk = 0; b.pkT = 0;
         continue;
       }
       b.timer -= dt;
@@ -3230,8 +3237,9 @@ function tickBoss4Pools(state, dt) {
       const dx = boss.x - p.x, dz = boss.z - p.z;
       if (dx * dx + dz * dz < BOSS4_POOL_RADIUS * BOSS4_POOL_RADIUS) { bossInPool = true; break; }
     }
-    boss.boss4DmgBuff = bossInPool ? BOSS4_BOSS_DMG_BUFF : 1;
-    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * BOSS4_BOSS_HEAL_PCT * dt);
+    const p2 = boss4IsP2(state);
+    boss.boss4DmgBuff = bossInPool ? (p2 ? BOSS4_BOSS_DMG_BUFF_P2 : BOSS4_BOSS_DMG_BUFF_P1) : 1;
+    if (bossInPool && boss.hp < boss.maxHp) boss.hp = Math.min(boss.maxHp, boss.hp + boss.maxHp * (p2 ? BOSS4_BOSS_HEAL_PCT_P2 : BOSS4_BOSS_HEAL_PCT_P1) * dt);
   }
   // Hero DOT/slow: var 0.5s. INGEN stapling — en hjälte i flera pooler tar EN tick (svar 4).
   if (!arr || arr.length === 0) return;
@@ -3426,7 +3434,7 @@ function serializeBossWarsState(state) {
   snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
   // Boss-4 (decision 132): bärar-minions, väskor (st 0=mark/1=buren, t=timer-sek, ci=bärar-idx), pooler.
   snap.b4m = arrOpt(state.boss4Minions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;
-  snap.b4b = arrOpt(state.boss4Bags, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), st: b.st === 'carried' ? 1 : 0, t: r2(b.timer), ci: b.ci || 0 })) || _ARENA_EMPTY_ARR;
+  snap.b4b = arrOpt(state.boss4Bags, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), st: b.st === 'carried' ? 1 : 0, t: r2(b.timer), tm: r2(b.maxTimer != null ? b.maxTimer : BOSS4_BAG_CARRY_TIME), ci: b.ci || 0 })) || _ARENA_EMPTY_ARR;
   snap.b4p = arrOpt(state.boss4Pools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z) })) || _ARENA_EMPTY_ARR;
   // Kill-cooldown: återstående sekunder (>0 = WIPE-risk, röd-state). Klienten visar countdown
   // i HOLD-FIRE-bannern + truthy-värdet driver ad-röd-färg (0 = falsy = säkert). Playtest #1.
