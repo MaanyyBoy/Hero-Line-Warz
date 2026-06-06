@@ -2331,6 +2331,118 @@ function endWarlordChallenge(state, boss) {
   if (w.round <= 3) w.roundSymbols = warlordMakeRoundSymbols(w.prevRoundSymbols);
 }
 
+// ===== BOSS 5 (DRAGON KING) BREAKPOINT-MEKANIK-RAMVERK (decision 135) =====
+// Combat-fas avbryts vid 80/60/40% HP av en kooperativ mekanik (boss otargetbar+immun+mitten),
+// 20% = fas 2 (buff-placeholder). Extensibelt: lägg till breakpoint-värde + en start-funktion.
+// Endast tier 5. Server-auth (MP, 3 spelare). Solo-port i main.js (1-spelar-varianter).
+const DRAGON_SYMBOLS = ['sword', 'crown', 'skull', 'eye', 'flame', 'moon'];
+const DRAGON_BREAKS = [0.80, 0.20];   // 0.60 (soul link) + 0.40 (meteor) läggs till när de byggts
+const DRAGON_MEM_REVEAL_HP = [0.95, 0.90, 0.85];   // 3 symbol-reveals under combat 100→80%
+const DRAGON_MEM_REVEAL_TIME = 1.0, DRAGON_MEM_GAP = 0.3;
+const DRAGON_MEM_TIMER = 30, DRAGON_MEM_WRONG_DMG = 0.20, DRAGON_MEM_MAX_MISTAKES = 3;
+const DRAGON_MEM_PILLAR_RADIUS = 7.0, DRAGON_MEM_STAND_RADIUS = 2.0, DRAGON_ACT_PILLAR_RADIUS = 2.2;
+const DRAGON_P2_DMG_MUL = 1.30, DRAGON_P2_DR_BONUS = 0.20;
+function dragonPickMemSymbols() {
+  const a = DRAGON_SYMBOLS.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; }
+  return a.slice(0, 3);
+}
+function dragonWipe(state) {   // raid wipe — alla 3 dör (ingen respawn i boss wars)
+  for (const idx of [1, 2, 3]) { const s = state.sides[idx]; if (s && !s.hero.dead) killHero(s); }
+}
+// Huvud-gate (anropas i tickBossWarsBoss). Returnerar true = boss immun + AI pausad denna tick.
+function tickDragonMechanics(state, dt, boss) {
+  const d = boss.dragon; if (!d) return false;
+  if (d.active) {
+    if (d.mech === 1) tickDragonMemory(state, dt, boss);
+    return true;   // mekanik pågår → boss immun (bossWarsDmgMod) + AI pausad
+  }
+  dragonTickMemoryReveals(state, dt, boss);   // visar symbolerna under combat 100→80%
+  const frac = boss.hp / boss.maxHp;
+  if (d.breakIdx < DRAGON_BREAKS.length && frac <= DRAGON_BREAKS[d.breakIdx]) {
+    const bf = DRAGON_BREAKS[d.breakIdx]; d.breakIdx++;
+    dragonStartBreak(state, boss, bf);
+    return true;
+  }
+  return false;
+}
+function dragonTickMemoryReveals(state, dt, boss) {
+  const d = boss.dragon;
+  if (d.memReveal) { d.memReveal.remaining -= dt; if (d.memReveal.remaining <= 0) { d.memReveal = null; d.memGap = DRAGON_MEM_GAP; } return; }
+  if ((d.memGap || 0) > 0) { d.memGap = Math.max(0, d.memGap - dt); return; }
+  const frac = boss.hp / boss.maxHp;
+  while (d.memRevealIdx < 3 && frac <= DRAGON_MEM_REVEAL_HP[d.memRevealIdx]) { d.memQueue.push(d.memSymbols[d.memRevealIdx]); d.memRevealIdx++; }
+  if (d.memQueue.length) d.memReveal = { shape: d.memQueue.shift(), remaining: DRAGON_MEM_REVEAL_TIME };
+}
+function dragonStartBreak(state, boss, bf) {
+  boss.hp = Math.max(boss.hp, bf * boss.maxHp);   // klamp till tröskeln (ingen burst under)
+  boss.x = BOSSWARS_CX; boss.z = BOSSWARS_CZ;       // teleport mitten
+  boss.activeCast = null;
+  if (state.bossProjectiles) state.bossProjectiles.length = 0;
+  if (state.bossPools) state.bossPools.length = 0;
+  if (bf === 0.80) startDragonMemory(state, boss);
+  else if (bf === 0.20) dragonEnterPhase2(state, boss);
+}
+// --- MEKANIK 1: MEMORY TRIAL ---
+function startDragonMemory(state, boss) {
+  const d = boss.dragon;
+  d.active = true; d.mech = 1;
+  d.memStep = 0; d.memMistakes = 0; d.memTimer = DRAGON_MEM_TIMER; d.memReveal = null;
+  d.memPillars = DRAGON_SYMBOLS.map((sym, i) => {
+    const ang = (i / DRAGON_SYMBOLS.length) * Math.PI * 2 - Math.PI / 2;
+    return { sym, x: BOSSWARS_CX + Math.cos(ang) * DRAGON_MEM_PILLAR_RADIUS, z: BOSSWARS_CZ + Math.sin(ang) * DRAGON_MEM_PILLAR_RADIUS };
+  });
+  d.actPillar = { x: BOSSWARS_CX, z: BOSSWARS_CZ };   // aktiverings-pelare i mitten
+  d.msg = 'Remember what was shown.';
+}
+function tickDragonMemory(state, dt, boss) {
+  const d = boss.dragon;
+  if ((d.memActLock || 0) > 0) d.memActLock = Math.max(0, d.memActLock - dt);   // debounce-timer
+  d.memTimer -= dt;
+  if (d.memTimer <= 0) { d.active = false; dragonWipe(state); }
+}
+// Aktiveringsknapp tryckt (MP: aktivator vid mitten-pelaren + ≥2 spelare i rätt symbol).
+function dragonMemActivate(state, sideIdx) {
+  const boss = state.boss, d = boss && boss.dragon;
+  if (!d || !d.active || d.mech !== 1) return;
+  if ((d.memActLock || 0) > 0) return;   // debounce: hindra knapp-spam → burst-missar på en tick
+  const actor = state.sides[sideIdx];
+  if (!actor || actor.hero.dead) return;
+  if (Math.hypot(actor.hero.x - d.actPillar.x, actor.hero.z - d.actPillar.z) > DRAGON_ACT_PILLAR_RADIUS) return;
+  d.memActLock = 0.5;
+  const wp = d.memPillars.find(p => p.sym === d.memSymbols[d.memStep]);
+  let count = 0;
+  for (const idx of [1, 2, 3]) {
+    if (idx === sideIdx) continue;
+    const s = state.sides[idx];
+    if (!s || s.hero.dead || !wp) continue;
+    if (Math.hypot(s.hero.x - wp.x, s.hero.z - wp.z) <= DRAGON_MEM_STAND_RADIUS) count++;
+  }
+  if (count >= 2) { d.memStep++; if (d.memStep >= 3) dragonMemSuccess(state, boss); }
+  else dragonMemMistake(state, boss);
+}
+function dragonMemMistake(state, boss) {
+  const d = boss.dragon;
+  d.memMistakes++;
+  for (const idx of [1, 2, 3]) { const s = state.sides[idx]; if (s && !s.hero.dead) damageHero(s, s.hero.maxHp * DRAGON_MEM_WRONG_DMG); }
+  if (d.memMistakes >= DRAGON_MEM_MAX_MISTAKES) { d.active = false; dragonWipe(state); }
+}
+function dragonMemSuccess(state, boss) {
+  const d = boss.dragon;
+  d.active = false; d.mech = 0; d.memPillars = []; d.msg = '';
+}
+// --- FAS 2 (20%): placeholder-buff. Extensibelt — framtida mekanik kan ersätta/utöka. ---
+function dragonEnterPhase2(state, boss) {
+  const d = boss.dragon;
+  if (boss.bossPhase !== 2) {
+    boss.bossPhase = 2;
+    boss.damage = Math.round(boss.damage * DRAGON_P2_DMG_MUL);   // +30% skada
+    boss.phase2DrBonus = DRAGON_P2_DR_BONUS;                      // +20% DR
+    if (boss.phase2Skills) { boss.bossSkills = boss.phase2Skills; boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4); }
+  }
+  d.active = false; d.mech = 0; d.msg = '';   // ingen mekanik än — combat fortsätter med buff
+}
+
 function createBossWarsState(tier) {
   const t = Math.max(1, Math.min(5, tier || 1));
   const sides = { 1: createSide(1), 2: createSide(2), 3: createSide(3) };
@@ -2399,6 +2511,15 @@ function createBossWarsState(tier) {
       engaged: false, challengeActive: false, challengeRound: 0,
       groundSymbols: [],
       pulseIdx: 0, pulseTimer: 0, pulseInterval: WARLORD_PULSE_INTERVAL_P1, pulseCounter: 0,
+    };
+  }
+  // Boss 5 (Dragon King): breakpoint-mekanik-state. Endast tier 5 (decision 135).
+  if (t === 5) {
+    boss.dragon = {
+      breakIdx: 0, active: false, mech: 0,
+      memSymbols: dragonPickMemSymbols(), memRevealIdx: 0, memReveal: null, memQueue: [], memGap: 0,
+      memPillars: [], actPillar: { x: BOSSWARS_CX, z: BOSSWARS_CZ }, memStep: 0, memMistakes: 0, memTimer: 0,
+      msg: '',
     };
   }
   sides[1].monsters.push(boss);
@@ -2776,6 +2897,7 @@ function tickBossWarsSkills(state, boss, dt) {
 function bossWarsDmgMod(m, dmg) {
   if (!m || !m.isBossWarsBoss) return dmg;
   if (m.warlord && m.warlord.engaged) return 0;          // immun hela symbol-fasen (boss 3): full reveal → pulser klart
+  if (m.dragon && m.dragon.active) return 0;             // immun under boss 5-mekanik (decision 135)
   if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
   // DR = base + step per intervall (decision 110) över aktiv tid, cap. Annars stallar långa fights.
   const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
@@ -2831,7 +2953,9 @@ function tickBossWarsBoss(state, dt) {
   }
   // Boss 3 (Warlord): symbol-mekanik äger sin egen fas-2 (vid 50%-challengen). Returnerar true
   // = boss immun + AI pausad (reveal/challenge/puls). Gate:ar den generiska fly-up-övergången.
-  if (boss.warlord) {
+  if (boss.dragon) {
+    if (tickDragonMechanics(state, dt, boss)) return;   // boss 5: breakpoint-mekaniker (gate:ar generisk fas)
+  } else if (boss.warlord) {
     if (tickWarlordChallenge(state, dt, boss)) return;
   } else if (boss.bossPhase === 1 && boss.phase2Skills && boss.hp <= boss.maxHp * (boss.phaseThreshold || 0.5)) {
     // Fas-övergång: trigga vid phaseThreshold; under flyup (2.5s) ingen AI (boss immun via bossWarsDmgMod).
@@ -3548,6 +3672,19 @@ function serializeBossWarsState(state) {
       o.wl = wb;
     } else {
       o.wl = undefined;
+    }
+    // Dragon King (boss 5): mekanik-render (reveal-symbol + memory-pelare/aktiverings-pelare). Tier 5.
+    if (boss.dragon) {
+      const d = boss.dragon;
+      const dg = { m: d.active ? d.mech : 0, rv: d.memReveal ? d.memReveal.shape : null, msg: d.msg || '', ph: boss.bossPhase || 1 };
+      if (d.active && d.mech === 1) {
+        dg.mp = d.memPillars.map(p => ({ s: p.sym, x: r2(p.x), z: r2(p.z) }));
+        dg.ap = { x: r2(d.actPillar.x), z: r2(d.actPillar.z) };
+        dg.st = d.memStep; dg.mis = d.memMistakes; dg.t = r2(d.memTimer);
+      }
+      o.dg = dg;
+    } else {
+      o.dg = undefined;
     }
     snap.b = o;
   } else {
@@ -7211,6 +7348,10 @@ function applyEvent(state, sideIdx, ev) {
   if (ev.type === 'hero-confirm') {
     if (state.phase !== 'pick') return;
     side.heroPickConfirmed = true;
+    return;
+  }
+  if (ev.type === 'dragon-activate') {   // boss 5 Memory Trial: aktivera nästa symbol (decision 135)
+    dragonMemActivate(state, sideIdx);
     return;
   }
   if (ev.type === 'portal') {

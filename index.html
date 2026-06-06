@@ -464,6 +464,26 @@
     .skill.legolas-charges.charge-partial .cd-mask { opacity: 0.4; }
     .skill.legolas-charges.charge-partial { border-color: #7fd0ff; }
     .skill.legolas-charges .sk-level { color: #9fe0ff; font-weight: 800; }
+    /* Boss 5 (Dragon King) Memory Trial HUD (decision 135) */
+    #dragon-banner {
+      position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+      z-index: 360; display: none; text-align: center; pointer-events: none;
+      background: linear-gradient(180deg, rgba(40,20,60,0.92), rgba(20,10,35,0.92));
+      border: 1px solid rgba(180,130,255,0.6); border-radius: 12px; padding: 8px 18px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.55); max-width: 90vw;
+    }
+    #dragon-banner.visible { display: block; }
+    #dragon-banner .dg-msg { color: #e9d7ff; font: 800 17px/1.2 system-ui, sans-serif; letter-spacing: 0.5px; }
+    #dragon-banner .dg-sub { color: #b79ce0; font: 700 13px/1.3 system-ui, sans-serif; margin-top: 3px; }
+    #dragon-activate-btn {
+      position: fixed; left: 50%; bottom: calc(120px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+      z-index: 360; display: none; padding: 16px 30px; border-radius: 16px;
+      background: linear-gradient(180deg, #ffcf52, #e89b18); color: #2a1a00;
+      border: 2px solid #fff2c2; font: 900 20px/1 system-ui, sans-serif; letter-spacing: 1px;
+      box-shadow: 0 0 22px rgba(255,180,60,0.9), 0 4px 14px rgba(0,0,0,0.55);
+      animation: ult-ready-pulse 1.1s ease-in-out infinite; cursor: pointer;
+    }
+    #dragon-activate-btn.visible { display: block; }
 
     /* Skill-arc — placerade kring AA på radie ~118px från AA-mitten (47.5,47.5).
        Q rakt ovanför AA (90°), F upp-vänster (135°), E rakt vänster (180°). */
@@ -4411,6 +4431,9 @@
       <div id="skill-cancel" aria-hidden="true">✕</div>
       <button id="aa-btn" data-key="aa" aria-label="Auto attack">ATK</button>
     </div>
+    <!-- Boss 5 (Dragon King) Memory Trial: meddelande-banner + aktiverings-knapp (decision 135) -->
+    <div id="dragon-banner"></div>
+    <button id="dragon-activate-btn" aria-label="Activate symbol">ACTIVATE</button>
     <button id="stats-toggle" class="hidden" aria-label="Spend skill points">
       <span class="pts">0</span>
       <span class="lbl">PTS</span>

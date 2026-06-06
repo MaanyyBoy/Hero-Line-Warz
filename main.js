@@ -8156,6 +8156,18 @@ function spawnBossWarsBoss(side, tier) {
       pulseIdx: 0, pulseTimer: 0, pulseInterval: WARLORD_PULSE_INTERVAL_P1, pulseCounter: 0,
     };
   }
+  // Boss 5 (Dragon King): breakpoint-mekanik-state (solo client-sim). MP får motsvarande via dg-snap.
+  if (tier === 5) {
+    const _db = side.monsters[side.monsters.length - 1];
+    const _shuf = DRAGON_SYMBOLS_C.slice();
+    for (let i = _shuf.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = _shuf[i]; _shuf[i] = _shuf[j]; _shuf[j] = t; }
+    _db._dragon = {
+      breakIdx: 0, active: false, mech: 0,
+      memSymbols: _shuf.slice(0, 3), memRevealIdx: 0, memReveal: null, memQueue: [], memGap: 0,
+      memPillars: [], actPillar: { x: BOSSWARS_CX, z: BOSSWARS_CZ }, memStep: 0, memMistakes: 0, memTimer: 0,
+      msg: '',
+    };
+  }
   // Boss 4 (decision 132): nollställ solo-spawn-schemat per match (modul-global persisterar annars).
   boss4SpawnStateSolo.active = false; boss4SpawnStateSolo.countdown = 0;
 }
@@ -11432,6 +11444,12 @@ function updateMonsters(side, dt) {
       updateWarlordSoloVisuals(m);
       if (_wlBusy) continue;
     }
+    // Boss 5 (Dragon King) breakpoint-mekanik (solo) — som Warlord: returnerar true = immun + AI pausad.
+    if (m.isBossWarsBoss && m._dragon) {
+      const _dgBusy = tickDragonClient(m, dt);
+      updateDragonSoloVisuals(m);
+      if (_dgBusy) continue;
+    }
     // Frusen: hoppa över movement + attack + boss-skills
     if ((m.frozenTime || 0) > 0) {
       m.frozenTime -= dt;
@@ -11445,8 +11463,8 @@ function updateMonsters(side, dt) {
     if ((m.tauntedTime || 0) > 0) { m.tauntedTime -= dt; m.chasing = true; }
     // Boss Wars phase-transition — bossar UTAN warlord (tier 1-2,4-5). Tier 3 (warlord) äger sin
     // egen fas-2 (vid 50%-challenge), hanterad FÖRE frozen/fear-checkarna ovan.
-    if (m.isBossWarsBoss && !m.warlord && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * (m.phaseThreshold || 0.5)) {
-      triggerBossPhaseTransition(side, m);
+    if (m.isBossWarsBoss && !m.warlord && !m._dragon && m.bossPhase === 1 && m.phase2Skills && m.hp <= m.maxHp * (m.phaseThreshold || 0.5)) {
+      triggerBossPhaseTransition(side, m);   // boss 5 (_dragon) gate:ar denna — fas 2 sker vid 20% i tickDragonClient
     }
     if ((m.phaseTransitionRemaining || 0) > 0) {
       m.phaseTransitionRemaining = Math.max(0, m.phaseTransitionRemaining - dt);
@@ -13449,6 +13467,7 @@ function damageMonster(m, rawDmg) {
   // ingen HP-förlust, ingen död. (Punkt-checkar på 13037/13211 visar "IMMUNE"-
   // text på direkthits; vi spammar INTE text per DoT-tick härifrån.)
   if (m.isBossWarsBoss && m.warlord && m.warlord.engaged) return 0;   // immun hela symbol-fasen (boss 3): full reveal → pulser klart
+  if (m.isBossWarsBoss && m._dragon && m._dragon.active) return 0;     // immun under boss 5-mekanik (decision 135)
   if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
   let dmg = rawDmg * (1 - dr);
@@ -13529,7 +13548,7 @@ function hostKillMonster(side, idx, byPlayerSide) {
   // effekter (de triggas separat i updateBossWarsMinions ABSORPTION-grenen,
   // INTE i despawnBossWarsMinion). Bossen själv är redan disposad och spliced
   // från side.monsters ovan, så denna loop går bara över minions.
-  if (m.isBossWarsBoss) { clearAllBossWarsMinions(); clearAllBoss2Ads(); }
+  if (m.isBossWarsBoss) { clearAllBossWarsMinions(); clearAllBoss2Ads(); clearAllDragonVisuals(); }
 }
 
 function minionBounty(creep) {
@@ -17234,6 +17253,7 @@ const clientMeshes = {
   kostefoSliders: new Map(),
   kostefoGooseWaves: new Map(),
   warlordSymbols: new Map(),   // boss 3 mark-symboler + puls-ring + reveal-symbol
+  dragon: new Map(),           // boss 5 memory-pelare + reveal-symbol + aktiverings-pelare (decision 135)
 };
 
 // Entiteter där interpolation gör störst nytta (karaktärer) — snabbflygande projektiler snappar.
@@ -23573,6 +23593,14 @@ if (aaBtnEl) {
   window.addEventListener('blur', () => { if (APP._aaShowRange) aaRelease(); });
 }
 
+// Boss 5 (Dragon King) Memory Trial: aktiverings-knapp (decision 135).
+const dragonActivateBtnEl = document.getElementById('dragon-activate-btn');
+if (dragonActivateBtnEl) {
+  const _dgPress = (e) => { e.preventDefault(); e.stopPropagation(); dragonActivatePressed(); };
+  dragonActivateBtnEl.addEventListener('touchstart', _dgPress, { passive: false });
+  dragonActivateBtnEl.addEventListener('mousedown', _dgPress);
+}
+
 // ---- Shop (lokal UI-state + populate + refresh) ----
 
 const shopContainerEl = document.getElementById('shop-container');
@@ -25450,6 +25478,232 @@ function updateWarlordVisuals(boss, wl) {
   }
 }
 
+// ============================================================
+// BOSS 5 (DRAGON KING) — Mekanik-rendering + solo-sim (decision 135)
+// MP: server-auth (boss.dragon i game-engine.js, serialiserat dg). Solo: client-sim nedan.
+// ============================================================
+const DRAGON_SYMBOLS_C = ['sword', 'crown', 'skull', 'eye', 'flame', 'moon'];
+const DRAGON_SYM_EMOJI = { sword: '⚔️', crown: '👑', skull: '💀', eye: '👁️', flame: '🔥', moon: '🌙' };
+const DRAGON_BREAKS_C = [0.80, 0.20];
+const DRAGON_MEM_REVEAL_HP_C = [0.95, 0.90, 0.85];
+const DRAGON_MEM_REVEAL_TIME_C = 1.0, DRAGON_MEM_GAP_C = 0.3;
+const DRAGON_MEM_TIMER_C = 30, DRAGON_MEM_WRONG_DMG_C = 0.20, DRAGON_MEM_MAX_MISTAKES_C = 3;
+const DRAGON_MEM_PILLAR_RADIUS_C = 7.0, DRAGON_MEM_STAND_RADIUS_C = 2.0, DRAGON_ACT_PILLAR_RADIUS_C = 2.2;
+const DRAGON_P2_DMG_MUL_C = 1.30, DRAGON_P2_DR_BONUS_C = 0.20;
+const _dragonEmojiTexCache = {};
+function dragonEmojiTexture(sym) {
+  if (_dragonEmojiTexCache[sym]) return _dragonEmojiTexCache[sym];
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const ctx = cv.getContext('2d');
+  ctx.font = '96px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(DRAGON_SYM_EMOJI[sym] || '?', 64, 70);
+  const tex = new THREE.CanvasTexture(cv); tex.needsUpdate = true;
+  _dragonEmojiTexCache[sym] = tex; return tex;
+}
+function makeDragonSymbolSprite(sym, scale) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: dragonEmojiTexture(sym), transparent: true, depthTest: false }));
+  sp.scale.set(scale || 2.2, scale || 2.2, 1);
+  return sp;
+}
+function makeDragonPillarMesh(sym) {
+  const g = new THREE.Group();
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 3.0, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a2a55, emissive: 0x221133, emissiveIntensity: 0.6, roughness: 0.6 }));
+  col.position.y = 1.5; g.add(col);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(DRAGON_MEM_STAND_RADIUS_C * 0.75, DRAGON_MEM_STAND_RADIUS_C, 28),
+    new THREE.MeshBasicMaterial({ color: 0x9b6bff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; ring.userData.isDragonRing = true; g.add(ring);
+  const sp = makeDragonSymbolSprite(sym, 1.8); sp.position.y = 3.7; g.add(sp);
+  g.userData.sym = sym;
+  return g;
+}
+function makeDragonActPillarMesh() {
+  const g = new THREE.Group();
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.85, 2.2, 6),
+    new THREE.MeshStandardMaterial({ color: 0xffcc44, emissive: 0xaa7711, emissiveIntensity: 0.85, roughness: 0.5 }));
+  col.position.y = 1.1; g.add(col);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(DRAGON_ACT_PILLAR_RADIUS_C * 0.75, DRAGON_ACT_PILLAR_RADIUS_C, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06; g.add(ring);
+  return g;
+}
+function _dragonDispose(o) {
+  o.traverse(c => {
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) { if (Array.isArray(c.material)) c.material.forEach(m => m && m.dispose()); else c.material.dispose(); }
+    // delade emoji-texturer disposas EJ (cache:ade i _dragonEmojiTexCache)
+  });
+}
+// Render från dg-snap (MP) eller solo-dg (byggd i updateDragonSoloVisuals).
+function updateDragonVisuals(boss, dg) {
+  if (!clientMeshes.dragon.has(1)) clientMeshes.dragon.set(1, new Map());
+  const map = clientMeshes.dragon.get(1);
+  const seen = new Set();
+  const floorY = BOSSWARS_FLOOR_Y;
+  const bx = boss && boss.mesh ? boss.mesh.position.x : BOSSWARS_CX;
+  const bz = boss && boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
+  const by = boss && boss.mesh ? boss.mesh.position.y : floorY;
+  if (dg) {
+    if (dg.rv) {   // reveal-symbol över bossen (combat 100→80%)
+      seen.add('_reveal');
+      let rm = map.get('_reveal');
+      if (!rm || rm.userData.sym !== dg.rv) { if (rm) { scene.remove(rm); _dragonDispose(rm); } rm = makeDragonSymbolSprite(dg.rv, 2.8); rm.userData.sym = dg.rv; scene.add(rm); map.set('_reveal', rm); }
+      rm.position.set(bx, by + 5.5, bz);
+    }
+    if (dg.m === 1 && dg.mp) {   // Memory Trial: symbol-pelare + aktiverings-pelare
+      for (const p of dg.mp) {
+        const id = 'p_' + p.s; seen.add(id);
+        let pm = map.get(id);
+        if (!pm) { pm = makeDragonPillarMesh(p.s); scene.add(pm); map.set(id, pm); }
+        pm.position.set(p.x, floorY, p.z);
+        // glow om en spelare står i pelaren
+        let occ = false;
+        for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s && s.mesh && !(s.hero && s.hero.dead)) { const dx = s.mesh.position.x - p.x, dz = s.mesh.position.z - p.z; if (dx * dx + dz * dz <= DRAGON_MEM_STAND_RADIUS_C * DRAGON_MEM_STAND_RADIUS_C) { occ = true; break; } } }
+        pm.traverse(o => { if (o.userData && o.userData.isDragonRing && o.material) o.material.opacity = occ ? 0.8 : 0.4; });
+      }
+      if (dg.ap) {
+        seen.add('_act');
+        let am = map.get('_act');
+        if (!am) { am = makeDragonActPillarMesh(); scene.add(am); map.set('_act', am); }
+        am.position.set(dg.ap.x, floorY, dg.ap.z);
+      }
+    }
+    dragonUpdateBanner(dg);
+  } else {
+    dragonUpdateBanner(null);
+  }
+  for (const [id, mesh] of map) { if (!seen.has(id)) { scene.remove(mesh); _dragonDispose(mesh); map.delete(id); } }
+}
+// HUD-banner (boss-meddelande + symbol-steg + missar + timer).
+function dragonUpdateBanner(dg) {
+  const el = document.getElementById('dragon-banner');
+  if (!el) return;
+  if (!dg || (!dg.msg && dg.m !== 1)) { el.classList.remove('visible'); return; }
+  if (dg.m === 1) {
+    const step = (dg.st || 0) + 1;
+    el.innerHTML = `<div class="dg-msg">${dg.msg || 'Remember what was shown.'}</div>`
+      + `<div class="dg-sub">Symbol ${Math.min(step, 3)}/3 &nbsp;·&nbsp; Mistakes ${dg.mis || 0}/${DRAGON_MEM_MAX_MISTAKES_C} &nbsp;·&nbsp; ${Math.ceil(dg.t || 0)}s</div>`;
+    el.classList.add('visible');
+  } else if (dg.msg) {
+    el.innerHTML = `<div class="dg-msg">${dg.msg}</div>`;
+    el.classList.add('visible');
+  } else { el.classList.remove('visible'); }
+}
+
+// ---- SOLO-SIM (1 spelare; 1-spelar-varianter) ----
+function tickDragonClient(boss, dt) {
+  const d = boss._dragon; if (!d) return false;
+  if (d.active) {
+    if (d.mech === 1) {
+      if ((d.memActLock || 0) > 0) d.memActLock = Math.max(0, d.memActLock - dt);   // debounce-timer
+      d.memTimer -= dt;
+      if (d.memTimer <= 0) { d.active = false; dragonClientWipe(); }
+    }
+    return true;   // boss immun (damageMonster läser _dragon.active) + AI pausad
+  }
+  // combat: reveal symbols 100→80%
+  if (d.memReveal) { d.memReveal.remaining -= dt; if (d.memReveal.remaining <= 0) { d.memReveal = null; d.memGap = DRAGON_MEM_GAP_C; } }
+  else if ((d.memGap || 0) > 0) { d.memGap = Math.max(0, d.memGap - dt); }
+  else {
+    const frac = boss.hp / boss.maxHp;
+    while (d.memRevealIdx < 3 && frac <= DRAGON_MEM_REVEAL_HP_C[d.memRevealIdx]) { d.memQueue.push(d.memSymbols[d.memRevealIdx]); d.memRevealIdx++; }
+    if (d.memQueue.length) d.memReveal = { shape: d.memQueue.shift(), remaining: DRAGON_MEM_REVEAL_TIME_C };
+  }
+  const frac = boss.hp / boss.maxHp;
+  if (d.breakIdx < DRAGON_BREAKS_C.length && frac <= DRAGON_BREAKS_C[d.breakIdx]) {
+    const bf = DRAGON_BREAKS_C[d.breakIdx]; d.breakIdx++;
+    dragonClientStartBreak(boss, bf);
+    return true;
+  }
+  return false;
+}
+function dragonClientStartBreak(boss, bf) {
+  const d = boss._dragon;
+  boss.hp = Math.max(boss.hp, bf * boss.maxHp);
+  if (boss.mesh) { boss.x = BOSSWARS_CX; boss.z = BOSSWARS_CZ; boss.mesh.position.x = BOSSWARS_CX; boss.mesh.position.z = BOSSWARS_CZ; }
+  boss.activeCast = null;
+  if (bf === 0.80) {
+    d.active = true; d.mech = 1; d.memStep = 0; d.memMistakes = 0; d.memTimer = DRAGON_MEM_TIMER_C; d.memReveal = null;
+    d.memPillars = DRAGON_SYMBOLS_C.map((sym, i) => { const ang = (i / DRAGON_SYMBOLS_C.length) * Math.PI * 2 - Math.PI / 2; return { sym, x: BOSSWARS_CX + Math.cos(ang) * DRAGON_MEM_PILLAR_RADIUS_C, z: BOSSWARS_CZ + Math.sin(ang) * DRAGON_MEM_PILLAR_RADIUS_C }; });
+    d.actPillar = { x: BOSSWARS_CX, z: BOSSWARS_CZ };
+    d.msg = 'Remember what was shown.';
+  } else if (bf === 0.20) {
+    if (boss.bossPhase !== 2) {
+      boss.bossPhase = 2;
+      boss.damage = Math.round((boss.damage || 0) * DRAGON_P2_DMG_MUL_C);
+      boss.phase2DrBonus = DRAGON_P2_DR_BONUS_C;
+      if (boss.phase2Skills) { boss.bossSkills = boss.phase2Skills; boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4); }
+      _showBossPhaseBanner(boss.bossName);
+    }
+    d.active = false; d.mech = 0; d.msg = '';
+  }
+}
+// Solo aktivering: spelaren står i en symbol-pelare + trycker → den pelarens symbol aktiveras.
+function dragonSoloActivate() {
+  const boss = sides[1] && sides[1].monsters ? sides[1].monsters.find(x => x.isBossWarsBoss) : null;
+  const d = boss && boss._dragon;
+  if (!d || !d.active || d.mech !== 1) return;
+  if ((d.memActLock || 0) > 0) return;   // debounce
+  const me = sides[APP.localSide];
+  if (!me || !me.hero || me.hero.dead) return;
+  let on = null;
+  for (const p of d.memPillars) { if (Math.hypot(me.hero.x - p.x, me.hero.z - p.z) <= DRAGON_MEM_STAND_RADIUS_C) { on = p; break; } }
+  if (!on) return;
+  d.memActLock = 0.5;
+  if (on.sym === d.memSymbols[d.memStep]) {
+    d.memStep++;
+    if (d.memStep >= 3) { d.active = false; d.mech = 0; d.memPillars = []; d.msg = ''; }
+  } else {
+    d.memMistakes++;
+    for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s && s.hero && !s.hero.dead) damageHero(s, s.hero.maxHp * DRAGON_MEM_WRONG_DMG_C); }
+    if (d.memMistakes >= DRAGON_MEM_MAX_MISTAKES_C) { d.active = false; dragonClientWipe(); }
+  }
+}
+function dragonClientWipe() {
+  for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s && s.hero && !s.hero.dead) killHero(s); }
+}
+// Bygg dg-objekt från solo-state och rendera (samma path som MP).
+const _dragonSoloDg = { m: 0, rv: null, msg: '', ph: 1, mp: null, ap: null, st: 0, mis: 0, t: 0 };
+function updateDragonSoloVisuals(boss) {
+  const d = boss._dragon; if (!d) return;
+  _dragonSoloDg.m = d.active ? d.mech : 0;
+  _dragonSoloDg.rv = d.memReveal ? d.memReveal.shape : null;
+  _dragonSoloDg.msg = d.msg || '';
+  if (d.active && d.mech === 1) {
+    _dragonSoloDg.mp = d.memPillars; _dragonSoloDg.ap = d.actPillar;
+    _dragonSoloDg.st = d.memStep; _dragonSoloDg.mis = d.memMistakes; _dragonSoloDg.t = d.memTimer;
+  } else { _dragonSoloDg.mp = null; _dragonSoloDg.ap = null; }
+  updateDragonVisuals(boss, _dragonSoloDg);
+}
+// Aktiverings-knapp: visa när lokal spelare kan aktivera (solo: i symbol-pelare; MP: vid aktiverings-pelaren).
+function updateDragonActivateButton() {
+  const btn = document.getElementById('dragon-activate-btn');
+  if (!btn) return;
+  let show = false;
+  const me = sides[APP.localSide];
+  const boss = sides[1] && sides[1].monsters ? sides[1].monsters.find(x => x.isBossWarsBoss) : null;
+  if (boss && me && me.hero && !me.hero.dead && APP.gameMode === 'bosswars') {
+    const solo = !bossActsAsClient();
+    if (solo && boss._dragon && boss._dragon.active && boss._dragon.mech === 1) {
+      for (const p of boss._dragon.memPillars) { if (Math.hypot(me.hero.x - p.x, me.hero.z - p.z) <= DRAGON_MEM_STAND_RADIUS_C) { show = true; break; } }
+    } else if (!solo && boss._dg && boss._dg.m === 1 && boss._dg.ap) {
+      if (Math.hypot(me.hero.x - boss._dg.ap.x, me.hero.z - boss._dg.ap.z) <= DRAGON_ACT_PILLAR_RADIUS_C) show = true;
+    }
+  }
+  btn.classList.toggle('visible', show);
+}
+function dragonActivatePressed() {
+  if (APP.gameMode !== 'bosswars') return;
+  if (!bossActsAsClient()) dragonSoloActivate();           // solo: lokal
+  else sendOrApplyEvent({ type: 'dragon-activate' });      // MP: server-auth
+}
+function clearAllDragonVisuals() {
+  const map = clientMeshes.dragon && clientMeshes.dragon.get(1);
+  if (map) { for (const mesh of map.values()) { scene.remove(mesh); _dragonDispose(mesh); } map.clear(); }
+  const ban = document.getElementById('dragon-banner'); if (ban) ban.classList.remove('visible');
+  const btn = document.getElementById('dragon-activate-btn'); if (btn) btn.classList.remove('visible');
+}
+
 function applyBossWarsState(msg) {
   // Klienter OCH server-auth-host applicerar serverns state; host-auth-host kör egen sim.
   if (!bossActsAsClient()) return;
@@ -25656,6 +25910,9 @@ function applyBossWarsState(msg) {
       // Warlord (boss 3) symbol-mekanik-visuals. wl serialiseras varje tick för tier 3.
       if (msg.b.wl) { boss._wl = msg.b.wl; updateWarlordVisuals(boss, msg.b.wl); }
       else if (boss._wl) { boss._wl = null; updateWarlordVisuals(boss, null); }   // cleanup vid match-slut/byte
+      // Dragon King (boss 5) mekanik-visuals. dg serialiseras varje tick för tier 5.
+      if (msg.b.dg) { boss._dg = msg.b.dg; updateDragonVisuals(boss, msg.b.dg); }
+      else if (boss._dg) { boss._dg = null; updateDragonVisuals(boss, null); }
     }
   }
 }
@@ -29171,6 +29428,7 @@ function enterPlayPhase() {
     // state så eskaleringen inte bär över. enterPlayPhase är ENDA väg in.
     clearAllBossWarsMinions();
     clearAllBoss2Ads();
+    clearAllDragonVisuals();   // boss 5: rensa stale mekanik-visualer/banner/knapp per match (decision 135)
     resetBoss2KillCooldown();   // LAGER 3: fresh global kylning per match (single-entry)
     resetBoss2AdWaveTimer();    // LAGER 2 (omarbetad): fresh våg-dödstimer per match
     resetBoss2AdWaveSpawnState(); // AUTO-VÅGSYSTEM: fresh spawn-schema per match
@@ -29387,7 +29645,7 @@ function returnToLobby() {
     'monsterProjectiles', 'bossProjectiles', 'bossPools', 'bossWarsMinions', 'boss2Ads',
     'aragurnBanners', 'heroCopyFireballs', 'fireWaves', 'blackHoles', 'shatters',
     'vineTraps', 'hammers', 'ironWillExplosions', 'thornPools', 'kostefoSliders', 'kostefoGooseWaves',
-    'warlordSymbols', 'boss4Minions', 'boss4Bags', 'boss4Pools',
+    'warlordSymbols', 'boss4Minions', 'boss4Bags', 'boss4Pools', 'dragon',
   ]);
   for (const key of Object.keys(clientMeshes)) {
     if (!clientMeshes[key]) continue;
@@ -29410,6 +29668,7 @@ function returnToLobby() {
   _netPending.classic = _netPending.arena = _netPending.boss = null;
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
+  clearAllDragonVisuals();   // boss 5: dölj ev. kvarvarande banner/aktiverings-knapp (decision 135)
   document.body.classList.remove('arena-mode');
   document.body.classList.remove('bosswars-mode');
   document.body.classList.remove('bw-fighting');
@@ -32592,6 +32851,7 @@ function tick() {
   checkWaveBanner();
   checkIncomeTickNotifications();
   updateSkillButtonStyles();
+  if (APP.gameMode === 'bosswars') updateDragonActivateButton();   // boss 5 Memory Trial aktiverings-knapp
   updateAimIndicators();
   updateTargetIndicator();
   updateAaRangeIndicator();
