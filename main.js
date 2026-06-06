@@ -13888,7 +13888,7 @@ function updateHeroAttack(side, dt) {
   // Berserk: 25% lifesteal på AA. Stackar additivt med dash-buff (annars dash overrider).
   const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
   const aaLifesteal = dashBuffed ? dashLs : berserkLs;
-  // Shadow Volley empowered AA: dmg = 25% target's maxHp + stun + thorn pool vid hit.
+  // Shadow Volley empowered AA: dmg = 20% target's maxHp (nerf) + stun + thorn pool vid hit.
   // Revealar Nyro direkt vid spawn av pilen.
   const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
   if (ultAaNow) {
@@ -21469,7 +21469,7 @@ const LEGOLUS_ULT_BUFF_DURATION = 5.0;
 const LEGOLUS_ULT_AS_BONUS = 0.30;
 
 // Shadow Volley cast: invis 5s + +20% movespeed + empowered next-AA pending.
-// Pilen är vanlig AA-projektil men dmg=25%maxHp, stun nearby, lämnar thorn pool.
+// Pilen är vanlig AA-projektil men dmg=20%maxHp (nerf), stun nearby, lämnar thorn pool.
 function hostCastLegolasUlt(side, dx, dz) {
   if (side.hero.dead) return;
   side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
@@ -26902,7 +26902,7 @@ const HERO_INFO = {
       e: { name: 'Shadow Dash', icon: '💨', desc: 'Quick dash forward (4 m). 6s cooldown. The next auto-attack is a guaranteed crit + 20% lifesteal. If the buffed AA kills the enemy, the dash cooldown resets so you can chain.' },
     },
     passive: { name: 'Toxic Volley', icon: '☣', desc: 'Every 3rd auto-attack splits: main target + the 2 nearest extra enemies within 6 m. All 3 hits apply a poison stack that ticks damage for 4 seconds. Stacks refresh duration. Damage per second = 5 × stacks × (1 + 10% × (stacks − 1)), so each stack does 10% more damage than the previous.' },
-    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Nyro becomes invisible to all enemies and opponents for 5 seconds, gains +20% movement speed and his next auto-attack becomes empowered: double range, deals 25% of the target\'s max HP as direct damage, stuns the target + all enemies within 2.5 m for 1.5 seconds and leaves a thorn pool under the target that ticks 5% of max HP in AoE damage every 0.5 seconds for 3 seconds (total 30% maxHP). Nyro reveals as soon as he fires the arrow or after 5 seconds. Skill damage that hits him during invis deals damage but does NOT reveal his position.' },
+    ult: { name: 'Shadow Volley', icon: '🌑', desc: 'Nyro becomes invisible to all enemies and opponents for 5 seconds, gains +20% movement speed and his next auto-attack becomes empowered: double range, deals 20% of the target\'s max HP as direct damage, stuns the target + all enemies within 2.5 m for 1.5 seconds and leaves a thorn pool under the target that ticks 4% of max HP in AoE damage every 0.5 seconds for 3 seconds (total 24% maxHP). Nyro reveals as soon as he fires the arrow or after 5 seconds. Skill damage that hits him during invis deals damage but does NOT reveal his position.' },
   },
   gimlu: {
     skills: {
