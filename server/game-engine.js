@@ -5260,8 +5260,9 @@ function updateProjectiles(state, side, opp, dt) {
       }
       // Ult-energy gain per AA-hit (3%)
       if (aaDmgDealt > 0) gainUltEnergy(side, ULT_GAIN_AA_HIT);
-      // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill
-      if (p.lifestealRatio > 0 && !side.hero.dead) {
+      // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill.
+      // Gate på aaDmgDealt > 0 → ingen heal mot immun boss (warlord/dragon-mekanik) — annars farm-exploit.
+      if (p.lifestealRatio > 0 && aaDmgDealt > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
       }
       if (p.legolusBuffed && killedTarget) {

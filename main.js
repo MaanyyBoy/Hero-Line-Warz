@@ -14079,7 +14079,7 @@ function updateProjectiles(side, dt) {
       // är damage-immune under phase-transition (annars kan man farma ult-energi
       // /Rage-heal genom att tima projektiler in i transition-fönstret). Övriga
       // träfftyper (arena-orb/arena-hero/normal monster) ger reward som vanligt.
-      const bossImmuneHit = p.target.isBossWarsBoss && (((p.target.phaseTransitionRemaining || 0) > 0) || (p.target.warlord && p.target.warlord.engaged));
+      const bossImmuneHit = p.target.isBossWarsBoss && (((p.target.phaseTransitionRemaining || 0) > 0) || (p.target.warlord && p.target.warlord.engaged) || (p.target._dragon && p.target._dragon.active));
       if (!bossImmuneHit) {
         gainUltEnergy(side, ULT_GAIN_AA_HIT);
         applyRageLifesteal(side, p.damage);
@@ -14118,7 +14118,7 @@ function updateProjectiles(side, dt) {
       }
       // Boss Wars: bossen invulnerable under phase-transition ELLER warlord symbol-fasen (boss 3).
       // AA-projektiler drar HP direkt (ej via damageMonster) → måste kolla immuniteten här också.
-      if (p.target.isBossWarsBoss && (((p.target.phaseTransitionRemaining || 0) > 0) || (p.target.warlord && p.target.warlord.engaged))) {
+      if (p.target.isBossWarsBoss && (((p.target.phaseTransitionRemaining || 0) > 0) || (p.target.warlord && p.target.warlord.engaged) || (p.target._dragon && p.target._dragon.active))) {
         spawnCcText(p.target.mesh, 'IMMUNE');
         scene.remove(p.mesh); side.projectiles.splice(i, 1);
         continue;
@@ -25483,7 +25483,8 @@ function updateWarlordVisuals(boss, wl) {
 // MP: server-auth (boss.dragon i game-engine.js, serialiserat dg). Solo: client-sim nedan.
 // ============================================================
 const DRAGON_SYMBOLS_C = ['sword', 'crown', 'skull', 'eye', 'flame', 'moon'];
-const DRAGON_SYM_EMOJI = { sword: '⚔️', crown: '👑', skull: '💀', eye: '👁️', flame: '🔥', moon: '🌙' };
+const DRAGON_SYM_EMOJI = { sword: '⚔️', crown: '👑', skull: '💀', eye: '👁️', flame: '🔥', moon: '🌙',
+  red: '🔥', blue: '💧', green: '🍃' };   // meteor-färg-glyfer (färgblind-tillgänglighet — form, ej bara färg)
 const DRAGON_BREAKS_C = [0.80, 0.40, 0.20];   // solo: memory(80), meteor(40), fas 2(20). Soul link(60) = MP-only, hoppas
 const DRAGON_MEM_REVEAL_HP_C = [0.95, 0.90, 0.85];
 const DRAGON_MEM_REVEAL_TIME_C = 1.0, DRAGON_MEM_GAP_C = 0.3;
@@ -25520,9 +25521,9 @@ function makeDragonPillarMesh(sym) {
   col.position.y = 1.5; g.add(col);
   const ring = new THREE.Mesh(new THREE.RingGeometry(DRAGON_MEM_STAND_RADIUS_C * 0.75, DRAGON_MEM_STAND_RADIUS_C, 28),
     new THREE.MeshBasicMaterial({ color: 0x9b6bff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }));
-  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; ring.userData.isDragonRing = true; g.add(ring);
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05; g.add(ring);
   const sp = makeDragonSymbolSprite(sym, 1.8); sp.position.y = 3.7; g.add(sp);
-  g.userData.sym = sym;
+  g.userData.sym = sym; g.userData.ring = ring;   // hoistad ref → glow utan per-frame traverse
   return g;
 }
 function makeDragonActPillarMesh() {
@@ -25567,7 +25568,7 @@ function updateDragonVisuals(boss, dg) {
         // glow om en spelare står i pelaren
         let occ = false;
         for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s && s.mesh && !(s.hero && s.hero.dead)) { const dx = s.mesh.position.x - p.x, dz = s.mesh.position.z - p.z; if (dx * dx + dz * dz <= DRAGON_MEM_STAND_RADIUS_C * DRAGON_MEM_STAND_RADIUS_C) { occ = true; break; } } }
-        pm.traverse(o => { if (o.userData && o.userData.isDragonRing && o.material) o.material.opacity = occ ? 0.8 : 0.4; });
+        if (pm.userData.ring && pm.userData.ring.material) pm.userData.ring.material.opacity = occ ? 0.8 : 0.4;
       }
       if (dg.ap) {
         seen.add('_act');
@@ -25617,7 +25618,11 @@ function dragonUpdateBanner(dg) {
   if (!dg || ((dg.m || 0) === 0 && !dg.msg)) { el.classList.remove('visible'); return; }
   if (dg.m === 1) {
     const step = (dg.st || 0) + 1;
+    const instr = bossActsAsClient()
+      ? '2 players stand on the correct symbol · 1 presses ACTIVATE at center'
+      : 'Stand on the correct symbol, then press ACTIVATE';
     el.innerHTML = `<div class="dg-msg">${dg.msg || 'Remember what was shown.'}</div>`
+      + `<div class="dg-sub">${instr}</div>`
       + `<div class="dg-sub">Symbol ${Math.min(step, 3)}/3 &nbsp;·&nbsp; Mistakes ${dg.mis || 0}/${DRAGON_MEM_MAX_MISTAKES_C} &nbsp;·&nbsp; ${Math.ceil(dg.t || 0)}s</div>`;
     el.classList.add('visible');
   } else if (dg.m === 2 && dg.sl) {
@@ -25663,6 +25668,7 @@ function makeDragonMeteorCircleMesh(color) {
   const ring = new THREE.Mesh(new THREE.RingGeometry(DRAGON_MT_CIRCLE_RADIUS_C * 0.88, DRAGON_MT_CIRCLE_RADIUS_C, 24),
     new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; g.add(ring);
+  const glyph = makeDragonSymbolSprite(color, 1.6); glyph.position.y = 1.6; g.add(glyph);   // form-glyf (färgblind-stöd)
   return g;
 }
 
@@ -25784,6 +25790,7 @@ function dragonClientMeteorResolve(boss) {
 }
 // Bygg dg-objekt från solo-state och rendera (samma path som MP).
 const _dragonSoloDg = { m: 0, rv: null, msg: '', ph: 1, mp: null, ap: null, st: 0, mis: 0, t: 0, mt: null };
+const _dragonSoloMt = { c: null, cd: 0, hint: '', r: 1 };   // persistent (undvik per-frame alloc)
 function updateDragonSoloVisuals(boss) {
   const d = boss._dragon; if (!d) return;
   _dragonSoloDg.m = d.active ? d.mech : 0;
@@ -25794,7 +25801,8 @@ function updateDragonSoloVisuals(boss) {
     _dragonSoloDg.mp = d.memPillars; _dragonSoloDg.ap = d.actPillar;
     _dragonSoloDg.st = d.memStep; _dragonSoloDg.mis = d.memMistakes; _dragonSoloDg.t = d.memTimer;
   } else if (d.active && d.mech === 3) {
-    _dragonSoloDg.mt = { c: d.mtCircles, cd: d.mtCountdown, hint: d.mtHint, r: (d.mtRound || 0) + 1 };
+    _dragonSoloMt.c = d.mtCircles; _dragonSoloMt.cd = d.mtCountdown; _dragonSoloMt.hint = d.mtHint; _dragonSoloMt.r = (d.mtRound || 0) + 1;
+    _dragonSoloDg.mt = _dragonSoloMt;
   }
   updateDragonVisuals(boss, _dragonSoloDg);
 }
