@@ -8079,6 +8079,11 @@ function serializeSide(side) {
       tnt: nzr2(side.hero.tauntedTime),
       poi: nzr2(side.hero.poisonRemaining),
       lMk: nzr2(side.hero.legolasMarked),
+      // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
+      zc: side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined,
+      zsp: side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined,
+      zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
+      zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
     },
     g: side.gold,
     inc: side.income,

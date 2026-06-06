@@ -17974,6 +17974,11 @@ function applyRemoteState(state) {
     } else {
       side.aragurnLeap = null;
     }
+    // Zheyna (decision 134): klon/spjut/ult-spjut/laddnings-sikt från classic-snap.
+    // Guard: allokera adapter-objektet bara för zheyna-sidor (GC i classic hot-path).
+    if (sData.hid === 'zheyna' || side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh) {
+      updateZheynaMpVisuals(side, { hid: sData.hid, fx: sData.h.fx, fz: sData.h.fz, zc: sData.h.zc, zsp: sData.h.zsp, zus: sData.h.zus, zch: sData.h.zch });
+    }
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
     if (isOwnLocalClassicMp) {
       // Own-side i classic MP: tickLocalPrediction uppdaterar mesh.position
