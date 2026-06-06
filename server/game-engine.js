@@ -69,14 +69,14 @@ function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 const ZHEYNA_PASSIVE_DMG_MAX = 0.40;   // +40% AA-skada på max AA-range (linjärt från 0 nära)
 const ZHEYNA_PASSIVE_LS_MAX = 0.25;    // +25% lifesteal på max AA-range
 // Q Spear Pierce
-const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5, ZHEYNA_Q_CD = 9;
+const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5;   // cd via HERO_SKILL_CD.zheyna
 const ZHEYNA_Q_STUN_RADIUS = 2.0, ZHEYNA_Q_STUN_DUR = 2.0;
 const ZHEYNA_Q_BUFF_HERO = 0.20, ZHEYNA_Q_BUFF_MINION = 0.05, ZHEYNA_Q_BUFF_DUR = 3.0;
 // F Clone
-const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_CD = 10, ZHEYNA_CLONE_DMG_MUL = 0.50;
+const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_DMG_MUL = 0.50;
 const ZHEYNA_CLONE_DMG_TAKEN_MUL = 1.5, ZHEYNA_CLONE_OWNER_DR = 0.50;
 // E Warpath
-const ZHEYNA_E_DUR = 5, ZHEYNA_E_CD = 12, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;
+const ZHEYNA_E_DUR = 5, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;   // cd via HERO_SKILL_CD.zheyna
 // R Spear God
 const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
 const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
@@ -8084,6 +8084,7 @@ function serializeSide(side) {
       zsp: side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined,
       zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
       zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
+      zwp: (side.zheynaWarpathRem || 0) > 0 ? 1 : undefined,
     },
     g: side.gold,
     inc: side.income,

@@ -2163,12 +2163,12 @@ const HERO_DEFS = {
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 // ===== ZHEYNA (spjut-carry) konstanter — speglar server/game-engine.js (decision 134) =====
 const ZHEYNA_PASSIVE_DMG_MAX = 0.40, ZHEYNA_PASSIVE_LS_MAX = 0.25;
-const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5, ZHEYNA_Q_CD = 9;
+const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5;   // cd via HERO_SKILL_CD.zheyna
 const ZHEYNA_Q_STUN_RADIUS = 2.0, ZHEYNA_Q_STUN_DUR = 2.0;
 const ZHEYNA_Q_BUFF_HERO = 0.20, ZHEYNA_Q_BUFF_MINION = 0.05, ZHEYNA_Q_BUFF_DUR = 3.0;
-const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_CD = 10, ZHEYNA_CLONE_DMG_MUL = 0.50;
+const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_DMG_MUL = 0.50;
 const ZHEYNA_CLONE_DMG_TAKEN_MUL = 1.5, ZHEYNA_CLONE_OWNER_DR = 0.50;
-const ZHEYNA_E_DUR = 5, ZHEYNA_E_CD = 12, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;
+const ZHEYNA_E_DUR = 5, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;   // cd via HERO_SKILL_CD.zheyna
 const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
 const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
 const ZHEYNA_R_KNOCKBACK_PER_SEC = 2.0, ZHEYNA_R_CHARGE_MS_MUL = 0.50, ZHEYNA_R_CHARGE_TURN_SPEED = 2.2, ZHEYNA_R_SPEAR_SPEED = 26;
@@ -9325,7 +9325,8 @@ function startArenaRound(roundNum) {
     if (s.zheynaSpear && s.zheynaSpear.mesh) { scene.remove(s.zheynaSpear.mesh); zheynaDispose(s.zheynaSpear.mesh); }
     if (s.zheynaUltSpear && s.zheynaUltSpear.mesh) { scene.remove(s.zheynaUltSpear.mesh); zheynaDispose(s.zheynaUltSpear.mesh); }
     if (s.zheynaChargeMesh) { scene.remove(s.zheynaChargeMesh); zheynaDispose(s.zheynaChargeMesh); }
-    s.zheynaClone = null; s.zheynaSpear = null; s.zheynaUltSpear = null; s.zheynaChargeMesh = null;
+    if (s.zheynaWarpathMesh) { scene.remove(s.zheynaWarpathMesh); zheynaDispose(s.zheynaWarpathMesh); }
+    s.zheynaClone = null; s.zheynaSpear = null; s.zheynaUltSpear = null; s.zheynaChargeMesh = null; s.zheynaWarpathMesh = null;
     s.zheynaUltCharging = false; s.zheynaWarpathRem = 0; s.zheynaDmgBuffMul = 1; s.zheynaDmgBuffRem = 0;
     // Arena-gold: runda 1 startar med ARENA_GOLD_START, övriga rundor får +ARENA_GOLD_PER_ROUND
     if (roundNum === 1) {
@@ -10057,6 +10058,7 @@ function removeSide(side) {
   if (side.zheynaSpear && side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); }
   if (side.zheynaUltSpear && side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); }
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); }
+  if (side.zheynaWarpathMesh) { scene.remove(side.zheynaWarpathMesh); zheynaDispose(side.zheynaWarpathMesh); }
 }
 
 // ============================================================
@@ -17976,8 +17978,8 @@ function applyRemoteState(state) {
     }
     // Zheyna (decision 134): klon/spjut/ult-spjut/laddnings-sikt från classic-snap.
     // Guard: allokera adapter-objektet bara för zheyna-sidor (GC i classic hot-path).
-    if (sData.hid === 'zheyna' || side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh) {
-      updateZheynaMpVisuals(side, { hid: sData.hid, fx: sData.h.fx, fz: sData.h.fz, zc: sData.h.zc, zsp: sData.h.zsp, zus: sData.h.zus, zch: sData.h.zch });
+    if (sData.hid === 'zheyna' || side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh || side.zheynaWarpathMesh) {
+      updateZheynaMpVisuals(side, { hid: sData.hid, fx: sData.h.fx, fz: sData.h.fz, zc: sData.h.zc, zsp: sData.h.zsp, zus: sData.h.zus, zch: sData.h.zch, zwp: sData.h.zwp });
     }
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
     if (isOwnLocalClassicMp) {
@@ -21031,6 +21033,28 @@ function updateZheynaChargeIndicatorSolo(side) {
 function disposeZheynaChargeIndicatorSolo(side) {
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); side.zheynaChargeMesh = null; }
 }
+// Warpath-aura (E aktiv): glödande ring + disk under Zheyna. Solo + MP (snap.zwp).
+function makeZheynaWarpathAura() {
+  const grp = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 28),
+    new THREE.MeshBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; grp.add(ring);
+  const disk = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24),
+    new THREE.MeshBasicMaterial({ color: 0x3399cc, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+  disk.rotation.x = -Math.PI / 2; disk.position.y = 0.01; grp.add(disk);
+  return grp;
+}
+function updateZheynaWarpathAura(side, active) {
+  if (active) {
+    if (!side.zheynaWarpathMesh) { side.zheynaWarpathMesh = makeZheynaWarpathAura(); scene.add(side.zheynaWarpathMesh); }
+    const baseY = side.mesh ? side.mesh.position.y : 0;
+    side.zheynaWarpathMesh.position.set(side.hero.x, baseY + 0.06, side.hero.z);
+    const ring = side.zheynaWarpathMesh.children[0];
+    if (ring && ring.material) ring.material.opacity = 0.45 + 0.2 * Math.abs(Math.sin(performance.now() * 0.006));
+  } else if (side.zheynaWarpathMesh) {
+    scene.remove(side.zheynaWarpathMesh); zheynaDispose(side.zheynaWarpathMesh); side.zheynaWarpathMesh = null;
+  }
+}
 function hostCastZheynaQ(side, ev) {
   if (side.hero.dead) return;
   if (side.zheynaSpear && (side.zheynaSpear.repress || 0) > 0) { zheynaTeleportToSpearSolo(side); return; }
@@ -21139,10 +21163,11 @@ function zheynaCleanupMpVisuals(side) {
   if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
   if (side.zheynaUltSpear) { if (side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); } side.zheynaUltSpear = null; }
   if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side);
+  updateZheynaWarpathAura(side, false);
 }
 function updateZheynaMpVisuals(side, snap) {
   if (!side || !snap || snap.hid !== 'zheyna') {
-    if (side && (side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh)) zheynaCleanupMpVisuals(side);
+    if (side && (side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh || side.zheynaWarpathMesh)) zheynaCleanupMpVisuals(side);
     return;
   }
   const baseY = side.mesh ? side.mesh.position.y : 0;
@@ -21177,6 +21202,7 @@ function updateZheynaMpVisuals(side, snap) {
     const full = (snap.zch.c || 0) >= ZHEYNA_R_MAX_CHARGE;
     if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
   } else if (side.zheynaChargeMesh) { disposeZheynaChargeIndicatorSolo(side); }
+  updateZheynaWarpathAura(side, !!snap.zwp);
 }
 function tickZheynaSolo(side, dt) {
   if (!side || side.heroId !== 'zheyna') return;
@@ -21185,10 +21211,12 @@ function tickZheynaSolo(side, dt) {
     if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
     side.zheynaUltCharging = false; side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
     disposeZheynaChargeIndicatorSolo(side);
+    updateZheynaWarpathAura(side, false);
     updateZheynaUltSpearSolo(side, dt);   // låt ev. redan avfyrat spjut flyga klart
     return;
   }
   if ((side.zheynaWarpathRem || 0) > 0) side.zheynaWarpathRem = Math.max(0, side.zheynaWarpathRem - dt);
+  updateZheynaWarpathAura(side, (side.zheynaWarpathRem || 0) > 0);
   if ((side.zheynaDmgBuffRem || 0) > 0) { side.zheynaDmgBuffRem = Math.max(0, side.zheynaDmgBuffRem - dt); if (side.zheynaDmgBuffRem <= 0) side.zheynaDmgBuffMul = 1; }
   updateZheynaSpearSolo(side, dt);
   tickZheynaCloneSolo(side, dt);
