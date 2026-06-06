@@ -25497,6 +25497,7 @@ const DRAGON_P2_DMG_MUL_C = 1.15, DRAGON_P2_DR_BONUS_C = 0.20;   // fas-2-dmg 1.
 const DRAGON_MT_ROUNDS_C = 3, DRAGON_MT_COUNTDOWN_C = 6, DRAGON_MT_CIRCLE_RADIUS_C = 2.0;   // countdown 5→6: matchar server, mobil-marginal 2026-06-07
 const DRAGON_MT_COLORS_C = ['red', 'blue', 'green'];
 const DRAGON_MT_COLOR_HEX = { red: 0xff3322, blue: 0x3366ff, green: 0x33cc44 };
+const DRAGON_SL_CHAIN_MAX_C = 12, DRAGON_SL_INTERCEPT_BAND_C = 1.6;   // speglar server DRAGON_SL_* (stretch-telegraf + intercept-band-bredd)
 const DRAGON_MT_HINTS_C = {
   red: ['Nothing is hotter than the flames.', 'Embers never lie — follow the burning hue.', 'Seek the color of fire and fury.'],
   blue: ['The deepest oceans never forget.', 'The sky reflects eternity.', 'Cold depths keep the worthy safe.'],
@@ -25580,15 +25581,41 @@ function updateDragonVisuals(boss, dg) {
         am.position.set(dg.ap.x, floorY, dg.ap.z);
       }
     }
-    if (dg.m === 2 && dg.sl) {   // Soul Link: kedja mellan 2 länkade + 10 energiklot
+    if (dg.m === 2 && dg.sl) {   // Soul Link: kedja + klot + roll-markörer + intercept-band (tydlighet 2026-06-07)
       const sl = dg.sl;
-      if (sl.p && sl.p.length === 2) {
-        const a = sides[sl.p[0]], b = sides[sl.p[1]];
-        if (a && a.mesh && b && b.mesh) {
-          seen.add('_chain');
-          let ch = map.get('_chain');
-          if (!ch) { ch = makeDragonChainMesh(); scene.add(ch); map.set('_chain', ch); }
-          dragonPositionChain(ch, a.mesh.position, b.mesh.position, sl.st === 1);
+      const pair = sl.p && sl.p.length === 2 ? sl.p : null;
+      const a = pair ? sides[pair[0]] : null, b = pair ? sides[pair[1]] : null;
+      const breaking = sl.st === 1;
+      const now = performance.now();
+      if (a && a.mesh && b && b.mesh) {
+        // kedja + stretch-telegraf (lila→röd när den närmar sig max-längd → snap förvarnas)
+        const dist = Math.hypot(a.mesh.position.x - b.mesh.position.x, a.mesh.position.z - b.mesh.position.z);
+        const stretch = Math.min(1, dist / DRAGON_SL_CHAIN_MAX_C);
+        seen.add('_chain');
+        let ch = map.get('_chain');
+        if (!ch) { ch = makeDragonChainMesh(); scene.add(ch); map.set('_chain', ch); }
+        dragonPositionChain(ch, a.mesh.position, b.mesh.position, breaking, stretch);
+        // intercept-band på marken: svagt under sträckning, starkt pulserande vid snap (var interceptorn ska stå)
+        seen.add('_iband');
+        let bd = map.get('_iband');
+        if (!bd) { bd = makeDragonInterceptBand(); scene.add(bd); map.set('_iband', bd); }
+        dragonPositionInterceptBand(bd, a.mesh.position, b.mesh.position);
+        if (bd.material) bd.material.opacity = breaking ? (0.45 + 0.4 * Math.abs(Math.sin(now * 0.012))) : (0.12 + 0.2 * stretch);
+      }
+      // roll-markörer ovanför varje levande spelares huvud (vem är länkad / vem är interceptor)
+      if (pair) {
+        for (const idx of [1, 2, 3]) {
+          const s = sides[idx];
+          if (!s || !s.mesh || (s.hero && s.hero.dead)) continue;
+          const linked = idx === pair[0] || idx === pair[1];
+          const kind = linked ? 'linked' : 'intercept';
+          const id = 'mark_' + idx; seen.add(id);
+          let mk = map.get(id);
+          if (!mk || mk.userData.kind !== kind) { if (mk) { scene.remove(mk); _dragonDispose(mk); } mk = linked ? makeDragonLinkedMarker() : makeDragonInterceptMarker(); mk.userData.kind = kind; scene.add(mk); map.set(id, mk); }
+          const bob = Math.sin(now * 0.005 + idx) * 0.2;
+          mk.position.set(s.mesh.position.x, s.mesh.position.y + 3.6 + bob, s.mesh.position.z);
+          mk.rotation.y = now * 0.002;   // spin för synlighet
+          if (!linked && mk.userData.cone) mk.userData.cone.material.opacity = breaking ? (0.55 + 0.45 * Math.abs(Math.sin(now * 0.012))) : 0.95;
         }
       }
       if (sl.o) {
@@ -25629,9 +25656,16 @@ function dragonUpdateBanner(dg) {
       + `<div class="dg-sub">Symbol ${Math.min(step, 3)}/3 &nbsp;·&nbsp; Mistakes ${dg.mis || 0}/${DRAGON_MEM_MAX_MISTAKES_C} &nbsp;·&nbsp; ${Math.ceil(dg.t || 0)}s</div>`;
     el.classList.add('visible');
   } else if (dg.m === 2 && dg.sl) {
+    const pr = dg.sl.p || [];
+    const role = pr.length === 2
+      ? (pr.indexOf(APP.localSide) !== -1
+        ? '<span style="color:#9b8bff">YOU ARE LINKED</span> — stretch apart from your partner'
+        : '<span style="color:#ffcc33">YOU INTERCEPT</span> — stand on the gold line when it snaps')
+      : 'Linked pair stretches apart · free player stands on the gold line';
     el.innerHTML = `<div class="dg-msg">${dg.msg || 'Soul Link'}</div>`
+      + `<div class="dg-sub">${role}</div>`
       + `<div class="dg-sub">Breaks ${dg.sl.br || 0}/3 &nbsp;·&nbsp; ${Math.ceil(dg.sl.t || 0)}s`
-      + `${dg.sl.st === 1 ? ' &nbsp;·&nbsp; <span style="color:#ff6b6b">CHAIN SNAPPING — INTERCEPT!</span>' : ''}</div>`;
+      + `${dg.sl.st === 1 ? ' &nbsp;·&nbsp; <span style="color:#ff6b6b">CHAIN SNAPPING — INTERCEPT NOW!</span>' : ''}</div>`;
     el.classList.add('visible');
   } else if (dg.m === 3 && dg.mt) {
     el.innerHTML = `<div class="dg-msg">🐉 ${dg.mt.hint || dg.msg || ''}</div>`
@@ -25648,7 +25682,7 @@ function makeDragonChainMesh() {
     new THREE.MeshBasicMaterial({ color: 0x8a6bff, transparent: true, opacity: 0.85 }));
   return m;
 }
-function dragonPositionChain(ch, pa, pb, breaking) {
+function dragonPositionChain(ch, pa, pb, breaking, stretch) {
   const dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z, len = Math.hypot(dx, dy, dz) || 0.001;
   ch.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 1.0, (pa.z + pb.z) / 2);
   ch.scale.set(1, len, 1);
@@ -25656,11 +25690,45 @@ function dragonPositionChain(ch, pa, pb, breaking) {
   ch.quaternion.setFromUnitVectors(_dgUp, _dgDir);
   if (ch.material) {
     if (breaking) { ch.material.color.setHex(0xff4444); ch.material.opacity = 0.6 + 0.4 * Math.abs(Math.sin(performance.now() * 0.02)); }
-    else { ch.material.color.setHex(0x8a6bff); ch.material.opacity = 0.85; }
+    else {
+      // stretch-telegraf: lila (0x8a6bff) → röd när kedjan närmar sig max-längd
+      const s = Math.max(0, Math.min(1, stretch || 0));
+      ch.material.color.setRGB(0.541 + 0.459 * s, 0.42 * (1 - s), 1.0 - s);
+      ch.material.opacity = 0.85;
+    }
   }
 }
 function makeDragonOrbMesh() {
   return new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff5522 }));
+}
+// Soul Link-tydlighet (2026-06-07): roll-markör för länkad spelare (svävande ring, syns genom väggar).
+function makeDragonLinkedMarker() {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.13, 8, 18),
+    new THREE.MeshBasicMaterial({ color: 0x8a6bff, transparent: true, opacity: 0.95, depthTest: false }));
+  ring.rotation.x = Math.PI / 2; g.add(ring);
+  g.userData.ring = ring; g.renderOrder = 999;
+  return g;
+}
+// Roll-markör för interceptorn: gul nedåtpil ("det är DU som ska stå i linjen").
+function makeDragonInterceptMarker() {
+  const g = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.1, 4),
+    new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.95, depthTest: false }));
+  cone.rotation.x = Math.PI; g.add(cone);   // spetsen pekar ned mot spelaren
+  g.userData.cone = cone; g.renderOrder = 999;
+  return g;
+}
+// Mark-band mellan paret = var interceptorn måste stå när kedjan brister.
+function makeDragonInterceptBand() {
+  return new THREE.Mesh(new THREE.BoxGeometry(DRAGON_SL_INTERCEPT_BAND_C * 2, 0.06, 1),
+    new THREE.MeshBasicMaterial({ color: 0xffcc33, transparent: true, opacity: 0.2, depthWrite: false }));
+}
+function dragonPositionInterceptBand(band, pa, pb) {
+  const dx = pb.x - pa.x, dz = pb.z - pa.z, len = Math.hypot(dx, dz) || 0.001;
+  band.position.set((pa.x + pb.x) / 2, BOSSWARS_FLOOR_Y + 0.05, (pa.z + pb.z) / 2);
+  band.rotation.set(0, Math.atan2(dx, dz), 0);   // box-djup (Z) längs linjen pa→pb
+  band.scale.set(1, 1, len);
 }
 function makeDragonMeteorCircleMesh(color) {
   const hex = DRAGON_MT_COLOR_HEX[color] || 0xffffff;
