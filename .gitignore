@@ -21,3 +21,4 @@ assets/enemies/quaternius_monsters_raw/
 .DS_Store
 Thumbs.db
 .commitmsg*.txt
+.commitmsg.tmp
