@@ -9324,7 +9324,8 @@ function startArenaRound(roundNum) {
     if (s.zheynaClone && s.zheynaClone.mesh) { scene.remove(s.zheynaClone.mesh); zheynaDispose(s.zheynaClone.mesh); }
     if (s.zheynaSpear && s.zheynaSpear.mesh) { scene.remove(s.zheynaSpear.mesh); zheynaDispose(s.zheynaSpear.mesh); }
     if (s.zheynaUltSpear && s.zheynaUltSpear.mesh) { scene.remove(s.zheynaUltSpear.mesh); zheynaDispose(s.zheynaUltSpear.mesh); }
-    s.zheynaClone = null; s.zheynaSpear = null; s.zheynaUltSpear = null;
+    if (s.zheynaChargeMesh) { scene.remove(s.zheynaChargeMesh); zheynaDispose(s.zheynaChargeMesh); }
+    s.zheynaClone = null; s.zheynaSpear = null; s.zheynaUltSpear = null; s.zheynaChargeMesh = null;
     s.zheynaUltCharging = false; s.zheynaWarpathRem = 0; s.zheynaDmgBuffMul = 1; s.zheynaDmgBuffRem = 0;
     // Arena-gold: runda 1 startar med ARENA_GOLD_START, övriga rundor får +ARENA_GOLD_PER_ROUND
     if (roundNum === 1) {
@@ -10055,6 +10056,7 @@ function removeSide(side) {
   if (side.zheynaClone && side.zheynaClone.mesh) { scene.remove(side.zheynaClone.mesh); zheynaDispose(side.zheynaClone.mesh); }
   if (side.zheynaSpear && side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); }
   if (side.zheynaUltSpear && side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); }
+  if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); }
 }
 
 // ============================================================
@@ -14079,6 +14081,12 @@ function updateProjectiles(side, dt) {
         if (targetSide) {
           // damageHero spawnar redan popup baserat på faktisk skada efter shields/DR
           damageHero(targetSide, heroDmg, p.isCrit);
+        }
+        // Zheyna Warpath: knockback fiende-hjälte 1m (arena).
+        if (targetSide && p.knockback > 0 && !targetSide.hero.dead) {
+          const kdx = targetSide.hero.x - side.hero.x, kdz = targetSide.hero.z - side.hero.z, km = Math.hypot(kdx, kdz) || 1;
+          const knx = targetSide.hero.x + (kdx / km) * p.knockback, knz = targetSide.hero.z + (kdz / km) * p.knockback;
+          if (isHeroWalkable(targetSide.idx, knx, knz)) { targetSide.hero.x = knx; targetSide.hero.z = knz; if (targetSide.mesh) { targetSide.mesh.position.x = knx; targetSide.mesh.position.z = knz; } }
         }
         if ((p.lifestealRatio || 0) > 0 && !side.hero.dead) {
           const healAmt = heroDmg * p.lifestealRatio;
@@ -20992,6 +21000,32 @@ function makeZheynaUltSpearMesh(width) {
   grp.scale.set(sc, sc, 1.0 + sc * 0.2);
   return grp;
 }
+function makeZheynaChargeIndicator() {
+  // Yaw-grupp (rotation.y mot facing) med en platt plane-child som sträcker sig framåt (+Z).
+  const grp = new THREE.Group();
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ color: 0x66bbff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+  plane.rotation.x = -Math.PI / 2;   // platt på marken; geometri-Y → world-Z (längd), geometri-X → bredd
+  grp.add(plane);
+  return grp;
+}
+function updateZheynaChargeIndicatorSolo(side) {
+  if (!side.zheynaChargeMesh) { side.zheynaChargeMesh = makeZheynaChargeIndicator(); scene.add(side.zheynaChargeMesh); }
+  const grp = side.zheynaChargeMesh;
+  const charge = Math.max(1, Math.min(ZHEYNA_R_MAX_CHARGE, side.zheynaUltCharge || 1));
+  const width = ZHEYNA_R_WIDTH_BASE + ZHEYNA_R_WIDTH_PER_SEC * (charge - 1);
+  const dx = side.hero.facingX || 0, dz = side.hero.facingZ || 1;
+  grp.position.set(side.hero.x, (side.mesh ? side.mesh.position.y : 0) + 0.08, side.hero.z);
+  grp.rotation.y = Math.atan2(dx, dz);
+  const plane = grp.children[0];
+  plane.scale.set(width, ZHEYNA_R_RANGE, 1);
+  plane.position.z = ZHEYNA_R_RANGE / 2;   // sträcker sig 0→20m framför hjälten
+  const full = (side.zheynaUltCharge || 0) >= ZHEYNA_R_MAX_CHARGE;
+  if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
+}
+function disposeZheynaChargeIndicatorSolo(side) {
+  if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); side.zheynaChargeMesh = null; }
+}
 function hostCastZheynaQ(side, ev) {
   if (side.hero.dead) return;
   if (side.zheynaSpear && (side.zheynaSpear.repress || 0) > 0) { zheynaTeleportToSpearSolo(side); return; }
@@ -21099,6 +21133,7 @@ function tickZheynaSolo(side, dt) {
     if (side.zheynaClone) zheynaDisposeCloneSolo(side);
     if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
     side.zheynaUltCharging = false; side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
+    disposeZheynaChargeIndicatorSolo(side);
     updateZheynaUltSpearSolo(side, dt);   // låt ev. redan avfyrat spjut flyga klart
     return;
   }
@@ -21110,6 +21145,8 @@ function tickZheynaSolo(side, dt) {
     if (side.hero.dead) side.zheynaUltCharging = false;
     else { side.zheynaUltCharge = Math.min(ZHEYNA_R_MAX_CHARGE, (side.zheynaUltCharge || 0) + dt); if (side.zheynaUltCharge >= ZHEYNA_R_MAX_CHARGE) { side.zheynaUltAim = (side.zheynaUltAim || 0) + dt; if (side.zheynaUltAim >= ZHEYNA_R_AIM_EXTRA) fireZheynaUltSolo(side); } }
   }
+  if (side.zheynaUltCharging) updateZheynaChargeIndicatorSolo(side);
+  else if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side);
   updateZheynaUltSpearSolo(side, dt);
 }
 
@@ -31032,6 +31069,18 @@ function spawnSlashFx(x, z, color = 0xffd060) {
 // isCrit: true → orange-rött glow-boost.
 function makeHeroAaProjectileMesh(heroId, isAoE, isCrit) {
   const grp = new THREE.Group();
+  if (heroId === 'zheyna') {
+    // Spjut: stål-skaft + glödande spets, pekar i färdriktningen.
+    const shaftMat = new THREE.MeshStandardMaterial({ color: 0x9fb4c8, metalness: 0.7, roughness: 0.4, emissive: 0x3a6a9a, emissiveIntensity: isCrit ? 0.8 : 0.4 });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 6), shaftMat);
+    shaft.rotation.x = Math.PI / 2; grp.add(shaft);
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0xcfe6ff, emissive: 0x66aaff, emissiveIntensity: isCrit ? 1.6 : 1.1 });
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 6), tipMat);
+    tip.rotation.x = Math.PI / 2; tip.position.z = 0.6; grp.add(tip);
+    grp.userData.orientToMotion = true;
+    grp.userData.trailColor = isCrit ? 0xaaddff : 0x6699cc;
+    return grp;
+  }
   if (heroId === 'legolas') {
     // Pil: brun cylinder-skaft + grön spets + 3 fjädrar bakåt.
     const shaftMat = new THREE.MeshStandardMaterial({ color: 0x7a4a22, roughness: 0.7, emissive: 0x33aa33, emissiveIntensity: 0.45 });
