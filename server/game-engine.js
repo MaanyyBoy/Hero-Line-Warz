@@ -7009,6 +7009,7 @@ function applyMovement(side, joyX, joyZ, dt) {
 function zheynaWalk(side) {
   return side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
+       : side.inDuel ? isArenaWalkable
        : (x, z) => isHeroWalkable(side.idx, x, z, null);
 }
 // Mode-agnostisk lista över giltiga fiender med {ent (har x/z + hp/maxHp), isHero/isMonster/isCreep}.

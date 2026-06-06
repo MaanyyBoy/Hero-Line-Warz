@@ -13800,7 +13800,7 @@ function maintainTargetLock(side) {
   }
   let target = resolveTargetEntity(side, opp);
   let isMonster = side.targetType === 'monster';
-  const baseRange = side.attackRange || HERO_ATTACK_RANGE;
+  const baseRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);   // Warpath +20% range (mirror server)
   // Shadow Volley empowered AA: dubbel range medan invis-ult-pending (klient-mirror av server).
   const range = (side.heroId === 'legolas' && side.legolusUltAaPending)
     ? baseRange * 2.0 : baseRange;
@@ -20948,12 +20948,22 @@ function zheynaEntPos(e) {
   if (e.ent.mesh) return { x: e.ent.mesh.position.x, z: e.ent.mesh.position.z };
   return { x: e.ent.x || 0, z: e.ent.z || 0 };
 }
+// Pooled scratch — undviker N objekt + 1 array-allokering per frame medan Q-spjutet flyger
+// (CLAUDE.md hot-path-varning). Callers använder resultatet OMEDELBART (håller ej ref över anrop).
+const _zhEnemyScratch = [];
+const _zhEntryPool = [];
+function _zhEntry(n, ent, isHero, isMonster, isCreep, sideIdx) {
+  let e = _zhEntryPool[n]; if (!e) { e = {}; _zhEntryPool[n] = e; }
+  e.ent = ent; e.isHero = isHero; e.isMonster = isMonster; e.isCreep = isCreep; e.sideIdx = sideIdx;
+  return e;
+}
 function zheynaEnemiesSolo(side) {
-  const out = []; const opp = sides[3 - side.idx];
+  const out = _zhEnemyScratch; out.length = 0;
+  const opp = sides[3 - side.idx];
   const oppHeroEnemy = !!(opp && opp.hero && !opp.hero.dead && (APP.gameMode === 'arena1v1' || side.inEnemyTerritory || opp.inEnemyTerritory));
-  if (oppHeroEnemy) out.push({ ent: opp.hero, isHero: true, sideIdx: 3 - side.idx });
-  for (const m of side.monsters) if (m && m.hp > 0) out.push({ ent: m, isMonster: true });
-  if (opp && opp.playerCreeps) for (const c of opp.playerCreeps) if (c && c.hp > 0) out.push({ ent: c, isCreep: true });
+  if (oppHeroEnemy) out.push(_zhEntry(out.length, opp.hero, true, false, false, 3 - side.idx));
+  for (const m of side.monsters) if (m && m.hp > 0) out.push(_zhEntry(out.length, m, false, true, false, 0));
+  if (opp && opp.playerCreeps) for (const c of opp.playerCreeps) if (c && c.hp > 0) out.push(_zhEntry(out.length, c, false, false, true, 0));
   return out;
 }
 function zheynaAaDamageAtSolo(side, dist, guaranteedCrit) {
@@ -21191,6 +21201,7 @@ function updateZheynaMpVisuals(side, snap) {
   } else if (side.zheynaUltSpear) { if (side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); } side.zheynaUltSpear = null; }
   // Ult-laddnings-sikt
   if (snap.zch) {
+    side.zheynaUltCharging = true; side.zheynaUltCharge = snap.zch.c || 0;   // → R-knapp-HUD i MP
     if (!side.zheynaChargeMesh) { side.zheynaChargeMesh = makeZheynaChargeIndicator(); scene.add(side.zheynaChargeMesh); }
     const grp = side.zheynaChargeMesh;
     const charge = Math.max(1, Math.min(ZHEYNA_R_MAX_CHARGE, snap.zch.c || 1));
@@ -21201,7 +21212,7 @@ function updateZheynaMpVisuals(side, snap) {
     plane.scale.set(width, ZHEYNA_R_RANGE, 1); plane.position.z = ZHEYNA_R_RANGE / 2;
     const full = (snap.zch.c || 0) >= ZHEYNA_R_MAX_CHARGE;
     if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
-  } else if (side.zheynaChargeMesh) { disposeZheynaChargeIndicatorSolo(side); }
+  } else { side.zheynaUltCharging = false; side.zheynaUltCharge = 0; if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side); }
   updateZheynaWarpathAura(side, !!snap.zwp);
 }
 function tickZheynaSolo(side, dt) {
@@ -24510,6 +24521,11 @@ function updateSkillButtonStyles() {
       el.classList.remove('cooling');
       el.querySelector('.cd').textContent = '';
     }
+    // Zheyna Spear Pierce: medan spjutet är ute (re-press-fönster) visa Q som "armed"
+    // (tryck igen → teleport) i stället för grå cooldown — annars är teleporten osynlig.
+    const qArmed = side && side.heroId === 'zheyna' && key === 'q' && !!side.zheynaSpear;
+    el.classList.toggle('zheyna-armed', qArmed);
+    if (qArmed) { el.classList.remove('cooling'); const cdEl = el.querySelector('.cd'); if (cdEl) cdEl.textContent = '↩'; }
   }
   if (aaBtnEl) {
     const hasTarget = !!(side && side.aaActive && side.targetId);
@@ -24526,7 +24542,15 @@ function updateSkillButtonStyles() {
     const pct = Math.min(100, Math.max(0, Math.round(energy)));
     if (ultFillEl) ultFillEl.style.height = ultLocked ? '0%' : pct + '%';
     if (ultPctEl) ultPctEl.textContent = ultLocked ? '' : pct + '%';
-    skillEls.r.classList.toggle('ready', !ultLocked && pct >= 100);
+    // Zheyna Spear God toggle-laddning: överrida R-knappen med laddnings-nivå (1→3s / MAX).
+    const zCharging = !!(side && side.zheynaUltCharging);
+    skillEls.r.classList.toggle('ult-charging', zCharging);
+    if (zCharging) {
+      const c = side.zheynaUltCharge || 0;
+      if (ultFillEl) ultFillEl.style.height = Math.min(100, Math.round(c / ZHEYNA_R_MAX_CHARGE * 100)) + '%';
+      if (ultPctEl) ultPctEl.textContent = c >= ZHEYNA_R_MAX_CHARGE ? 'MAX' : (Math.max(1, Math.ceil(c)) + 's');
+    }
+    skillEls.r.classList.toggle('ready', !ultLocked && pct >= 100 && !zCharging);
   }
   updateStatsToggleAndPanel(side, unspent);
 }
@@ -25193,8 +25217,8 @@ function makeBoss4PoolMesh() {
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.015; grp.add(ring);
   // Bubblor som stiger + poppar (egen geometri/material per bubbla → disponeras rent).
   const bubbles = [];
-  for (let i = 0; i < 7; i++) {
-    const bub = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6),
+  for (let i = 0; i < 4; i++) {   // 4 bubblor (var 7) + lägre segment → billigare på mobil vid många pooler
+    const bub = new THREE.Mesh(new THREE.SphereGeometry(1, 6, 4),
       new THREE.MeshBasicMaterial({ color: 0x9be84a, transparent: true, opacity: 0.7, depthWrite: false }));
     const a = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * radius * 0.82;
     bub.userData.bx = Math.cos(a) * rr; bub.userData.bz = Math.sin(a) * rr;
