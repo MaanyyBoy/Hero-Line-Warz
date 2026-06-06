@@ -275,7 +275,7 @@ const KENNEY_FX_TEXTURES = [
   // Smoke (Cannabis Cloud, smoke trail, leap-dust)
   'smoke_03', 'smoke_05', 'smoke_07',
   // Flames (Fireball/Eldklot/firePatch)
-  'flame_05', 'fire_01',
+  'flame_05', 'fire_01', 'flame_03',
   // Twirl (Black Hole, Whirlwind)
   'twirl_02', 'twirl_03',
   // Trace (projectile trails, dash)
@@ -459,6 +459,10 @@ async function preloadAllAssets() {
     await Promise.all(batch.map(fn => fn()));
   }
   clearTimeout(safetyTimer);
+  // Procedurella element-texturer (is/vatten/blixt) — Kenney-paketet saknar dem.
+  // Genereras som små canvas-texturer (låg VRAM) och registreras i kenneyTex så de
+  // flödar genom samma spawnKenneyFx-system. (decision 136)
+  generateProceduralFxTextures();
   // Decision 047: fyll mixamo_boss-anim-poolen från Gandulfs animationer.
   // Mixamo-rigs delar bone-naming så samma clips fungerar för alla 5 bossar
   // — vi slipper ladda + bädda in 5×11 animation-FBX:er.
@@ -10648,20 +10652,20 @@ function startBossCast(side, m, skill, skillIdx) {
     targetZ: skill.targetHero ? hero.z : (skill.originSelf ? bz : bz + dirZ * (skill.length || 5) / 2),
     telegraphMesh: null,
     extras: null,
+    element: bossSkillElement(skill.id, m.bossTier),   // FX-tema (decision 136)
   };
   m.activeCast = cast;
   // Trigga attack-animation på boss-mesh — gör att den visuellt "slår" när skill cast startar
   if (m.mesh) m.mesh.userData.attackTrigger = true;
   // Boss roterar mot target under telegraph
   if (m.mesh) m.mesh.rotation.y = Math.atan2(dirX, dirZ);
-  // Extra visuell feedback för boss-skill-cast i boss wars — så användaren
-  // tydligt ser "bossen castar något". Lila ring runt bossen + camera shake.
-  if (m.isBossWarsBoss && m.mesh) {
-    spawnSkillCastFx(m.mesh.position.x, m.mesh.position.z, 0xcc44ff, 1.8);
-    spawnShieldBurstFx(m.mesh.position.x, m.mesh.position.z, 0xff66dd);
-    triggerCameraShake(0.18, 0.2);
+  // Element-färgad cast-start (decision 136): tydlig "bossen castar X-element"
+  // istället för generisk lila ring. Alla bossar (ej bara boss wars).
+  if (m.mesh) {
+    spawnElementCast(m.mesh.position.x, m.mesh.position.z, cast.element, 1.8);
+    triggerCameraShake(0.16, 0.18);
     // Bumpa aaCount så klienter delta-detect:ar och triggar attack-clip lokalt
-    m.aaCount = (m.aaCount || 0) + 1;
+    if (m.isBossWarsBoss) m.aaCount = (m.aaCount || 0) + 1;
   }
   spawnBossTelegraph(side, m, cast);
 }
@@ -10741,27 +10745,31 @@ function spawnBossTelegraph(side, m, cast) {
   _leakDiag.nc.telegraphSpawn++;
   // Y-offset: boss-wars-platformen är på y=0.42, så telegraphs måste vara ovanpå
   const gY = (APP.gameMode === 'bosswars') ? 0.48 : 0.08;
-  const matRed = () => new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
+  // Element-färg (decision 136). Pulse/expansion (tickBossTelegraph) ger fortfarande
+  // fara-läsbarheten; färgen ger identitet (eld=orange, is=blå, gift=grön ...).
+  const fxE = elementFx(cast.element);
+  const telCol = fxE.ring, telEdge = fxE.core;
+  const matRed = () => new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
   if (s.kind === 'groundCircle' || s.kind === 'poolDot') {
     const ring = new THREE.Mesh(new THREE.RingGeometry(s.radius * 0.92, s.radius, 40), matRed());
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(cast.targetX, gY, cast.targetZ);
     grp.add(ring);
     const disk = new THREE.Mesh(new THREE.CircleGeometry(s.radius, 32),
-      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
     disk.rotation.x = -Math.PI / 2;
     disk.position.set(cast.targetX, gY - 0.02, cast.targetZ);
     grp.add(disk);
   } else if (s.kind === 'lineDash') {
     const w = s.width, l = s.length;
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, l),
-      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.50, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.50, side: THREE.DoubleSide, depthWrite: false }));
     plane.rotation.x = -Math.PI / 2;
     plane.position.set(cast.originX + cast.dirX * l / 2, gY, cast.originZ + cast.dirZ * l / 2);
     plane.rotation.z = -Math.atan2(cast.dirX, cast.dirZ);
     grp.add(plane);
     const edge = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.15, l),
-      new THREE.MeshBasicMaterial({ color: 0xff7755, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telEdge, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
     edge.rotation.x = -Math.PI / 2;
     edge.position.copy(plane.position);
     edge.rotation.z = plane.rotation.z;
@@ -10788,7 +10796,7 @@ function spawnBossTelegraph(side, m, cast) {
   } else if (s.kind === 'projectile' || s.kind === 'projectileMulti') {
     // Liten röd "laddnings"-glow vid boss + svaga indicator-linjer per projektil
     const glow = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff5533, transparent: true, opacity: 0.7, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: fxE.mid, transparent: true, opacity: 0.7, depthWrite: false }));
     glow.position.set(cast.originX, 1.5, cast.originZ);
     grp.add(glow);
     const count = s.count || 1;
@@ -10798,7 +10806,7 @@ function spawnBossTelegraph(side, m, cast) {
       const ang = Math.atan2(cast.dirX, cast.dirZ) + off;
       const dx = Math.sin(ang), dz = Math.cos(ang);
       const line = new THREE.Mesh(new THREE.PlaneGeometry(0.20, s.range || 14),
-        new THREE.MeshBasicMaterial({ color: 0xff5533, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+        new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
       line.rotation.x = -Math.PI / 2;
       line.position.set(cast.originX + dx * (s.range || 14) / 2, gY, cast.originZ + dz * (s.range || 14) / 2);
       line.rotation.z = -ang;
@@ -10810,7 +10818,7 @@ function spawnBossTelegraph(side, m, cast) {
     const ang = s.halfAngle;
     const segs = 28;
     const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.92, r, segs, 1, -ang, 2 * ang),
-      new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(cast.originX, gY, cast.originZ);
     ring.rotation.z = Math.atan2(cast.dirX, cast.dirZ);
@@ -10818,7 +10826,7 @@ function spawnBossTelegraph(side, m, cast) {
   } else if (s.kind === 'multiCircle') {
     // Visa bossens position som "incoming meteor storm" — liten central marker
     const mark = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.9, 24),
-      new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telEdge, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
     mark.rotation.x = -Math.PI / 2;
     mark.position.set(cast.originX, gY, cast.originZ);
     grp.add(mark);
@@ -10866,10 +10874,10 @@ function bossExecuteSkill(side, m, cast) {
   if (s.kind === 'groundCircle') {
     cast.timer = 0.45;   // visuell flash-tid
     cast.extras = { meshes: [], done: true };
-    spawnGroundImpact(cast.targetX, cast.targetZ, s.radius, 0xff5533);
+    spawnExplosion(cast.targetX, cast.targetZ, cast.element, { scale: Math.max(0.8, s.radius / 4), power: 1, shakeMag: 0.18 });
     applyBossCircleDmg(side, m, cast);
     if (s.knockback) applyBossKnockback(side, cast.targetX, cast.targetZ, s.radius, s.knockback);
-    if (s.leaveBurn) spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius * 0.7, 3.0, 0.3, 0xff7722);
+    if (s.leaveBurn) spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius * 0.7, 3.0, 0.3, elementFx(cast.element).deep);
     return;
   }
   if (s.kind === 'lineDash') {
@@ -10886,7 +10894,7 @@ function bossExecuteSkill(side, m, cast) {
     return;
   }
   if (s.kind === 'projectile') {
-    spawnBossProjectile(side, m, cast.originX, cast.originZ, cast.dirX, cast.dirZ, s);
+    spawnBossProjectile(side, m, cast.originX, cast.originZ, cast.dirX, cast.dirZ, s, cast.element);
     cast.timer = 0.05; cast.extras = { meshes: [], done: true };
     return;
   }
@@ -10897,7 +10905,7 @@ function bossExecuteSkill(side, m, cast) {
     for (let i = 0; i < count; i++) {
       const off = count === 1 ? 0 : (-spread / 2 + spread * i / (count - 1));
       const ang = baseAng + off;
-      spawnBossProjectile(side, m, cast.originX, cast.originZ, Math.sin(ang), Math.cos(ang), s);
+      spawnBossProjectile(side, m, cast.originX, cast.originZ, Math.sin(ang), Math.cos(ang), s, cast.element);
     }
     cast.timer = 0.05; cast.extras = { meshes: [], done: true };
     return;
@@ -10905,14 +10913,16 @@ function bossExecuteSkill(side, m, cast) {
   if (s.kind === 'cone') {
     cast.timer = 0.4;
     cast.extras = { meshes: [], done: true };
-    spawnConeFlash(cast.originX, cast.originZ, cast.dirX, cast.dirZ, s.length, s.halfAngle, 0xff4422);
+    spawnConeFlash(cast.originX, cast.originZ, cast.dirX, cast.dirZ, s.length, s.halfAngle, elementFx(cast.element).mid);
+    // Element-burst en bit ut i konen för "träff"-känsla
+    spawnExplosion(cast.originX + cast.dirX * s.length * 0.5, cast.originZ + cast.dirZ * s.length * 0.5, cast.element, { scale: 1.1, power: 0.7, shake: false });
     applyBossConeDmg(side, m, cast);
     return;
   }
   if (s.kind === 'poolDot') {
     cast.timer = 0.3;
     cast.extras = { meshes: [], done: true };
-    spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius, s.duration, s.dpsMul, 0x66dd33, s.slow);
+    spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius, s.duration, s.dpsMul, elementFx(cast.element).ring, s.slow);
     return;
   }
   if (s.kind === 'multiCircle') {
@@ -10962,7 +10972,18 @@ function tickBossExecute(side, m, cast, dt) {
     m.mesh.position.z = cz;
     // Skada allt nytt i bredd-band
     applyBossLineDmg(side, m, cast, cx, cz);
-    if (cast.timer <= 0) e.done = true;
+    // Element-trail under rusningen + explosion vid slutet (decision 136)
+    e.fxAccum = (e.fxAccum || 0) + dt;
+    if (e.fxAccum >= (IS_MOBILE_UA ? 0.08 : 0.04)) {
+      e.fxAccum = 0;
+      const fx = elementFx(cast.element);
+      const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 0.5 : 0.5;
+      spawnKenneyFx({ texName: fx.sparkTex, x: cx, y: ey, z: cz, color: fx.spark, scale: 0.7, scaleEnd: 0.2, life: 0.3, additive: true });
+    }
+    if (cast.timer <= 0) {
+      e.done = true;
+      if (!e._endBoom) { e._endBoom = true; spawnExplosion(cx, cz, cast.element, { scale: 1.2, power: 1 }); }
+    }
     return;
   }
   if (s.kind === 'multiCircle') {
@@ -10979,6 +11000,7 @@ function tickBossExecute(side, m, cast, dt) {
         dirX: 0, dirZ: 1,
         telegraphMesh: null,
         phase: 'telegraph', timer: 0.7,
+        element: cast.element,   // ärver boss-skill-elementet (decision 136)
       };
       spawnBossTelegraph(side, m, subCast);
       e.circles.push(subCast);
@@ -10993,7 +11015,7 @@ function tickBossExecute(side, m, cast, dt) {
       if (sub.timer <= 0 && sub.phase === 'telegraph') {
         sub.phase = 'done';
         cleanupTelegraphMesh(sub);
-        spawnGroundImpact(sub.targetX, sub.targetZ, s.radius, 0xff6633);
+        spawnElementImpact(sub.targetX, sub.targetZ, cast.element, s.radius);
         applyBossCircleDmg(side, m, sub);
       }
       if (sub.phase === 'done' && sub.timer < -0.5) e.circles.splice(i, 1);
@@ -11009,6 +11031,15 @@ function tickBossExecute(side, m, cast, dt) {
     if (e.beamMesh) {
       e.beamMesh.position.set(cast.originX + cast.dirX * s.length / 2, 1.0, cast.originZ + cast.dirZ * s.length / 2);
       e.beamMesh.rotation.y = curAng;
+    }
+    // Element-gnistor vid strålens spets (decision 136)
+    e.fxAccum = (e.fxAccum || 0) + dt;
+    if (e.fxAccum >= (IS_MOBILE_UA ? 0.1 : 0.05)) {
+      e.fxAccum = 0;
+      const fx = elementFx(cast.element);
+      const tx = cast.originX + cast.dirX * s.length, tz = cast.originZ + cast.dirZ * s.length;
+      const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 1.0 : 1.0;
+      spawnKenneyFx({ texName: fx.sparkTex, x: tx, y: ey, z: tz, color: fx.spark, scale: 0.6, scaleEnd: 0.15, life: 0.3, vy: 1.0, additive: true });
     }
     e.damageTimer -= dt;
     if (e.damageTimer <= 0) {
@@ -11028,6 +11059,17 @@ function tickBossExecute(side, m, cast, dt) {
     // Mesh pulsar
     if (e.coneMesh && e.coneMesh.material) {
       e.coneMesh.material.opacity = 0.55 + 0.30 * Math.sin(performance.now() * 0.015);
+    }
+    // Element-lågor/partiklar längs konen (Dragon Breath = eld) (decision 136)
+    e.fxAccum = (e.fxAccum || 0) + dt;
+    if (e.fxAccum >= (IS_MOBILE_UA ? 0.16 : 0.09)) {
+      e.fxAccum = 0;
+      const fx = elementFx(cast.element);
+      const baseAng = Math.atan2(cast.dirX, cast.dirZ) + (Math.random() - 0.5) * 2 * s.halfAngle;
+      const dist = s.length * (0.3 + Math.random() * 0.6);
+      const px = cast.originX + Math.sin(baseAng) * dist, pz = cast.originZ + Math.cos(baseAng) * dist;
+      const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 0.6 : 0.6;
+      spawnKenneyFx({ texName: fx.burst[0], x: px, y: ey, z: pz, color: fx.mid, scale: 1.1, scaleEnd: 2.0, life: 0.4, vy: fx.rise, rotateSpeed: (Math.random() - 0.5) * 3, additive: true });
     }
     if (cast.timer <= 0) e.done = true;
     return;
@@ -11174,15 +11216,19 @@ function spawnConeFlash(x, z, dx, dz, length, halfAngle, color) {
   triggerCameraShake(0.22, 0.20);
 }
 
-function spawnBossProjectile(side, m, x, z, dx, dz, skill) {
+function spawnBossProjectile(side, m, x, z, dx, dz, skill, element) {
   side.bossProjectiles = side.bossProjectiles || [];
   const dmg = bossEffectiveDamage(m) * (skill.dmgMul || 1);
+  const fx = elementFx(element);   // decision 136: element-färgad projektil
   const grp = new THREE.Group();
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10),
-    new THREE.MeshStandardMaterial({ color: 0xff4422, emissive: 0xff3311, emissiveIntensity: 1.4 }));
+    new THREE.MeshStandardMaterial({ color: fx.mid, emissive: fx.deep, emissiveIntensity: 1.4 }));
   grp.add(head);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8),
+    new THREE.MeshBasicMaterial({ color: fx.core, transparent: true, opacity: 0.35, depthWrite: false }));
+  grp.add(glow);
   const tail = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.7, 8),
-    new THREE.MeshBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.7 }));
+    new THREE.MeshBasicMaterial({ color: fx.spark, transparent: true, opacity: 0.7 }));
   tail.rotation.x = Math.PI / 2;
   tail.position.z = -0.5;
   grp.add(tail);
@@ -11196,6 +11242,8 @@ function spawnBossProjectile(side, m, x, z, dx, dz, skill) {
     radius: skill.radius || 0.8,
     range: skill.range || 14,
     traveled: 0,
+    element: element || 'physical',
+    trailColor: fx.spark,
   });
   _leakDiag.nc.bossProjSpawn++;
 }
@@ -11207,7 +11255,7 @@ function tickBossProjectiles(side, dt) {
     const step = p.speed * dt;
     p.x += p.dx * step; p.z += p.dz * step; p.traveled += step;
     p.mesh.position.set(p.x, 1.1, p.z);
-    spawnProjectileTrailPuff(p.x, 1.0, p.z, 0xff7733);
+    spawnProjectileTrailPuff(p.x, 1.0, p.z, p.trailColor || 0xff7733);
     // Träffa hjälte (i co-op: alla 3)
     let hit = false;
     for (const tgt of bossWarsTargets(side)) {
@@ -11219,6 +11267,7 @@ function tickBossProjectiles(side, dt) {
       }
     }
     if (hit) {
+      spawnExplosion(p.x, p.z, p.element, { scale: 0.9, power: 0.6, y: 1.0, shake: false });   // element-impact (decision 136)
       if (p.mesh.geometry) p.mesh.geometry.dispose?.();
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
@@ -11306,14 +11355,20 @@ function tickBossPools(side, dt) {
 
 function spawnSweepBeamMesh(cast) {
   const s = cast.skill;
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, s.length, 14),
-    new THREE.MeshBasicMaterial({ color: 0xff4422, transparent: true, opacity: 0.85 }));
-  beam.rotation.x = Math.PI / 2;
-  beam.position.set(cast.originX + cast.dirX * s.length / 2, 1.0, cast.originZ + cast.dirZ * s.length / 2);
-  beam.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
-  scene.add(beam);
-  cast.extras.beamMesh = beam;
-  cast.extras.meshes = [beam];
+  const fx = elementFx(cast.element);   // decision 136: element-färgad stråle (kärna+glöd)
+  const grp = new THREE.Group();
+  const glow = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, s.length, 14),
+    new THREE.MeshBasicMaterial({ color: fx.deep, transparent: true, opacity: 0.32, depthWrite: false }));
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, s.length, 14),
+    new THREE.MeshBasicMaterial({ color: fx.mid, transparent: true, opacity: 0.85 }));
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, s.length, 12),
+    new THREE.MeshBasicMaterial({ color: fx.core, transparent: true, opacity: 0.95 }));
+  for (const mm of [glow, beam, core]) { mm.rotation.x = Math.PI / 2; grp.add(mm); }
+  grp.position.set(cast.originX + cast.dirX * s.length / 2, 1.0, cast.originZ + cast.dirZ * s.length / 2);
+  grp.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
+  scene.add(grp);
+  cast.extras.beamMesh = grp;
+  cast.extras.meshes = [grp];
   _leakDiag.nc.sweepBeamSpawn++;
 }
 
@@ -11334,7 +11389,7 @@ function spawnSustainedConeMesh(cast) {
   geom.setIndex(idx);
   geom.computeVertexNormals();
   const cone = new THREE.Mesh(geom,
-    new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+    new THREE.MeshBasicMaterial({ color: elementFx(cast.element).mid, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
   cone.position.set(cast.originX, 0.12, cast.originZ);
   cone.rotation.y = Math.atan2(cast.dirX, cast.dirZ);
   scene.add(cone);
@@ -32123,6 +32178,195 @@ function triggerClientVisualSkill(side, key) {
   }
 }
 
+// ============================================================================
+// ELEMENT-VFX-FUNDAMENT (decision 136) — element-rätt FX på alla skills.
+// Vita procedurella texturer (tintas av material-färg) + signaturpalett +
+// riktig flerlager-explosion. Återanvänder spawnKenneyFx + fxLightPool.
+// ============================================================================
+function _registerFxTexture(name, canvas) {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  kenneyTex.set(name, tex);
+}
+function generateProceduralFxTextures() {
+  if (kenneyTex.has('snowflake')) return;   // idempotent
+  const S = 128, C = S / 2;
+  // Snöflinga: 6-armad stjärna + mjuk glow. Vit (tintas).
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d');
+    const g = x.createRadialGradient(C, C, 0, C, C, C); g.addColorStop(0, 'rgba(255,255,255,0.9)'); g.addColorStop(0.5, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g; x.fillRect(0, 0, S, S);
+    x.strokeStyle = 'rgba(255,255,255,0.95)'; x.lineCap = 'round';
+    for (let i = 0; i < 6; i++) {
+      x.save(); x.translate(C, C); x.rotate(i * Math.PI / 3);
+      x.lineWidth = 5; x.beginPath(); x.moveTo(0, 0); x.lineTo(0, -C * 0.82); x.stroke();
+      x.lineWidth = 3.5;
+      for (const f of [0.45, 0.66]) { x.beginPath(); x.moveTo(0, -C * 0.82 * f); x.lineTo(C * 0.22, -C * 0.82 * f - C * 0.16); x.moveTo(0, -C * 0.82 * f); x.lineTo(-C * 0.22, -C * 0.82 * f - C * 0.16); x.stroke(); }
+      x.restore();
+    }
+    _registerFxTexture('snowflake', cv);
+  }
+  // Iskristall: avlång diamant med ljus kärna.
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d');
+    x.translate(C, C);
+    const grad = x.createLinearGradient(0, -C, 0, C); grad.addColorStop(0, 'rgba(255,255,255,0.2)'); grad.addColorStop(0.5, 'rgba(255,255,255,1)'); grad.addColorStop(1, 'rgba(255,255,255,0.2)');
+    x.fillStyle = grad;
+    x.beginPath(); x.moveTo(0, -C * 0.9); x.lineTo(C * 0.28, -C * 0.2); x.lineTo(C * 0.18, C * 0.85); x.lineTo(-C * 0.18, C * 0.85); x.lineTo(-C * 0.28, -C * 0.2); x.closePath(); x.fill();
+    x.strokeStyle = 'rgba(255,255,255,0.85)'; x.lineWidth = 2; x.beginPath(); x.moveTo(0, -C * 0.9); x.lineTo(0, C * 0.85); x.stroke();
+    _registerFxTexture('ice_shard', cv);
+  }
+  // Vattendroppe: teardrop.
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d'); x.translate(C, C);
+    const g = x.createRadialGradient(0, C * 0.25, 0, 0, C * 0.25, C * 0.7); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.7, 'rgba(255,255,255,0.75)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g;
+    x.beginPath(); x.moveTo(0, -C * 0.85); x.quadraticCurveTo(C * 0.55, C * 0.1, 0, C * 0.8); x.quadraticCurveTo(-C * 0.55, C * 0.1, 0, -C * 0.85); x.closePath(); x.fill();
+    _registerFxTexture('water_drop', cv);
+  }
+  // Ripple: koncentriska ringar (markvågor).
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d'); x.strokeStyle = 'rgba(255,255,255,0.9)';
+    for (let i = 0; i < 3; i++) { x.lineWidth = 5 - i; x.globalAlpha = 0.9 - i * 0.25; x.beginPath(); x.arc(C, C, C * (0.35 + i * 0.22), 0, Math.PI * 2); x.stroke(); }
+    _registerFxTexture('ripple', cv);
+  }
+  // Blixt: taggig bult med glow + sidogren.
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d');
+    x.shadowColor = 'rgba(255,255,255,0.9)'; x.shadowBlur = 10;
+    x.strokeStyle = 'rgba(255,255,255,1)'; x.lineWidth = 6; x.lineJoin = 'round'; x.lineCap = 'round';
+    x.beginPath(); x.moveTo(C, 4); x.lineTo(C - 16, C * 0.55); x.lineTo(C + 10, C * 0.7); x.lineTo(C - 18, S - 4); x.stroke();
+    x.lineWidth = 3; x.beginPath(); x.moveTo(C + 10, C * 0.7); x.lineTo(C + 30, C * 1.05); x.stroke();
+    _registerFxTexture('lightning_bolt', cv);
+  }
+}
+
+// Signaturpalett per element. burst/smoke/cast/sparkTex = textur-namn (laddade
+// Kenney + procedurella). Färger tintas på vita sprites. rise = uppåt-hastighet.
+const ELEMENT_FX = {
+  fire:      { core: 0xfff0b0, mid: 0xff7a1a, deep: 0xff3311, spark: 0xffb050, ring: 0xff5522, light: 0xff5520, burst: ['flame_05', 'fire_01', 'flame_03'], smoke: 'smoke_05', cast: 'magic_05', sparkTex: 'spark_05', rise: 1.5 },
+  ice:       { core: 0xeafaff, mid: 0x8fd8ff, deep: 0x2a7fd0, spark: 0xcdeeff, ring: 0x6fc8ff, light: 0x4aa0e0, burst: ['snowflake', 'ice_shard', 'star_04'], smoke: 'smoke_03', cast: 'snowflake', sparkTex: 'ice_shard', rise: 0.2 },
+  water:     { core: 0xcfeeff, mid: 0x49a8e6, deep: 0x1560a0, spark: 0x9fd8ff, ring: 0x3aa0e0, light: 0x2a80c0, burst: ['water_drop', 'ripple', 'circle_05'], smoke: 'smoke_03', cast: 'ripple', sparkTex: 'water_drop', rise: 0.6 },
+  nature:    { core: 0xe6ffb0, mid: 0x6fcf4a, deep: 0x2f8f2f, spark: 0xb7f06a, ring: 0x6fcf4a, light: 0x4faf3a, burst: ['scratch_01', 'star_04', 'spark_05'], smoke: 'smoke_03', cast: 'magic_03', sparkTex: 'spark_05', rise: 0.4 },
+  poison:    { core: 0xe2ff7a, mid: 0x8fce22, deep: 0x4a8f1a, spark: 0xc4ff4a, ring: 0x88cc22, light: 0x6faf1a, burst: ['smoke_07', 'scratch_01', 'spark_05'], smoke: 'smoke_07', cast: 'magic_03', sparkTex: 'spark_05', rise: 0.7 },
+  lightning: { core: 0xffffff, mid: 0xbcd9ff, deep: 0x5a8fff, spark: 0xdcecff, ring: 0x88aaff, light: 0x88aaff, burst: ['lightning_bolt', 'spark_07', 'star_07'], smoke: 'smoke_03', cast: 'lightning_bolt', sparkTex: 'spark_07', rise: 0.3 },
+  shadow:    { core: 0xe0b0ff, mid: 0x9a4fff, deep: 0x5a1f9f, spark: 0xc890ff, ring: 0x9a4fff, light: 0x8030d0, burst: ['twirl_03', 'magic_01', 'spark_03'], smoke: 'smoke_05', cast: 'twirl_02', sparkTex: 'spark_03', rise: 0.3 },
+  arcane:    { core: 0xcfe6ff, mid: 0x66a0ff, deep: 0x3050d0, spark: 0xa9d0ff, ring: 0x66a0ff, light: 0x4070e0, burst: ['magic_05', 'star_07', 'spark_03'], smoke: 'smoke_03', cast: 'magic_05', sparkTex: 'spark_03', rise: 0.3 },
+  holy:      { core: 0xfff6d0, mid: 0xffe27a, deep: 0xffcf3a, spark: 0xfff0a0, ring: 0xffd34a, light: 0xffcf3a, burst: ['star_07', 'flare_01', 'light_03'], smoke: 'smoke_03', cast: 'star_07', sparkTex: 'star_04', rise: 0.5 },
+  physical:  { core: 0xfff0d8, mid: 0xffce70, deep: 0xc89030, spark: 0xffe6a0, ring: 0xffce70, light: 0xe0b040, burst: ['slash_01', 'spark_05', 'star_04'], smoke: 'smoke_05', cast: 'slash_03', sparkTex: 'spark_05', rise: 0.4 },
+  earth:     { core: 0xf0e0c0, mid: 0xb08050, deep: 0x6a4a2a, spark: 0xd8bd8a, ring: 0xb08050, light: 0xa07840, burst: ['dirt_01', 'scorch_02', 'smoke_05'], smoke: 'smoke_05', cast: 'dirt_01', sparkTex: 'dirt_01', rise: 0.2 },
+};
+function elementFx(el) { return ELEMENT_FX[el] || ELEMENT_FX.physical; }
+function _fxGroundY() { return (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 0.06 : 0.07; }
+// Delad plane-geometri för ground-partiklar (perf: undviker PlaneGeometry-alloc
+// per partikel → mindre GC-tryck på mobil). Skalas via mesh.scale, disposas ALDRIG.
+const _FX_PLANE_GEO = new THREE.PlaneGeometry(1, 1);
+
+// Kort ljuspuls ur fxLightPool (ingen ny PointLight → ingen iOS-rekompilering).
+function spawnFxLightPulse(x, y, z, color, intensity, distance, life) {
+  if (IS_MOBILE_UA) intensity *= 0.7;
+  const l = acquireFxLight(color, intensity, distance || 9, x, y, z);
+  combatFx.push({ mesh: null, fxLight: l, life: life || 0.4, maxLife: life || 0.4, kind: 'elemLight', lightBase: intensity });
+}
+
+// RIKTIG explosion: flash → element-burst → rök → gnistor/skärvor (flyger utåt) →
+// mark-scorch → expanderande shockwave-ring → ljuspuls + shake. Mobil-reducerad.
+// opts: { scale, power(0.5 liten…1.5 stor), y, shake, shakeMag, shakeDur }
+function spawnExplosion(x, z, element, opts = {}) {
+  const fx = elementFx(element);
+  const scale = opts.scale || 1;
+  const power = opts.power != null ? opts.power : 1;
+  const mobile = IS_MOBILE_UA;
+  const baseY = opts.y != null ? opts.y : (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y + 0.6 : 0.6);
+  const gY = _fxGroundY();
+  // Adaptiv self-gate: halvera partikelmängd när combatFx redan är nära cappen
+  // (skyddar mot co-op-projektil-flod som annars trycker ut nyttig FX).
+  const _lf = (combatFx.length / COMBAT_FX_CAP) > 0.7 ? 0.5 : 1;
+  // 1. Kärn-flash
+  spawnKenneyFx({ texName: 'flare_01', x, y: baseY, z, color: fx.core, scale: 1.2 * scale, scaleEnd: 3.0 * scale, life: 0.26, additive: true, opacity: 0.95 });
+  // 2. Element-burst (lågor/is/skärvor)
+  const burstN = Math.max(1, Math.round((mobile ? 2 : 3) * power * _lf));
+  for (let i = 0; i < burstN; i++) {
+    const tex = fx.burst[i % fx.burst.length];
+    const a = Math.random() * Math.PI * 2, r = (0.2 + Math.random() * 0.6) * scale;
+    spawnKenneyFx({ texName: tex, x: x + Math.cos(a) * r, y: baseY + 0.1 + Math.random() * 0.4, z: z + Math.sin(a) * r,
+      color: i === 0 ? fx.core : fx.mid, scale: (1.4 + Math.random() * 0.8) * scale, scaleEnd: (2.4 + Math.random()) * scale,
+      life: 0.4 + Math.random() * 0.25, rotateSpeed: (Math.random() - 0.5) * 4, vy: fx.rise, additive: true });
+  }
+  // 3. Rök/damm-efterdyning (normal blend)
+  if (!mobile || Math.random() < 0.6) {
+    spawnKenneyFx({ texName: fx.smoke, x, y: baseY, z, color: fx.deep, scale: 1.2 * scale, scaleEnd: 2.8 * scale, life: 0.7, vy: 0.5, opacity: 0.5 });
+  }
+  // 4. Gnistor/skärvor utåt (vx/vz + gravitation)
+  const sparkN = Math.max(2, Math.round((mobile ? 4 : 7) * power * _lf));
+  for (let i = 0; i < sparkN; i++) {
+    const a = (i / sparkN) * Math.PI * 2 + Math.random() * 0.6;
+    const spd = (2.5 + Math.random() * 4) * scale;
+    spawnKenneyFx({ texName: fx.sparkTex, x, y: baseY + 0.2, z, color: fx.spark,
+      scale: 0.5 * scale, scaleEnd: 0.1 * scale, life: 0.3 + Math.random() * 0.22,
+      vx: Math.cos(a) * spd, vz: Math.sin(a) * spd, vy: 1.2 + Math.random() * 1.6, gravity: 6, additive: true });
+  }
+  // 5. Mark-scorch / element-mark
+  const groundTex = element === 'water' ? 'ripple' : (element === 'ice' ? 'snowflake' : (element === 'lightning' ? 'light_03' : 'scorch_02'));
+  spawnKenneyFx({ texName: groundTex, x, y: gY, z, color: fx.ring, scale: 1.5 * scale, scaleEnd: 2.3 * scale, life: 0.6, ground: true, rotateSpeed: 0.4, opacity: 0.7, additive: element !== 'earth' && element !== 'physical' });
+  // 6. Expanderande shockwave-ring
+  const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.28 * scale, 0.46 * scale, 28),
+    new THREE.MeshBasicMaterial({ color: fx.ring, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+  ringMesh.rotation.x = -Math.PI / 2; ringMesh.position.set(x, gY + 0.02, z);
+  scene.add(ringMesh);
+  combatFx.push({ mesh: ringMesh, life: 0.4, maxLife: 0.4, kind: 'castRing' });
+  // 7. Ljuspuls + shake
+  spawnFxLightPulse(x, baseY, z, fx.light, 3.0 * Math.min(1.6, scale), 8 + 3 * scale, 0.34);
+  if (opts.shake !== false) triggerCameraShake(opts.shakeMag || 0.2 * Math.min(1.5, scale), opts.shakeDur || 0.2);
+}
+// Lättare mark-impact (för upprepade/multi-nedslag, t.ex. meteor-regn).
+function spawnElementImpact(x, z, element, radius) {
+  const sc = Math.max(0.6, Math.min(2.0, (radius || 3) / 3));
+  spawnExplosion(x, z, element, { scale: sc, power: 0.6, shakeMag: 0.1, shakeDur: 0.12 });
+}
+// Element-färgad cast-start (ersätter generisk lila ring + sköld-burst).
+function spawnElementCast(x, z, element, radius = 1.6) {
+  const fx = elementFx(element);
+  const gY = _fxGroundY();
+  const upY = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 0.8 : 0.8;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.12, radius, 32),
+    new THREE.MeshBasicMaterial({ color: fx.ring, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(x, gY, z); scene.add(ring);
+  combatFx.push({ mesh: ring, life: 0.5, maxLife: 0.5, kind: 'castRing' });
+  spawnKenneyFx({ texName: fx.cast, x, y: upY, z, color: fx.core, scale: radius * 1.3, scaleEnd: radius * 2.1, life: 0.5, rotateSpeed: 2, additive: true });
+  spawnKenneyFx({ texName: 'magic_05', x, y: gY, z, color: fx.mid, scale: radius * 1.1, scaleEnd: radius * 1.9, life: 0.55, ground: true, rotateSpeed: -1.5, additive: true });
+  spawnFxLightPulse(x, upY, z, fx.light, 2.2, 8, 0.4);
+}
+
+// Skill-id → element. Driver boss-FX (alla bossar delar generiska kind, men
+// olika element-tema). Fallback per boss-tier-tema.
+const BOSS_SKILL_ELEMENT = {
+  shieldBash: 'physical', throwingAxe: 'physical', battleRoar: 'physical',
+  lightningStrike: 'lightning', spearVolley: 'physical', warStomp: 'earth',
+  cleaveWave: 'nature', poisonPool: 'poison', earthquake: 'earth',
+  hellfireBeam: 'fire', infernoStrike: 'fire', meteorShower: 'fire',
+  dragonBreath: 'fire', wingSlam: 'physical', skyfireRain: 'fire',
+  berserkerCharge: 'physical', whirlwindStrike: 'physical', warCry: 'physical',
+  stormCall: 'lightning', heavyArtillery: 'physical', shieldWall: 'holy',
+  tectonicSlam: 'earth', toxicCloud: 'poison', boulderHurl: 'earth',
+  demonicEruption: 'shadow', soulBurn: 'shadow', hellfireStorm: 'fire',
+  infernalRoar: 'fire', dragonDive: 'fire', meteorApocalypse: 'fire',
+};
+function bossSkillElement(skillId, bossTier) {
+  if (skillId && BOSS_SKILL_ELEMENT[skillId]) return BOSS_SKILL_ELEMENT[skillId];
+  const byTier = { 1: 'physical', 2: 'lightning', 3: 'poison', 4: 'shadow', 5: 'fire' };
+  return byTier[bossTier] || 'physical';
+}
+
 function spawnSkillCastFx(x, z, color, radius = 0.6) {
   // Cast-ring som expanderar (för skills som inte annars har visuell start)
   const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
@@ -32165,13 +32409,12 @@ function spawnKenneyFx(opts) {
   // För ground-plane MÅSTE vi använda MeshBasicMaterial (annars osynlig render).
   let mesh;
   if (opts.ground) {
-    const geo = new THREE.PlaneGeometry(1, 1);
     const mat = new THREE.MeshBasicMaterial({
       map: tex, color, transparent: true, opacity,
       depthWrite: false, blending,
       side: THREE.DoubleSide,
     });
-    mesh = new THREE.Mesh(geo, mat);
+    mesh = new THREE.Mesh(_FX_PLANE_GEO, mat);   // delad geo (perf) — disposas ej
     mesh.rotation.x = -Math.PI / 2;
   } else {
     const mat = new THREE.SpriteMaterial({
@@ -32193,6 +32436,9 @@ function spawnKenneyFx(opts) {
     scaleEnd: opts.scaleEnd != null ? opts.scaleEnd : scale * 1.5,
     rotateSpeed: opts.rotateSpeed || 0,
     vy: opts.vy || 0,
+    vx: opts.vx || 0,
+    vz: opts.vz || 0,
+    gravity: opts.gravity || 0,
     startOpacity: opts.opacity != null ? opts.opacity : 1.0,
     isGround: !!opts.ground,
   });
@@ -32394,10 +32640,9 @@ function tickProjectileEntitySpins(dt) {
 // GPU-buffrar — bara .dispose() gör det. Varje fx skapar nya geometrier → säkert.
 function _disposeCombatFxEntry(e) {
   if (e.kind === 'kenneyFx' && e.mesh) {
-    // Kenney-fx: Sprite-material disposas; geometrin bara om ground-plan
-    // (Sprite delar intern geometri). Textur är shared → ej disposad.
+    // Kenney-fx: Sprite-material disposas. Geometri disposas EJ — Sprite delar
+    // intern geometri och ground-plan delar _FX_PLANE_GEO (perf). Textur shared.
     if (e.mesh.material) e.mesh.material.dispose();
-    if (e.isGround && e.mesh.geometry) e.mesh.geometry.dispose();
   } else if (e.mesh) {
     e.mesh.traverse(o => {
       if (o.geometry) o.geometry.dispose();
@@ -32463,7 +32708,12 @@ function tickCombatFx(dt) {
         if (e.isGround) e.mesh.rotation.z += e.rotateSpeed * dt;
         else e.mesh.material.rotation = (e.mesh.material.rotation || 0) + e.rotateSpeed * dt;
       }
+      if (e.gravity) e.vy -= e.gravity * dt;
       if (e.vy) e.mesh.position.y += e.vy * dt;
+      if (e.vx || e.vz) {
+        e.mesh.position.x += e.vx * dt; e.mesh.position.z += e.vz * dt;
+        const fr = Math.max(0, 1 - 3 * dt); e.vx *= fr; e.vz *= fr;   // luftmotstånd → decel
+      }
       if (e.mesh.material) e.mesh.material.opacity = e.startOpacity * (1 - t);
     } else if (e.kind === 'aaCharge') {
       // Boss-AA charge: lerp scale start→end + fade-out
@@ -32488,6 +32738,9 @@ function tickCombatFx(dt) {
         }
       });
       if (e.fxLight) e.fxLight.intensity = 3.5 * (1 - t);
+    } else if (e.kind === 'elemLight') {
+      // Mesh-lös ljuspuls (spawnFxLightPulse): fade:a intensitet, släpps i dispose.
+      if (e.fxLight) e.fxLight.intensity = (e.lightBase || 3) * (1 - t);
     }
   }
 }
