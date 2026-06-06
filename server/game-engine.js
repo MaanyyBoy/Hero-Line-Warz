@@ -55,8 +55,32 @@ const HERO_DEFS = {
     attackInterval: 0.9,  // något snabbare
     baseMoveSpeed: 6.2,
   },
+  zheyna: {
+    name: 'Zheyna',
+    baseHp: 95,           // spjut-carry: medium HP
+    baseDmg: 15,          // hög skada per träff (motsats till snabba archers)
+    attackRange: 7.5,     // ranged spjut
+    attackInterval: 1.8,  // långsam AA-takt
+    baseMoveSpeed: 6.0,
+  },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
+// ===== ZHEYNA (spjut-carry) konstanter (decision 134) =====
+const ZHEYNA_PASSIVE_DMG_MAX = 0.40;   // +40% AA-skada på max AA-range (linjärt från 0 nära)
+const ZHEYNA_PASSIVE_LS_MAX = 0.25;    // +25% lifesteal på max AA-range
+// Q Spear Pierce
+const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5, ZHEYNA_Q_CD = 9;
+const ZHEYNA_Q_STUN_RADIUS = 2.0, ZHEYNA_Q_STUN_DUR = 2.0;
+const ZHEYNA_Q_BUFF_HERO = 0.20, ZHEYNA_Q_BUFF_MINION = 0.05, ZHEYNA_Q_BUFF_DUR = 3.0;
+// F Clone
+const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_CD = 10, ZHEYNA_CLONE_DMG_MUL = 0.50;
+const ZHEYNA_CLONE_DMG_TAKEN_MUL = 1.5, ZHEYNA_CLONE_OWNER_DR = 0.50;
+// E Warpath
+const ZHEYNA_E_DUR = 5, ZHEYNA_E_CD = 12, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;
+// R Spear God
+const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
+const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
+const ZHEYNA_R_KNOCKBACK_PER_SEC = 2.0, ZHEYNA_R_CHARGE_MS_MUL = 0.50, ZHEYNA_R_CHARGE_TURN_MUL = 0.50, ZHEYNA_R_SPEAR_SPEED = 26;
 
 // Konstanta side-index-arrayer — undviker `[1,2]` literal-allokering i hot-paths
 // (30 Hz × N anrop = märkbar GC-tryck i Render free-tier Node). Frysta = immutable.

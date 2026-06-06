@@ -158,6 +158,7 @@ const CHARACTER_ASSETS = {
   // Embedded clips: Idle / Walk / Run / Punch / SwordSlash / Shoot_OneHanded /
   // Death / Jump / SitDown / Walk_Carry / Run_Carry. Alla 51 karaktärer i pack:et
   // delar samma rig — blandbara fritt.
+  zheyna_qt: 'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Viking_Female.gltf',
   zyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Wizard.gltf',
   nyro_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Elf.gltf',
   kryx_qt:   'heroes/Ultimate Animated Character Pack - Nov 2019/glTF/Viking_Male.gltf',
@@ -2157,8 +2158,20 @@ const HERO_DEFS = {
   gimlu:   { name: 'Kryx',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Elar', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
   kostefo: { name: 'Kostef', baseHp: 95,  baseDmg: 5, attackRange: 6.3, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range = 70% av archer (Legolas 9.0). Var 5.4
+  zheyna:  { name: 'Zheyna', baseHp: 95,  baseDmg: 15, attackRange: 7.5, attackInterval: 1.8, baseMoveSpeed: 6.0 },  // spjut-carry: långsam, hårdslående ranged AA
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
+// ===== ZHEYNA (spjut-carry) konstanter — speglar server/game-engine.js (decision 134) =====
+const ZHEYNA_PASSIVE_DMG_MAX = 0.40, ZHEYNA_PASSIVE_LS_MAX = 0.25;
+const ZHEYNA_Q_RANGE = 10, ZHEYNA_Q_SPEED = 22, ZHEYNA_Q_REPRESS = 1.5, ZHEYNA_Q_CD = 9;
+const ZHEYNA_Q_STUN_RADIUS = 2.0, ZHEYNA_Q_STUN_DUR = 2.0;
+const ZHEYNA_Q_BUFF_HERO = 0.20, ZHEYNA_Q_BUFF_MINION = 0.05, ZHEYNA_Q_BUFF_DUR = 3.0;
+const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_CD = 10, ZHEYNA_CLONE_DMG_MUL = 0.50;
+const ZHEYNA_CLONE_DMG_TAKEN_MUL = 1.5, ZHEYNA_CLONE_OWNER_DR = 0.50;
+const ZHEYNA_E_DUR = 5, ZHEYNA_E_CD = 12, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;
+const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
+const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
+const ZHEYNA_R_KNOCKBACK_PER_SEC = 2.0, ZHEYNA_R_CHARGE_MS_MUL = 0.50, ZHEYNA_R_CHARGE_TURN_MUL = 0.50, ZHEYNA_R_SPEAR_SPEED = 26;
 const PROJECTILE_SPEED = 18;
 const PASSIVE_EVERY = 4;
 const PASSIVE_AOE_RADIUS = 2.0;
@@ -3126,6 +3139,7 @@ const HERO_GLTF_MAP = {
   gimlu:   'kryx_qt',     // Viking_Male
   aragurn: 'elar_qt',     // Knight_Golden_Male
   kostefo: 'kostef_qt',   // Witch
+  zheyna:  'zheyna_qt',   // Viking_Female (spjut-carry)
 };
 // Per-hero scale: {x,y,z}. Mixamo-modeller är vanligen i meter-skala efter
 // Blender-GLB-export. Initial 1.0 — justera per hjälte efter visuell test.
@@ -3136,6 +3150,7 @@ const HERO_GLTF_SCALE = {
   gimlu:   { x: 0.759, y: 0.759, z: 0.759 },   // Kryx +15% (anv-onskemal)
   aragurn: { x: 0.87, y: 0.87, z: 0.87 },
   kostefo: { x: 0.72, y: 0.72, z: 0.72 },
+  zheyna:  { x: 0.75, y: 0.75, z: 0.75 },
 };
 // Per-hero AA-clip: vilken animation som triggas vid auto-attack.
 // Quaternius-clip-namn: Idle/Walk/Run/Punch/SwordSlash/Shoot_OneHanded/Death/Jump.
@@ -3146,6 +3161,7 @@ const HERO_ATTACK_CLIP = {
   gimlu:   'SwordSlash',        // Viking_Male svingar svärd
   aragurn: 'SwordSlash',        // Knight_Golden_Male svärd
   kostefo: 'Punch',             // Witch — punch som cast-substitut
+  zheyna:  'SwordSlash',        // Viking_Female — spjut-kast (slash som kast-substitut)
 };
 function makeHeroMesh(idx, heroId) {
   const cfg = SIDE_CFG[idx];
@@ -26402,7 +26418,7 @@ const HEROES = [
   { id: 'gimlu',     name: 'Kryx',       role: 'Tank',         initial: 'Gi',  available: true  },
   { id: 'aragurn',   name: 'Elar',     role: 'Warrior',      initial: 'Ar',  available: true  },
   { id: 'kostefo',   name: 'Kostef',     role: 'Smoke-Mage',   initial: 'K',   available: true  },
-  { id: 'hero-6',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
+  { id: 'zheyna',    name: 'Zheyna',      role: 'Spear',        initial: 'Zh',  available: true  },
   { id: 'hero-7',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-8',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
   { id: 'hero-9',    name: '? ? ?',       role: 'Coming Soon',  initial: '?',   available: false },
@@ -26455,6 +26471,15 @@ const HERO_INFO = {
     },
     passive: { name: 'Smoke Companion', icon: '🌫', desc: 'A green-glowing companion follows Kostef everywhere. The companion copies Kostef\'s auto-attack but only deals 25% of Kostef\'s AA damage. All damage the companion deals heals Kostef for the same amount (100% lifesteal flow via the companion).' },
     ult: { name: 'Joint Avengers', icon: '🎯', desc: 'Summons 8 cannabis joints that orbit Kostef for 5 seconds. Each joint copies Kostef\'s AA and deals 10% of his AA damage. 50% of all damage from the joints heals Kostef (strong sustain burst). With 8 joints ticking AA = burst DPS + heal rush.' },
+  },
+  zheyna: {
+    skills: {
+      q: { name: 'Spear Pierce', icon: '🗡', desc: 'Throws a spear up to 10 m that hits the first enemy in its path for auto-attack damage (guaranteed crit). Press Q again within 1.5s to teleport to the spear\'s destination, stunning all enemies within 2 m for 2s. Per hero stunned: +20% damage for 3s; per minion stunned: +5% damage for 3s.' },
+      f: { name: 'Clone', icon: '👥', desc: 'Spawns a clone beside Zheyna for 5 seconds that follows her and copies her auto-attacks only (same target if she has one, else nearest). The clone deals 50% of Zheyna\'s damage with the same attack speed + crit chance. While the clone lives Zheyna takes 50% less damage, but the clone takes 50% more damage (easy to kill). 10s cooldown.' },
+      e: { name: 'Warpath', icon: '⚡', desc: '5-second self buff: +20% attack speed, +20% movement speed, +20% auto-attack range, and every auto-attack knocks the target back 1 m. 12s cooldown.' },
+    },
+    passive: { name: 'Hunter\'s Reach', icon: '🎯', desc: 'Zheyna\'s auto-attacks scale with distance to the target: the farther away the enemy, the more damage AND lifesteal. At maximum auto-attack range: +40% AA damage and +25% lifesteal. Point-blank gives almost nothing — reward for keeping your distance.' },
+    ult: { name: 'Spear God', icon: '🔱', desc: 'Hold to charge (max 3s). Each second the spear gets wider and hits harder. Release to throw (or auto-throw after a 2s aim window at max charge). Throws a giant spear up to 20 m that hits ALL enemies in its path. Damage: 20% of target max HP per charge second (1s=20%, 3s=60%) and knockback 2 m per second (1s=2 m, 3s=6 m). While charging Zheyna moves and turns 50% slower (aim = facing).' },
   },
 };
 
