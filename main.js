@@ -21127,6 +21127,52 @@ function updateZheynaUltSpearSolo(side, dt) {
   if (sp.mesh) sp.mesh.position.set(sp.x, sp.y, sp.z);
   if (sp.traveled >= ZHEYNA_R_RANGE) { if (sp.mesh) { scene.remove(sp.mesh); zheynaDispose(sp.mesh); } side.zheynaUltSpear = null; }
 }
+// MP-render: skapa/uppdatera/dispose Zheyna-entiteter från server-snap (arena + boss wars).
+// Solo använder tickZheynaSolo i stället (modes är mutually exclusive). Klassisk MP = ej täckt än.
+function zheynaCleanupMpVisuals(side) {
+  if (side.zheynaClone) zheynaDisposeCloneSolo(side);
+  if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
+  if (side.zheynaUltSpear) { if (side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); } side.zheynaUltSpear = null; }
+  if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side);
+}
+function updateZheynaMpVisuals(side, snap) {
+  if (!side || !snap || snap.hid !== 'zheyna') {
+    if (side && (side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh)) zheynaCleanupMpVisuals(side);
+    return;
+  }
+  const baseY = side.mesh ? side.mesh.position.y : 0;
+  // Klon
+  if (snap.zc) {
+    if (!side.zheynaClone || !side.zheynaClone.mesh) { const m = makeZheynaCloneMesh(); scene.add(m); side.zheynaClone = { mesh: m }; }
+    side.zheynaClone.mesh.position.set(snap.zc.x, baseY, snap.zc.z);
+    if (side.mesh) side.zheynaClone.mesh.rotation.y = side.mesh.rotation.y;
+  } else if (side.zheynaClone) { zheynaDisposeCloneSolo(side); }
+  // Spjut (Q)
+  if (snap.zsp) {
+    if (!side.zheynaSpear || !side.zheynaSpear.mesh) { const m = makeZheynaSpearMesh(); scene.add(m); side.zheynaSpear = { mesh: m }; }
+    side.zheynaSpear.mesh.position.set(snap.zsp.x, baseY + 1.0, snap.zsp.z);
+    side.zheynaSpear.mesh.rotation.y = Math.atan2(snap.zsp.dx || 0, snap.zsp.dz || 1);
+  } else if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
+  // Ult-spjut (R)
+  if (snap.zus) {
+    if (!side.zheynaUltSpear || !side.zheynaUltSpear.mesh) { const m = makeZheynaUltSpearMesh(snap.zus.w || 3); scene.add(m); side.zheynaUltSpear = { mesh: m }; }
+    side.zheynaUltSpear.mesh.position.set(snap.zus.x, baseY + 1.0, snap.zus.z);
+    side.zheynaUltSpear.mesh.rotation.y = Math.atan2(snap.zus.dx || 0, snap.zus.dz || 1);
+  } else if (side.zheynaUltSpear) { if (side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); } side.zheynaUltSpear = null; }
+  // Ult-laddnings-sikt
+  if (snap.zch) {
+    if (!side.zheynaChargeMesh) { side.zheynaChargeMesh = makeZheynaChargeIndicator(); scene.add(side.zheynaChargeMesh); }
+    const grp = side.zheynaChargeMesh;
+    const charge = Math.max(1, Math.min(ZHEYNA_R_MAX_CHARGE, snap.zch.c || 1));
+    const width = ZHEYNA_R_WIDTH_BASE + ZHEYNA_R_WIDTH_PER_SEC * (charge - 1);
+    grp.position.set(side.hero.x, baseY + 0.08, side.hero.z);
+    grp.rotation.y = Math.atan2(snap.fx || 0, snap.fz || 1);
+    const plane = grp.children[0];
+    plane.scale.set(width, ZHEYNA_R_RANGE, 1); plane.position.z = ZHEYNA_R_RANGE / 2;
+    const full = (snap.zch.c || 0) >= ZHEYNA_R_MAX_CHARGE;
+    if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
+  } else if (side.zheynaChargeMesh) { disposeZheynaChargeIndicatorSolo(side); }
+}
 function tickZheynaSolo(side, dt) {
   if (!side || side.heroId !== 'zheyna') return;
   if (side.hero.dead) {
@@ -26051,6 +26097,8 @@ function applyHeroSnap(side, snap) {
       triggerClientVisualSkill(side, 'r');
     }
   }
+  // Zheyna (decision 134): rendera klon/spjut/ult-spjut/laddnings-sikt från snap (MP).
+  updateZheynaMpVisuals(side, snap);
 }
 
 // Klient-mesh för en host-broadcastad black hole (route B). Mörk sfär + lila

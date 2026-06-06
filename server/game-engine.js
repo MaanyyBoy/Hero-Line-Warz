@@ -1934,6 +1934,7 @@ function _makeHeroSnapBuf() {
     lInv: undefined, kUlt: undefined, kJoints: undefined,
     kComp: undefined, kCl: undefined,
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
+    zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwp: undefined,   // Zheyna (decision 134)
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -1981,6 +1982,12 @@ function serializeArenaHero(side, buf) {
   buf.aus = nz(side.auraStacks);
   buf.art = nzr2(side.auraResetTimer);
   buf.ads = nz(side.adStacks);
+  // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (MP-paritet).
+  buf.zc = side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined;
+  buf.zsp = side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined;
+  buf.zus = side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined;
+  buf.zch = side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined;
+  buf.zwp = (side.zheynaWarpathRem || 0) > 0 ? 1 : undefined;
   return buf;
 }
 
