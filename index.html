@@ -460,6 +460,10 @@
     .skill.zheyna-armed .cd { color: #bfffd9; font-weight: 800; opacity: 1; }
     /* Aktiv self-buff (Warpath/Hunter's Focus/Whirlwind/Taunt/Iron Will/Cloud) — cyan glow. */
     .skill.buff-active { border-color: #5ad6ff; box-shadow: 0 0 16px rgba(90,214,255,0.8), 0 4px 14px rgba(0,0,0,0.55); }
+    /* Legolas E lvl5: 2 charges. En stack redo + en laddar -> transparent cd-overlay (fortf. tryckbar). */
+    .skill.legolas-charges.charge-partial .cd-mask { opacity: 0.4; }
+    .skill.legolas-charges.charge-partial { border-color: #7fd0ff; }
+    .skill.legolas-charges .sk-level { color: #9fe0ff; font-weight: 800; }
 
     /* Skill-arc — placerade kring AA på radie ~118px från AA-mitten (47.5,47.5).
        Q rakt ovanför AA (90°), F upp-vänster (135°), E rakt vänster (180°). */

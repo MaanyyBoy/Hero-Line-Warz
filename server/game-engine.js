@@ -349,12 +349,12 @@ const KOSTEFO_COMPANION_AA_INTERVAL = 0.9;
 const LEGOLUS_INVIS_DURATION = 5.0;
 const LEGOLUS_INVIS_SPEED_BONUS = 0.20;     // +20% movespeed under invis
 const LEGOLUS_ULT_AA_RANGE_MUL = 2.0;       // dubbel range på empowered AA
-const LEGOLUS_ULT_AA_DMG_PCT = 0.25;        // 25% av target's maxHp som direct dmg
+const LEGOLUS_ULT_AA_DMG_PCT = 0.20;        // 20% av target's maxHp (nerf -20% från 0.25)
 const LEGOLUS_ULT_AA_STUN_DUR = 1.5;        // stun target + nearby 1.5s
 const LEGOLUS_ULT_AA_STUN_RADIUS = 2.5;     // radie runt target för AoE-stun
 const LEGOLUS_THORN_POOL_DURATION = 3.0;    // pool finns kvar 3s
 const LEGOLUS_THORN_POOL_TICK = 0.5;        // tick var 0.5s
-const LEGOLUS_THORN_POOL_DMG_PCT = 0.05;    // 5% maxHp per tick
+const LEGOLUS_THORN_POOL_DMG_PCT = 0.04;    // 4% maxHp per tick (nerf -20% från 0.05)
 const LEGOLUS_THORN_POOL_RADIUS = 2.5;      // AoE-radie
 // Gimlu
 const TAUNT_RADIUS = 5.5;
@@ -7290,6 +7290,7 @@ function applyEvent(state, sideIdx, ev) {
         if (side.heroId === 'legolas' && !side.hero.dead) {
           side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
           side.legolusUltAaPending = true;
+          side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
         }
         // Kostefo Joint Avengers: summona 8 joints som orbiterar + kopierar AA
         if (side.heroId === 'kostefo' && !side.hero.dead) {

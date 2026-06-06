@@ -13894,7 +13894,7 @@ function updateHeroAttack(side, dt) {
   if (ultAaNow) {
     const tEnt = target.entity;
     const tMax = tEnt.maxHp || tEnt.hp || aaDmg;
-    aaDmg = tMax * 0.25;
+    aaDmg = tMax * 0.20;   // Shadow Volley empowered AA: 20% målets maxHP (nerf -20% från 0.25)
     side.legolusUltAaPending = false;
     side.legolusInvisRemaining = 0;
   }
@@ -21453,7 +21453,7 @@ const LEGOLUS_ULT_AA_STUN_DUR = 1.5;
 const LEGOLUS_ULT_AA_STUN_RADIUS = 2.5;
 const LEGOLUS_THORN_POOL_DURATION = 3.0;
 const LEGOLUS_THORN_POOL_TICK = 0.5;
-const LEGOLUS_THORN_POOL_DMG_PCT = 0.05;
+const LEGOLUS_THORN_POOL_DMG_PCT = 0.04;   // 4% maxHp/tick (nerf -20% från 0.05)
 const LEGOLUS_THORN_POOL_RADIUS = 2.5;
 // Gamla Worldpiercer-konstanter — funktionerna nedan (_legacyHostCastLegolasUlt_UNUSED,
 // tickBigArrows, onLegolasUltHit, disposeArrowMesh) kallas aldrig längre eftersom
@@ -21474,6 +21474,7 @@ function hostCastLegolasUlt(side, dx, dz) {
   if (side.hero.dead) return;
   side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
   side.legolusUltAaPending = true;
+  side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x44aa66, 1.6);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0x44aa66);
   triggerCameraShake(0.15, 0.20);
@@ -23492,8 +23493,14 @@ function endSkillTouch(touch, cancelled) {
   hideSkillTooltip();
   const side = sides[APP.localSide];
   // Om tooltipen visades = användaren ville läsa, INTE casta
-  // ULT (r) har ingen CD — kolla energi i hostCastUlt i stället
-  const skillCdOK = key === 'r' ? true : (side && side.skills[key].cd <= 0);
+  // ULT (r) har ingen CD — kolla energi i hostCastUlt i stället.
+  // Re-press/charge-skills får castas ÄVEN när cd > 0 (annars blockerade touch-gaten dem
+  // — de funkade bara på tangentbord): Gimlu E (teleport till hammer), Legolas E lvl5
+  // (stack 2 redo), Zheyna Q (re-press-teleport-fönster). castLocalSkill har samma bypass.
+  const eGimluTp = side && side.heroId === 'gimlu' && key === 'e';   // teleport-till-hammer (cast-fn no-op:ar om ingen hammer)
+  const eLegoStack2 = side && side.heroId === 'legolas' && key === 'e' && side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX && (side.legolasDashStackCd || 0) <= 0;
+  const qZheynaRepress = side && side.heroId === 'zheyna' && key === 'q' && (side._zheynaQCastAt || 0) > 0 && (performance.now() - side._zheynaQCastAt) < ZHEYNA_Q_REPRESS * 1000;
+  const skillCdOK = key === 'r' ? true : (side && (side.skills[key].cd <= 0 || eGimluTp || eLegoStack2 || qZheynaRepress));
   if (!cancelled && !overCancel && !wasShowingTooltip && side && skillCdOK) {
     let dx, dz;
     const isDrag = SKILL_AIMABLE[key] && aimState.dragMag > AIM_THRESHOLD;
@@ -24534,6 +24541,26 @@ function updateSkillButtonStyles() {
       el.classList.remove('cooling');
       el.querySelector('.cd').textContent = '';
     }
+    // Legolas E lvl5: 2-charge-display. Visa antal lediga (X/2) + transparent cd för stacken
+    // som laddar medan den andra är redo (knappen förblir tryckbar). Båda i cd → vanlig full cd.
+    if (side && key === 'e' && side.heroId === 'legolas' && side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
+      const cd1 = side.skills.e.cd || 0, cd2 = side.legolasDashStackCd || 0;
+      const readyCharges = (cd1 <= 0 ? 1 : 0) + (cd2 <= 0 ? 1 : 0);
+      el.classList.add('legolas-charges');
+      el.classList.toggle('charge-partial', readyCharges === 1);
+      if (lvlEl) lvlEl.textContent = readyCharges + '/2';   // ersätter skill-lvl-badge med charge-count
+      if (readyCharges === 1) {
+        const rcd = Math.max(cd1, cd2);   // stacken som laddar
+        el.classList.remove('cooling');   // en stack redo → ej full-grå
+        const cdEl = el.querySelector('.cd'); if (cdEl) cdEl.textContent = rcd.toFixed(1);
+        const cdMax = (side.skills.e.max) || 1;
+        let mask = el.querySelector('.cd-mask');
+        if (!mask) { mask = document.createElement('div'); mask.className = 'cd-mask'; el.appendChild(mask); }
+        mask.style.setProperty('--cd-frac', Math.max(0, Math.min(1, rcd / cdMax)));
+      }
+    } else {
+      el.classList.remove('legolas-charges', 'charge-partial');
+    }
     // Zheyna Spear Pierce: medan spjutet är ute (re-press-fönster) visa Q som "armed"
     // (tryck igen → teleport) i stället för grå cooldown — annars är teleporten osynlig.
     const qArmed = side && side.heroId === 'zheyna' && key === 'q' && !!side.zheynaSpear;
@@ -24647,6 +24674,7 @@ function castLocalSkill(key, worldDx, worldDz, tap = false, mag = 1) {
     if (side.heroId === 'legolas') {
       side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
       side.legolusUltAaPending = true;
+      side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
     }
     sendOrApplyEvent({ type: 'skill', key, dx: worldDx, dz: worldDz, tap, mag });
     return;
