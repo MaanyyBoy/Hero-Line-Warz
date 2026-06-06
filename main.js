@@ -25484,12 +25484,20 @@ function updateWarlordVisuals(boss, wl) {
 // ============================================================
 const DRAGON_SYMBOLS_C = ['sword', 'crown', 'skull', 'eye', 'flame', 'moon'];
 const DRAGON_SYM_EMOJI = { sword: '⚔️', crown: '👑', skull: '💀', eye: '👁️', flame: '🔥', moon: '🌙' };
-const DRAGON_BREAKS_C = [0.80, 0.20];
+const DRAGON_BREAKS_C = [0.80, 0.40, 0.20];   // solo: memory(80), meteor(40), fas 2(20). Soul link(60) = MP-only, hoppas
 const DRAGON_MEM_REVEAL_HP_C = [0.95, 0.90, 0.85];
 const DRAGON_MEM_REVEAL_TIME_C = 1.0, DRAGON_MEM_GAP_C = 0.3;
 const DRAGON_MEM_TIMER_C = 30, DRAGON_MEM_WRONG_DMG_C = 0.20, DRAGON_MEM_MAX_MISTAKES_C = 3;
 const DRAGON_MEM_PILLAR_RADIUS_C = 7.0, DRAGON_MEM_STAND_RADIUS_C = 2.0, DRAGON_ACT_PILLAR_RADIUS_C = 2.2;
 const DRAGON_P2_DMG_MUL_C = 1.30, DRAGON_P2_DR_BONUS_C = 0.20;
+const DRAGON_MT_ROUNDS_C = 3, DRAGON_MT_COUNTDOWN_C = 5, DRAGON_MT_CIRCLE_RADIUS_C = 2.0;
+const DRAGON_MT_COLORS_C = ['red', 'blue', 'green'];
+const DRAGON_MT_COLOR_HEX = { red: 0xff3322, blue: 0x3366ff, green: 0x33cc44 };
+const DRAGON_MT_HINTS_C = {
+  red: ['Nothing is hotter than the flames.', 'Embers never lie — follow the burning hue.', 'Seek the color of fire and fury.'],
+  blue: ['The deepest oceans never forget.', 'The sky reflects eternity.', 'Cold depths keep the worthy safe.'],
+  green: ['Life always returns through nature.', 'The forest remembers all.', 'Where the leaves grow, you will live.'],
+};
 const _dragonEmojiTexCache = {};
 function dragonEmojiTexture(sym) {
   if (_dragonEmojiTexCache[sym]) return _dragonEmojiTexCache[sym];
@@ -25568,6 +25576,34 @@ function updateDragonVisuals(boss, dg) {
         am.position.set(dg.ap.x, floorY, dg.ap.z);
       }
     }
+    if (dg.m === 2 && dg.sl) {   // Soul Link: kedja mellan 2 länkade + 10 energiklot
+      const sl = dg.sl;
+      if (sl.p && sl.p.length === 2) {
+        const a = sides[sl.p[0]], b = sides[sl.p[1]];
+        if (a && a.mesh && b && b.mesh) {
+          seen.add('_chain');
+          let ch = map.get('_chain');
+          if (!ch) { ch = makeDragonChainMesh(); scene.add(ch); map.set('_chain', ch); }
+          dragonPositionChain(ch, a.mesh.position, b.mesh.position, sl.st === 1);
+        }
+      }
+      if (sl.o) {
+        for (let i = 0; i < sl.o.length; i++) {
+          const id = 'orb_' + i; seen.add(id);
+          let om = map.get(id);
+          if (!om) { om = makeDragonOrbMesh(); scene.add(om); map.set(id, om); }
+          om.position.set(sl.o[i].x, floorY + 1.0, sl.o[i].z);
+        }
+      }
+    }
+    if (dg.m === 3 && dg.mt && dg.mt.c) {   // Meteor Riddle: 15 färgade cirklar
+      for (let i = 0; i < dg.mt.c.length; i++) {
+        const c = dg.mt.c[i], col = c.col || c.color, id = 'mt_' + i; seen.add(id);
+        let cm = map.get(id);
+        if (!cm || cm.userData.col !== col) { if (cm) { scene.remove(cm); _dragonDispose(cm); } cm = makeDragonMeteorCircleMesh(col); cm.userData.col = col; scene.add(cm); map.set(id, cm); }
+        cm.position.set(c.x, floorY + 0.05, c.z);
+      }
+    }
     dragonUpdateBanner(dg);
   } else {
     dragonUpdateBanner(null);
@@ -25578,16 +25614,56 @@ function updateDragonVisuals(boss, dg) {
 function dragonUpdateBanner(dg) {
   const el = document.getElementById('dragon-banner');
   if (!el) return;
-  if (!dg || (!dg.msg && dg.m !== 1)) { el.classList.remove('visible'); return; }
+  if (!dg || ((dg.m || 0) === 0 && !dg.msg)) { el.classList.remove('visible'); return; }
   if (dg.m === 1) {
     const step = (dg.st || 0) + 1;
     el.innerHTML = `<div class="dg-msg">${dg.msg || 'Remember what was shown.'}</div>`
       + `<div class="dg-sub">Symbol ${Math.min(step, 3)}/3 &nbsp;·&nbsp; Mistakes ${dg.mis || 0}/${DRAGON_MEM_MAX_MISTAKES_C} &nbsp;·&nbsp; ${Math.ceil(dg.t || 0)}s</div>`;
     el.classList.add('visible');
+  } else if (dg.m === 2 && dg.sl) {
+    el.innerHTML = `<div class="dg-msg">${dg.msg || 'Soul Link'}</div>`
+      + `<div class="dg-sub">Breaks ${dg.sl.br || 0}/3 &nbsp;·&nbsp; ${Math.ceil(dg.sl.t || 0)}s`
+      + `${dg.sl.st === 1 ? ' &nbsp;·&nbsp; <span style="color:#ff6b6b">CHAIN SNAPPING — INTERCEPT!</span>' : ''}</div>`;
+    el.classList.add('visible');
+  } else if (dg.m === 3 && dg.mt) {
+    el.innerHTML = `<div class="dg-msg">🐉 ${dg.mt.hint || dg.msg || ''}</div>`
+      + `<div class="dg-sub">Round ${dg.mt.r || 1}/3 &nbsp;·&nbsp; Impact in ${Math.ceil(dg.mt.cd || 0)}s — stand on the safe color!</div>`;
+    el.classList.add('visible');
   } else if (dg.msg) {
     el.innerHTML = `<div class="dg-msg">${dg.msg}</div>`;
     el.classList.add('visible');
   } else { el.classList.remove('visible'); }
+}
+const _dgUp = new THREE.Vector3(0, 1, 0), _dgDir = new THREE.Vector3();
+function makeDragonChainMesh() {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 1, 6),
+    new THREE.MeshBasicMaterial({ color: 0x8a6bff, transparent: true, opacity: 0.85 }));
+  return m;
+}
+function dragonPositionChain(ch, pa, pb, breaking) {
+  const dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z, len = Math.hypot(dx, dy, dz) || 0.001;
+  ch.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 1.0, (pa.z + pb.z) / 2);
+  ch.scale.set(1, len, 1);
+  _dgDir.set(dx, dy, dz).normalize();
+  ch.quaternion.setFromUnitVectors(_dgUp, _dgDir);
+  if (ch.material) {
+    if (breaking) { ch.material.color.setHex(0xff4444); ch.material.opacity = 0.6 + 0.4 * Math.abs(Math.sin(performance.now() * 0.02)); }
+    else { ch.material.color.setHex(0x8a6bff); ch.material.opacity = 0.85; }
+  }
+}
+function makeDragonOrbMesh() {
+  return new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff5522 }));
+}
+function makeDragonMeteorCircleMesh(color) {
+  const hex = DRAGON_MT_COLOR_HEX[color] || 0xffffff;
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(DRAGON_MT_CIRCLE_RADIUS_C, 24),
+    new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }));
+  disc.rotation.x = -Math.PI / 2; g.add(disc);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(DRAGON_MT_CIRCLE_RADIUS_C * 0.88, DRAGON_MT_CIRCLE_RADIUS_C, 24),
+    new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; g.add(ring);
+  return g;
 }
 
 // ---- SOLO-SIM (1 spelare; 1-spelar-varianter) ----
@@ -25598,6 +25674,8 @@ function tickDragonClient(boss, dt) {
       if ((d.memActLock || 0) > 0) d.memActLock = Math.max(0, d.memActLock - dt);   // debounce-timer
       d.memTimer -= dt;
       if (d.memTimer <= 0) { d.active = false; dragonClientWipe(); }
+    } else if (d.mech === 3) {
+      if (d.mtState === 'countdown') { d.mtCountdown -= dt; if (d.mtCountdown <= 0) dragonClientMeteorResolve(boss); }
     }
     return true;   // boss immun (damageMonster läser _dragon.active) + AI pausad
   }
@@ -25627,6 +25705,10 @@ function dragonClientStartBreak(boss, bf) {
     d.memPillars = DRAGON_SYMBOLS_C.map((sym, i) => { const ang = (i / DRAGON_SYMBOLS_C.length) * Math.PI * 2 - Math.PI / 2; return { sym, x: BOSSWARS_CX + Math.cos(ang) * DRAGON_MEM_PILLAR_RADIUS_C, z: BOSSWARS_CZ + Math.sin(ang) * DRAGON_MEM_PILLAR_RADIUS_C }; });
     d.actPillar = { x: BOSSWARS_CX, z: BOSSWARS_CZ };
     d.msg = 'Remember what was shown.';
+  } else if (bf === 0.40) {
+    d.active = true; d.mech = 3; d.mtRound = 0;
+    dragonClientMeteorNewRound(d);
+    d.msg = 'Read the riddle — stand on the safe color!';
   } else if (bf === 0.20) {
     if (boss.bossPhase !== 2) {
       boss.bossPhase = 2;
@@ -25659,20 +25741,61 @@ function dragonSoloActivate() {
     if (d.memMistakes >= DRAGON_MEM_MAX_MISTAKES_C) { d.active = false; dragonClientWipe(); }
   }
 }
+function dragonKillClient(s) {   // mekanik-död slutgiltig — kringgår phoenix-revive
+  if (!s || !s.hero || s.hero.dead) return;
+  s.phoenixReviveAvailable = false;
+  killHero(s);
+}
 function dragonClientWipe() {
-  for (const idx of [1, 2, 3]) { const s = sides[idx]; if (s && s.hero && !s.hero.dead) killHero(s); }
+  for (const idx of [1, 2, 3]) dragonKillClient(sides[idx]);
+}
+// Solo Meteor Riddle (mirror av server, 1-spelar-väg).
+function dragonClientMakeMeteorCircles() {
+  const pts = [], rings = [{ r: 5, n: 5 }, { r: 9.5, n: 5 }, { r: 14, n: 5 }];
+  for (const ring of rings) for (let i = 0; i < ring.n; i++) {
+    const ang = (i / ring.n) * Math.PI * 2 + ring.r * 0.3;
+    pts.push({ x: BOSSWARS_CX + Math.cos(ang) * ring.r, z: BOSSWARS_CZ + Math.sin(ang) * ring.r });
+  }
+  const colors = [];
+  for (const c of DRAGON_MT_COLORS_C) for (let i = 0; i < 5; i++) colors.push(c);
+  for (let i = colors.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = colors[i]; colors[i] = colors[j]; colors[j] = t; }
+  return pts.map((p, i) => ({ x: p.x, z: p.z, color: colors[i] }));
+}
+function dragonClientMeteorNewRound(d) {
+  d.mtSafe = DRAGON_MT_COLORS_C[(Math.random() * 3) | 0];
+  d.mtCircles = dragonClientMakeMeteorCircles();
+  const a = DRAGON_MT_HINTS_C[d.mtSafe]; d.mtHint = a[(Math.random() * a.length) | 0];
+  d.mtCountdown = DRAGON_MT_COUNTDOWN_C; d.mtState = 'countdown';
+}
+function dragonClientMeteorResolve(boss) {
+  const d = boss._dragon;
+  for (const c of d.mtCircles) c._occ = 0;
+  for (const idx of [1, 2, 3]) {
+    const s = sides[idx]; if (!s || !s.hero || s.hero.dead) continue;
+    let safe = null;
+    for (const c of d.mtCircles) { if (Math.hypot(s.hero.x - c.x, s.hero.z - c.z) <= DRAGON_MT_CIRCLE_RADIUS_C && c.color === d.mtSafe) { safe = c; break; } }
+    s._mtSafeCircle = safe; if (safe) safe._occ++;
+  }
+  for (const idx of [1, 2, 3]) { const s = sides[idx]; if (!s || !s.hero || s.hero.dead) continue; if (!s._mtSafeCircle || s._mtSafeCircle._occ !== 1) dragonKillClient(s); }
+  d.mtRound++;
+  if (![1, 2, 3].some(i => sides[i] && sides[i].hero && !sides[i].hero.dead)) { d.active = false; d.mech = 0; d.mtCircles = []; d.msg = ''; return; }
+  if (d.mtRound >= DRAGON_MT_ROUNDS_C) { d.active = false; d.mech = 0; d.mtCircles = []; d.msg = ''; }
+  else dragonClientMeteorNewRound(d);
 }
 // Bygg dg-objekt från solo-state och rendera (samma path som MP).
-const _dragonSoloDg = { m: 0, rv: null, msg: '', ph: 1, mp: null, ap: null, st: 0, mis: 0, t: 0 };
+const _dragonSoloDg = { m: 0, rv: null, msg: '', ph: 1, mp: null, ap: null, st: 0, mis: 0, t: 0, mt: null };
 function updateDragonSoloVisuals(boss) {
   const d = boss._dragon; if (!d) return;
   _dragonSoloDg.m = d.active ? d.mech : 0;
   _dragonSoloDg.rv = d.memReveal ? d.memReveal.shape : null;
   _dragonSoloDg.msg = d.msg || '';
+  _dragonSoloDg.mp = null; _dragonSoloDg.ap = null; _dragonSoloDg.mt = null;
   if (d.active && d.mech === 1) {
     _dragonSoloDg.mp = d.memPillars; _dragonSoloDg.ap = d.actPillar;
     _dragonSoloDg.st = d.memStep; _dragonSoloDg.mis = d.memMistakes; _dragonSoloDg.t = d.memTimer;
-  } else { _dragonSoloDg.mp = null; _dragonSoloDg.ap = null; }
+  } else if (d.active && d.mech === 3) {
+    _dragonSoloDg.mt = { c: d.mtCircles, cd: d.mtCountdown, hint: d.mtHint, r: (d.mtRound || 0) + 1 };
+  }
   updateDragonVisuals(boss, _dragonSoloDg);
 }
 // Aktiverings-knapp: visa när lokal spelare kan aktivera (solo: i symbol-pelare; MP: vid aktiverings-pelaren).

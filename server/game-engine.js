@@ -2336,7 +2336,7 @@ function endWarlordChallenge(state, boss) {
 // 20% = fas 2 (buff-placeholder). Extensibelt: lägg till breakpoint-värde + en start-funktion.
 // Endast tier 5. Server-auth (MP, 3 spelare). Solo-port i main.js (1-spelar-varianter).
 const DRAGON_SYMBOLS = ['sword', 'crown', 'skull', 'eye', 'flame', 'moon'];
-const DRAGON_BREAKS = [0.80, 0.20];   // 0.60 (soul link) + 0.40 (meteor) läggs till när de byggts
+const DRAGON_BREAKS = [0.80, 0.60, 0.40, 0.20];   // 80=memory, 60=soul link, 40=meteor, 20=fas 2
 const DRAGON_MEM_REVEAL_HP = [0.95, 0.90, 0.85];   // 3 symbol-reveals under combat 100→80%
 const DRAGON_MEM_REVEAL_TIME = 1.0, DRAGON_MEM_GAP = 0.3;
 const DRAGON_MEM_TIMER = 30, DRAGON_MEM_WRONG_DMG = 0.20, DRAGON_MEM_MAX_MISTAKES = 3;
@@ -2347,14 +2347,21 @@ function dragonPickMemSymbols() {
   for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; }
   return a.slice(0, 3);
 }
+function dragonKill(side) {   // mekanik-död är SLUTGILTIG — kringgår phoenix-revive ("dör direkt")
+  if (!side || side.hero.dead) return;
+  side.phoenixReviveAvailable = false;
+  killHero(side);
+}
 function dragonWipe(state) {   // raid wipe — alla 3 dör (ingen respawn i boss wars)
-  for (const idx of [1, 2, 3]) { const s = state.sides[idx]; if (s && !s.hero.dead) killHero(s); }
+  for (const idx of [1, 2, 3]) dragonKill(state.sides[idx]);
 }
 // Huvud-gate (anropas i tickBossWarsBoss). Returnerar true = boss immun + AI pausad denna tick.
 function tickDragonMechanics(state, dt, boss) {
   const d = boss.dragon; if (!d) return false;
   if (d.active) {
     if (d.mech === 1) tickDragonMemory(state, dt, boss);
+    else if (d.mech === 2) tickDragonSoulLink(state, dt, boss);
+    else if (d.mech === 3) tickDragonMeteor(state, dt, boss);
     return true;   // mekanik pågår → boss immun (bossWarsDmgMod) + AI pausad
   }
   dragonTickMemoryReveals(state, dt, boss);   // visar symbolerna under combat 100→80%
@@ -2381,6 +2388,8 @@ function dragonStartBreak(state, boss, bf) {
   if (state.bossProjectiles) state.bossProjectiles.length = 0;
   if (state.bossPools) state.bossPools.length = 0;
   if (bf === 0.80) startDragonMemory(state, boss);
+  else if (bf === 0.60) startDragonSoulLink(state, boss);
+  else if (bf === 0.40) startDragonMeteor(state, boss);
   else if (bf === 0.20) dragonEnterPhase2(state, boss);
 }
 // --- MEKANIK 1: MEMORY TRIAL ---
@@ -2441,6 +2450,142 @@ function dragonEnterPhase2(state, boss) {
     if (boss.phase2Skills) { boss.bossSkills = boss.phase2Skills; boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4); }
   }
   d.active = false; d.mech = 0; d.msg = '';   // ingen mekanik än — combat fortsätter med buff
+}
+// --- MEKANIK 2: SOUL LINK TRIAL (60%) — MP-only (3 spelare). Solo hoppar denna breakpoint. ---
+const DRAGON_SL_TIMER = 30, DRAGON_SL_BREAKS_REQ = 3;
+const DRAGON_SL_CHAIN_MAX = 12, DRAGON_SL_BREAK_WINDOW = 1.5, DRAGON_SL_INTERCEPT_BAND = 1.6;
+const DRAGON_SL_ORB_COUNT = 10, DRAGON_SL_ORB_SPEED = 6, DRAGON_SL_ORB_DMG = 0.15, DRAGON_SL_ORB_HIT_RADIUS = 1.3, DRAGON_SL_ORB_HIT_CD = 1.0;
+function dragonPointOnSegment(px, pz, ax, az, bx, bz, band) {
+  const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
+  if (len2 < 0.01) return false;
+  let t = ((px - ax) * dx + (pz - az) * dz) / len2; t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cz = az + t * dz;
+  return Math.hypot(px - cx, pz - cz) <= band;
+}
+function dragonSpawnOrbs(d) {
+  d.slOrbs = [];
+  for (let i = 0; i < DRAGON_SL_ORB_COUNT; i++) {
+    const ang = Math.random() * Math.PI * 2, r = Math.random() * BOSSWARS_RADIUS * 0.6, dir = Math.random() * Math.PI * 2;
+    d.slOrbs.push({ x: BOSSWARS_CX + Math.cos(ang) * r, z: BOSSWARS_CZ + Math.sin(ang) * r, vx: Math.cos(dir) * DRAGON_SL_ORB_SPEED, vz: Math.sin(dir) * DRAGON_SL_ORB_SPEED });
+  }
+}
+function dragonNewSoulPair(state, d) {
+  const alive = [1, 2, 3].filter(i => state.sides[i] && !state.sides[i].hero.dead);
+  if (alive.length < 3) { d.slPair = null; return; }   // kräver alla 3 (2 länkade + 1 interceptor)
+  for (let i = alive.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = alive[i]; alive[i] = alive[j]; alive[j] = t; }
+  d.slPair = [alive[0], alive[1]]; d.slState = 'linking'; d.slWindow = 0;
+}
+function startDragonSoulLink(state, boss) {
+  const d = boss.dragon;
+  d.active = true; d.mech = 2;
+  d.slBreaks = 0; d.slTimer = DRAGON_SL_TIMER;
+  dragonSpawnOrbs(d);
+  dragonNewSoulPair(state, d);
+  d.msg = 'Stretch the chain — third stands in it as it snaps!';
+}
+function dragonTickOrbs(state, dt, d) {
+  if (!d.slOrbs) return;
+  for (const o of d.slOrbs) {
+    o.x += o.vx * dt; o.z += o.vz * dt;
+    const dx = o.x - BOSSWARS_CX, dz = o.z - BOSSWARS_CZ, dd = Math.hypot(dx, dz) || 0.001;
+    if (dd > BOSSWARS_RADIUS - 1) {   // studsa mot arena-kanten
+      const nx = dx / dd, nz = dz / dd, dot = o.vx * nx + o.vz * nz;
+      o.vx -= 2 * dot * nx; o.vz -= 2 * dot * nz;
+      o.x = BOSSWARS_CX + nx * (BOSSWARS_RADIUS - 1); o.z = BOSSWARS_CZ + nz * (BOSSWARS_RADIUS - 1);
+    }
+    for (const idx of [1, 2, 3]) {
+      const s = state.sides[idx];
+      if (!s || s.hero.dead) continue;
+      if ((s._dragonOrbCd || 0) <= 0 && Math.hypot(s.hero.x - o.x, s.hero.z - o.z) <= DRAGON_SL_ORB_HIT_RADIUS) {
+        damageHero(s, s.hero.maxHp * DRAGON_SL_ORB_DMG); s._dragonOrbCd = DRAGON_SL_ORB_HIT_CD;
+      }
+    }
+  }
+  for (const idx of [1, 2, 3]) { const s = state.sides[idx]; if (s && (s._dragonOrbCd || 0) > 0) s._dragonOrbCd = Math.max(0, s._dragonOrbCd - dt); }
+}
+function tickDragonSoulLink(state, dt, boss) {
+  const d = boss.dragon;
+  d.slTimer -= dt;
+  if (d.slTimer <= 0) { d.active = false; dragonWipe(state); return; }
+  dragonTickOrbs(state, dt, d);
+  if (!d.slPair) { dragonNewSoulPair(state, d); if (!d.slPair) { d.active = false; dragonWipe(state); return; } }
+  const a = state.sides[d.slPair[0]], b = state.sides[d.slPair[1]];
+  if (!a || !b || a.hero.dead || b.hero.dead) { d.active = false; dragonWipe(state); return; }   // länkad spelare dog (orb) → wipe
+  const dist = Math.hypot(a.hero.x - b.hero.x, a.hero.z - b.hero.z);
+  if (d.slState === 'linking') {
+    if (dist >= DRAGON_SL_CHAIN_MAX) { d.slState = 'breaking'; d.slWindow = DRAGON_SL_BREAK_WINDOW; }
+  } else if (d.slState === 'breaking') {
+    d.slWindow -= dt;
+    if (d.slWindow <= 0) {
+      const third = [1, 2, 3].find(i => i !== d.slPair[0] && i !== d.slPair[1]);
+      const t = state.sides[third];
+      const onLine = t && !t.hero.dead && dragonPointOnSegment(t.hero.x, t.hero.z, a.hero.x, a.hero.z, b.hero.x, b.hero.z, DRAGON_SL_INTERCEPT_BAND);
+      if (onLine) {
+        d.slBreaks++;
+        if (d.slBreaks >= DRAGON_SL_BREAKS_REQ) { d.active = false; d.mech = 0; d.slPair = null; d.slOrbs = []; d.msg = ''; }
+        else dragonNewSoulPair(state, d);
+      } else { d.active = false; dragonWipe(state); }   // kedjan brister utan interceptor → wipe (länkade dör)
+    }
+  }
+}
+// --- MEKANIK 3: METEOR RIDDLE (40%) — 3 rundor. Körs i MP OCH solo (1 spelare = 1 säker cirkel). ---
+const DRAGON_MT_ROUNDS = 3, DRAGON_MT_COUNTDOWN = 5, DRAGON_MT_CIRCLE_RADIUS = 2.0;
+const DRAGON_MT_COLORS = ['red', 'blue', 'green'];
+const DRAGON_MT_HINTS = {
+  red: ['Nothing is hotter than the flames.', 'Embers never lie — follow the burning hue.', 'Seek the color of fire and fury.'],
+  blue: ['The deepest oceans never forget.', 'The sky reflects eternity.', 'Cold depths keep the worthy safe.'],
+  green: ['Life always returns through nature.', 'The forest remembers all.', 'Where the leaves grow, you will live.'],
+};
+function dragonPickHint(color) { const a = DRAGON_MT_HINTS[color]; return a[(Math.random() * a.length) | 0]; }
+function dragonMakeMeteorCircles() {
+  const pts = [], rings = [{ r: 5, n: 5 }, { r: 9.5, n: 5 }, { r: 14, n: 5 }];
+  for (const ring of rings) for (let i = 0; i < ring.n; i++) {
+    const ang = (i / ring.n) * Math.PI * 2 + ring.r * 0.3;
+    pts.push({ x: BOSSWARS_CX + Math.cos(ang) * ring.r, z: BOSSWARS_CZ + Math.sin(ang) * ring.r });
+  }
+  const colors = [];
+  for (const c of DRAGON_MT_COLORS) for (let i = 0; i < 5; i++) colors.push(c);
+  for (let i = colors.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = colors[i]; colors[i] = colors[j]; colors[j] = t; }
+  return pts.map((p, i) => ({ x: p.x, z: p.z, color: colors[i] }));
+}
+function dragonMeteorNewRound(d) {
+  d.mtSafe = DRAGON_MT_COLORS[(Math.random() * 3) | 0];
+  d.mtCircles = dragonMakeMeteorCircles();
+  d.mtHint = dragonPickHint(d.mtSafe);
+  d.mtCountdown = DRAGON_MT_COUNTDOWN;
+  d.mtState = 'countdown';
+}
+function startDragonMeteor(state, boss) {
+  const d = boss.dragon;
+  d.active = true; d.mech = 3; d.mtRound = 0;
+  dragonMeteorNewRound(d);
+  d.msg = 'Read the riddle — stand on the safe color!';
+}
+function dragonMeteorResolve(state, boss) {
+  const d = boss.dragon;
+  for (const c of d.mtCircles) c._occ = 0;
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx]; if (!s || s.hero.dead) continue;
+    let safeCircle = null;
+    for (const c of d.mtCircles) { if (Math.hypot(s.hero.x - c.x, s.hero.z - c.z) <= DRAGON_MT_CIRCLE_RADIUS && c.color === d.mtSafe) { safeCircle = c; break; } }
+    s._mtSafeCircle = safeCircle;
+    if (safeCircle) safeCircle._occ++;
+  }
+  for (const idx of [1, 2, 3]) {
+    const s = state.sides[idx]; if (!s || s.hero.dead) continue;
+    if (!s._mtSafeCircle || s._mtSafeCircle._occ !== 1) dragonKill(s);   // fel färg / utanför / delad cirkel = död
+  }
+  d.mtRound++;
+  if (![1, 2, 3].some(i => state.sides[i] && !state.sides[i].hero.dead)) { d.active = false; d.mech = 0; d.mtCircles = []; d.msg = ''; return; }   // alla döda → checkBossWarsEnd
+  if (d.mtRound >= DRAGON_MT_ROUNDS) { d.active = false; d.mech = 0; d.mtCircles = []; d.msg = ''; }
+  else dragonMeteorNewRound(d);
+}
+function tickDragonMeteor(state, dt, boss) {
+  const d = boss.dragon;
+  if (d.mtState === 'countdown') {
+    d.mtCountdown -= dt;
+    if (d.mtCountdown <= 0) dragonMeteorResolve(state, boss);
+  }
 }
 
 function createBossWarsState(tier) {
@@ -3681,6 +3826,16 @@ function serializeBossWarsState(state) {
         dg.mp = d.memPillars.map(p => ({ s: p.sym, x: r2(p.x), z: r2(p.z) }));
         dg.ap = { x: r2(d.actPillar.x), z: r2(d.actPillar.z) };
         dg.st = d.memStep; dg.mis = d.memMistakes; dg.t = r2(d.memTimer);
+      } else if (d.active && d.mech === 2) {
+        dg.sl = {
+          p: d.slPair, st: d.slState === 'breaking' ? 1 : 0, bw: r2(d.slWindow || 0),
+          br: d.slBreaks, t: r2(d.slTimer), o: (d.slOrbs || []).map(o => ({ x: r2(o.x), z: r2(o.z) })),
+        };
+      } else if (d.active && d.mech === 3) {
+        dg.mt = {   // safe-färgen skickas EJ (spelaren måste lösa gåtan); cirkel-färger ÄR synliga
+          c: d.mtCircles.map(c => ({ x: r2(c.x), z: r2(c.z), col: c.color })),
+          cd: r2(d.mtCountdown), hint: d.mtHint, r: (d.mtRound || 0) + 1,
+        };
       }
       o.dg = dg;
     } else {
