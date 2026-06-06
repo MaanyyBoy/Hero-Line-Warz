@@ -1934,7 +1934,7 @@ function _makeHeroSnapBuf() {
     lInv: undefined, kUlt: undefined, kJoints: undefined,
     kComp: undefined, kCl: undefined,
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
-    zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwp: undefined,   // Zheyna (decision 134)
+    zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -1987,7 +1987,7 @@ function serializeArenaHero(side, buf) {
   buf.zsp = side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined;
   buf.zus = side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined;
   buf.zch = side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined;
-  buf.zwp = (side.zheynaWarpathRem || 0) > 0 ? 1 : undefined;
+  buf.zwr = nzr2(side.zheynaWarpathRem);
   return buf;
 }
 
@@ -8085,7 +8085,7 @@ function serializeSide(side) {
       zsp: side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined,
       zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
       zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
-      zwp: (side.zheynaWarpathRem || 0) > 0 ? 1 : undefined,
+      zwr: nzr2(side.zheynaWarpathRem),
     },
     g: side.gold,
     inc: side.income,

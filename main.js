@@ -17979,7 +17979,7 @@ function applyRemoteState(state) {
     // Zheyna (decision 134): klon/spjut/ult-spjut/laddnings-sikt från classic-snap.
     // Guard: allokera adapter-objektet bara för zheyna-sidor (GC i classic hot-path).
     if (sData.hid === 'zheyna' || side.zheynaClone || side.zheynaSpear || side.zheynaUltSpear || side.zheynaChargeMesh || side.zheynaWarpathMesh) {
-      updateZheynaMpVisuals(side, { hid: sData.hid, fx: sData.h.fx, fz: sData.h.fz, zc: sData.h.zc, zsp: sData.h.zsp, zus: sData.h.zus, zch: sData.h.zch, zwp: sData.h.zwp });
+      updateZheynaMpVisuals(side, { hid: sData.hid, fx: sData.h.fx, fz: sData.h.fz, zc: sData.h.zc, zsp: sData.h.zsp, zus: sData.h.zus, zch: sData.h.zch, zwr: sData.h.zwr });
     }
     const heroRy = Math.atan2(sData.h.fx, sData.h.fz);
     if (isOwnLocalClassicMp) {
@@ -21043,7 +21043,7 @@ function updateZheynaChargeIndicatorSolo(side) {
 function disposeZheynaChargeIndicatorSolo(side) {
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); side.zheynaChargeMesh = null; }
 }
-// Warpath-aura (E aktiv): glödande ring + disk under Zheyna. Solo + MP (snap.zwp).
+// Warpath-aura (E aktiv): glödande ring + disk under Zheyna. Solo + MP (snap.zwr).
 function makeZheynaWarpathAura() {
   const grp = new THREE.Group();
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.15, 28),
@@ -21213,7 +21213,8 @@ function updateZheynaMpVisuals(side, snap) {
     const full = (snap.zch.c || 0) >= ZHEYNA_R_MAX_CHARGE;
     if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
   } else { side.zheynaUltCharging = false; side.zheynaUltCharge = 0; if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side); }
-  updateZheynaWarpathAura(side, !!snap.zwp);
+  side.zheynaWarpathRem = snap.zwr || 0;   // → buff-cue på E-knappen i MP
+  updateZheynaWarpathAura(side, (snap.zwr || 0) > 0);
 }
 function tickZheynaSolo(side, dt) {
   if (!side || side.heroId !== 'zheyna') return;
@@ -24483,6 +24484,18 @@ window.addEventListener('keydown', (e) => {
   cheatBufferTimer = setTimeout(() => { cheatBuffer = ''; }, 3000);
 });
 
+// Aktiv self-buff-tid (sek) för lokal hjältes Q/F/E → buff-glow + nedräkning på knappen.
+function heroActiveBuffRemaining(side, key) {
+  if (!side) return 0;
+  const h = side.heroId;
+  if (key === 'e' && h === 'zheyna') return side.zheynaWarpathRem || 0;        // Warpath
+  if (key === 'f' && h === 'legolas') return side.legolusBuffRemaining || 0;   // Hunter's Focus
+  if (key === 'q' && h === 'aragurn') return side.whirlwindRemaining || 0;     // Whirlwind
+  if (key === 'q' && h === 'gimlu') return side.titansTauntRemaining || 0;     // Titan's Taunt
+  if (key === 'f' && h === 'gimlu') return side.ironWillRemaining || 0;        // Iron Will
+  if (key === 'e' && h === 'kostefo') return side.kostefoCloudRemaining || 0;  // Cannabis Cloud
+  return 0;
+}
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
   const unspent = side ? (side.unspentPoints || 0) : 0;
@@ -24526,6 +24539,10 @@ function updateSkillButtonStyles() {
     const qArmed = side && side.heroId === 'zheyna' && key === 'q' && !!side.zheynaSpear;
     el.classList.toggle('zheyna-armed', qArmed);
     if (qArmed) { el.classList.remove('cooling'); const cdEl = el.querySelector('.cd'); if (cdEl) cdEl.textContent = '↩'; }
+    // Aktiv self-buff-glow + nedräkning (Warpath/Hunter's Focus/Whirlwind/Taunt/Iron Will/Cloud).
+    const buffRem = heroActiveBuffRemaining(side, key);
+    el.classList.toggle('buff-active', buffRem > 0);
+    if (buffRem > 0 && !(cd > 0) && !qArmed) { const cdEl = el.querySelector('.cd'); if (cdEl) cdEl.textContent = Math.ceil(buffRem) + 's'; }
   }
   if (aaBtnEl) {
     const hasTarget = !!(side && side.aaActive && side.targetId);
