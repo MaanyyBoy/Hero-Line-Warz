@@ -10732,6 +10732,7 @@ function cleanupExecuteMesh(cast) {
     }
     scene.remove(obj);
   }
+  e.meshes = null;   // hindra dubbel-dispose om cleanup kallas igen
   _leakDiag.nc.executeMeshCleanup++;
 }
 
@@ -10748,10 +10749,13 @@ function spawnBossTelegraph(side, m, cast) {
   // Element-färg (decision 136). Pulse/expansion (tickBossTelegraph) ger fortfarande
   // fara-läsbarheten; färgen ger identitet (eld=orange, is=blå, gift=grön ...).
   const fxE = elementFx(cast.element);
-  const telCol = fxE.ring, telEdge = fxE.core;
+  // telCol = element-fyllning (identitet); telEdge = VIT högkontrast-kant så fara-
+  // zonen alltid syns oavsett mark-färg (fix: grön telegraph på grön tier-1-mark).
+  const telCol = fxE.ring, telEdge = 0xffffff;
   const matRed = () => new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
+  const matEdge = () => new THREE.MeshBasicMaterial({ color: telEdge, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
   if (s.kind === 'groundCircle' || s.kind === 'poolDot') {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(s.radius * 0.92, s.radius, 40), matRed());
+    const ring = new THREE.Mesh(new THREE.RingGeometry(s.radius * 0.92, s.radius, 40), matEdge());
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(cast.targetX, gY, cast.targetZ);
     grp.add(ring);
@@ -10818,7 +10822,7 @@ function spawnBossTelegraph(side, m, cast) {
     const ang = s.halfAngle;
     const segs = 28;
     const ring = new THREE.Mesh(new THREE.RingGeometry(r * 0.92, r, segs, 1, -ang, 2 * ang),
-      new THREE.MeshBasicMaterial({ color: telCol, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: telEdge, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(cast.originX, gY, cast.originZ);
     ring.rotation.z = Math.atan2(cast.dirX, cast.dirZ);
@@ -32688,6 +32692,11 @@ function tickCombatFx(dt) {
       if (e.mesh.material) e.mesh.material.opacity = 0.7 * (1 - t);
     } else if (e.kind === 'castRing') {
       e.mesh.scale.setScalar(1 + t * 1.8);
+      if (e.mesh.material) e.mesh.material.opacity = 0.85 * (1 - t);
+    } else if (e.kind === 'impact') {
+      if (e.mesh.material) e.mesh.material.opacity = 0.9 * (1 - t);
+    } else if (e.kind === 'cone-flash') {
+      e.mesh.scale.setScalar(1 + t * 0.5);
       if (e.mesh.material) e.mesh.material.opacity = 0.85 * (1 - t);
     } else if (e.kind === 'trail') {
       e.mesh.scale.setScalar(1 - t * 0.5);
