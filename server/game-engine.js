@@ -80,7 +80,18 @@ const ZHEYNA_E_DUR = 5, ZHEYNA_E_CD = 12, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20
 // R Spear God
 const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
 const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
-const ZHEYNA_R_KNOCKBACK_PER_SEC = 2.0, ZHEYNA_R_CHARGE_MS_MUL = 0.50, ZHEYNA_R_CHARGE_TURN_MUL = 0.50, ZHEYNA_R_SPEAR_SPEED = 26;
+const ZHEYNA_R_KNOCKBACK_PER_SEC = 2.0, ZHEYNA_R_CHARGE_MS_MUL = 0.50, ZHEYNA_R_CHARGE_TURN_SPEED = 2.2, ZHEYNA_R_SPEAR_SPEED = 26;
+function zheynaTurnToward(side, ndx, ndz, dt) {
+  // Turn-rate-begränsad facing (ult-laddning): rotera mot (ndx,ndz) max TURN_SPEED rad/s.
+  const cx = side.hero.facingX || 0, cz = side.hero.facingZ || 1;
+  const cur = Math.atan2(cx, cz), tgt = Math.atan2(ndx, ndz);
+  let d = tgt - cur;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  const step = ZHEYNA_R_CHARGE_TURN_SPEED * dt;
+  const na = Math.abs(d) <= step ? tgt : cur + Math.sign(d) * step;
+  side.hero.facingX = Math.sin(na); side.hero.facingZ = Math.cos(na);
+}
 
 // Konstanta side-index-arrayer — undviker `[1,2]` literal-allokering i hot-paths
 // (30 Hz × N anrop = märkbar GC-tryck i Render free-tier Node). Frysta = immutable.
@@ -881,7 +892,7 @@ function recomputeSideStats(side) {
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
   // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
   // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
-  const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 } };
+  const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1026,7 +1037,7 @@ function recomputeArenaSideStats(state, side) {
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
   // Uppdatera CD-max för skills efter ev. cdrPct-förändring
   if (cdrPct !== 0) {
-    const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 } };
+    const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
     const heroCd = HERO_SKILL_CD[side.heroId] || {};
     side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1101,6 +1112,13 @@ function damageHero(side, amount) {
   // Aragurn banner-aura (Hero Leap lvl5): -20% incoming dmg
   const bannerMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
   let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * aragurnMul * bannerMul;
+  // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar samma instans ×1.5 (egen
+  // HP-pool) och dör snabbt → DR slut. Robust i alla lägen (ingen aggro-omdirigering).
+  if (side.zheynaClone) {
+    side.zheynaClone.hp -= final * ZHEYNA_CLONE_DMG_TAKEN_MUL;
+    final *= (1 - ZHEYNA_CLONE_OWNER_DR);
+    if (side.zheynaClone.hp <= 0) side.zheynaClone = null;
+  }
   // Gandulf shield absorberar först
   if ((side.shield || 0) > 0 && final > 0) {
     if (side.shield >= final) { side.shield -= final; final = 0; }
@@ -1172,6 +1190,11 @@ function killHero(side) {
   }
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
+  // Zheyna: avbryt klon/spjut/ult-laddning + DR vid död (decision 134)
+  if (side.heroId === 'zheyna') {
+    side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
+    side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
+  }
 }
 function respawnHero(side) {
   const cfg = SIDE_CFG[side.idx];
@@ -1616,6 +1639,7 @@ function tickArenaCombat(state, dt) {
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    tickZheyna(state, side, dt);
     // CC-timers på hero: tickas ner här (tickGame gör detta i sin loop, men
     // tickArenaCombat är en separat path). Utan detta fastnar frozenTime/
     // tauntedTime/heroSlowTime permanent på det satta värdet i arena.
@@ -1701,6 +1725,10 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.attackCd = 0; side.attackCounter = 0;
   side.aaActive = false; side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
   side.windPuffMsRem = 0; side.gimluHammerMsRem = 0;
+  // Zheyna-state (decision 134)
+  side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null;
+  side.zheynaUltCharging = false; side.zheynaUltCharge = 0; side.zheynaUltAim = 0;
+  side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
   // CC-fält på hero-objektet (frozenTime etc. kan kvarstå från sista dead-tick)
   side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
@@ -3366,6 +3394,7 @@ function tickBossWars(state, dt) {
     if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
     if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
     if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
+    tickZheyna(state, s, dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
     if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
@@ -4663,7 +4692,7 @@ function maintainTargetLock(side, opp, state) {
   let isHero = side.targetType === 'hero';
   let isDuelOrb = side.targetType === 'duelOrb';
   let isArenaOrb = side.targetType === 'arenaOrb';
-  const baseRange = side.attackRange || HERO_ATTACK_RANGE;
+  const baseRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
   // Legolus Shadow Volley empowered AA: dubbel range medan invis-ult-pending.
   const ultAaRange = (side.heroId === 'legolas' && side.legolusUltAaPending)
     ? baseRange * LEGOLUS_ULT_AA_RANGE_MUL : baseRange;
@@ -4732,6 +4761,18 @@ function updateHeroAttack(state, side, opp, dt) {
     side.legolusUltAaPending = false;
     side.legolusInvisRemaining = 0;   // reveal direkt vid pil-spawn
   }
+  // Zheyna passive Hunter's Reach: distans-skalad AA-dmg + lifesteal (alla lägen).
+  // Warpath (E): +1m knockback per AA medan aktiv.
+  let zheynaLs = 0, zheynaKnock = 0;
+  if (side.heroId === 'zheyna') {
+    const _tdx = (target.entity.x || 0) - side.hero.x, _tdz = (target.entity.z || 0) - side.hero.z;
+    const _wp = (side.zheynaWarpathRem || 0) > 0;
+    const _maxR = (side.attackRange || 7.5) * (_wp ? (1 + ZHEYNA_E_RANGE) : 1);
+    const _f = _maxR > 0 ? Math.max(0, Math.min(1, Math.hypot(_tdx, _tdz) / _maxR)) : 0;
+    aaDmg *= (1 + ZHEYNA_PASSIVE_DMG_MAX * _f) * (side.zheynaDmgBuffMul || 1);   // passive + Q-stun-buff
+    zheynaLs = ZHEYNA_PASSIVE_LS_MAX * _f;
+    if (_wp) zheynaKnock = ZHEYNA_E_KNOCKBACK;
+  }
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -4743,11 +4784,23 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (3 - side.idx) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : 0),
+    lifestealRatio: dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs),
+    knockback: zheynaKnock,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
     legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
   });
+  // Zheyna Clone: kopierar AA (50% dmg) från klon-position mot samma target.
+  if (side.heroId === 'zheyna' && side.zheynaClone) {
+    side.projectiles.push({
+      id: state.nextEntityId++, x: side.zheynaClone.x, y: 1.2, z: side.zheynaClone.z,
+      target: target.entity, targetIsMonster: !!target.isMonster, targetIsHero: !!target.isHero,
+      targetIsDuelOrb: !!target.isDuelOrb, targetIsArenaOrb: !!target.isArenaOrb,
+      targetSideIdx: target.isHero ? (3 - side.idx) : 0, ownerSideIdx: side.idx,
+      damage: aaDmg * ZHEYNA_CLONE_DMG_MUL, isAoE: false, isCrit,
+      lifestealRatio: 0, knockback: 0, legolusBuffed: false, appliesPoison: false,
+    });
+  }
   // Split: skjut 2 extra projektiler mot närmaste andra fiender
   if (splitNow) {
     const extras = [];
@@ -4804,7 +4857,8 @@ function updateHeroAttack(state, side, opp, dt) {
   // Aragurn banner-aura (Hero Leap lvl5): +10% AS
   const bannerAsMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul);
+  const warpathAsMul = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_AS) : 1;
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -4879,6 +4933,23 @@ function updateProjectiles(state, side, opp, dt) {
             const k = opp.playerCreeps.indexOf(p.target);
             if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(p.target); gainXp(side, minionXp(p.target)); }
           }
+        }
+      }
+      // Zheyna Warpath: knockback target 1m bort från Zheyna (mode-anpassad walkable för heroes).
+      if (p.knockback > 0 && tp) {
+        const kdx = tp.x - side.hero.x, kdz = tp.z - side.hero.z;
+        const km = Math.hypot(kdx, kdz) || 1;
+        const knx = tp.x + (kdx / km) * p.knockback, knz = tp.z + (kdz / km) * p.knockback;
+        if (p.targetIsHero) {
+          const ts = state.sides[p.targetSideIdx];
+          if (ts && !ts.hero.dead) {
+            const walk = ts.inBossWars ? (x, z) => isBossWarsWalkable(x, z, ts._bwGateClosed)
+                       : ts.inArena1v1 ? isArena1v1Walkable
+                       : (x, z) => isHeroWalkable(ts.idx, x, z, null);
+            if (walk(knx, knz)) { ts.hero.x = knx; ts.hero.z = knz; }
+          }
+        } else if (p.targetIsMonster && p.target && p.target.hp > 0) {
+          p.target.x = knx; p.target.z = knz;
         }
       }
       // Aragurn passive lifesteal: 0.5% per 1% HP loss på AA-damage också
@@ -6897,8 +6968,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   // ingen graderad hastighet. Speglar klientens applyMovement (annars rubber-band).
   const strength = 1;
   const ndx = joyX / mag, ndz = joyZ / mag;
-  side.hero.facingX = ndx;
-  side.hero.facingZ = ndz;
+  if (side.zheynaUltCharging) zheynaTurnToward(side, ndx, ndz, dt);   // turn-rate-begränsad sikt under ult-laddning
+  else { side.hero.facingX = ndx; side.hero.facingZ = ndz; }
   // Slow (Kostefo Slider / Aragurn Shout / Gimlu Hammer lvl5) — appliceras nu på
   // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
   const slowMul = ((side.inArena1v1 || side.inBossWars) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
@@ -6912,8 +6983,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zyro passive: +10% MS per stack (max 30%) under buff-duration.
   const zyroPassiveMs = (side.heroId === 'magiker' && (side.gandulfBuffRemaining || 0) > 0)
     ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * slowMul * strength * dt;
+  // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
+  const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
+  const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * slowMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * slowMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
@@ -6922,6 +6996,181 @@ function applyMovement(side, joyX, joyZ, dt) {
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
   else if (check(side.hero.x, nz)) side.hero.z = nz;
+}
+
+// ===== ZHEYNA SKILLS (server-auth, decision 134) =====
+function zheynaWalk(side) {
+  return side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
+       : side.inArena1v1 ? isArena1v1Walkable
+       : (x, z) => isHeroWalkable(side.idx, x, z, null);
+}
+// Mode-agnostisk lista över giltiga fiender med {ent (har x/z + hp/maxHp), isHero/isMonster/isCreep}.
+function zheynaEnemies(state, side) {
+  const out = [];
+  const opp = state.sides[3 - side.idx];
+  if (opp && opp.hero && !opp.hero.dead && (state.duelActive || side.inArena1v1 || (typeof isHeroPvpActive === 'function' && isHeroPvpActive(state)))) {
+    out.push({ ent: opp.hero, isHero: true, sideIdx: 3 - side.idx });
+  }
+  for (const m of side.monsters) if (m && m.hp > 0) out.push({ ent: m, isMonster: true });
+  if (opp && opp.playerCreeps) for (const c of opp.playerCreeps) if (c && c.hp > 0) out.push({ ent: c, isCreep: true });
+  return out;
+}
+// Aktuell AA-skada (för Q-spjut + clone): bas × passive(distans) × crit × Q-buff.
+function zheynaAaDamageAt(side, dist, guaranteedCrit) {
+  const maxR = (side.attackRange || 7.5) * ((side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
+  const f = maxR > 0 ? Math.max(0, Math.min(1, dist / maxR)) : 0;
+  let dmg = (side.attackDmg || 0) * (1 + ZHEYNA_PASSIVE_DMG_MAX * f) * (side.zheynaDmgBuffMul || 1);
+  if (guaranteedCrit) dmg *= (side.critDmgMul || 2.0);
+  return dmg;
+}
+function zheynaApplyHitDamage(state, side, e, dmg) {
+  if (e.isHero) { const ts = state.sides[e.sideIdx]; if (ts && !ts.hero.dead) damageHero(ts, dmg); }
+  else if (e.isMonster) {
+    e.ent.hp -= bossWarsDmgMod(e.ent, dmg);
+    if (e.ent.hp <= 0) { const k = side.monsters.indexOf(e.ent); if (k >= 0) killMonster(side, k, side); }
+  } else if (e.isCreep) {
+    const opp = state.sides[3 - side.idx];
+    e.ent.hp -= dmg;
+    if (e.ent.hp <= 0 && opp) { const k = opp.playerCreeps.indexOf(e.ent); if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(e.ent); gainXp(side, minionXp(e.ent)); } }
+  }
+}
+function zheynaKnockEnt(state, side, e, ox, oz, dist) {
+  const ent = e.ent; const dx = (ent.x || 0) - ox, dz = (ent.z || 0) - oz; const m = Math.hypot(dx, dz) || 1;
+  const nx = (ent.x || 0) + (dx / m) * dist, nz = (ent.z || 0) + (dz / m) * dist;
+  if (e.isHero) { const ts = state.sides[e.sideIdx]; if (ts && !ts.hero.dead) { const w = zheynaWalk(ts); if (w(nx, nz)) { ts.hero.x = nx; ts.hero.z = nz; } } }
+  else if (ent.hp > 0) { ent.x = nx; ent.z = nz; }
+}
+// Q Spear Pierce — kast + re-press-teleport
+function castZheynaQ(state, sideIdx, ev) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead) return;
+  if (side.zheynaSpear && (side.zheynaSpear.repress || 0) > 0) { zheynaTeleportToSpear(state, side); return; }
+  if (side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  let dx = ev && ev.dx, dz = ev && ev.dz;
+  const m = Math.hypot(dx || 0, dz || 0);
+  if (m < 0.01) { dx = side.hero.facingX || 0; dz = side.hero.facingZ || 1; } else { dx /= m; dz /= m; }
+  side.zheynaSpear = {
+    id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, dx, dz, traveled: 0,
+    destX: side.hero.x + dx * ZHEYNA_Q_RANGE, destZ: side.hero.z + dz * ZHEYNA_Q_RANGE,
+    landed: false, hit: false, repress: ZHEYNA_Q_REPRESS,
+  };
+}
+function updateZheynaSpear(state, side, dt) {
+  const sp = side.zheynaSpear; if (!sp) return;
+  sp.repress = Math.max(0, sp.repress - dt);
+  if (sp.repress <= 0) { side.zheynaSpear = null; return; }   // fönster ute → spjut försvinner
+  if (!sp.landed) {
+    const step = ZHEYNA_Q_SPEED * dt;
+    // träff på första fiende i banan?
+    for (const e of zheynaEnemies(state, side)) {
+      const rx = (e.ent.x || 0) - sp.x, rz = (e.ent.z || 0) - sp.z;
+      const along = rx * sp.dx + rz * sp.dz, perp = Math.abs(rx * sp.dz - rz * sp.dx);
+      if (along >= 0 && along <= step + 0.6 && perp <= 0.9) {
+        sp.landed = true; sp.destX = e.ent.x || sp.x; sp.destZ = e.ent.z || sp.z;
+        const dist = Math.hypot((e.ent.x || 0) - side.hero.x, (e.ent.z || 0) - side.hero.z);
+        if (!sp.hit) { sp.hit = true; zheynaApplyHitDamage(state, side, e, zheynaAaDamageAt(side, dist, true)); }
+        break;
+      }
+    }
+    if (!sp.landed) {
+      sp.x += sp.dx * step; sp.z += sp.dz * step; sp.traveled += step;
+      if (sp.traveled >= ZHEYNA_Q_RANGE) { sp.landed = true; sp.destX = sp.x; sp.destZ = sp.z; }
+    }
+  }
+}
+function zheynaTeleportToSpear(state, side) {
+  const sp = side.zheynaSpear; if (!sp) return;
+  const tx = sp.destX, tz = sp.destZ;
+  const w = zheynaWalk(side);
+  if (w(tx, tz)) { side.hero.x = tx; side.hero.z = tz; }
+  let heroStuns = 0, minionStuns = 0;
+  const rSq = ZHEYNA_Q_STUN_RADIUS * ZHEYNA_Q_STUN_RADIUS;
+  for (const e of zheynaEnemies(state, side)) {
+    const ddx = (e.ent.x || 0) - tx, ddz = (e.ent.z || 0) - tz;
+    if (ddx * ddx + ddz * ddz <= rSq) {
+      e.ent.frozenTime = Math.max(e.ent.frozenTime || 0, ZHEYNA_Q_STUN_DUR);
+      if (e.isHero) heroStuns++; else minionStuns++;
+    }
+  }
+  const buff = heroStuns * ZHEYNA_Q_BUFF_HERO + minionStuns * ZHEYNA_Q_BUFF_MINION;
+  if (buff > 0) { side.zheynaDmgBuffMul = 1 + buff; side.zheynaDmgBuffRem = ZHEYNA_Q_BUFF_DUR; }
+  side.zheynaSpear = null;
+}
+// F Clone
+function castZheynaClone(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead || side.skills.f.cd > 0) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.zheynaClone = { id: state.nextEntityId++, x: side.hero.x + 1.4, z: side.hero.z, hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR };
+}
+function tickZheynaClone(state, side, dt) {
+  const cl = side.zheynaClone; if (!cl) return;
+  cl.remaining -= dt;
+  if (cl.remaining <= 0 || cl.hp <= 0) { side.zheynaClone = null; return; }
+  const ox = side.hero.x + 1.4, oz = side.hero.z;
+  cl.x += (ox - cl.x) * Math.min(1, dt * 6); cl.z += (oz - cl.z) * Math.min(1, dt * 6);
+}
+// E Warpath
+function castZheynaWarpath(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead || side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  side.zheynaWarpathRem = ZHEYNA_E_DUR;
+}
+// R Spear God — håll-ladda + släpp/auto-kast (hitscan-rektangel + visuellt spjut)
+function startZheynaUltCharge(state, side) {
+  if (side.hero.dead || side.zheynaUltCharging) return;
+  if ((side.level || 1) < ULT_UNLOCK_LEVEL) return;
+  if ((side.ultEnergy || 0) < ULT_ENERGY_MAX || (side._ultLockoutTime || 0) > 0) return;
+  side.zheynaUltCharging = true; side.zheynaUltCharge = 0; side.zheynaUltAim = 0;
+}
+function fireZheynaUlt(state, side) {
+  if (!side.zheynaUltCharging) return;
+  side.zheynaUltCharging = false;
+  if (side.hero.dead) return;
+  const charge = Math.max(1, Math.min(ZHEYNA_R_MAX_CHARGE, side.zheynaUltCharge || 1));
+  side.ultEnergy = 0; side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
+  const dmgFrac = ZHEYNA_R_DMG_PER_SEC * charge;
+  const width = ZHEYNA_R_WIDTH_BASE + ZHEYNA_R_WIDTH_PER_SEC * (charge - 1);
+  const knock = ZHEYNA_R_KNOCKBACK_PER_SEC * charge;
+  let dx = side.hero.facingX || 0, dz = side.hero.facingZ || 1;
+  const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
+  const ox = side.hero.x, oz = side.hero.z, halfW = width / 2;
+  for (const e of zheynaEnemies(state, side)) {
+    const rx = (e.ent.x || 0) - ox, rz = (e.ent.z || 0) - oz;
+    const along = rx * dx + rz * dz, perp = Math.abs(rx * dz - rz * dx);
+    if (along >= 0 && along <= ZHEYNA_R_RANGE && perp <= halfW) {
+      zheynaApplyHitDamage(state, side, e, (e.ent.maxHp || e.ent.hp || 0) * dmgFrac * (side.zheynaDmgBuffMul || 1));
+      if (e.ent.hp == null || e.ent.hp > 0) zheynaKnockEnt(state, side, e, ox, oz, knock);
+    }
+  }
+  // Visuellt spjut (gameplay redan klart via hitscan) — flyger 20m för FX/MP-render.
+  side.zheynaUltSpear = { id: state.nextEntityId++, x: ox, z: oz, dx, dz, traveled: 0, width };
+}
+function updateZheynaUltSpear(side, dt) {
+  const sp = side.zheynaUltSpear; if (!sp) return;
+  sp.x += sp.dx * ZHEYNA_R_SPEAR_SPEED * dt; sp.z += sp.dz * ZHEYNA_R_SPEAR_SPEED * dt; sp.traveled += ZHEYNA_R_SPEAR_SPEED * dt;
+  if (sp.traveled >= ZHEYNA_R_RANGE) side.zheynaUltSpear = null;
+}
+// Per-side Zheyna-tick — anropas i alla modes per frame.
+function tickZheyna(state, side, dt) {
+  if (!side || side.heroId !== 'zheyna') return;
+  if ((side.zheynaWarpathRem || 0) > 0) side.zheynaWarpathRem = Math.max(0, side.zheynaWarpathRem - dt);
+  if ((side.zheynaDmgBuffRem || 0) > 0) { side.zheynaDmgBuffRem = Math.max(0, side.zheynaDmgBuffRem - dt); if (side.zheynaDmgBuffRem <= 0) side.zheynaDmgBuffMul = 1; }
+  updateZheynaSpear(state, side, dt);
+  tickZheynaClone(state, side, dt);
+  if (side.zheynaUltCharging) {
+    if (side.hero.dead) { side.zheynaUltCharging = false; }
+    else {
+      side.zheynaUltCharge = Math.min(ZHEYNA_R_MAX_CHARGE, (side.zheynaUltCharge || 0) + dt);
+      if (side.zheynaUltCharge >= ZHEYNA_R_MAX_CHARGE) {
+        side.zheynaUltAim = (side.zheynaUltAim || 0) + dt;
+        if (side.zheynaUltAim >= ZHEYNA_R_AIM_EXTRA) fireZheynaUlt(state, side);
+      }
+    }
+  }
+  updateZheynaUltSpear(side, dt);
 }
 
 function tickIncome(side, dt) {
@@ -7017,6 +7266,12 @@ function applyEvent(state, sideIdx, ev) {
     if (ev.key === 'r') {
       // ULT-unlock-gate: kräver hero-level >= 10
       if ((side.level || 1) < ULT_UNLOCK_LEVEL) return;
+      // Zheyna Spear God: tryck → börja ladda; tryck igen → kasta (toggle). Auto-kast vid
+      // max-laddning + sikt-fönster (tickZheyna). Konsumerar ult-energy vid kast.
+      if (side.heroId === 'zheyna') {
+        if (side.zheynaUltCharging) fireZheynaUlt(state, side); else startZheynaUltCharge(state, side);
+        return;
+      }
       // Säkerställ att ult-träffar (t.ex. Soul Drain-tick) räknas som 'r' i
       // Gandulf Soul Mark-tracking istället för stale Q/F/E från förra cast.
       side._currentSkillKey = 'r';
@@ -7091,6 +7346,7 @@ function applyEvent(state, sideIdx, ev) {
     const isGimlu = side.heroId === 'gimlu';
     const isAragurn = side.heroId === 'aragurn';
     const isKostefo = side.heroId === 'kostefo';
+    const isZheyna = side.heroId === 'zheyna';
     // Wrap-around-cast: bumpa side.skillDmgMul med per-skill-level-mult under
     // cast-tid. Bake-at-cast skills (projektiler, fireballs, dotPerSec etc) får
     // automatiskt rätt skalning. Tick-skills som läser side.skillDmgMul live ska
@@ -7105,18 +7361,21 @@ function applyEvent(state, sideIdx, ev) {
         else if (isGimlu) castGimluTaunt(state, sideIdx);
         else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
         else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
+        else if (isZheyna) castZheynaQ(state, sideIdx, ev);
         else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
       } else if (ev.key === 'f') {
         if (isLegolus) castLegolusBuff(state, sideIdx);
         else if (isGimlu) castGimluIronWill(state, sideIdx);
         else if (isAragurn) castAragurnShout(state, sideIdx, dx, dz);
         else if (isKostefo) castKostefoJointSlider(state, sideIdx, dx, dz);
+        else if (isZheyna) castZheynaClone(state, sideIdx);
         else castFrostnova(state, sideIdx, ev);
       } else if (ev.key === 'e') {
         if (isLegolus) castLegolusDash(state, sideIdx, ev);
         else if (isGimlu) castGimluHammer(state, sideIdx, dx, dz);
         else if (isAragurn) castAragurnLeap(state, sideIdx, ev);
         else if (isKostefo) castKostefoCannabisCloud(state, sideIdx);
+        else if (isZheyna) castZheynaWarpath(state, sideIdx);
         else castBlink(state, sideIdx, ev);
       }
     } finally {
@@ -7598,6 +7857,7 @@ function tickGame(state, dt) {
       tickGimluTauntLvl5(state, side, opp, dt);
       if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
       if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+      tickZheyna(state, side, dt);
       flushIronWillReflectLvl5(state, side, opp);
       tickAragurnBannersLvl5(side, dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -7757,6 +8017,7 @@ function tickGame(state, dt) {
     // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    tickZheyna(state, side, dt);
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
