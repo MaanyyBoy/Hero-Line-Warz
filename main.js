@@ -2309,7 +2309,7 @@ const BOSS_WARS_DEFS = [
   {
     tier: 5, wave: 50, name: 'Dragon King', diff: 'Nightmare', diffClass: 'nightmare',
     desc: 'The dragon king. Sustained cone-flame, AoE knockback and ever-falling meteors. The ultimate raid test — expect 5+ minutes if your team is skilled. When he reaches 30% HP, the apocalypse begins.',
-    hp: 30000, dmgScale: 3.5, hasPhase2: true, phaseThreshold: 0.3,
+    hp: 30000, dmgScale: 3.0, hasPhase2: true, phaseThreshold: 0.3,   // dmgScale 3.5→3.0: one-shot-nerf 2026-06-07
   },
 ];
 
@@ -4791,7 +4791,10 @@ scene.add(arenaSceneGroup);
 // Decision 049: 5 tematiska maps (en per boss), större arena (radius 36),
 // per-tier theme-props (träd/lava/eld/etc) + korridor-facklor.
 const BOSSWARS_CX = 0;
-const BOSSWARS_MAX_HIT_FRAC = 0.05;   // tak: max 5% av maxHp i skada per hit på boss-wars-bossar
+const BOSSWARS_MAX_HIT_FRAC = 0.05;   // fallback-tak om bossTier saknas
+// Tier-graderat tak (användarbeslut 2026-06-07): platta 5% gjorde alla tiers ~20 hits.
+// T1 lättare (6%), T5 svårare (4%). Speglar server-game-engine.js.
+const BOSSWARS_TIER_MAX_HIT_FRAC = { 1: 0.06, 2: 0.055, 3: 0.05, 4: 0.045, 5: 0.04 };
 const BOSSWARS_CZ = 90;
 const BOSSWARS_RADIUS = 36;   // 30 → 36 (20% större, mer rörelseutrymme för boss-fight)
 
@@ -13471,8 +13474,8 @@ function damageMonster(m, rawDmg) {
   if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
   let dmg = rawDmg * (1 - dr);
-  // Cap: max 5% av maxHp i skada per hit (alla boss-wars-bossar) — hindrar burst-one-shots.
-  if (m.isBossWarsBoss) dmg = Math.min(dmg, m.maxHp * BOSSWARS_MAX_HIT_FRAC);
+  // Cap: tier-graderat per-hit-tak (T1 6% → T5 4%) — hindrar burst-one-shots.
+  if (m.isBossWarsBoss) dmg = Math.min(dmg, m.maxHp * (BOSSWARS_TIER_MAX_HIT_FRAC[m.bossTier] || BOSSWARS_MAX_HIT_FRAC));
   const actual = Math.min(dmg, Math.max(0, m.hp));
   m.hp -= dmg;
   return actual;
@@ -25490,8 +25493,8 @@ const DRAGON_MEM_REVEAL_HP_C = [0.95, 0.90, 0.85];
 const DRAGON_MEM_REVEAL_TIME_C = 1.0, DRAGON_MEM_GAP_C = 0.3;
 const DRAGON_MEM_TIMER_C = 30, DRAGON_MEM_WRONG_DMG_C = 0.20, DRAGON_MEM_MAX_MISTAKES_C = 3;
 const DRAGON_MEM_PILLAR_RADIUS_C = 7.0, DRAGON_MEM_STAND_RADIUS_C = 2.0, DRAGON_ACT_PILLAR_RADIUS_C = 2.2;
-const DRAGON_P2_DMG_MUL_C = 1.30, DRAGON_P2_DR_BONUS_C = 0.20;
-const DRAGON_MT_ROUNDS_C = 3, DRAGON_MT_COUNTDOWN_C = 5, DRAGON_MT_CIRCLE_RADIUS_C = 2.0;
+const DRAGON_P2_DMG_MUL_C = 1.15, DRAGON_P2_DR_BONUS_C = 0.20;   // fas-2-dmg 1.30→1.15: fas-2-one-shot-nerf 2026-06-07
+const DRAGON_MT_ROUNDS_C = 3, DRAGON_MT_COUNTDOWN_C = 6, DRAGON_MT_CIRCLE_RADIUS_C = 2.0;   // countdown 5→6: matchar server, mobil-marginal 2026-06-07
 const DRAGON_MT_COLORS_C = ['red', 'blue', 'green'];
 const DRAGON_MT_COLOR_HEX = { red: 0xff3322, blue: 0x3366ff, green: 0x33cc44 };
 const DRAGON_MT_HINTS_C = {

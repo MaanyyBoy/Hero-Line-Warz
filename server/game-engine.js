@@ -744,7 +744,10 @@ function isCreepPos(x, z) {
 // (buggmönster #9: geometri-antaganden). Samma namn som klienten för port-trohet.
 // ADDITIVT — oanropat tills tickBossWars/applyMovement wirar in det (slice 0/1).
 const BOSSWARS_CX = 0, BOSSWARS_CZ = 90, BOSSWARS_RADIUS = 36, BOSSWARS_FLOOR_Y = 0.42;
-const BOSSWARS_MAX_HIT_FRAC = 0.05;   // tak: max 5% av maxHp i skada per hit på boss-wars-bossar
+const BOSSWARS_MAX_HIT_FRAC = 0.05;   // fallback-tak om bossTier saknas
+// Tier-graderat tak (användarbeslut 2026-06-07): platta 5% gjorde alla tiers ~20 hits.
+// T1 lättare (6% → ~17 hits), T5 svårare (4% → ~25 hits). Per-hit-andel av maxHp.
+const BOSSWARS_TIER_MAX_HIT_FRAC = { 1: 0.06, 2: 0.055, 3: 0.05, 4: 0.045, 5: 0.04 };
 const BOSS_GATE_X = BOSSWARS_CX - BOSSWARS_RADIUS;            // -36 (boss-rummets västsida)
 const BW_CORRIDOR_LENGTH = 26, BW_CORRIDOR_WIDTH = 9;
 const BW_CORRIDOR_HALF_W = BW_CORRIDOR_WIDTH / 2;             // 4.5
@@ -2102,7 +2105,7 @@ function serializeArenaState(state) {
 // ADDITIVT — inget anropar detta än (server.js wirar in i slice 0d). Boss-AI/skills/ads
 // portas slice 2-4; HÄR bara state + STATISK boss för att validera pipelinen (slice 0).
 const BOSSWARS_TIER_HP = { 1: 6500, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  // bas-hp (×3 raid-buff vid spawn). Tier 1: 5000→6500 (crit-comp dödade på ~14s = trivialt, mekanik hann ej aktiveras).
-const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.5 };    // matchar BOSS_WARS_DEFS
+const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.0 };    // matchar BOSS_WARS_DEFS (T5 3.5→3.0: one-shot-nerf 2026-06-07)
 const BOSSWARS_TIER_SPEED = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };       // matchar spawnBossWarsBoss
 const BOSSWARS_TIER_PHASE_THRESH = { 1: 0.5, 2: 0.5, 3: 0.5, 4: 0.3, 5: 0.3 };
 const BOSSWARS_TIER_AA = {
@@ -2341,7 +2344,7 @@ const DRAGON_MEM_REVEAL_HP = [0.95, 0.90, 0.85];   // 3 symbol-reveals under com
 const DRAGON_MEM_REVEAL_TIME = 1.0, DRAGON_MEM_GAP = 0.3;
 const DRAGON_MEM_TIMER = 30, DRAGON_MEM_WRONG_DMG = 0.20, DRAGON_MEM_MAX_MISTAKES = 3;
 const DRAGON_MEM_PILLAR_RADIUS = 7.0, DRAGON_MEM_STAND_RADIUS = 2.0, DRAGON_ACT_PILLAR_RADIUS = 2.2;
-const DRAGON_P2_DMG_MUL = 1.30, DRAGON_P2_DR_BONUS = 0.20;
+const DRAGON_P2_DMG_MUL = 1.15, DRAGON_P2_DR_BONUS = 0.20;   // fas-2-dmg 1.30→1.15: fas-2-one-shot-nerf 2026-06-07
 function dragonPickMemSymbols() {
   const a = DRAGON_SYMBOLS.slice();
   for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = a[i]; a[i] = a[j]; a[j] = t; }
@@ -2453,8 +2456,8 @@ function dragonEnterPhase2(state, boss) {
 }
 // --- MEKANIK 2: SOUL LINK TRIAL (60%) — MP-only (3 spelare). Solo hoppar denna breakpoint. ---
 const DRAGON_SL_TIMER = 30, DRAGON_SL_BREAKS_REQ = 3;
-const DRAGON_SL_CHAIN_MAX = 12, DRAGON_SL_BREAK_WINDOW = 1.5, DRAGON_SL_INTERCEPT_BAND = 1.6;
-const DRAGON_SL_ORB_COUNT = 10, DRAGON_SL_ORB_SPEED = 6, DRAGON_SL_ORB_DMG = 0.15, DRAGON_SL_ORB_HIT_RADIUS = 1.3, DRAGON_SL_ORB_HIT_CD = 1.0;
+const DRAGON_SL_CHAIN_MAX = 12, DRAGON_SL_BREAK_WINDOW = 2.0, DRAGON_SL_INTERCEPT_BAND = 1.6;   // brytfönster 1.5→2.0: mer marginal på mobil 2026-06-07
+const DRAGON_SL_ORB_COUNT = 10, DRAGON_SL_ORB_SPEED = 6, DRAGON_SL_ORB_DMG = 0.10, DRAGON_SL_ORB_HIT_RADIUS = 1.3, DRAGON_SL_ORB_HIT_CD = 1.0;   // orb-dmg 0.15→0.10: 10 orbs × koordination var för hårt 2026-06-07
 function dragonPointOnSegment(px, pz, ax, az, bx, bz, band) {
   const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz;
   if (len2 < 0.01) return false;
@@ -2529,7 +2532,7 @@ function tickDragonSoulLink(state, dt, boss) {
   }
 }
 // --- MEKANIK 3: METEOR RIDDLE (40%) — 3 rundor. Körs i MP OCH solo (1 spelare = 1 säker cirkel). ---
-const DRAGON_MT_ROUNDS = 3, DRAGON_MT_COUNTDOWN = 5, DRAGON_MT_CIRCLE_RADIUS = 2.0;
+const DRAGON_MT_ROUNDS = 3, DRAGON_MT_COUNTDOWN = 6, DRAGON_MT_CIRCLE_RADIUS = 2.0;   // countdown 5→6: gåta+spring för snålt på mobil 2026-06-07
 const DRAGON_MT_COLORS = ['red', 'blue', 'green'];
 const DRAGON_MT_HINTS = {
   red: ['Nothing is hotter than the flames.', 'Embers never lie — follow the burning hue.', 'Seek the color of fire and fury.'],
@@ -3048,8 +3051,9 @@ function bossWarsDmgMod(m, dmg) {
   const steps = Math.floor((m.activeTime || 0) / (m.dmgReductionStepIntervalSec || 120));
   // phase2DrBonus: +20pp DR additivt i fas 2 (sätts vid fas-övergång). Cap 70% totalt.
   const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05) + (m.phase2DrBonus || 0));
-  // Cap: max 5% av maxHp i skada per hit (alla boss-wars-bossar) — hindrar burst-one-shots.
-  return Math.min(dmg * (1 - dr), m.maxHp * BOSSWARS_MAX_HIT_FRAC);
+  // Cap: tier-graderat per-hit-tak (T1 6% → T5 4%) — hindrar burst-one-shots.
+  const cap = BOSSWARS_TIER_MAX_HIT_FRAC[m.bossTier] || BOSSWARS_MAX_HIT_FRAC;
+  return Math.min(dmg * (1 - dr), m.maxHp * cap);
 }
 // Fas-övergång (slice 3a): vid phaseThreshold-HP → bossPhase 2. Stun+push heroes, immun flyup 2.5s,
 // cleanse boss-debuffs (behåll positiv buff), swap till phase2-skills vid landning. Port av main.js.
