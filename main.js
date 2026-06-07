@@ -2816,18 +2816,63 @@ function attachHpBar(meshGroup, yOffset, hero = false) {
   return bar;
 }
 
+// Kryx berserk-mätare: 3-bars-sprite under hero-HP-baren. Fylls av tagen skada
+// (1 bar/10% maxHP); full = glödande. Wire till side.berserkDmgAccum/berserkCharged.
+function createBerserkBar() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 100; canvas.height = 16;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.LinearFilter; tex.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.9, 0.30, 1);   // samma bredd som hero-HP-bar
+  sprite.renderOrder = 999;
+  sprite.userData.canvas = canvas; sprite.userData.tex = tex; sprite.userData.lastKey = '';
+  return sprite;
+}
+function drawBerserkBar(sprite, frac, charged) {
+  frac = Math.max(0, Math.min(1, frac));
+  const key = charged ? 'C' : frac.toFixed(2);
+  if (sprite.userData.lastKey === key) return;
+  sprite.userData.lastKey = key;
+  const ctx = sprite.userData.canvas.getContext('2d');
+  ctx.clearRect(0, 0, 100, 16);
+  const segW = 31, gap = 3.5, x0 = 1.5;
+  for (let i = 0; i < 3; i++) {
+    const bx = x0 + i * (segW + gap);
+    ctx.fillStyle = 'rgba(0,0,0,0.62)'; ctx.fillRect(bx, 2, segW, 12);
+    ctx.strokeStyle = charged ? 'rgba(255,235,140,0.95)' : 'rgba(255,150,70,0.6)';
+    ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, 2.5, segW - 1, 11);
+    const barFrac = Math.max(0, Math.min(1, frac * 3 - i));   // varje bar = 1/3 av total
+    if (barFrac > 0) {
+      ctx.fillStyle = charged ? '#ffdd44' : '#ff6a1a';
+      ctx.fillRect(bx + 1.5, 3.5, (segW - 3) * barFrac, 9);
+    }
+  }
+  sprite.userData.tex.needsUpdate = true;
+}
+
 // Disposear HP-bar-texturen för en entity-mesh INNAN scene.remove. CanvasTexture
 // släpps inte automatiskt av GC på iOS Safari — om vi inte explicit disposear
 // så ackumuleras GPU-texturer per död monster/creep → mobil-OOM efter ~wave 2-3.
 function disposeEntityHpBar(meshGroup) {
-  const bar = meshGroup && meshGroup.userData && meshGroup.userData.hpBar;
-  if (!bar) return;
-  if (bar.material) {
-    if (bar.material.map) bar.material.map.dispose();
-    bar.material.dispose();
+  if (!meshGroup || !meshGroup.userData) return;
+  const bar = meshGroup.userData.hpBar;
+  if (bar) {
+    if (bar.material) {
+      if (bar.material.map) bar.material.map.dispose();
+      bar.material.dispose();
+    }
+    if (bar.userData) bar.userData.canvas = null;
+    meshGroup.userData.hpBar = null;
   }
-  if (bar.userData) bar.userData.canvas = null;
-  meshGroup.userData.hpBar = null;
+  // Kryx berserk-mätare (egen canvas-textur) — disposa oberoende av hpBar
+  const bb = meshGroup.userData.berserkBar;
+  if (bb) {
+    if (bb.material) { if (bb.material.map) bb.material.map.dispose(); bb.material.dispose(); }
+    if (bb.userData) bb.userData.canvas = null;
+    meshGroup.userData.berserkBar = null;
+  }
 }
 
 // Wrapper kring scene.remove som först disposear ägd GPU-data (just nu HP-bar).
@@ -2866,6 +2911,22 @@ function tickAllHpBars() {
     const shieldTotal = (s.shield || 0) + (s.lingShieldHp || 0);
     updateEntityHpBar(s.mesh, s.hero.hp, s.hero.maxHp, now, shieldTotal);
     if (s.mesh.userData.hpBar) s.mesh.userData.hpBar.visible = !s.hero.dead;
+    // Kryx berserk-mätare (3 bars) under HP-baren
+    if (s.heroId === 'gimlu' && !s.hero.dead) {
+      let bb = s.mesh.userData.berserkBar;
+      if (!bb) {
+        bb = createBerserkBar();
+        const hpY = s.mesh.userData.hpBar ? s.mesh.userData.hpBar.position.y : 2.0;
+        bb.position.y = hpY - 0.34;
+        s.mesh.add(bb);
+        s.mesh.userData.berserkBar = bb;
+      }
+      bb.visible = true;
+      const frac = s.hero.maxHp > 0 ? (s.berserkDmgAccum || 0) / (s.hero.maxHp * BERSERK_FULL_PCT) : 0;
+      drawBerserkBar(bb, frac, !!s.berserkCharged);
+    } else if (s.mesh.userData.berserkBar) {
+      s.mesh.userData.berserkBar.visible = false;
+    }
   }
   if (APP.mode === 'solo') {
     for (const idx of [1, 2]) {
