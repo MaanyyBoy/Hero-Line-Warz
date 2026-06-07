@@ -14307,11 +14307,16 @@ function updateProjectiles(side, dt) {
 }
 
 // Liten färgad puff som spawnar bakom flygande projektiler. Förlitar sig på combatFx-cleanup.
+// Perf (decision 136-uppföljning): trail-puffar spawnas per-frame × 10 call-sites.
+// Dela geometrin (disposas aldrig) + poola materialen (per-instans-opacity bevaras
+// via acquire/release) → noll BufferGeometry/Material-allokering i steady state.
+const _FX_SPHERE_GEO = new THREE.SphereGeometry(0.10, 6, 5);
+const _trailMatPool = [];
 function spawnProjectileTrailPuff(x, y, z, color) {
-  const m = new THREE.Mesh(
-    new THREE.SphereGeometry(0.10, 6, 5),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55 })
-  );
+  let mat = _trailMatPool.pop();
+  if (mat) { mat.color.set(color); mat.opacity = 0.55; }
+  else mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55 });
+  const m = new THREE.Mesh(_FX_SPHERE_GEO, mat);
   m.position.set(x, y, z);
   scene.add(m);
   combatFx.push({ mesh: m, life: 0.28, maxLife: 0.28, kind: 'trail' });
@@ -32666,6 +32671,9 @@ function _disposeCombatFxEntry(e) {
     // Kenney-fx: Sprite-material disposas. Geometri disposas EJ — Sprite delar
     // intern geometri och ground-plan delar _FX_PLANE_GEO (perf). Textur shared.
     if (e.mesh.material) e.mesh.material.dispose();
+  } else if (e.kind === 'trail' && e.mesh) {
+    // Poolad trail-puff: returnera materialet, dela geometrin (disposas aldrig).
+    if (e.mesh.material) _trailMatPool.push(e.mesh.material);
   } else if (e.mesh) {
     e.mesh.traverse(o => {
       if (o.geometry) o.geometry.dispose();
