@@ -22090,7 +22090,8 @@ function hostCastKostefoJointAttack(side, ev) {
     tickAccum: 0,
     mesh,                          // lokal mesh-ref (Arena/Solo)
   });
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66dd55, 1.6);
+  // Boss-nivå-FX (decision 136): nature-cast-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.6);
 }
 
 // F: Joint Slider — piercing projectile, 6m, exploderar vid slut.
@@ -22137,7 +22138,8 @@ function hostCastKostefoJointSlider(side, ev) {
     lvl5Tp: !!(side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX),
     homingTargetType, homingTargetId,
   });
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddaa44, 1.2);
+  // Boss-nivå-FX (decision 136): nature-cast-burst (slider exploderar i eld vid slut)
+  spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.2);
 }
 
 // E: Cannabis Cloud — stationär dim-area vid cast-pos. Heal 25% maxHP direct,
@@ -22165,7 +22167,9 @@ function hostCastKostefoCannabisCloud(side) {
       opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, _K_CLOUD_STUN_DUR);
     }
   }
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xeeeeee, 2.0);
+  // Boss-nivå-FX (decision 136): nature-cast-burst + heal-pop (var generisk vit ring)
+  spawnElementCast(side.hero.x, side.hero.z, 'nature', 2.0);
+  spawnHealFx(side.hero.x, side.hero.z);
   // Kenney smoke-puffs vid cloud-spawn: 8 stora smoke-sprites spridda i radie
   if (kenneyTex.size > 0) {
     for (let i = 0; i < 8; i++) {
@@ -22254,7 +22258,8 @@ function hostCastKostefoJointAvengers(side) {
       attackCd: i * (_K_COMPANION_AA_INTERVAL / _K_ULT_JOINT_COUNT),
     });
   }
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 2.5);
+  // Boss-nivå-FX (decision 136): nature companion-summon-explosion
+  spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.6, power: 1.2, shakeMag: 0.3, shakeDur: 0.35 });
 }
 
 // Hjälpare: applicera dmg på opp.hero (arena) — använder damageHero som
