@@ -8228,6 +8228,74 @@ function endDuel(state) {
   state.duelTimer = state.duelCount < DUEL_MAX_COUNT ? DUEL_INTERVAL : Infinity;
 }
 
+// === BOTS (line wars-motståndare) — server-auth. Mirror av main.js solo-bot. ===
+// Svårighet skalar combat-aggression + ekonomi-takt. Bot:en kör ekonomi-köp DIREKT
+// (server-AI behöver ej stå i basen som en spelare) + styr hjälten via lastInputs/applyEvent.
+const BOT_PARAMS = {
+  easy:   { jitter: 0.40, skillRatePerSec: 0.25, skillReactionMs: 800, economyInterval: 6.5, tierBuffer: 2.6, minionPickTop: 4 },
+  medium: { jitter: 0.18, skillRatePerSec: 0.70, skillReactionMs: 350, economyInterval: 3.8, tierBuffer: 1.7, minionPickTop: 2 },
+  hard:   { jitter: 0.05, skillRatePerSec: 1.40, skillReactionMs: 150, economyInterval: 2.2, tierBuffer: 1.2, minionPickTop: 1 },
+};
+function botLineWarsEconomy(state, side, p) {
+  // Lås upp nästa tier om vi har gott om guld (buffer skalar per svårighet).
+  for (let tier = 2; tier <= 5; tier++) {
+    if (!side.tierUnlocks[tier] && side.tierUnlocks[tier - 1]) {
+      const cost = TIER_UNLOCK_COST[tier];
+      if (cost && side.gold > cost * p.tierBuffer) { side.gold -= cost; side.tierUnlocks[tier] = true; }
+      break;
+    }
+  }
+  // Köp bästa råd-affordabla minion → slumpad lane (skickas mot spelaren).
+  const affordable = [];
+  for (const id in MINION_TYPES) { const m = MINION_TYPES[id]; if (side.tierUnlocks[m.tier] && side.gold >= m.cost) affordable.push(m); }
+  if (affordable.length) {
+    affordable.sort((a, b) => b.cost - a.cost);
+    const m = affordable[Math.min(affordable.length - 1, (Math.random() * p.minionPickTop) | 0)];
+    side.gold -= m.cost;
+    side.income += Math.floor(m.cost * INCOME_MINION_RATIO);
+    spawnMinion(state, side, m.id, 1 + ((Math.random() * 2) | 0));
+  }
+}
+function tickLineWarsBot(state, sideIdx, dt) {
+  const side = state.sides[sideIdx];
+  if (!side || !side.isBot) return;
+  // Lazy-init: bot startar med Q/F/E unlockade (annars gatas skill-cast av skillLvl<=0).
+  if (!side._botSkillsInited) {
+    side._botSkillsInited = true;
+    side.skillLvl = side.skillLvl || { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) if ((side.skillLvl[k] || 0) < 1) side.skillLvl[k] = 1;
+  }
+  const p = BOT_PARAMS[side.botDifficulty] || BOT_PARAMS.medium;
+  // Ekonomi-tick
+  side._botEco = (side._botEco || 0) - dt;
+  if (side._botEco <= 0) { side._botEco = p.economyInterval; botLineWarsEconomy(state, side, p); }
+  // Hjälte-AI: försvara nära basen, attackera närmaste inkommande fiende.
+  const input = state.lastInputs[sideIdx];
+  if (side.hero.dead) { if (input) input.j = null; return; }
+  if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) {
+    if (input) input.j = null; return;
+  }
+  const opp = state.sides[3 - sideIdx];
+  const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, 14, state);
+  let mx = 0, mz = 0;
+  if (t && t.entity) {
+    const dx = t.entity.x - side.hero.x, dz = t.entity.z - side.hero.z, d = Math.hypot(dx, dz) || 1;
+    side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
+    const range = side.attackRange || HERO_ATTACK_RANGE;
+    if (d > range * 0.85) { mx = dx / d; mz = dz / d; }
+    if (d <= range + 0.5 && !side.aaActive) applyEvent(state, sideIdx, { type: 'aa' });
+    side._botSkillT = (side._botSkillT || 0) - dt;
+    if (side._botSkillT <= 0 && Math.random() < p.skillRatePerSec * dt) {
+      side._botSkillT = p.skillReactionMs / 1000;
+      const cand = [];   // R (ult) ger ingen combat-effekt i classic → hoppas över
+      for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
+      if (cand.length) applyEvent(state, sideIdx, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
+    }
+  }
+  if (mx || mz) { mx += (Math.random() - 0.5) * p.jitter; mz += (Math.random() - 0.5) * p.jitter; const ml = Math.hypot(mx, mz) || 1; mx /= ml; mz /= ml; }
+  if (input) input.j = (mx || mz) ? { x: mx, z: mz } : null;
+}
+
 function tickGame(state, dt) {
   if (state.matchState.gameOver) return;
   // Hero pick-fas: bara timer + transition. Inga waves/monsters under denna fas.
@@ -8350,6 +8418,9 @@ function tickGame(state, dt) {
       if (side.hero.respawnTimer <= 0) respawnHero(side);
     }
   }
+  // Bot-AI (line wars-motståndare): sätter rörelse-input + AA/skill/ekonomi-köp.
+  if (state.sides[1] && state.sides[1].isBot) tickLineWarsBot(state, 1, dt);
+  if (state.sides[2] && state.sides[2].isBot) tickLineWarsBot(state, 2, dt);
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx].j;
