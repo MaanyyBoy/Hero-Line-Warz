@@ -22967,6 +22967,8 @@ function hostCastAragurnWhirlwind(side) {
   // frozen/feared/taunted. Whirlwind rensar resten (slow, etc) vid cast.
   side.whirlwindRemaining = WHIRLWIND_DURATION + (arenaHasTalent(side, 'a_spin_extend') ? 1.5 : 0);
   side.whirlwindTickAccum = 0;
+  // Boss-nivå-FX (decision 136): physical spin-up-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'physical', 1.8);
   // Kenney twirl på marken som snurrar under hela whirlwind-duration
   if (kenneyTex.size > 0) {
     const twirlTex = kenneyTex.get('twirl_03');
@@ -23082,9 +23084,8 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   const halfAng = SHOUT_HALF_ANGLE * (rangeMul > 1 ? 1.15 : 1);
   // Visuell kon-flash + ljudvågringar
   spawnConeFlash(side.hero.x, side.hero.z, dirX, dirZ, length, halfAng, 0xffe399);
-  // Visuell buff-cirkel runt Elar (separat från damage-konen)
-  spawnGroundImpact(side.hero.x, side.hero.z, SHOUT_BUFF_RADIUS, 0xffe399);
-  triggerCameraShake(0.18, 0.20);
+  // Boss-nivå-FX (decision 136): holy shout-out-burst runt Elar (var generisk impact)
+  spawnExplosion(side.hero.x, side.hero.z, 'holy', { scale: 1.4, power: 0.9, shakeMag: 0.18, shakeDur: 0.2 });
   // Kenney shout-burst framåt + ground-scorch i cone
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -23238,7 +23239,8 @@ function hostCastAragurnLeap(side, ev) {
   ring.position.set(tx, 0.08, tz);
   scene.add(ring);
   side.aragurnLeap.indicator = ring;
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xffaa55, 1.4);
+  // Boss-nivå-FX (decision 136): earth launch-burst vid avstamp
+  spawnElementCast(side.hero.x, side.hero.z, 'earth', 1.4);
 }
 
 function tickAragurnLeap(side, dt) {
@@ -23337,8 +23339,8 @@ function tickAragurnBannersLvl5Client(side, dt) {
 }
 
 function applyAragurnLeapImpact(side, x, z) {
-  spawnGroundImpact(x, z, LEAP_RADIUS, 0xff7733);
-  triggerCameraShake(0.40, 0.45);
+  // Boss-nivå-FX (decision 136): earth-landnings-explosion (var generisk impact)
+  spawnExplosion(x, z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.2, shakeMag: 0.4, shakeDur: 0.45 });
   // Kenney-FX: stor scorch-decal + central flare + dust-burst för dramatik
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -23455,9 +23457,9 @@ function hostCastAragurnUlt(side) {
     scene.add(grp);
     side.berserkSwordMesh = grp;
   }
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 2.2);
+  // Boss-nivå-FX (decision 136): fire berserk-aktivering (var generisk ring)
+  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.4, shakeDur: 0.44 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa55);
-  triggerCameraShake(0.30, 0.40);
 }
 
 function tickAragurnBerserk(side, dt) {
@@ -32646,8 +32648,7 @@ function tickAragurnVisuals(dt) {
       if (s._leapActive) {
         // Just landed — spawn ground-impact vid current pos
         s._leapActive = false;
-        spawnGroundImpact(s.mesh.position.x, s.mesh.position.z, LEAP_RADIUS, 0xff7733);
-        triggerCameraShake(0.35, 0.4);
+        spawnExplosion(s.mesh.position.x, s.mesh.position.z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.0, shakeMag: 0.35, shakeDur: 0.4 });
         s.mesh.position.y = groundY;
       } else if (s.mesh.position.y !== groundY) {
         s.mesh.position.y = groundY;
