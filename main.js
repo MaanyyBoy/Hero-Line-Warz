@@ -12355,6 +12355,17 @@ function makeMonsterProjectileMesh(kind) {
 }
 
 // Impact-färg per projektil-kind — matchar mesh-emissive så hit-FX känns sammanhängande.
+// Projektil-typ → element (decision 136): driver element-explosion vid boss/
+// mini-boss-projektil-träff. Vanliga minion-skott behåller slash+spark-impact.
+function projectileElement(kind) {
+  switch (kind) {
+    case 'magic': case 'fireball': case 'bossHellfire': case 'dragonBolt': case 'dragonBreath': return 'fire';
+    case 'darkOrb': return 'shadow';
+    case 'bossSpear': return 'lightning';
+    case 'bw_goblinArrow': return 'nature';
+    default: return 'physical';   // arrow, axe, bossAxe ...
+  }
+}
 function projectileImpactColor(kind) {
   switch (kind) {
     case 'arrow': return 0xffd060;
@@ -13272,9 +13283,9 @@ function updateMonsterProjectiles(side, dt) {
       const impactColor = projectileImpactColor(p.kind);
       spawnSlashFx(side.hero.x, side.hero.z, impactColor);
       spawnHitSparkFx(side.hero.x, 1.2, side.hero.z, impactColor);
-      // Boss/mini-boss-träffar får extra kraftig FX (synligare slag)
+      // Boss/mini-boss-träffar får riktig element-explosion (synligare slag, decision 136)
       if (p.isBoss || p.isMiniBoss) {
-        spawnGroundImpact(side.hero.x, side.hero.z, 1.6, impactColor);
+        spawnExplosion(side.hero.x, side.hero.z, projectileElement(p.kind), { scale: 1.0, power: 0.6, shake: false });
       }
       scene.remove(p.mesh);
       // Dispose GPU (decision 083: undvik geometri-läcka)
