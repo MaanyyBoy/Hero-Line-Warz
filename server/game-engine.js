@@ -1121,8 +1121,10 @@ function damageHero(side, amount) {
   if (side.heroId === 'gimlu') {
     let kryxDr = 0;
     if ((side.titansStompDrTime || 0) > 0) kryxDr += (side.titansStompDr || 0);
-    if ((side.titansRageTime || 0) > 0) kryxDr += (side.titansRageDr || 0);
+    if ((side.titansRageTime || 0) > 0) kryxDr += (side.titansRageBuff || 0);
     if (kryxDr > 0) gimluMul = 1 - Math.min(KRYX_DR_CAP, kryxDr);
+  } else if ((side.titansRageTime || 0) > 0) {
+    gimluMul = 1 - Math.min(KRYX_DR_CAP, side.titansRageBuff || 0);   // ally rage-DR (cap-skydd mot negativ final)
   }
   // Aragurn passive — DR baserat på nearby enemies (cached varje frame i tick-loop)
   const aragurnMul = side.heroId === 'aragurn' ? (1 - aragurnPassiveDR(side)) : 1;
@@ -1757,7 +1759,8 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.heroASlowTime = 0; side.heroASlowMul = 1;   // Kryx-rework: hjälte-AS-slow
-  side.titansStompDrTime = 0; side.titansStompDr = 0; side.titansRageTime = 0; side.titansRageDr = 0;
+  side.titansStompDrTime = 0; side.titansStompDr = 0; side.titansRageTime = 0; side.titansRageBuff = 0;
+  side.rageLeechStart = 0; side.rageLeechTime = 0; side.rageLeechOwner = 0;
   side.berserkCharged = false; side.berserkDmgAccum = 0;   // berserk-mätare
   side.iceBlockRemaining = 0;
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
@@ -5085,7 +5088,8 @@ function updateHeroAttack(state, side, opp, dt) {
   // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars) && (side.berserkRemaining || 0) > 0;
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1);
+  const rageDmgMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/bosswars only)
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul;
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -5191,7 +5195,8 @@ function updateHeroAttack(state, side, opp, dt) {
   const warpathAsMul = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_AS) : 1;
   // Kryx-rework: Titan's Stomp AS-slow på hjälte (<1 → långsammare). Rage-AS-buff folds in i batch 2.
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul);
+  const rageAsMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (arena/bosswars only)
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul);
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -5294,6 +5299,11 @@ function updateProjectiles(state, side, opp, dt) {
       }
       // Ult-energy gain per AA-hit (3%)
       if (aaDmgDealt > 0) gainUltEnergy(side, ULT_GAIN_AA_HIT);
+      // Titan's Rage leech: en feared enemy:s utdelade AA-skada healar Kryx i 1s efter fearen.
+      if ((side.rageLeechTime || 0) > 0 && aaDmgDealt > 0) {
+        const kryx = state.sides[side.rageLeechOwner];
+        if (kryx && !kryx.hero.dead) kryx.hero.hp = Math.min(kryx.hero.maxHp, kryx.hero.hp + aaDmgDealt);
+      }
       // Legolus dash-buffed AA: 20% lifesteal + reset dash-cd om kill.
       // Gate på aaDmgDealt > 0 → ingen heal mot immun boss (warlord/dragon-mekanik) — annars farm-exploit.
       if (p.lifestealRatio > 0 && aaDmgDealt > 0 && !side.hero.dead) {
@@ -5839,10 +5849,11 @@ function castGimluTaunt(state, sideIdx) {
   side.skills.q.cd = side.skills.q.max;
   // Passive empower: full berserk → 100% större AoE, +50% skada, 60% slow.
   const emp = consumeBerserk(side);
+  const rageMul = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg
   const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
   const r2 = eRad * eRad;
-  const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1);
-  const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1);
+  const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
+  const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
   let drGain = 0;
   // Monsters (minions + boss)
@@ -5898,7 +5909,17 @@ function castGimluTaunt(state, sideIdx) {
 function tickKryxTimers(side, dt) {
   if ((side.titansStompDrTime || 0) > 0) { side.titansStompDrTime = Math.max(0, side.titansStompDrTime - dt); if (side.titansStompDrTime <= 0) side.titansStompDr = 0; }
   if ((side.heroASlowTime || 0) > 0) { side.heroASlowTime = Math.max(0, side.heroASlowTime - dt); if (side.heroASlowTime <= 0) side.heroASlowMul = 1; }
-  if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageDr = 0; }   // Titan's Rage (batch 2)
+  if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageBuff = 0; }
+  // Titan's Rage leech: efter fear-fönstret (rageLeechStart) → 1s där denna (feared)
+  // hjältes utdelade skada healar Kryx (rageLeechOwner). Empowered: slow vid leech-start.
+  if ((side.rageLeechStart || 0) > 0) {
+    side.rageLeechStart = Math.max(0, side.rageLeechStart - dt);
+    if (side.rageLeechStart <= 0) {
+      side.rageLeechTime = TITANS_RAGE_LEECH_DUR;
+      if (side.rageEmpSlow) { side.heroSlowMul = Math.min(side.heroSlowMul == null ? 1 : side.heroSlowMul, 0.6); side.heroSlowTime = Math.max(side.heroSlowTime || 0, 1.0); }
+    }
+  }
+  if ((side.rageLeechTime || 0) > 0) side.rageLeechTime = Math.max(0, side.rageLeechTime - dt);
 }
 
 // Passive: konsumera full berserk-mätare (empowrar nästa Q/F/E). Returnerar true + nollar.
@@ -5980,13 +6001,40 @@ function tickGimluTauntLvl5(state, side, opp, dt) {
   }
 }
 
-// F: Iron Will — 3s aktivt fönster. Alla dmg taken stackas. Vid slut: AoE explosion runt hero.
+// F: Titan's Rage (rework 2026-06-07) — self+ally-buff (dmg/DR/MS/AS, alla samma %).
+// Enemy-hero (PvP) feared; efter fearen healar deras utdelade skada Kryx i 1s (leech).
+// Empowered (berserk): 30% stats, allies full (ej halva), fear 1.5s + slow efter.
 function castGimluIronWill(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.ironWillRemaining = IRON_WILL_DURATION;
-  side.ironWillStored = 0;
+  const emp = consumeBerserk(side);
+  const self = emp ? 0.30 : TITANS_RAGE_SELF;
+  const ally = emp ? self : self * 0.5;
+  const fearDur = emp ? 1.5 : TITANS_RAGE_FEAR_DUR;
+  // Self-buff
+  side.titansRageTime = TITANS_RAGE_DURATION;
+  side.titansRageBuff = self;
+  // Ally-buff (boss wars co-op) inom radie
+  const r2 = TITANS_RAGE_RADIUS * TITANS_RAGE_RADIUS;
+  if (side.inBossWars) for (const idx of [1, 2, 3]) {
+    if (idx === sideIdx) continue;
+    const a = state.sides[idx];
+    if (!a || a.hero.dead) continue;
+    const dx = a.hero.x - side.hero.x, dz = a.hero.z - side.hero.z;
+    if (dx * dx + dz * dz <= r2) { a.titansRageTime = TITANS_RAGE_DURATION; a.titansRageBuff = ally; }
+  }
+  // Fear + heal-redirect på enemy-hero (PvP only — bossar/minions kan ej feares)
+  const opp = state.sides[3 - sideIdx];
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
+    if (dx * dx + dz * dz <= r2) {
+      opp.heroFearTime = Math.max(opp.heroFearTime || 0, fearDur);
+      opp.rageLeechStart = fearDur;          // efter fear → leech-fönster (1s)
+      opp.rageLeechOwner = sideIdx;
+      opp.rageEmpSlow = emp;
+    }
+  }
 }
 
 function updateIronWill(state, side, opp, dt) {
@@ -6059,7 +6107,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
     traveled: 0,
     returning: false,
     hit: new Set(),
-    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * ((side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1),
     returnDmgMul: hammerReturnMul,
     lvl5Slow: isLvl5,
     empowered: emp,
@@ -7369,8 +7417,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * slowMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * slowMul * strength * dt;
+  const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * slowMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * slowMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
