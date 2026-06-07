@@ -14735,6 +14735,9 @@ function tickSoulDrain(side, dt) {
     applySoulDrainTick(side, tt, sd);
   }
   if (sd.remaining <= 0) {
+    // Slut-payoff (decision 136): "själen brister" — shadow-burst vid target
+    // (drain:en fizzlade tidigare tyst; Black Hole har redan sin kollaps-burst).
+    if (target && target.mesh) spawnExplosion(target.mesh.position.x, target.mesh.position.z, 'shadow', { scale: 1.0, power: 0.9, shakeMag: 0.15, shakeDur: 0.18 });
     removeSoulDrainBeam(side);
     side.soulDrain = null;
   }
@@ -16822,8 +16825,12 @@ function activateInventoryItem(side, slotIdx) {
     entry.activeRemaining = 0;
     entry.activeCd = 0;
   } else {
-    // Generisk stat-buff (boots/glove)
+    // Generisk stat-buff (boots/glove). Aktiverings-FX (decision 136): var HELT
+    // tyst → spelaren såg inte att lvl-10-activen fyrade (dubbel-tap/wasted CD).
     entry.activeRemaining = def.activeAtMax.duration ?? ACTIVE_DURATION;
+    spawnElementCast(side.hero.x, side.hero.z, 'holy', 1.6);
+    spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffe27a);
+    triggerCameraShake(0.12, 0.15);
   }
   recomputeSideStats(side);
 }
