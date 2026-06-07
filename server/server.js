@@ -117,6 +117,32 @@ function scheduleNextTick(room) {
 // free-tier-spikes (delad CPU kan ge sporadiska pauser).
 const TICK_SPIKE_WARN_MS = 50;
 
+// Server-telemetri: periodisk summering av tick-stats till Render-loggen (var 10s)
+// så vi ser steady-state-distributionen (avg/p95/max), inte bara spike-outliers.
+// För djup MP-lagg-analys på botmatcher (komplement till klient-telemetrin).
+const TELEMETRY_LOG_INTERVAL_MS = 10000;
+function _telFmt(arr) {
+  if (!arr.length) return '0';
+  const s = arr.slice().sort((a, b) => a - b);
+  const avg = arr.reduce((x, y) => x + y, 0) / arr.length;
+  const p95 = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+  return `avg${avg.toFixed(1)} p95:${p95} max:${s[s.length - 1]}`;
+}
+function _telEntityCount(game) {
+  let n = 0;
+  if (!game || !game.sides) return 0;
+  const seen = new Set();
+  for (const idx of [1, 2, 3, 4]) {
+    const s = game.sides[idx];
+    if (!s) continue;
+    if (s.monsters && !seen.has(s.monsters)) { seen.add(s.monsters); n += s.monsters.length; }
+    if (s.playerCreeps) n += s.playerCreeps.length;
+    if (s.projectiles) n += s.projectiles.length;
+    if (s.monsterProjectiles) n += s.monsterProjectiles.length;
+  }
+  return n;
+}
+
 function gameLoopTick(room) {
   if (!room.game) { room.tickHandle = null; return; }
   const now = Date.now();
@@ -144,6 +170,7 @@ function gameLoopTick(room) {
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
       const payload = JSON.stringify({ t: 'msg', d: stateMsg });
+      room._lastPayloadLen = payload.length;   // för telemetri
       // Backpressure-skip: om peer-socket har > 40 KB buffrad (sänkt från 64 KB)
       // skippa frame. Aggressivare drop = mindre kö-djup = snabbare återhämtning
       // när socket flushas. State är redundant — nästa snap (33ms senare vid
@@ -172,6 +199,16 @@ function gameLoopTick(room) {
   const _totalMs = Date.now() - now;
   if (_totalMs >= TICK_SPIKE_WARN_MS) {
     console.warn(`[${room.code}] tick-spike ${_totalMs}ms (sim ${_simMs}ms)`);
+  }
+  // Telemetri: rullande tick-stats → periodisk summering i Render-loggen.
+  const _tel = room._tel || (room._tel = { sim: [], total: [], pay: [], lastLog: now });
+  _tel.sim.push(_simMs); _tel.total.push(_totalMs);
+  if (room._lastPayloadLen) _tel.pay.push(room._lastPayloadLen);
+  if (now - _tel.lastLog >= TELEMETRY_LOG_INTERVAL_MS) {
+    _tel.lastLog = now;
+    const mode = _isArena ? 'arena' : (_isBoss ? 'boss' : 'lw');
+    console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B ents:${_telEntityCount(room.game)}`);
+    _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0;
   }
   // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
   // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
