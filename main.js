@@ -10060,7 +10060,8 @@ function removeSide(side) {
   // novaEffects kan innehålla ett lånat FX-pool-ljus (isLight) — det ska
   // lämnas tillbaka, INTE scene.remove:as (pool-ljus måste ligga kvar i scenen).
   for (const n of side.novaEffects) {
-    if (n.isLight) releaseFxLight(n.mesh); else scene.remove(n.mesh);
+    if (n.isLight) releaseFxLight(n.mesh);
+    else { scene.remove(n.mesh); n.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
   }
   for (const cp of side.creepProjectiles) scene.remove(cp.mesh);
   if (side.monsterProjectiles) for (const mp of side.monsterProjectiles) scene.remove(mp.mesh);
@@ -13776,7 +13777,7 @@ function respawnHero(side) {
   // Kosteflvl5: rensa tp-marker + decoy-kloner
   side.kostefoSliderTpMarker = null;
   if (side.kostefoClones) {
-    for (const k of side.kostefoClones) if (k.mesh) scene.remove(k.mesh);
+    for (const k of side.kostefoClones) if (k.mesh) { scene.remove(k.mesh); k.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
     side.kostefoClones.length = 0;
   }
   side.kostefoCloudRadiusMul = 1;
@@ -14738,7 +14739,7 @@ function tickSoulDrain(side, dt) {
   if (sd.remaining <= 0) {
     // Slut-payoff (decision 136): "själen brister" — shadow-burst vid target
     // (drain:en fizzlade tidigare tyst; Black Hole har redan sin kollaps-burst).
-    if (target && target.mesh) spawnExplosion(target.mesh.position.x, target.mesh.position.z, 'shadow', { scale: 1.0, power: 0.9, shakeMag: 0.15, shakeDur: 0.18 });
+    if (target && target.mesh) spawnExplosion(target.mesh.position.x, target.mesh.position.z, 'shadow', { scale: 1.0, power: 0.9, shakeMag: 0.22, shakeDur: 0.22 });   // shake 0.15→0.22: payoff:en (50% AoE) ska kännas (playtest)
     removeSoulDrainBeam(side);
     side.soulDrain = null;
   }
@@ -15245,7 +15246,8 @@ function updateNovaEffects(side, dt) {
       n.mesh.material.opacity = n.baseOpacity * tNorm;
     }
     if (n.life <= 0) {
-      if (n.isLight) releaseFxLight(n.mesh); else scene.remove(n.mesh);
+      if (n.isLight) releaseFxLight(n.mesh);
+    else { scene.remove(n.mesh); n.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
       side.novaEffects.splice(i, 1);
     }
   }
@@ -15469,9 +15471,13 @@ function updateBlackHolesSolo(side, dt) {
       // Riktig shadow-explosion vid kollaps (decision 136): lila implosion→smäll
       // med gnistor/skärvor + ljuspuls + shake i ALLA modes (var tidigare bara en
       // svag flare + scorch, shake endast i arena → kändes "tom").
-      spawnExplosion(bh.x, bh.z, 'shadow', { scale: Math.max(1.1, expR / 2.5), power: 1.4, shakeMag: 0.3, shakeDur: 0.35 });
+      spawnExplosion(bh.x, bh.z, 'shadow', { scale: Math.max(1.1, expR / 2.5), power: 1.4, shakeMag: 0.2, shakeDur: 0.25 });   // shake 0.3→0.2: se kropparna i smällen (playtest)
       scene.remove(bh.sphere);
+      if (bh.sphere.geometry) bh.sphere.geometry.dispose();
+      if (bh.sphere.material) bh.sphere.material.dispose();
       scene.remove(bh.ring);
+      if (bh.ring.geometry) bh.ring.geometry.dispose();
+      if (bh.ring.material) bh.ring.material.dispose();
       if (bh.twirlMesh) {
         scene.remove(bh.twirlMesh);
         if (bh.twirlMesh.material) bh.twirlMesh.material.dispose();
@@ -15755,8 +15761,9 @@ function hostCastGimluTaunt(side) {
   side.tauntHealAccum = 0;
   side._tauntHpPrev = side.hero.hp;
   side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
-  // Boss-nivå-FX (decision 136): earth-stomp-explosion (spillror + shockwave)
-  spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: 1.6, power: 1, shakeMag: 0.25, shakeDur: 0.22 });
+  // Boss-nivå-FX (decision 136): earth-stomp-explosion. Shake sänkt 0.25→0.15
+  // (playtest: Taunt är kort-CD/hög-uptime → enda "spam-shakaren"; circle-shockwave bär punchen).
+  spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: 1.6, power: 1, shakeMag: 0.15, shakeDur: 0.18 });
   // Kenney-FX: stor shockwave-burst runt Kryx vid skrik + 6 sparks splash:ar
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -22239,7 +22246,7 @@ function tickKostefoClonesLvl5Client(side, dt) {
       k.mesh.position.z = k.z;
     }
     if (k.life <= 0 || k.hp <= 0) {
-      if (k.mesh) scene.remove(k.mesh);
+      if (k.mesh) { scene.remove(k.mesh); k.mesh.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); }
       side.kostefoClones.splice(i, 1);
     }
   }
@@ -22260,8 +22267,8 @@ function hostCastKostefoJointAvengers(side) {
       attackCd: i * (_K_COMPANION_AA_INTERVAL / _K_ULT_JOINT_COUNT),
     });
   }
-  // Boss-nivå-FX (decision 136): nature companion-summon-explosion
-  spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.6, power: 1.2, shakeMag: 0.3, shakeDur: 0.35 });
+  // Boss-nivå-FX (decision 136): nature companion-summon. Shake sänkt 0.3→0.22 (summon, ej nuke)
+  spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.6, power: 1.2, shakeMag: 0.22, shakeDur: 0.28 });
 }
 
 // Hjälpare: applicera dmg på opp.hero (arena) — använder damageHero som
@@ -22849,8 +22856,8 @@ function hostCastGimluUlt(side) {
   side.rageRemaining = RAGE_DURATION;
   side.rageTickAccum = 0;
   if (side.mesh) side.mesh.scale.set(RAGE_SCALE, RAGE_SCALE, RAGE_SCALE);
-  // Boss-nivå-FX (decision 136): fire-rage-aktivering (explosion + glöd)
-  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.42, shakeDur: 0.46 });
+  // Boss-nivå-FX (decision 136): fire-rage-aktivering. Shake sänkt 0.42→0.3 (playtest)
+  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.3, shakeDur: 0.34 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xff6633);
 }
 
@@ -23346,14 +23353,16 @@ function tickAragurnBannersLvl5Client(side, dt) {
 }
 
 function applyAragurnLeapImpact(side, x, z) {
-  // Boss-nivå-FX (decision 136): earth-landnings-explosion (var generisk impact)
-  spawnExplosion(x, z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.2, shakeMag: 0.4, shakeDur: 0.45 });
-  // Kenney-FX: stor scorch-decal + central flare + dust-burst för dramatik
+  // Boss-nivå-FX (decision 136): earth-landnings-explosion. Shake sänkt 0.4→0.28
+  // (playtest: egen hjälte ska ej skaka som boss-ENRAGE; läsbarhet vid landning).
+  spawnExplosion(x, z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.2, shakeMag: 0.28, shakeDur: 0.3 });
+  // Kenney-FX: scorch-decal + central flare + dust-burst (decal kortad 1.5→0.7s /
+  // ×2.4→×1.8 så stridsmarken under landningen blir läsbar snabbt igen).
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
       texName: 'scorch_02', x, y: 0.06, z, color: 0x553322,
-      scale: LEAP_RADIUS * 2.4, scaleEnd: LEAP_RADIUS * 2.6,
-      life: 1.5, ground: true, opacity: 0.8,
+      scale: LEAP_RADIUS * 1.8, scaleEnd: LEAP_RADIUS * 2.0,
+      life: 0.7, ground: true, opacity: 0.8,
     });
     spawnKenneyFx({
       texName: 'flare_01', x, y: 0.8, z, color: 0xffaa44,
@@ -23464,8 +23473,8 @@ function hostCastAragurnUlt(side) {
     scene.add(grp);
     side.berserkSwordMesh = grp;
   }
-  // Boss-nivå-FX (decision 136): fire berserk-aktivering (var generisk ring)
-  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.4, shakeDur: 0.44 });
+  // Boss-nivå-FX (decision 136): fire berserk-aktivering. Shake sänkt 0.4→0.3 (playtest)
+  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.3, shakeDur: 0.34 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa55);
 }
 
@@ -32052,7 +32061,7 @@ function spawnHealFx(x, z) {
   const grp = new THREE.Group();
   const mat = new THREE.MeshBasicMaterial({ color: 0x66ff88, transparent: true, opacity: 0.95 });
   const h = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.10, 0.10), mat);
-  const v = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.36, 0.10), mat);
+  const v = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.36, 0.10), mat.clone());   // eget material → ingen dubbel-dispose
   grp.add(h); grp.add(v);
   grp.position.set(x, 1.7, z);
   scene.add(grp);
@@ -32339,6 +32348,15 @@ function spawnExplosion(x, z, element, opts = {}) {
   const mobile = IS_MOBILE_UA;
   const baseY = opts.y != null ? opts.y : (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y + 0.6 : 0.6);
   const gY = _fxGroundY();
+  // Hård call-gate (perf): nära cap → minimal explosion (flash + ljus + shake) och
+  // returnera. Bryter cap-thrash/dispose-flod när alla 6 hjältar + boss-skills
+  // sprutar element-FX samtidigt (vid extrem flod syns ändå inget i mängden).
+  if (combatFx.length > COMBAT_FX_CAP * 0.9) {
+    spawnKenneyFx({ texName: 'flare_01', x, y: baseY, z, color: fx.core, scale: 1.2 * scale, scaleEnd: 2.6 * scale, life: 0.24, additive: true, opacity: 0.9 });
+    spawnFxLightPulse(x, baseY, z, fx.light, 2.4 * Math.min(1.4, scale), 8, 0.3);
+    if (opts.shake !== false) triggerCameraShake(opts.shakeMag || 0.18 * Math.min(1.5, scale), opts.shakeDur || 0.18);
+    return;
+  }
   // Adaptiv self-gate: halvera partikelmängd när combatFx redan är nära cappen
   // (skyddar mot co-op-projektil-flod som annars trycker ut nyttig FX).
   const _lf = (combatFx.length / COMBAT_FX_CAP) > 0.7 ? 0.5 : 1;
@@ -32655,7 +32673,7 @@ function tickAragurnVisuals(dt) {
       if (s._leapActive) {
         // Just landed — spawn ground-impact vid current pos
         s._leapActive = false;
-        spawnExplosion(s.mesh.position.x, s.mesh.position.z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.0, shakeMag: 0.35, shakeDur: 0.4 });
+        spawnExplosion(s.mesh.position.x, s.mesh.position.z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.0, shakeMag: 0.28, shakeDur: 0.3 });
         s.mesh.position.y = groundY;
       } else if (s.mesh.position.y !== groundY) {
         s.mesh.position.y = groundY;
