@@ -1273,7 +1273,7 @@
       justify-content: flex-start;
       flex-direction: column;
       font: 16px/1.4 system-ui, sans-serif;
-      padding: 24px 16px 40px;
+      padding: max(24px, calc(env(safe-area-inset-top) + 12px)) max(16px, env(safe-area-inset-right)) max(40px, calc(env(safe-area-inset-bottom) + 16px)) max(16px, env(safe-area-inset-left));
       z-index: 500;
       text-align: center;
       overflow-y: auto;
@@ -2466,7 +2466,7 @@
       width: 100%; margin-bottom: 14px;
     }
     .browser-header h2 { font-size: 26px; color: #ffd34a; letter-spacing: 1px; margin: 0; }
-    .browser-back { padding: 8px 16px !important; font-size: 13px !important; min-width: auto !important; }
+    .browser-back { padding: 11px 16px !important; font-size: 13px !important; min-width: auto !important; min-height: 44px; display: inline-flex; align-items: center; }
     .browser-grid {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
@@ -3298,7 +3298,7 @@
       transform: translateY(-50%);
       width: min(700px, 68vw);
       max-height: 96vh;
-      max-height: 96dvh;  /* dvh: exkluderar iOS Safari-chrome (vh-fallback ovan) */
+      max-height: calc(96dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));  /* dvh + safe-area: kortet syns helt i landskap-DI */
       display: none;
       z-index: 250;
     }
