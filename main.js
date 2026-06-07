@@ -15317,6 +15317,8 @@ function hostCastBlink(side, ev) {
     // Lvl 5 bonus: stun:a alla hit-targets vid explosion
     lvl5Stun: !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX),
   });
+  // Cast-cue: shadow-flourish så det syns tydligt att en black hole formas (decision 136)
+  spawnElementCast(center.x, center.z, 'shadow', Math.max(1.2, BLACKHOLE_RADIUS * sizeMul * 0.55));
 }
 
 function updateBlackHolesSolo(side, dt) {
@@ -15444,20 +15446,10 @@ function updateBlackHolesSolo(side, dt) {
           }
         }
       }
-      if (APP.gameMode === 'arena1v1') triggerCameraShake(0.30, 0.35);
-      // Kenney-FX vid explosion: flare-burst + scorch på marken
-      if (kenneyTex.size > 0) {
-        spawnKenneyFx({
-          texName: 'flare_01', x: bh.x, y: 1.2, z: bh.z, color: 0xddaaff,
-          scale: 3.0, scaleEnd: 5.5,
-          life: 0.5, additive: true,
-        });
-        spawnKenneyFx({
-          texName: 'scorch_02', x: bh.x, y: 0.08, z: bh.z, color: 0x442266,
-          scale: expR * 1.8, scaleEnd: expR * 2.0,
-          life: 1.2, ground: true, opacity: 0.7,
-        });
-      }
+      // Riktig shadow-explosion vid kollaps (decision 136): lila implosion→smäll
+      // med gnistor/skärvor + ljuspuls + shake i ALLA modes (var tidigare bara en
+      // svag flare + scorch, shake endast i arena → kändes "tom").
+      spawnExplosion(bh.x, bh.z, 'shadow', { scale: Math.max(1.1, expR / 2.5), power: 1.4, shakeMag: 0.3, shakeDur: 0.35 });
       scene.remove(bh.sphere);
       scene.remove(bh.ring);
       if (bh.twirlMesh) {
@@ -21120,7 +21112,11 @@ function updateZheynaChargeIndicatorSolo(side) {
   plane.scale.set(width, ZHEYNA_R_RANGE, 1);
   plane.position.z = ZHEYNA_R_RANGE / 2;   // sträcker sig 0→20m framför hjälten
   const full = (side.zheynaUltCharge || 0) >= ZHEYNA_R_MAX_CHARGE;
-  if (plane.material) { plane.material.opacity = full ? 0.5 : 0.28; plane.material.color.setHex(full ? 0x88ddff : 0x66bbff); }
+  // Full-charge pulsar tydligt (decision 136): "släpp NU"-momentet ska vara omöjligt att missa
+  if (plane.material) {
+    if (full) { plane.material.opacity = 0.4 + 0.28 * Math.abs(Math.sin(performance.now() * 0.013)); plane.material.color.setHex(0x88ddff); }
+    else { plane.material.opacity = 0.28; plane.material.color.setHex(0x66bbff); }
+  }
 }
 function disposeZheynaChargeIndicatorSolo(side) {
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); side.zheynaChargeMesh = null; }
@@ -21156,6 +21152,9 @@ function hostCastZheynaQ(side, ev) {
   if (m < 0.01) { dx = side.hero.facingX || 0; dz = side.hero.facingZ || 1; } else { dx /= m; dz /= m; }
   const y = side.mesh ? side.mesh.position.y + 1.0 : 1.2;
   const mesh = makeZheynaSpearMesh(); mesh.position.set(side.hero.x, y, side.hero.z); mesh.rotation.y = Math.atan2(dx, dz); scene.add(mesh);
+  // Kast-feedback (decision 136): cast-burst + framåt-gnista
+  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.0);
+  spawnHitSparkFx(side.hero.x + dx * 0.8, y, side.hero.z + dz * 0.8, 0x88ddff);
   side.zheynaSpear = { x: side.hero.x, z: side.hero.z, dx, dz, traveled: 0, destX: side.hero.x + dx * ZHEYNA_Q_RANGE, destZ: side.hero.z + dz * ZHEYNA_Q_RANGE, landed: false, hit: false, repress: ZHEYNA_Q_REPRESS, mesh, y };
 }
 function updateZheynaSpearSolo(side, dt) {
@@ -21169,12 +21168,16 @@ function updateZheynaSpearSolo(side, dt) {
       const rx = p.x - sp.x, rz = p.z - sp.z, along = rx * sp.dx + rz * sp.dz, perp = Math.abs(rx * sp.dz - rz * sp.dx);
       if (along >= 0 && along <= step + 0.6 && perp <= 0.9) {
         sp.landed = true; sp.destX = p.x; sp.destZ = p.z;
-        if (!sp.hit) { sp.hit = true; zheynaApplyHitDamageSolo(side, e, zheynaAaDamageAtSolo(side, Math.hypot(p.x - side.hero.x, p.z - side.hero.z), true)); }
+        if (!sp.hit) {
+          sp.hit = true; zheynaApplyHitDamageSolo(side, e, zheynaAaDamageAtSolo(side, Math.hypot(p.x - side.hero.x, p.z - side.hero.z), true));
+          spawnHitSparkFx(p.x, sp.y, p.z, 0x88ddff); triggerCameraShake(0.12, 0.12);   // pierce-träff-feedback
+        }
         break;
       }
     }
     if (!sp.landed) { sp.x += sp.dx * step; sp.z += sp.dz * step; sp.traveled += step; if (sp.traveled >= ZHEYNA_Q_RANGE) { sp.landed = true; sp.destX = sp.x; sp.destZ = sp.z; } }
     if (sp.mesh) sp.mesh.position.set(sp.x, sp.y, sp.z);
+    if (!sp.landed) spawnProjectileTrailPuff(sp.x, sp.y, sp.z, 0x66ccff);   // flygtrail
   }
 }
 function zheynaTeleportToSpearSolo(side) {
@@ -21201,6 +21204,9 @@ function hostCastZheynaClone(side) {
   side.skills.f.cd = side.skills.f.max;
   const mesh = makeZheynaCloneMesh(); const y = side.mesh ? side.mesh.position.y : 0;
   mesh.position.set(side.hero.x + 1.4, y, side.hero.z); scene.add(mesh);
+  // Spawn-poof (decision 136): klonen "splittras" fram istället för att bara poppa in
+  spawnShieldBurstFx(mesh.position.x, mesh.position.z, 0x66ddff);
+  spawnSkillCastFx(mesh.position.x, mesh.position.z, 0x88ddff, 0.9);
   side.zheynaClone = { hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR, mesh };
 }
 function zheynaDisposeCloneSolo(side) { const cl = side.zheynaClone; if (cl && cl.mesh) { scene.remove(cl.mesh); zheynaDispose(cl.mesh); } side.zheynaClone = null; }
@@ -21214,7 +21220,7 @@ function tickZheynaCloneSolo(side, dt) {
   cl.mesh.position.y = y;
   if (side.mesh) cl.mesh.rotation.y = side.mesh.rotation.y;
 }
-function hostCastZheynaWarpath(side) { if (side.hero.dead || side.skills.e.cd > 0) return; side.skills.e.cd = side.skills.e.max; side.zheynaWarpathRem = ZHEYNA_E_DUR; }
+function hostCastZheynaWarpath(side) { if (side.hero.dead || side.skills.e.cd > 0) return; side.skills.e.cd = side.skills.e.max; side.zheynaWarpathRem = ZHEYNA_E_DUR; spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.6); spawnShieldBurstFx(side.hero.x, side.hero.z, 0x88ddff); triggerCameraShake(0.15, 0.18); }   // E-aktiverings-punch (decision 136)
 function startZheynaUltChargeSolo(side) {
   if (side.hero.dead || side.zheynaUltCharging) return;
   if ((side.level || 1) < ULT_UNLOCK_LEVEL) return;
