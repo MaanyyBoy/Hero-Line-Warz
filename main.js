@@ -32732,6 +32732,33 @@ function spawnFxLightPulse(x, y, z, color, intensity, distance, life) {
 // RIKTIG explosion: flash → element-burst → rök → gnistor/skärvor (flyger utåt) →
 // mark-scorch → expanderande shockwave-ring → ljuspuls + shake. Mobil-reducerad.
 // opts: { scale, power(0.5 liten…1.5 stor), y, shake, shakeMag, shakeDur }
+// Pool för Kenney-FX-material (perf: undviker per-FX material-alloc+dispose, den
+// dominanta mobil-GC-källan i strid — en explosion = ~8 spawnKenneyFx). Poolas per
+// (sprite/ground × normal/additive) eftersom blending ej kan ändras utan shader-recompile.
+// Texturer + geo är redan delade. Mönster speglar _trailMatPool.
+const _KENNEY_MAT_POOL_CAP = 48;
+const _kenneyMatPools = { sn: [], sa: [], gn: [], ga: [] };
+function _kenneyMatKey(ground, additive) { return (ground ? 'g' : 's') + (additive ? 'a' : 'n'); }
+function _acquireKenneyMat(ground, additive, tex, color, opacity) {
+  const mat = _kenneyMatPools[_kenneyMatKey(ground, additive)].pop();
+  if (mat) {
+    // Reset ALLA fält som muteras under FX-livet (annars läcker de mellan reuse):
+    // map (needsUpdate för iOS-stale-textur-skydd), color, opacity, sprite-rotation.
+    mat.map = tex; mat.needsUpdate = true; mat.color.setHex(color); mat.opacity = opacity; mat.rotation = 0;
+    return mat;
+  }
+  const blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+  return ground
+    ? new THREE.MeshBasicMaterial({ map: tex, color, transparent: true, opacity, depthWrite: false, blending, side: THREE.DoubleSide })
+    : new THREE.SpriteMaterial({ map: tex, color, transparent: true, opacity, depthWrite: false, blending });
+}
+function _releaseKenneyMat(mat, key) {
+  if (!mat) return;
+  const pool = _kenneyMatPools[key];
+  if (pool && pool.length < _KENNEY_MAT_POOL_CAP) pool.push(mat);
+  else mat.dispose();
+}
+
 function spawnExplosion(x, z, element, opts = {}) {
   const fx = elementFx(element);
   const scale = opts.scale || 1;
@@ -32863,24 +32890,15 @@ function spawnKenneyFx(opts) {
   if (!tex) return null;
   const color = opts.color != null ? opts.color : 0xffffff;
   const opacity = opts.opacity != null ? opts.opacity : 1.0;
-  const blending = opts.additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-  // Sprite vs ground-plane: ground gör meshen till horisontell plan på marken.
-  // VIKTIGT: SpriteMaterial fungerar BARA på THREE.Sprite (separat shader).
-  // För ground-plane MÅSTE vi använda MeshBasicMaterial (annars osynlig render).
+  const ground = !!opts.ground, additive = !!opts.additive;
+  // Material från pool (perf). Sprite vs ground-plane: ground = horisontell plan.
+  // SpriteMaterial fungerar BARA på Sprite; ground MÅSTE vara MeshBasicMaterial.
+  const mat = _acquireKenneyMat(ground, additive, tex, color, opacity);
   let mesh;
-  if (opts.ground) {
-    const mat = new THREE.MeshBasicMaterial({
-      map: tex, color, transparent: true, opacity,
-      depthWrite: false, blending,
-      side: THREE.DoubleSide,
-    });
+  if (ground) {
     mesh = new THREE.Mesh(_FX_PLANE_GEO, mat);   // delad geo (perf) — disposas ej
     mesh.rotation.x = -Math.PI / 2;
   } else {
-    const mat = new THREE.SpriteMaterial({
-      map: tex, color, transparent: true, opacity,
-      depthWrite: false, blending,
-    });
     mesh = new THREE.Sprite(mat);
   }
   const scale = opts.scale || 1.0;
@@ -32900,7 +32918,8 @@ function spawnKenneyFx(opts) {
     vz: opts.vz || 0,
     gravity: opts.gravity || 0,
     startOpacity: opts.opacity != null ? opts.opacity : 1.0,
-    isGround: !!opts.ground,
+    isGround: ground,
+    _kmatKey: _kenneyMatKey(ground, additive),   // för material-pool-retur vid dispose
   });
   return mesh;
 }
@@ -33099,9 +33118,9 @@ function tickProjectileEntitySpins(dt) {
 // GPU-buffrar — bara .dispose() gör det. Varje fx skapar nya geometrier → säkert.
 function _disposeCombatFxEntry(e) {
   if (e.kind === 'kenneyFx' && e.mesh) {
-    // Kenney-fx: Sprite-material disposas. Geometri disposas EJ — Sprite delar
-    // intern geometri och ground-plan delar _FX_PLANE_GEO (perf). Textur shared.
-    if (e.mesh.material) e.mesh.material.dispose();
+    // Kenney-fx: returnera material till poolen (perf). Geometri delas (disposas ej),
+    // textur shared. Pool-nyckel lagrad vid spawn.
+    if (e.mesh.material) _releaseKenneyMat(e.mesh.material, e._kmatKey);
   } else if (e.kind === 'trail' && e.mesh) {
     // Poolad trail-puff: returnera materialet, dela geometrin (disposas aldrig).
     if (e.mesh.material) _trailMatPool.push(e.mesh.material);
