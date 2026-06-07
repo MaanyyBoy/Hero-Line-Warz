@@ -352,6 +352,8 @@
       from { box-shadow: 0 0 9px 2px rgba(255,50,30,0.6), inset 0 0 7px rgba(255,60,40,0.35); }
       to   { box-shadow: 0 0 20px 5px rgba(255,65,42,1.0), inset 0 0 14px rgba(255,90,55,0.7); }
     }
+    /* Boss wars co-op-bot svårighetsval — markerad knapp */
+    .bb-diff.selected { outline: 3px solid #ffec70; outline-offset: -3px; box-shadow: 0 0 10px rgba(255,230,110,0.6); }
     .skill.active { background: rgba(80,120,220,0.8); border-color: #fff; transform: scale(1.06); }
 
     /* Skill-tooltip (visas vid långt tryck på en skill-knapp) */
@@ -4260,6 +4262,20 @@
       <button class="lobby-btn" id="btn-line-bot-medium" style="background: rgba(190,140,40,0.85); border-color: rgba(255,210,120,0.7);">Medium <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Steady minion waves + skills</small></button>
       <button class="lobby-btn" id="btn-line-bot-hard" style="background: rgba(180,40,40,0.85); border-color: rgba(255,140,140,0.7);">Hard <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Fast economy, heavy waves, aggressive hero</small></button>
       <button class="lobby-btn secondary" id="btn-line-bot-back" style="margin-top: 18px;">← Back</button>
+    </div>
+
+    <div class="lobby-panel" id="lobby-boss-bot">
+      <div style="font-size: 26px; color: #ff66cc; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">⚔ Boss Wars · Co-op</div>
+      <div class="sub" style="margin-bottom: 12px;">Bot teammates + difficulty</div>
+      <div style="display:flex; gap:8px; justify-content:center; margin-bottom:14px;">
+        <button class="lobby-btn bb-diff" id="btn-bw-diff-easy" data-diff="easy" style="flex:1;">Easy</button>
+        <button class="lobby-btn bb-diff" id="btn-bw-diff-medium" data-diff="medium" style="flex:1;">Medium</button>
+        <button class="lobby-btn bb-diff" id="btn-bw-diff-hard" data-diff="hard" style="flex:1;">Hard</button>
+      </div>
+      <button class="lobby-btn" id="btn-bw-bots-0">Solo (no bots)</button>
+      <button class="lobby-btn" id="btn-bw-bots-1">1 Bot Ally</button>
+      <button class="lobby-btn" id="btn-bw-bots-2">2 Bot Allies</button>
+      <button class="lobby-btn secondary" id="btn-bw-bot-back" style="margin-top: 14px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-heroes">

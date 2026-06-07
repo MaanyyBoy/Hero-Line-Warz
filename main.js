@@ -4461,6 +4461,7 @@ const APP = {
   arenaTeamSize: 1,       // 1 (1v1) eller 2 (2v2) — antal hjältar per team
   arenaBot: { active: false, difficulty: null },  // arena solo vs AI
   lineWarsBot: { active: false, difficulty: null },  // line wars solo vs AI-motståndare
+  bossWarsBots: { active: false, count: 1, difficulty: null },  // boss wars solo co-op-bots (1-2)
   bossWars: { active: false, tier: 0 },           // boss wars solo (eller 3-spelare co-op kommande)
   localSide: 1,           // 1, 2, 3 eller 4 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
@@ -4768,8 +4769,8 @@ function activeSides() {
   if (APP.gameMode === 'arena1v1' && APP.arenaTeamSize === 2) {
     return [sides[1], sides[2], sides[3], sides[4]].filter(s => s);
   }
-  // Boss Wars MP: 3 hjältar
-  if (APP.gameMode === 'bosswars' && bossMpState && bossMpState.matchActive) {
+  // Boss Wars: 3 hjältar (MP-peers ELLER solo-bot-medspelare)
+  if (APP.gameMode === 'bosswars') {
     return [sides[1], sides[2], sides[3]].filter(s => s);
   }
   return [sides[1], sides[2]].filter(s => s);
@@ -8258,9 +8259,8 @@ function checkBossWarsActivation() {
   if (APP.bossWars.bossActivated) return;
   // Test-mode: ingen activation, ingen gate-close — bara fri inspektion.
   if (APP.bossWars.testMode) return;
-  // I MP boss-wars: alla 3 peers. I solo: bara sides[1].
-  const isMp = bossMpState && bossMpState.matchActive;
-  const activeIdxs = isMp ? [1, 2, 3] : [1];
+  // MP: alla 3 peers. Solo med bot-medspelare: alla existerande sides. Solo: bara [1].
+  const activeIdxs = [1, 2, 3].filter(i => sides[i]);
   let allInside = true;
   let anyAlive = false;
   for (const idx of activeIdxs) {
@@ -11157,7 +11157,8 @@ function tickBossExecute(side, m, cast, dt) {
 // I boss-wars co-op (MP) ska boss-skills träffa ALLA hjältar inom AoE,
 // inte bara sides[1]. Helper:
 function bossWarsTargets(side) {
-  if (bossMpState && bossMpState.matchActive && APP.gameMode === 'bosswars') {
+  // MP co-op ELLER solo med bot-medspelare → bossen targetar alla hjältar.
+  if (APP.gameMode === 'bosswars' && ((bossMpState && bossMpState.matchActive) || sides[2] || sides[3])) {
     return [sides[1], sides[2], sides[3]].filter(s => s);
   }
   return [side];
@@ -11506,8 +11507,8 @@ function updateMonsters(side, dt) {
   const oppIdx = 3 - side.idx;
   const opp = sides[oppIdx];
   const towerPos = SIDE_CFG[side.idx].tower;
-  // Boss Wars MP co-op: bossen ska jaga närmsta levande hjälte av alla 3
-  const bwCoOp = bossMpState && bossMpState.matchActive && APP.gameMode === 'bosswars';
+  // Boss Wars co-op: bossen jagar närmsta levande hjälte (MP-peers ELLER solo-bot-medspelare)
+  const bwCoOp = APP.gameMode === 'bosswars' && ((bossMpState && bossMpState.matchActive) || sides[2] || sides[3]);
 
   for (let i = side.monsters.length - 1; i >= 0; i--) {
     const m = side.monsters[i];
@@ -18753,8 +18754,11 @@ function checkMatchEnd() {
       }
       return;
     }
-    // Solo: existing logic
-    if (s.hero.dead) {
+    // Solo (med ev. bot-medspelare): förlust = ALLA hjältar döda; vinst = boss död.
+    // (Utan bots = bara sides[1] → identiskt med gamla beteendet.)
+    const heroes = [sides[1], sides[2], sides[3]].filter(Boolean);
+    const allDead = heroes.length > 0 && heroes.every(h => h.hero.dead);
+    if (allDead) {
       matchState.gameOver = true;
       matchState.winner = 2;
       matchState.gameWon = false;
@@ -21178,6 +21182,44 @@ function tickLineWarsBotSolo(side, dt) {
       for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
       if (cand.length) applyEvent(side, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
     }
+  }
+}
+
+// === BOSS WARS-BOT (solo co-op-medspelare) — slåss mot delade bossen. ===
+function bossWarsBossEntity() {
+  const s = sides[1];
+  if (!s || !s.monsters) return null;
+  for (const m of s.monsters) if (m.isBossWarsBoss) return m;
+  return null;
+}
+function tickBossWarsBotSolo(side, dt) {
+  if (!side || !side.isBot || side.hero.dead) return;
+  const p = BOT_PARAMS[side.botDifficulty] || BOT_PARAMS.medium;
+  if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) return;
+  // Inte aktiverad än → gå in i boss-rummet (mot center) så activation triggas.
+  if (!APP.bossWars || !APP.bossWars.bossActivated) {
+    const dx = BOSSWARS_CX - side.hero.x, dz = BOSSWARS_CZ - side.hero.z, d = Math.hypot(dx, dz) || 1;
+    if (d > 2) applyMovement(side, dx / d, dz / d, dt);
+    return;
+  }
+  const boss = bossWarsBossEntity();
+  if (!boss || !boss.mesh) return;
+  const dx = boss.mesh.position.x - side.hero.x, dz = boss.mesh.position.z - side.hero.z, d = Math.hypot(dx, dz) || 1;
+  side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
+  const range = side.attackRange || 4;
+  let mx = 0, mz = 0;
+  if (d > range * 0.8) { mx = dx / d; mz = dz / d; }            // närma sig
+  else if (d < range * 0.45) { mx = -dx / d; mz = -dz / d; }    // för nära → backa lite
+  if (mx || mz) { mx += (Math.random() - 0.5) * p.jitter; mz += (Math.random() - 0.5) * p.jitter; const ml = Math.hypot(mx, mz) || 1; applyMovement(side, mx / ml, mz / ml, dt); }
+  side.targetId = boss.id; side.targetType = 'monster';
+  if (d <= range + 0.5 && !side.aaActive) applyEvent(side, { type: 'aa' });
+  side._botSkillT = (side._botSkillT || 0) - dt;
+  if (side._botSkillT <= 0 && Math.random() < p.skillRatePerSec * dt) {
+    side._botSkillT = p.skillReactionMs / 1000;
+    const cand = [];
+    for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
+    if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX) cand.push('r');   // ult funkar i boss wars
+    if (cand.length) applyEvent(side, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
   }
 }
 
@@ -28988,6 +29030,7 @@ const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
 const lobbyArenaBotEl = document.getElementById('lobby-arena-bot');
 const lobbyLineBotEl = document.getElementById('lobby-line-bot');
+const lobbyBossBotEl = document.getElementById('lobby-boss-bot');
 const lobbyLineWarsEl = document.getElementById('lobby-line-wars');
 const lobbyArenaWarsEl = document.getElementById('lobby-arena-wars');
 const lobbyLineTeamEl = document.getElementById('lobby-line-team');
@@ -29007,7 +29050,7 @@ function showLobbyPanel(which) {
   const _lbProfileEl = document.getElementById('lobby-profile');
   const _lbEventEl = document.getElementById('lobby-event');
   const _lbShopEl = document.getElementById('lobby-shop');
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl, _lbShopEl]) {
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineBotEl, lobbyBossBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl, _lbShopEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -29026,6 +29069,7 @@ function showLobbyPanel(which) {
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
   else if (which === 'arena-bot') lobbyArenaBotEl.classList.add('visible');
   else if (which === 'line-bot') lobbyLineBotEl.classList.add('visible');
+  else if (which === 'boss-bot') lobbyBossBotEl.classList.add('visible');
   else if (which === 'line-wars') lobbyLineWarsEl.classList.add('visible');
   else if (which === 'arena-wars') lobbyArenaWarsEl.classList.add('visible');
   else if (which === 'line-team') lobbyLineTeamEl.classList.add('visible');
@@ -29762,6 +29806,18 @@ function setupMatch(mode) {
       const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
       sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
     }
+    // Boss Wars Singleplayer med bot-medspelare (co-op): skapa sides[2] (+[3])
+    if (APP.gameMode === 'bosswars' && APP.bossWarsBots && APP.bossWarsBots.active) {
+      const n = APP.bossWarsBots.count === 2 ? 2 : 1;
+      const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
+      for (let i = 0; i < n; i++) {
+        const idx = 2 + i;
+        sides[idx] = createSide(idx);
+        sides[idx].isBot = true;
+        sides[idx].botDifficulty = APP.bossWarsBots.difficulty || 'medium';
+        sides[idx].heroId = heroes[Math.floor(Math.random() * heroes.length)];
+      }
+    }
   } else if (mode === 'host') {
     APP.localSide = 1;
     APP.twoSides = true;
@@ -29922,6 +29978,9 @@ function enterPlayPhase() {
         s.heroId = (p && p.hero) || 'magiker';
         swapHeroMeshIfNeeded(s);
       }
+    } else {
+      // Solo boss wars-bot-medspelare: applicera hjälte-mesh (heroId satt i setupMatch)
+      for (const idx of [2, 3]) { const s = sides[idx]; if (s && s.isBot) swapHeroMeshIfNeeded(s); }
     }
     // Server-auth (Fas 2, decision 122): servern kör boss-simmen. Host blir klient
     // (ingen lokal sim/broadcast); alla peers konsumerar serverns b-state. Mirror av arena.
@@ -29961,7 +30020,7 @@ function enterPlayPhase() {
       2: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ - 3 },
       3: { x: SPAWN_ROOM_CX + 1, z: SPAWN_ROOM_CZ + 3 },
     };
-    const activeIdxs = bossMpState.matchActive ? [1, 2, 3] : [1];
+    const activeIdxs = [1, 2, 3].filter(i => sides[i]);   // MP-peers + solo-bot-medspelare
     for (const idx of activeIdxs) {
       const s = sides[idx];
       if (!s) continue;
@@ -30014,10 +30073,9 @@ function enterPlayPhase() {
     // itererar side.monsters i sin egen sida (tom). Dela monsters-arrayen så
     // alla hero-skills träffar bossen oavsett vem som castar. updateMonsters
     // skippas för sides 2/3 i simulateAll (annars triple-tick av boss-AI).
-    if (bossMpState.matchActive) {
-      if (sides[2]) sides[2].monsters = sides[1].monsters;
-      if (sides[3]) sides[3].monsters = sides[1].monsters;
-    }
+    // Dela monster-arrayen även för solo-bot-medspelare (guardat av existens).
+    if (sides[2]) sides[2].monsters = sides[1].monsters;
+    if (sides[3]) sides[3].monsters = sides[1].monsters;
     // Markera match som startad — först nu får checkMatchEnd avgöra utgång
     APP.bossWars.started = true;
     // Obligatorisk mekanik-toast under walk-in (playtest HÖGT-1) — tier 1/2 har special-mekanik.
@@ -31298,6 +31356,7 @@ function bossWarsStartFight(tier) {
 function bossWarsStartTest(tier) {
   APP.gameMode = 'bosswars';
   APP.arenaTeamSize = 1;
+  APP.bossWarsBots = { active: false, count: 0, difficulty: null };   // inga bots i test mode
   APP.bossWars = {
     active: true, tier,
     started: false,    // sätts till true i enterPlayPhase
@@ -31532,10 +31591,37 @@ const btnBossBack = document.getElementById('btn-boss-back');
 if (btnBossBack) btnBossBack.addEventListener('click', () => showLobbyPanel('boss-mode'));
 const btnBossDetailBack = document.getElementById('btn-boss-detail-back');
 if (btnBossDetailBack) btnBossDetailBack.addEventListener('click', closeBossDetail);
+// Boss Wars co-op-bot-val (bara solo). MP-host → riktiga peers, ingen bot-panel.
+let _bossBotDiff = 'medium';
+let _bossBotTier = 1;
+function _updateBwDiffButtons() {
+  for (const d of ['easy', 'medium', 'hard']) {
+    const b = document.getElementById('btn-bw-diff-' + d);
+    if (b) b.classList.toggle('selected', d === _bossBotDiff);
+  }
+}
+for (const d of ['easy', 'medium', 'hard']) {
+  const b = document.getElementById('btn-bw-diff-' + d);
+  if (b) b.addEventListener('click', () => { _bossBotDiff = d; _updateBwDiffButtons(); });
+}
+function bossWarsStartWithBots(count) {
+  APP.bossWarsBots = count > 0 ? { active: true, count, difficulty: _bossBotDiff } : { active: false, count: 0, difficulty: null };
+  bossWarsStartFight(_bossBotTier);
+}
+for (const c of [0, 1, 2]) {
+  const b = document.getElementById('btn-bw-bots-' + c);
+  if (b) b.addEventListener('click', () => bossWarsStartWithBots(c));
+}
+const btnBwBotBack = document.getElementById('btn-bw-bot-back');
+if (btnBwBotBack) btnBwBotBack.addEventListener('click', () => showLobbyPanel('boss-pick'));
 const btnBossDetailFight = document.getElementById('btn-boss-detail-fight');
 if (btnBossDetailFight) btnBossDetailFight.addEventListener('click', () => {
   const tier = parseInt(btnBossDetailFight.dataset.tier || '1', 10);
-  bossWarsStartFight(tier);
+  if (bossMpState.active) { bossWarsStartFight(tier); return; }   // MP-host: riktiga peers, inga bots
+  _bossBotTier = tier;
+  closeBossDetail();
+  _updateBwDiffButtons();
+  showLobbyPanel('boss-bot');
 });
 const btnBossDetailTest = document.getElementById('btn-boss-detail-test');
 if (btnBossDetailTest) btnBossDetailTest.addEventListener('click', () => {
@@ -31621,6 +31707,10 @@ function simulateAll(dt) {
   // Line Wars solo vs bot: driv bot-sides (ekonomi + hjälte-AI)
   if (APP.gameMode === 'classic' && APP.mode === 'solo') {
     for (const side of activeSides()) if (side && side.isBot) tickLineWarsBotSolo(side, dt);
+  }
+  // Boss Wars solo med bot-medspelare: driv co-op-bot-sides
+  if (APP.gameMode === 'bosswars' && APP.mode === 'solo') {
+    for (const side of activeSides()) if (side && side.isBot) tickBossWarsBotSolo(side, dt);
   }
   // (Klassisk multiplayer-fjärrsidans input hanteras av servern numera.)
   // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
