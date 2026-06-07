@@ -29906,8 +29906,11 @@ function setupMatch(mode) {
       const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
       sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
     }
-    // Boss Wars Singleplayer med bot-medspelare (co-op): skapa sides[2] (+[3])
-    if (APP.gameMode === 'bosswars' && APP.bossWarsBots && APP.bossWarsBots.active) {
+    // Boss Wars Singleplayer med bot-medspelare (co-op): skapa sides[2] (+[3]).
+    // Gatad mot MP — annars läcker stale bot-flagga in i MP-rum → lokal AI dubbel-
+    // styr peer-sides ovanpå server-auth → desync (client-correctness-fynd).
+    if (APP.gameMode === 'bosswars' && APP.bossWarsBots && APP.bossWarsBots.active
+        && !bossMpState.active && !bossMpState.matchActive) {
       const n = APP.bossWarsBots.count === 2 ? 2 : 1;
       const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
       for (let i = 0; i < n; i++) {
@@ -30200,6 +30203,12 @@ function enterPlayPhase() {
   // Recompute stats för solo (MP får från servern)
   if (APP.mode === 'solo') {
     if (sides[1]) recomputeSideStats(sides[1]);
+    // Bot-sides (line wars-motståndare / boss wars-medspelare): recomputa med rätt
+    // heroId+level+skills (annars level-1/fel-hjälte-stats → boss wars-bots värdelösa).
+    for (const idx of [2, 3]) {
+      const s = sides[idx];
+      if (s && s.isBot) { recomputeSideStats(s); s.hero.hp = s.hero.maxHp; }
+    }
   } else if (APP.gameMode === 'arena1v1') {
     // I arena vill vi att klientens lvl 30 också ger rätt stats lokalt
     if (sides[1]) recomputeSideStats(sides[1]);
@@ -31552,6 +31561,7 @@ function updateBossPeerCount(n, max) {
 async function bossWarsHostGame() {
   APP.gameMode = 'bosswars';
   APP.bossWars = { active: true, tier: 0 };
+  APP.bossWarsBots = { active: false, count: 0, difficulty: null };   // inga solo-bots i MP
   bossMpState.active = true;
   bossMpState.role = 'host';
   bossMpState.code = null;
@@ -31578,6 +31588,7 @@ async function bossWarsJoinGame() {
   }
   APP.gameMode = 'bosswars';
   APP.bossWars = { active: true, tier: 0 };
+  APP.bossWarsBots = { active: false, count: 0, difficulty: null };   // inga solo-bots i MP
   bossMpState.active = true;
   bossMpState.role = 'client';
   bossMpState.code = code;
