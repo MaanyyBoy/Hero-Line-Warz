@@ -15753,6 +15753,8 @@ function hostCastGimluTaunt(side) {
   side.tauntHealAccum = 0;
   side._tauntHpPrev = side.hero.hp;
   side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
+  // Boss-nivå-FX (decision 136): earth-stomp-explosion (spillror + shockwave)
+  spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: 1.6, power: 1, shakeMag: 0.25, shakeDur: 0.22 });
   // Kenney-FX: stor shockwave-burst runt Kryx vid skrik + 6 sparks splash:ar
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -15832,8 +15834,9 @@ function hostCastGimluIronWill(side) {
   side.skills.f.cd = side.skills.f.max;
   side.ironWillRemaining = IRON_WILL_DURATION;
   side.ironWillStored = 0;
-  // Visuell uppladdning — orange ring runt hero som indikerar buf
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff7733, 1.3);
+  // Boss-nivå-FX (decision 136): holy "fäst sköld"-burst (defensiv buff)
+  spawnElementCast(side.hero.x, side.hero.z, 'holy', 1.5);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffe27a);
   // Kenney persistent shield-aura under iron-will duration
   attachIronWillAura(side);
 }
@@ -16035,9 +16038,9 @@ function hostCastGimluHammer(side, dirX, dirZ) {
     side.hero.z = tz;
     side.mesh.position.x = tx;
     side.mesh.position.z = tz;
-    // Liten teleport-FX där hammer låg
-    spawnSkillCastFx(h.mesh.position.x, h.mesh.position.z, 0xffaa44, 1.2);
-    spawnSkillCastFx(tx, tz, 0xffaa44, 1.2);
+    // Boss-nivå-FX: earth-impact vid teleport-landning + burst där hammer låg
+    spawnElementCast(h.mesh.position.x, h.mesh.position.z, 'earth', 1.2);
+    spawnExplosion(tx, tz, 'earth', { scale: 1.0, power: 0.6, shakeMag: 0.15, shakeDur: 0.15 });
     scene.remove(h.mesh);
     side.hammers.splice(0, 1);
     // Lvl 5: +50% MS i 1s efter tp till hammer
@@ -16069,6 +16072,8 @@ function hostCastGimluHammer(side, dirX, dirZ) {
     damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
     lvl5Slow: isLvl5,
   });
+  // Boss-nivå-FX (decision 136): earth-kast-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'earth', 1.2);
 }
 
 function updateHammersSolo(side, dt) {
@@ -16081,6 +16086,7 @@ function updateHammersSolo(side, dt) {
       h.mesh.position.x += h.dx * step;
       h.mesh.position.z += h.dz * step;
       h.traveled += step;
+      spawnProjectileTrailPuff(h.mesh.position.x, 1.0, h.mesh.position.z, 0xd8bd8a);   // boss-nivå: kast-trail
       if (h.traveled >= HAMMER_RANGE) {
         h.returning = true;
         h.hit = new Set();
@@ -22836,9 +22842,9 @@ function hostCastGimluUlt(side) {
   side.rageRemaining = RAGE_DURATION;
   side.rageTickAccum = 0;
   if (side.mesh) side.mesh.scale.set(RAGE_SCALE, RAGE_SCALE, RAGE_SCALE);
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xff4422, 2.2);
+  // Boss-nivå-FX (decision 136): fire-rage-aktivering (explosion + glöd)
+  spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.42, shakeDur: 0.46 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xff6633);
-  triggerCameraShake(0.45, 0.5);
 }
 
 function tickGimluRage(side, dt) {
