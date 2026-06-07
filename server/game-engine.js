@@ -60,7 +60,7 @@ const HERO_DEFS = {
     baseHp: 95,           // spjut-carry: medium HP
     baseDmg: 15,          // hög skada per träff (motsats till snabba archers)
     attackRange: 7.5,     // ranged spjut
-    attackInterval: 1.8,  // långsam AA-takt
+    attackInterval: 1.5,  // AA-takt (1.8→1.5 balans 2026-06-08)
     baseMoveSpeed: 6.0,
   },
 };
@@ -367,6 +367,7 @@ const IRON_WILL_EXPLOSION_RADIUS = 6.0;
 // Kryx-rework 2026-06-07: Q Titan's Stomp + F Titan's Rage (E/R orörda).
 const STOMP_RADIUS = 5.5;
 const STOMP_DMG_PCT = 0.25;            // initial AoE = 25% av targets maxHP (boss: via bossWarsDmgMod-cap)
+const STOMP_DMG_PCT_HERO = 0.12;       // PvP-burst-nerf (balans 2026-06-08): 12% maxHP mot hjältar
 const STOMP_DOT_PCT = 0.05;            // DoT 5% maxHP/sek
 const STOMP_DOT_DUR = 3.0;
 const STOMP_DR_HERO = 0.25, STOMP_DR_MINION = 0.05, STOMP_DR_BOSS = 0.50, STOMP_DR_DUR = 3.0;
@@ -572,7 +573,7 @@ const ARCHETYPE_BASE = {
   slasher:  { cost: 10, hp: 18, speed: 1.6,  damage: 3, range: 1.3, interval: 0.8, attackType: 'melee' },
   archer:   { cost: 14, hp: 15, speed: 1.4,  damage: 4, range: 5.5, interval: 1.2, attackType: 'arrow' },
   bruiser:  { cost: 18, hp: 32, speed: 1.3,  damage: 5, range: 1.5, interval: 1.3, attackType: 'melee' },
-  mage:     { cost: 22, hp: 20, speed: 1.3,  damage: 5, range: 5.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
+  mage:     { cost: 22, hp: 20, speed: 1.3,  damage: 7, range: 5.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
   tank:     { cost: 26, hp: 60, speed: 1.15, damage: 2, range: 1.3, interval: 1.4, attackType: 'melee' },
   champion: { cost: 35, hp: 48, speed: 1.3,  damage: 8, range: 1.8, interval: 1.5, attackType: 'melee' },
 };
@@ -981,6 +982,16 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'k_dmg',          stats: { attackDmg: 5 } },
     { id: 'k_as',           stats: { attackSpeedPct: 0.12 } },
     { id: 'k_crit',         stats: { critChancePct: 0.10 } },
+  ],
+  zheyna: [
+    { id: 'z_dmg',          stats: { attackDmg: 6 } },
+    { id: 'z_as',           stats: { attackSpeedPct: 0.15 } },
+    { id: 'z_crit',         stats: { critChancePct: 0.10 } },
+    { id: 'z_hp',           stats: { maxHpPct: 0.15 } },
+    { id: 'z_dr',           stats: { dmgReductionPct: 0.10 } },
+    { id: 'z_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'z_skill',        stats: { skillDmgPct: 0.10 } },
+    { id: 'z_cdr',          stats: { cdrPct: 0.10 } },
   ],
 };
 
@@ -5896,6 +5907,7 @@ function castGimluTaunt(state, sideIdx) {
   const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
   const r2 = eRad * eRad;
   const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
+  const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
   const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
   let drGain = 0;
@@ -5935,7 +5947,7 @@ function castGimluTaunt(state, sideIdx) {
   if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
-      damageHero(opp, opp.hero.maxHp * eDmgPct);
+      damageHero(opp, opp.hero.maxHp * eDmgPctHero);   // PvP-nerf: 12% (ej 25%)
       opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, eSlow);
       opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, STOMP_SLOW_DUR);
       opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, eSlow);

@@ -2162,7 +2162,7 @@ const HERO_DEFS = {
   gimlu:   { name: 'Kryx',   baseHp: 140, baseDmg: 7, attackRange: 2.5, attackInterval: 1.2, baseMoveSpeed: 5.0 },
   aragurn: { name: 'Elar', baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5 },
   kostefo: { name: 'Kostef', baseHp: 95,  baseDmg: 5, attackRange: 6.3, attackInterval: 0.9, baseMoveSpeed: 6.2 },   // AA-range = 70% av archer (Legolas 9.0). Var 5.4
-  zheyna:  { name: 'Zheyna', baseHp: 95,  baseDmg: 15, attackRange: 7.5, attackInterval: 1.8, baseMoveSpeed: 6.0 },  // spjut-carry: långsam, hårdslående ranged AA
+  zheyna:  { name: 'Zheyna', baseHp: 95,  baseDmg: 15, attackRange: 7.5, attackInterval: 1.5, baseMoveSpeed: 6.0 },  // spjut-carry: ranged AA (intervall 1.8→1.5 balans 2026-06-08)
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 // ===== ZHEYNA (spjut-carry) konstanter — speglar server/game-engine.js (decision 134) =====
@@ -2470,7 +2470,7 @@ const ARCHETYPE_BASE = {
   slasher:  { cost: 10, hp: 18, speed: 1.6, damage: 3, range: 1.3, interval: 0.8, attackType: 'melee' },
   archer:   { cost: 14, hp: 15, speed: 1.4, damage: 4, range: 5.5, interval: 1.2, attackType: 'arrow' },
   bruiser:  { cost: 18, hp: 32, speed: 1.3, damage: 5, range: 1.5, interval: 1.3, attackType: 'melee' },
-  mage:     { cost: 22, hp: 20, speed: 1.3, damage: 5, range: 5.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
+  mage:     { cost: 22, hp: 20, speed: 1.3, damage: 7, range: 5.5, interval: 1.5, attackType: 'magic', aoeRadius: 1.6 },
   tank:     { cost: 26, hp: 60, speed: 1.15, damage: 2, range: 1.3, interval: 1.4, attackType: 'melee' },
   champion: { cost: 35, hp: 48, speed: 1.3, damage: 8, range: 1.8, interval: 1.5, attackType: 'melee' },
 };
@@ -2621,6 +2621,7 @@ const IRON_WILL_EXPLOSION_RADIUS = 6.0;
 // Kryx-rework 2026-06-07 (speglar server): Q Titan's Stomp + F Titan's Rage + berserk-passive.
 const STOMP_RADIUS = 5.5;
 const STOMP_DMG_PCT = 0.25, STOMP_DOT_PCT = 0.05, STOMP_DOT_DUR = 3.0;
+const STOMP_DMG_PCT_HERO = 0.12;   // PvP-burst-nerf (balans 2026-06-08): 12% maxHP mot hjältar (25% mot minions)
 const STOMP_DR_HERO = 0.25, STOMP_DR_MINION = 0.05, STOMP_DR_BOSS = 0.50, STOMP_DR_DUR = 3.0;
 const STOMP_SLOW_MUL = 0.60, STOMP_SLOW_DUR = 2.0;
 const KRYX_DR_CAP = 0.70;
@@ -4845,6 +4846,19 @@ const ARENA_TALENTS = {
     { id: 'k_dmg',    icon: '🌬', name: 'Heavy Exhale',       desc: '+5 attack damage',      stats: { attackDmg: 5 } },
     { id: 'k_as',     icon: '⚡', name: 'Rapid Puffs',        desc: '+12% attack speed',     stats: { attackSpeedPct: 0.12 } },
     { id: 'k_crit',   icon: '🎯', name: 'Pinpoint Haze',      desc: '+10% crit chance',      stats: { critChancePct: 0.10 } },
+  ],
+  zheyna: [
+    // 8 pure stat-talents (samma upplägg som Kostefo — recomputeArenaSideStats).
+    // Stänger struktur-hålet: Zheyna fick tidigare NOLL talents (balans 2026-06-08).
+    // Skill-modifier-talents (spear/clone/warpath) kräver skill-pipeline-wiring → framtida.
+    { id: 'z_dmg',   icon: '🗡', name: 'Spear Mastery',    desc: '+6 attack damage',        stats: { attackDmg: 6 } },
+    { id: 'z_as',    icon: '⚡', name: 'Swift Thrusts',     desc: '+15% attack speed',       stats: { attackSpeedPct: 0.15 } },
+    { id: 'z_crit',  icon: '🎯', name: 'Piercing Aim',      desc: '+10% crit chance',        stats: { critChancePct: 0.10 } },
+    { id: 'z_hp',    icon: '❤', name: 'Vanguard Vigor',    desc: '+15% max HP',             stats: { maxHpPct: 0.15 } },
+    { id: 'z_dr',    icon: '🛡', name: 'Battle Plate',      desc: '+10% damage reduction',   stats: { dmgReductionPct: 0.10 } },
+    { id: 'z_ms',    icon: '💨', name: 'Warpath Strides',   desc: '+10% movement speed',     stats: { moveSpeedPct: 0.10 } },
+    { id: 'z_skill', icon: '✦', name: 'Spear Focus',       desc: '+10% skill damage',       stats: { skillDmgPct: 0.10 } },
+    { id: 'z_cdr',   icon: '⏱', name: 'Hunter\'s Tempo',   desc: '+10% cooldown reduction', stats: { cdrPct: 0.10 } },
   ],
 };
 
@@ -15841,6 +15855,7 @@ function hostCastGimluTaunt(side) {
   const rageMul = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;
   const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
   const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
+  const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
   const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
   // Boss-nivå-FX (decision 136): earth-stomp-explosion. Shake sänkt 0.25→0.15
@@ -15904,7 +15919,7 @@ function hostCastGimluTaunt(side) {
   if (opp && !opp.hero.dead && (inDuel || inArenaFight)) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
-      damageHero(opp, opp.hero.maxHp * eDmgPct);
+      damageHero(opp, opp.hero.maxHp * eDmgPctHero);   // PvP-nerf: 12% (ej 25%)
       opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, eSlow); opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, STOMP_SLOW_DUR);
       opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, eSlow); opp.heroASlowTime = Math.max(opp.heroASlowTime || 0, STOMP_SLOW_DUR);
       opp.hero.dotRemaining = STOMP_DOT_DUR; opp.hero.dotPerSec = opp.hero.maxHp * eDotPct;
