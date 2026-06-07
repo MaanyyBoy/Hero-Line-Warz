@@ -274,10 +274,22 @@ function applyArenaInput(room, ws, payload) {
 // Bakåtkompatibelt: en boss-klient som INTE skickar b-sim-start får gammalt host-auth
 // relä-beteende (relayBossWarsMessage) → deploy bryter inget. När den nya klientens host
 // skickar b-sim-start startar servern boss-engine:n + äger b-state. 3-peer broadcast.
-function startBossWarsSim(room, heroes, tier, loadouts) {
+function startBossWarsSim(room, heroes, tier, loadouts, bots) {
   if (room.game || room.tickHandle) return;        // redan igång
   room.bossSim = true;
   room.game = engine.initBossWarsMatch(heroes, tier, loadouts);
+  // Host fyller tomma co-op-slots (2/3) med bots. bots = { "2": "medium", "3": "hard" }.
+  // Bara slots utan ansluten peer (säkerställs klient-side; här sätts bara flaggan).
+  if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
+    for (const k of Object.keys(bots)) {
+      const idx = Number(k);
+      const side = room.game.sides[idx];
+      if (side && (idx === 2 || idx === 3)) {
+        side.isBot = true;
+        side.botDifficulty = ['easy', 'medium', 'hard'].includes(bots[k]) ? bots[k] : 'medium';
+      }
+    }
+  }
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
   room.nextTickAt = Date.now();
@@ -311,7 +323,7 @@ function handleBossMessage(room, fromWs, envelope) {
   const t = payload && payload.t;
   // Host begär server-auth boss-sim (skickas vid match-launch). Bara host.
   if (t === 'b-sim-start') {
-    if (fromWs === room.host) startBossWarsSim(room, payload.heroes, payload.tier, payload.loadouts);
+    if (fromWs === room.host) startBossWarsSim(room, payload.heroes, payload.tier, payload.loadouts, payload.bots);
     return;
   }
   if (room.bossSim) {

@@ -4362,7 +4362,13 @@
       <div id="lobby-boss-peer-count" style="font-size: 18px; color: #aaccff; margin: 6px 0 12px 0;">Players: 1 / 3</div>
       <div class="msg" id="lobby-boss-host-msg">Waiting for players...</div>
       <button class="lobby-btn" id="btn-boss-start-match" disabled style="background: rgba(60,160,80,0.85); border-color: rgba(120,220,150,0.7); opacity: 0.5;">Start match (3/3)</button>
-      <button class="lobby-btn danger" id="btn-boss-host-cancel">Cancel</button>
+      <div class="msg" style="margin-top:10px; opacity:0.85;">Or start now — fill empty slots with bots:</div>
+      <div style="display:flex; gap:6px; margin-top:4px;">
+        <button class="lobby-btn" id="btn-boss-host-bot-easy" style="flex:1; background: rgba(80,170,90,0.85);">Bots: Easy</button>
+        <button class="lobby-btn" id="btn-boss-host-bot-medium" style="flex:1; background: rgba(190,140,40,0.85);">Medium</button>
+        <button class="lobby-btn" id="btn-boss-host-bot-hard" style="flex:1; background: rgba(180,40,40,0.85);">Hard</button>
+      </div>
+      <button class="lobby-btn danger" id="btn-boss-host-cancel" style="margin-top:10px;">Cancel</button>
     </div>
 
     <div class="lobby-panel" id="lobby-boss-join">

@@ -28858,11 +28858,26 @@ function updateBossPrepWaitingStatus() {
 function maybeLaunchBossMp() {
   if (bossMpState.role !== 'host' || bossMpState.matchActive) return;
   const ready = bossMpState.peersReady || {};
-  const total = bossMpState.peersTotal || 3;
-  let count = 0;
-  for (let i = 1; i <= 3; i++) if (ready[i]) count++;
-  if (count < total) return;
-  // Alla klara — bygg full payload och broadcasta
+  const fillDiff = bossMpState.fillBotsDiff;
+  if (fillDiff) {
+    // Host-med-bots: starta så fort host (peer 1) är redo; fyll tomma slots [2,3] med bots.
+    if (!ready[1]) return;
+    const botHeroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
+    const botSlots = {};
+    for (const i of [2, 3]) {
+      if (!ready[i]) {
+        ready[i] = { p: i, hero: botHeroes[Math.floor(Math.random() * botHeroes.length)], tals: [], items: [] };
+        botSlots[i] = fillDiff;
+      }
+    }
+    APP.bossWars.botSlots = botSlots;
+  } else {
+    const total = bossMpState.peersTotal || 3;
+    let count = 0;
+    for (let i = 1; i <= 3; i++) if (ready[i]) count++;
+    if (count < total) return;
+  }
+  // Alla klara (eller bot-fylld) — bygg full payload och broadcasta
   sendGameMsg({
     t: 'b-launch',
     tier: APP.bossWars.tier || 1,
@@ -30002,6 +30017,7 @@ function enterPlayPhase() {
             3: (sides[3] && sides[3].heroId) || 'magiker',
           },
           loadouts: { 1: _lo(1), 2: _lo(2), 3: _lo(3) },
+          bots: (APP.bossWars && APP.bossWars.botSlots) || undefined,   // host-fyllda bot-slots
         });
       }
     }
@@ -31508,6 +31524,14 @@ function bossWarsHostStartMatch() {
   sendGameMsg({ t: 'b-start' });
   bossWarsShowPick();   // Host väljer boss + prep ensam; clients väntar
 }
+// Host startar UTAN att vänta på fulla peers — tomma co-op-slots [2,3] fylls med bots
+// (server-auth: servern kör bot-AI:n). fillBotsDiff på bossMpState överlever bossWarsStartFight.
+function bossWarsHostStartWithBots(difficulty) {
+  if (bossMpState.role !== 'host') return;
+  bossMpState.fillBotsDiff = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+  sendGameMsg({ t: 'b-start' });   // ev. anslutna klienter går till wait
+  bossWarsShowPick();
+}
 function bossMpCleanupAfterMatch() {
   // Anropas från returnToLobby — nolla allt boss-MP-state.
   // No-op om inte aktiv.
@@ -31526,6 +31550,8 @@ function bossMpCleanupAfterMatch() {
   bossMpState.lastSentJz = null;
   bossMpState.lastInputActualSent = 0;
   bossMpState.peersReady = {};
+  bossMpState.fillBotsDiff = null;   // nolla host-bot-fyllning
+  if (APP.bossWars) APP.bossWars.botSlots = null;
   // Återställ prep-panel UI till default-state inför nästa match
   const waitEl = document.getElementById('bp-mp-waiting');
   if (waitEl) waitEl.classList.add('hidden');
@@ -31535,6 +31561,10 @@ function bossMpCleanupAfterMatch() {
 // Wire up boss-MP-knappar
 const btnBossStart = document.getElementById('btn-boss-start-match');
 if (btnBossStart) btnBossStart.addEventListener('click', bossWarsHostStartMatch);
+for (const d of ['easy', 'medium', 'hard']) {
+  const b = document.getElementById('btn-boss-host-bot-' + d);
+  if (b) b.addEventListener('click', () => bossWarsHostStartWithBots(d));
+}
 const btnBossHostCancel = document.getElementById('btn-boss-host-cancel');
 if (btnBossHostCancel) btnBossHostCancel.addEventListener('click', bossWarsLeaveLobby);
 const btnBossJoinConnect = document.getElementById('btn-boss-join-connect');
