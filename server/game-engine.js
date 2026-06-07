@@ -379,6 +379,10 @@ const TITANS_RAGE_ALLY = 0.125;        // allies nära: hälften
 const TITANS_RAGE_FEAR_DUR = 1.0;      // feared 1s (endast enemy-hero/PvP)
 const TITANS_RAGE_LEECH_DUR = 1.0;     // efter fear: 1s där enemy-skada healar Kryx 100%
 const TITANS_RAGE_RADIUS = 6.0;        // fear/ally-buff-radie
+// Passive: Berserk-mätare (3 bars, 1 bar/10% maxHP taget). Full → nästa Q/F/E empowras.
+const BERSERK_BAR_PCT = 0.10, BERSERK_FULL_PCT = 0.30;
+const BERSERK_STOMP_RADIUS_MUL = 2.0, BERSERK_STOMP_DMG_MUL = 1.5, BERSERK_STOMP_SLOW_MUL = 0.40;   // empowered Stomp (100% AoE, +50% dmg, 60% slow)
+const BERSERK_HAMMER_SIZE_MUL = 3.0, BERSERK_HAMMER_DMG_MUL = 1.5, BERSERK_HAMMER_HEAL_MUL = 1.5, BERSERK_HAMMER_SLOW_MUL = 0.50;
 const HAMMER_SPEED = 12;
 const HAMMER_RANGE = 9;
 const HAMMER_RADIUS = 0.8;
@@ -1111,26 +1115,15 @@ function tickGandulfMark(state, target, dt) {
 function damageHero(side, amount) {
   if (side.hero.dead) return;
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
-  // Gimlu passive Stalwart Resolve — tröskelbaserad DR + var 3:e instance immune vid <40%
-  let gimluDR = 0;
+  // Kryx-DR (rework 2026-06-07): Titan's Stomp-stack + Titan's Rage, cap 70%. Passiven
+  // är nu berserk-mätaren (offensiv empower, INGEN DR) → gamla Stalwart Resolve borttagen.
+  let gimluMul = 1;
   if (side.heroId === 'gimlu') {
-    const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
-    if (ratio < GIMLU_PASSIVE_TIER1_HP) gimluDR += GIMLU_PASSIVE_TIER1_DR;
-    if (ratio < GIMLU_PASSIVE_TIER3_HP) {
-      gimluDR += GIMLU_PASSIVE_TIER3_DR;
-      side.gimluDmgInstanceCount = (side.gimluDmgInstanceCount || 0) + 1;
-      if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) return; // immune
-    }
-  }
-  // Kryx total-DR (rework 2026-06-07): passive (gimluDR ovan) + Titan's Stomp-stack
-  // + Titan's Rage, cap 70% (user-beslut). Ersätter gamla taunt-DR.
-  let kryxDr = gimluDR;
-  if (side.heroId === 'gimlu') {
+    let kryxDr = 0;
     if ((side.titansStompDrTime || 0) > 0) kryxDr += (side.titansStompDr || 0);
     if ((side.titansRageTime || 0) > 0) kryxDr += (side.titansRageDr || 0);
-    kryxDr = Math.min(KRYX_DR_CAP, kryxDr);
+    if (kryxDr > 0) gimluMul = 1 - Math.min(KRYX_DR_CAP, kryxDr);
   }
-  const gimluMul = kryxDr > 0 ? (1 - kryxDr) : 1;
   // Aragurn passive — DR baserat på nearby enemies (cached varje frame i tick-loop)
   const aragurnMul = side.heroId === 'aragurn' ? (1 - aragurnPassiveDR(side)) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
@@ -1164,6 +1157,11 @@ function damageHero(side, amount) {
   // + single-target skills). 5% av damage taken som ult-gain, cap 2% per hit.
   if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
     gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
+    // Passive: berserk-mätare fylls av tagen skada (3 bars = 30% maxHP → empowrar nästa Q/F/E).
+    if (!side.berserkCharged) {
+      side.berserkDmgAccum = (side.berserkDmgAccum || 0) + final;
+      if (side.berserkDmgAccum >= side.hero.maxHp * BERSERK_FULL_PCT) { side.berserkDmgAccum = side.hero.maxHp * BERSERK_FULL_PCT; side.berserkCharged = true; }
+    }
   }
   if (side.hero.hp <= 0) killHero(side);
 }
@@ -1760,6 +1758,7 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.heroASlowTime = 0; side.heroASlowMul = 1;   // Kryx-rework: hjälte-AS-slow
   side.titansStompDrTime = 0; side.titansStompDr = 0; side.titansRageTime = 0; side.titansRageDr = 0;
+  side.berserkCharged = false; side.berserkDmgAccum = 0;   // berserk-mätare
   side.iceBlockRemaining = 0;
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
 }
@@ -1999,6 +1998,7 @@ function serializeArenaHero(side, buf) {
   buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
   buf.rg = nzr2(side.rageRemaining);
   buf.bz = nzr2(side.berserkRemaining);
+  buf.gmBk = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : 0);   // Gimlu berserk-mätare: 1 = charged, 0..1 = andel
   buf.lInv = nzr2(side.legolusInvisRemaining);
   buf.kUlt = nzr2(side.kostefoUltRemaining);
   buf.kJoints = arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) }));
@@ -5837,7 +5837,13 @@ function castGimluTaunt(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
-  const r2 = STOMP_RADIUS * STOMP_RADIUS;
+  // Passive empower: full berserk → 100% större AoE, +50% skada, 60% slow.
+  const emp = consumeBerserk(side);
+  const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
+  const r2 = eRad * eRad;
+  const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1);
+  const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1);
+  const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
   let drGain = 0;
   // Monsters (minions + boss)
   for (let i = side.monsters.length - 1; i >= 0; i--) {
@@ -5846,12 +5852,12 @@ function castGimluTaunt(state, sideIdx) {
     if (dx * dx + dz * dz >= r2) continue;
     const isBoss = !!m.isBossWarsBoss;
     const mMax = m.maxHp || m.hp;   // cacha FÖRE hp-reduktion (annars baseras DoT på sänkt hp)
-    m.hp -= bossWarsDmgMod(m, mMax * STOMP_DMG_PCT);   // cap/immunitet för boss, no-op annars
-    m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, STOMP_SLOW_MUL);
+    m.hp -= bossWarsDmgMod(m, mMax * eDmgPct);   // cap/immunitet för boss, no-op annars
+    m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, eSlow);
     m.slowTime = Math.max(m.slowTime || 0, STOMP_SLOW_DUR);
-    m.aSlowMul = Math.min(m.aSlowMul == null ? 1 : m.aSlowMul, STOMP_SLOW_MUL);
+    m.aSlowMul = Math.min(m.aSlowMul == null ? 1 : m.aSlowMul, eSlow);
     m.aSlowTime = Math.max(m.aSlowTime || 0, STOMP_SLOW_DUR);
-    if (!isBoss) { m.dotRemaining = STOMP_DOT_DUR; m.dotPerSec = mMax * STOMP_DOT_PCT; }
+    if (!isBoss) { m.dotRemaining = STOMP_DOT_DUR; m.dotPerSec = mMax * eDotPct; }
     drGain += isBoss ? STOMP_DR_BOSS : STOMP_DR_MINION;
     if (m.hp <= 0) killMonster(side, i, side);
   }
@@ -5862,12 +5868,12 @@ function castGimluTaunt(state, sideIdx) {
     const dx = c.x - side.hero.x, dz = c.z - side.hero.z;
     if (dx * dx + dz * dz >= r2) continue;
     const cMax = c.maxHp || c.hp;   // cacha FÖRE hp-reduktion
-    c.hp -= cMax * STOMP_DMG_PCT;
-    c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, STOMP_SLOW_MUL);
+    c.hp -= cMax * eDmgPct;
+    c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, eSlow);
     c.slowTime = Math.max(c.slowTime || 0, STOMP_SLOW_DUR);
-    c.aSlowMul = Math.min(c.aSlowMul == null ? 1 : c.aSlowMul, STOMP_SLOW_MUL);
+    c.aSlowMul = Math.min(c.aSlowMul == null ? 1 : c.aSlowMul, eSlow);
     c.aSlowTime = Math.max(c.aSlowTime || 0, STOMP_SLOW_DUR);
-    c.dotRemaining = STOMP_DOT_DUR; c.dotPerSec = cMax * STOMP_DOT_PCT;
+    c.dotRemaining = STOMP_DOT_DUR; c.dotPerSec = cMax * eDotPct;
     drGain += STOMP_DR_MINION;
     if (c.hp <= 0) { opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
   }
@@ -5875,12 +5881,12 @@ function castGimluTaunt(state, sideIdx) {
   if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
-      damageHero(opp, opp.hero.maxHp * STOMP_DMG_PCT);
-      opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, STOMP_SLOW_MUL);
+      damageHero(opp, opp.hero.maxHp * eDmgPct);
+      opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, eSlow);
       opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, STOMP_SLOW_DUR);
-      opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, STOMP_SLOW_MUL);
+      opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, eSlow);
       opp.heroASlowTime = Math.max(opp.heroASlowTime || 0, STOMP_SLOW_DUR);
-      opp.hero.dotRemaining = STOMP_DOT_DUR; opp.hero.dotPerSec = opp.hero.maxHp * STOMP_DOT_PCT;
+      opp.hero.dotRemaining = STOMP_DOT_DUR; opp.hero.dotPerSec = opp.hero.maxHp * eDotPct;
       drGain += STOMP_DR_HERO;
     }
   }
@@ -5893,6 +5899,13 @@ function tickKryxTimers(side, dt) {
   if ((side.titansStompDrTime || 0) > 0) { side.titansStompDrTime = Math.max(0, side.titansStompDrTime - dt); if (side.titansStompDrTime <= 0) side.titansStompDr = 0; }
   if ((side.heroASlowTime || 0) > 0) { side.heroASlowTime = Math.max(0, side.heroASlowTime - dt); if (side.heroASlowTime <= 0) side.heroASlowMul = 1; }
   if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageDr = 0; }   // Titan's Rage (batch 2)
+}
+
+// Passive: konsumera full berserk-mätare (empowrar nästa Q/F/E). Returnerar true + nollar.
+function consumeBerserk(side) {
+  if (side.heroId !== 'gimlu' || !side.berserkCharged) return false;
+  side.berserkCharged = false; side.berserkDmgAccum = 0;
+  return true;
 }
 
 // Lvl-5 Gimlu F (Iron Will) — flush reflect-queue: applicera AoE-skada runt Gimlu
@@ -6038,6 +6051,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
   side.hammers = side.hammers || [];
   // g_hammer_full talent: return = 100% damage (base is 50%)
   const hammerReturnMul = engineHasTalent(state, side, 'g_hammer_full') ? 1.0 : HAMMER_RETURN_DMG_MUL;
+  const emp = consumeBerserk(side);   // passive empower (endast vid kast, ej teleport)
   side.hammers.push({
     id: state.nextEntityId++,
     x: side.hero.x, z: side.hero.z,
@@ -6048,6 +6062,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
     damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
     returnDmgMul: hammerReturnMul,
     lvl5Slow: isLvl5,
+    empowered: emp,
   });
 }
 
@@ -6076,19 +6091,24 @@ function updateHammers(state, side, opp, dt) {
       h.z += (ddz / d) * step;
     }
     const dmgMul = h.returning ? (h.returnDmgMul !== undefined ? h.returnDmgMul : HAMMER_RETURN_DMG_MUL) : 1;
-    const dmg = h.damage * dmgMul;
+    // Passive empower: +50% dmg, +50% heal, ×3 hit-radie, 50% MS-slow (annars lvl5-slow).
+    const dmg = h.damage * dmgMul * (h.empowered ? BERSERK_HAMMER_DMG_MUL : 1);
+    const lifesteal = HAMMER_LIFESTEAL * (h.empowered ? BERSERK_HAMMER_HEAL_MUL : 1);
+    const hitR = HAMMER_RADIUS * (h.empowered ? BERSERK_HAMMER_SIZE_MUL : 1);
+    const doSlow = h.lvl5Slow || h.empowered;
+    const hSlowMul = h.empowered ? BERSERK_HAMMER_SLOW_MUL : GIMLU_LVL5_HAMMER_SLOW_MUL;
     // Träff på monsters
     for (let j = side.monsters.length - 1; j >= 0; j--) {
       const m = side.monsters[j];
       if (h.hit.has(m.id)) continue;
-      if (Math.hypot(m.x - h.x, m.z - h.z) < HAMMER_RADIUS) {
+      if (Math.hypot(m.x - h.x, m.z - h.z) < hitR) {
         h.hit.add(m.id);
         m.hp -= bossWarsDmgMod(m, dmg);   // 5%-tak/immunitet/DR (no-op icke-boss)
-        if (h.lvl5Slow) {
+        if (doSlow) {
           m.slowTime = Math.max(m.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
-          m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+          m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, hSlowMul);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * lifesteal);
         if (m.hp <= 0) killMonster(side, j, side);
       }
     }
@@ -6096,28 +6116,27 @@ function updateHammers(state, side, opp, dt) {
     if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
       const c = opp.playerCreeps[j];
       if (h.hit.has(c.id)) continue;
-      if (Math.hypot(c.x - h.x, c.z - h.z) < HAMMER_RADIUS) {
+      if (Math.hypot(c.x - h.x, c.z - h.z) < hitR) {
         h.hit.add(c.id);
         c.hp -= dmg;
-        if (h.lvl5Slow) {
+        if (doSlow) {
           c.slowTime = Math.max(c.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
-          c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+          c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, hSlowMul);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * lifesteal);
         if (c.hp <= 0) { opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
     // Duel: träffa opp.hero
     if (state.duelActive && opp && !opp.hero.dead && !h.hit.has('opp-hero')) {
-      if (Math.hypot(opp.hero.x - h.x, opp.hero.z - h.z) < HAMMER_RADIUS + 0.4) {
+      if (Math.hypot(opp.hero.x - h.x, opp.hero.z - h.z) < hitR + 0.4) {
         h.hit.add('opp-hero');
         damageHero(opp, dmg);
-        // Lvl5 hero-slow via heroSlowTime/heroSlowMul (existerande hero-slow-fält)
-        if (h.lvl5Slow) {
+        if (doSlow) {
           opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
-          opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+          opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, hSlowMul);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * lifesteal);
       }
     }
   }
@@ -8328,13 +8347,7 @@ function tickGame(state, dt) {
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * dt);
       }
-      // Gimlu Stalwart Resolve regen: 5%/s när <60% HP
-      if (side.heroId === 'gimlu' && side.hero.hp < side.hero.maxHp) {
-        const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
-        if (ratio < GIMLU_PASSIVE_TIER2_HP) {
-          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * GIMLU_PASSIVE_TIER2_REGEN * dt);
-        }
-      }
+      // (Stalwart Resolve regen borttagen i rework 2026-06-07 — passiven ersatt av berserk-mätaren.)
     }
   }
   for (const sideIdx of [1, 2]) {
