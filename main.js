@@ -8269,12 +8269,11 @@ function applyBossPhase2Glow(mesh, tier) {
     grp.add(w);
     wisps.push(w);
   }
-  // Pulserande pointlight (raid-känsla)
-  const light = new THREE.PointLight(color, 2.0, 8);
-  light.position.y = 1.8;
-  grp.add(light);
+  // OBS: ingen runtime-PointLight här — det ändrar NUM_POINT_LIGHTS → shader-
+  // rekompilering → iOS-stutter/krasch (ARCHITECTURE-regel, decisions 045/053).
+  // Emissiv core + wisps + ENRAGE-explosionens fxLightPool-puls ger raid-känslan.
   mesh.add(grp);
-  mesh.userData.phase2Aura = { grp, aura, core, wisps, light, baseY: 1.6, color, age: 0 };
+  mesh.userData.phase2Aura = { grp, aura, core, wisps, baseY: 1.6, color, age: 0 };
 }
 function tickBossPhase2Aura(mesh, dt) {
   const a = mesh && mesh.userData && mesh.userData.phase2Aura;
@@ -8284,7 +8283,6 @@ function tickBossPhase2Aura(mesh, dt) {
   const pulse = 0.5 + 0.5 * Math.sin(a.age * 4);
   if (a.aura.material) a.aura.material.opacity = 0.18 + 0.10 * pulse;
   if (a.core.material) a.core.material.opacity = 0.30 + 0.15 * pulse;
-  if (a.light) a.light.intensity = 1.6 + 0.7 * pulse;
   // Wisps orbiterar
   for (let i = 0; i < a.wisps.length; i++) {
     const w = a.wisps[i];
@@ -9261,6 +9259,9 @@ function startArenaRound(roundNum) {
         s.mesh.userData.currentClipName.toLowerCase().includes('death')) {
       s.mesh.userData.currentClipName = null;  // tvinga animateGltfCharacter att välja om
     }
+    // Item-aktiv-buffar (lvl-10-actives) nollas FÖRE recompute så en pågående
+    // active inte ger gratis stats nästa runda (carryover-exploit-fix).
+    for (const e of (s.inventory || [])) { e.activeCd = 0; e.activeRemaining = 0; }
     recomputeArenaSideStats(s);
     s.hero.hp = s.hero.maxHp;
     s.shield = 0;
@@ -9882,7 +9883,7 @@ function recomputeArenaSideStats(side) {
   if (side.hero.maxHp > maxHpBefore) {
     side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + (side.hero.maxHp - maxHpBefore));
   }
-  side.critChance = (side.critChance || 0) + critChancePct;
+  side.critChancePct = Math.min(1, (side.critChancePct || 0) + critChancePct);   // AA läser critChancePct (ej critChance) → talent-crit funkade aldrig
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
 }
 
@@ -32682,9 +32683,15 @@ const COMBAT_FX_CAP = 140;
 function tickCombatFx(dt) {
   // Hård cap: vid FX-flod (t.ex. Whirlwind-puffar + rage-burst samtidigt) släpp
   // äldsta entries så combatFx aldrig växer obegränsat → ingen frame-spik på mobil.
-  while (combatFx.length > COMBAT_FX_CAP) {
-    const old = combatFx.shift();
-    if (old) { _disposeCombatFxEntry(old); _leakBump(_leakDiag.disposedByKind, old.kind || 'capped'); }
+  if (combatFx.length > COMBAT_FX_CAP) {
+    // Batch-trim: dispose:a överskottet + EN splice (O(n)) i st f upprepad
+    // shift() (O(n²)) — viktigt just i FX-floden där cappen nås.
+    const overflow = combatFx.length - COMBAT_FX_CAP;
+    for (let k = 0; k < overflow; k++) {
+      const old = combatFx[k];
+      if (old) { _disposeCombatFxEntry(old); _leakBump(_leakDiag.disposedByKind, old.kind || 'capped'); }
+    }
+    combatFx.splice(0, overflow);
   }
   for (let i = combatFx.length - 1; i >= 0; i--) {
     const e = combatFx[i];

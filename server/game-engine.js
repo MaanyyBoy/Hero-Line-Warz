@@ -6810,7 +6810,7 @@ function castKostefoCannabisCloud(state, sideIdx) {
       c.frozenTime = Math.max(c.frozenTime || 0, KOSTEFO_CLOUD_STUN_DUR);
     }
   }
-  if (opp && !opp.hero.dead) {
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {   // PvP-gate: stunna ej medspelare i boss wars
     const ddx = opp.hero.x - cx, ddz = opp.hero.z - cz;
     if (ddx * ddx + ddz * ddz < r2) {
       opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, KOSTEFO_CLOUD_STUN_DUR);
