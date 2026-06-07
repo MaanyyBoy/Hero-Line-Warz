@@ -15858,9 +15858,9 @@ function hostCastGimluTaunt(side) {
   const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
   const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
-  // Boss-nivå-FX (decision 136): earth-stomp-explosion. Shake sänkt 0.25→0.15
-  // (playtest: Taunt är kort-CD/hög-uptime → enda "spam-shakaren"; circle-shockwave bär punchen).
-  spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: 1.6, power: 1, shakeMag: 0.15, shakeDur: 0.18 });
+  // Boss-nivå-FX (decision 136): earth-stomp-explosion. Vanlig Stomp = nedtonad shake
+  // (kort-CD/hög-uptime spam). Empowered = full berserk-payoff → kraftigare shake + scale.
+  spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: emp ? 2.6 : 1.6, power: emp ? 1.4 : 1, shakeMag: emp ? 0.28 : 0.15, shakeDur: emp ? 0.24 : 0.18 });
   // Kenney-FX: stor shockwave-burst runt Kryx vid skrik + 6 sparks splash:ar
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -21292,8 +21292,14 @@ function tickBossWarsBotSolo(side, dt) {
   if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) return;
   // Inte aktiverad än → gå in i boss-rummet (mot center) så activation triggas.
   if (!APP.bossWars || !APP.bossWars.bossActivated) {
-    const dx = BOSSWARS_CX - side.hero.x, dz = BOSSWARS_CZ - side.hero.z, d = Math.hypot(dx, dz) || 1;
-    if (d > 2) applyMovement(side, dx / d, dz / d, dt);
+    // Grace (playtest): vänta tills SPELAREN själv är på väg in i boss-rummet —
+    // annars rusar boten in och triggar encountern åt spelaren (tappar tempo-kontroll).
+    const p1 = sides[1];
+    const playerLeading = !p1 || p1.hero.dead || isInsideBossRoom(p1.hero.x, p1.hero.z);
+    if (playerLeading) {
+      const dx = BOSSWARS_CX - side.hero.x, dz = BOSSWARS_CZ - side.hero.z, d = Math.hypot(dx, dz) || 1;
+      if (d > 2) applyMovement(side, dx / d, dz / d, dt);
+    }
     return;
   }
   const boss = bossWarsBossEntity();
@@ -29344,7 +29350,7 @@ function handleRelayEnvelope(e) {
       if (bossMpState.role === 'host' && bossMpState.hostMsgEl) {
         bossMpState.hostMsgEl.textContent = (bossMpState.peersTotal >= bossMpState.maxPeers)
           ? 'Alla är inne! Tryck "Starta matchen" när ni är redo.'
-          : `Spelare anslöt (${bossMpState.peersTotal}/${bossMpState.maxPeers}).`;
+          : `Player joined (${bossMpState.peersTotal}/${bossMpState.maxPeers}).`;
       }
       return;
     }
@@ -29826,7 +29832,7 @@ function onReclaimed(code, hasClient) {
   if (lobbyCodeDisplayEl) lobbyCodeDisplayEl.textContent = code;
   if (lobbyHostMsgEl) lobbyHostMsgEl.textContent = hasClient
     ? 'Återansluten. Spelet återupptas...'
-    : 'Återansluten. Väntar på spelare...';
+    : 'Reconnected. Waiting for players...';
 }
 
 function onHosted(code) {
@@ -29850,7 +29856,7 @@ function onJoined(code) {
 
 async function hostGame() {
   showLobbyPanel('hosting');
-  lobbyHostMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  lobbyHostMsgEl.textContent = 'Connecting to server (~30s if it was asleep)...';
   try {
     await openRelay();
   } catch (err) {
@@ -29874,10 +29880,10 @@ function cancelHosting() {
 async function joinGame() {
   const code = lobbyCodeInputEl.value.trim().toUpperCase();
   if (code.length !== 4) {
-    lobbyJoinMsgEl.innerHTML = '<span class="err">Koden måste vara 4 tecken.</span>';
+    lobbyJoinMsgEl.innerHTML = '<span class="err">Code must be 4 characters.</span>';
     return;
   }
-  lobbyJoinMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  lobbyJoinMsgEl.textContent = 'Connecting to server (~30s if it was asleep)...';
   try {
     await openRelay();
   } catch (err) {
@@ -31582,7 +31588,7 @@ async function bossWarsHostGame() {
   bossMpState.code = null;
   bossMpState.peersTotal = 1;
   if (bossMpState.codeDisplayEl) bossMpState.codeDisplayEl.textContent = '----';
-  if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  if (bossMpState.hostMsgEl) bossMpState.hostMsgEl.textContent = 'Connecting to server (~30s if it was asleep)...';
   updateBossPeerCount(1, 3);
   showLobbyPanel('boss-host');
   try {
@@ -31598,7 +31604,7 @@ async function bossWarsHostGame() {
 async function bossWarsJoinGame() {
   const code = (bossMpState.codeInputEl ? bossMpState.codeInputEl.value : '').trim().toUpperCase();
   if (code.length !== 4) {
-    if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.innerHTML = '<span class="err">Koden måste vara 4 tecken.</span>';
+    if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.innerHTML = '<span class="err">Code must be 4 characters.</span>';
     return;
   }
   APP.gameMode = 'bosswars';
@@ -31607,7 +31613,7 @@ async function bossWarsJoinGame() {
   bossMpState.active = true;
   bossMpState.role = 'client';
   bossMpState.code = code;
-  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Ansluter till server (kan ta ~30 s om servern sover)...';
+  if (bossMpState.joinMsgEl) bossMpState.joinMsgEl.textContent = 'Connecting to server (~30s if it was asleep)...';
   try {
     await openRelay();
   } catch (err) {
