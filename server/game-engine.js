@@ -3631,8 +3631,50 @@ function tickBoss4(state, dt) {
 }
 
 // Boss-wars top-tick. SLICE 1a-3b: hjälte + boss-AI + minion-vågor/aura + boss-2-ads.
+// Boss wars-bot (co-op-medspelare, server-auth). Mirror av main.js tickBossWarsBotSolo.
+// Gå in i boss-rummet → target state.boss → move/AA/skill (ult tillåten i boss wars).
+function tickBossWarsBot(state, sideIdx, dt) {
+  const side = state.sides[sideIdx];
+  if (!side || !side.isBot || side.hero.dead) return;
+  const input = state.lastInputs[sideIdx];
+  if (!side._botSkillsInited) {
+    side._botSkillsInited = true;
+    side.skillLvl = side.skillLvl || { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) if ((side.skillLvl[k] || 0) < 1) side.skillLvl[k] = 1;
+  }
+  const p = BOT_PARAMS[side.botDifficulty] || BOT_PARAMS.medium;
+  if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) { if (input) input.j = null; return; }
+  if (!state.bossActivated) {
+    const dx = BOSSWARS_CX - side.hero.x, dz = BOSSWARS_CZ - side.hero.z, d = Math.hypot(dx, dz) || 1;
+    if (input) input.j = (d > 2) ? { x: dx / d, z: dz / d } : null;
+    return;
+  }
+  const boss = state.boss;
+  if (!boss || (boss.hp || 0) <= 0) { if (input) input.j = null; return; }
+  const dx = boss.x - side.hero.x, dz = boss.z - side.hero.z, d = Math.hypot(dx, dz) || 1;
+  side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
+  const range = side.attackRange || HERO_ATTACK_RANGE;
+  let mx = 0, mz = 0;
+  if (d > range * 0.8) { mx = dx / d; mz = dz / d; }
+  else if (d < range * 0.45) { mx = -dx / d; mz = -dz / d; }
+  if (mx || mz) { mx += (Math.random() - 0.5) * p.jitter; mz += (Math.random() - 0.5) * p.jitter; const ml = Math.hypot(mx, mz) || 1; mx /= ml; mz /= ml; }
+  if (input) input.j = (mx || mz) ? { x: mx, z: mz } : null;
+  side.targetId = boss.id; side.targetType = 'monster';
+  if (d <= range + 0.5 && !side.aaActive) applyEvent(state, sideIdx, { type: 'aa' });
+  side._botSkillT = (side._botSkillT || 0) - dt;
+  if (side._botSkillT <= 0 && Math.random() < p.skillRatePerSec * dt) {
+    side._botSkillT = p.skillReactionMs / 1000;
+    const cand = [];
+    for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
+    if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX) cand.push('r');   // ult funkar i boss wars
+    if (cand.length) applyEvent(state, sideIdx, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
+  }
+}
+
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
+  // Bot-AI (co-op-medspelare): sätter rörelse-input + AA/skill före rörelse-loopen.
+  for (const idx of [1, 2, 3]) if (state.sides[idx] && state.sides[idx].isBot) tickBossWarsBot(state, idx, dt);
   // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
   for (const idx of [1, 2, 3]) {
     const s = state.sides[idx];
