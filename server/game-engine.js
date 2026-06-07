@@ -1964,6 +1964,7 @@ function _makeHeroSnapBuf() {
     kComp: undefined, kCl: undefined,
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
+    gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -8760,6 +8761,9 @@ function serializeSide(side) {
     shld: nzr1(side.shield),
     dSp: nzr2(side.duelSpeedBuffRemaining),
     IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
+    // Kryx berserk-mätare i classic MP (duel): 1 = charged, 0..1 = andel.
+    // Skippar fältet helt när 0 (nz → undefined → JSON.stringify utelämnar det).
+    gmBk: side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : undefined),
   };
 }
 

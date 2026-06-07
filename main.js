@@ -18283,6 +18283,14 @@ function applyRemoteState(state) {
     side.titansTauntRemaining = sData.taunt || 0;
     side.ironWillRemaining = sData.iw || 0;
     side.ironWillStored = sData.iwS || 0;
+    // Kryx berserk-mätare (classic MP): gmBk=1 → charged, 0..1 → andel.
+    // Undefined (ej Gimlu eller mätare tom) → nolla state så mätaren försvinner.
+    if (sData.gmBk != null) {
+      if (sData.gmBk >= 1) { side.berserkCharged = true; side.berserkDmgAccum = side.hero.maxHp > 0 ? side.hero.maxHp * BERSERK_FULL_PCT : 0; }
+      else { side.berserkCharged = false; side.berserkDmgAccum = side.hero.maxHp > 0 ? sData.gmBk * side.hero.maxHp * BERSERK_FULL_PCT : 0; }
+    } else {
+      side.berserkCharged = false; side.berserkDmgAccum = 0;
+    }
     // Gandulf passive
     side.gandulfBuffRemaining = sData.gbuf || 0;
     side.gandulfBuffStacks = sData.gbStk || 0;
@@ -19176,6 +19184,9 @@ const _perfMeasure = {
   startMs: 0,
   durationMs: PERF_MEASURE_DURATION_MS,
   frameMs: [],          // array av frame-times i ms
+  simMs: [],            // sim-tid per frame (simulateAll/prediction) — var går tiden
+  renderMs: [],         // render-tid per frame (renderer.render/bloom)
+  entCounts: [],        // total entity-count per frame (monsters+creeps+proj+fx)
   drawCalls: [],        // array av render.calls per frame
   triangles: [],        // array av render.triangles per frame
   geometries: 0,        // sista mätta värde
@@ -19246,6 +19257,36 @@ function pmOnePctLow(arr) {
   const avgWorst = s / n;
   return 1000 / avgWorst;   // → FPS
 }
+function pmMax(arr) { let m = 0; for (const v of arr) if (v > m) m = v; return m; }
+// Telemetri: total live entity-count (proxy för load). Dedupar delad monster-array (boss wars).
+let _pmSeenMon = new Set();
+function _pmEntityCount() {
+  let n = 0;
+  _pmSeenMon.clear();
+  for (const idx of [1, 2, 3, 4]) {
+    const s = sides[idx];
+    if (!s) continue;
+    if (s.monsters && !_pmSeenMon.has(s.monsters)) { _pmSeenMon.add(s.monsters); n += s.monsters.length; }
+    if (s.playerCreeps) n += s.playerCreeps.length;
+    if (s.fireballs) n += s.fireballs.length;
+    if (s.hammers) n += s.hammers.length;
+    if (s.projectiles) n += s.projectiles.length;
+    if (s.monsterProjectiles) n += s.monsterProjectiles.length;
+  }
+  if (typeof combatFx !== 'undefined' && combatFx) n += combatFx.length;
+  return n;
+}
+// Per-frame sim/render-tid (sätts i tick(), pushas i slutet om mätning aktiv).
+let _pmSimMs = 0, _pmRenderMs = 0;
+// Nät-telemetri-snapshot (MP). RTT kräver ping-protokoll (ej byggt) — rapporterar
+// state-recv/apply-totaler + värsta burst (max recv/frame; >1 = state-bunching = jitter).
+function _pmNetStats() {
+  try {
+    const mp = (isMpMode && isMpMode()) || (bossMpState && bossMpState.matchActive);
+    if (!mp || !_netDiag) return null;
+    return { stateRecv: _netDiag.recv, stateApply: _netDiag.apply, maxRecvPerFrame: _netDiag.maxPerFrame };
+  } catch (_) { return null; }
+}
 
 function pmFinish() {
   if (!_perfMeasure.active) return;
@@ -19262,12 +19303,21 @@ function pmFinish() {
     durationMs: _perfMeasure.durationMs,
     avgFps: Math.round(avgFps * 10) / 10,
     onePctLowFps: Math.round(onePctLowFps * 10) / 10,
+    worstFrameMs: Math.round(pmMax(_perfMeasure.frameMs) * 10) / 10,
+    // Var går frame-tiden? sim (gameplay-logik) vs render (GPU/draw).
+    avgSimMs: Math.round(pmAvg(_perfMeasure.simMs) * 100) / 100,
+    maxSimMs: Math.round(pmMax(_perfMeasure.simMs) * 100) / 100,
+    avgRenderMs: Math.round(pmAvg(_perfMeasure.renderMs) * 100) / 100,
+    maxRenderMs: Math.round(pmMax(_perfMeasure.renderMs) * 100) / 100,
+    avgEntities: Math.round(pmAvg(_perfMeasure.entCounts)),
+    maxEntities: Math.round(pmMax(_perfMeasure.entCounts)),
     avgCalls,
     avgTris,
     geometries: _perfMeasure.geometries,
     textures: _perfMeasure.textures,
     programs: _perfMeasure.programs,
     mode: APP.mode + '/' + (APP.gameMode || '?'),
+    net: _pmNetStats(),
     snapshots: _perfMeasure.sampleGeo ? _perfMeasure.geoSnapshots.slice() : null,
     leakSnapshots: _perfMeasure.sampleGeo ? _perfMeasure.leakSnapshots.slice() : null,
   };
@@ -19276,6 +19326,9 @@ function pmFinish() {
   pmShowOverlay(result);
   // Rensa data så nästa mätning börjar fresh
   _perfMeasure.frameMs.length = 0;
+  _perfMeasure.simMs.length = 0;
+  _perfMeasure.renderMs.length = 0;
+  _perfMeasure.entCounts.length = 0;
   _perfMeasure.drawCalls.length = 0;
   _perfMeasure.triangles.length = 0;
   _perfMeasure.geoSnapshots.length = 0;
@@ -19506,11 +19559,20 @@ function pmShowOverlay(result) {
         '</div>'
       );
     })() : '') +
+    // Frame-breakdown: var går tiden (sim vs render) + entity-load + nät.
+    '<div style="margin-top:12px;background:rgba(0,0,0,0.4);border-radius:10px;padding:10px;font:600 12px/1.6 ui-monospace,monospace;color:#d8e0f0;">' +
+      '<div style="color:#ffd86a;font-weight:800;margin-bottom:3px;">FRAME BREAKDOWN</div>' +
+      'sim ' + result.avgSimMs + 'ms (max ' + result.maxSimMs + ') · render ' + result.avgRenderMs + 'ms (max ' + result.maxRenderMs + ')<br>' +
+      'worst frame ' + result.worstFrameMs + 'ms · entities avg ' + result.avgEntities + ' / max ' + result.maxEntities +
+      (result.net ? '<br>net: recv ' + result.net.stateRecv + ' apply ' + result.net.stateApply + ' maxBurst/f ' + result.net.maxRecvPerFrame : '') +
+    '</div>' +
     '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">' +
-      '<button id="pm-rerun" style="flex:1;min-width:140px;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
+      '<button id="pm-rerun" style="flex:1;min-width:120px;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
         'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run 30s</button>' +
-      '<button id="pm-rerun-long" style="flex:1;min-width:140px;padding:10px;background:linear-gradient(135deg,#8cd2ff,#4ab0e8);color:#0a1830;' +
+      '<button id="pm-rerun-long" style="flex:1;min-width:120px;padding:10px;background:linear-gradient(135deg,#8cd2ff,#4ab0e8);color:#0a1830;' +
         'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">Run 120s (geo-log)</button>' +
+      '<button id="pm-copy" style="flex:1;min-width:120px;padding:10px;background:linear-gradient(135deg,#9aff9a,#3ad03a);color:#0a2a08;' +
+        'border:0;border-radius:8px;font:800 13px/1 system-ui;cursor:pointer;">📋 Copy data</button>' +
     '</div>' +
     '<div style="margin-top:8px;font:500 10px/1.3 system-ui;color:#98a0b0;text-align:center;">' +
       'Frames sampled: ' + result.duration + ' · ' + result.when.replace('T', ' ').replace(/\..+/, '') +
@@ -19521,7 +19583,24 @@ function pmShowOverlay(result) {
   document.getElementById('pm-rerun').addEventListener('click', () => { pmHideOverlay(); pmStart(PERF_MEASURE_DURATION_MS, false); });
   const longBtn = document.getElementById('pm-rerun-long');
   if (longBtn) longBtn.addEventListener('click', () => { pmHideOverlay(); pmStart(PERF_MEASURE_LONG_DURATION_MS, true); });
+  const copyBtn = document.getElementById('pm-copy');
+  if (copyBtn) copyBtn.addEventListener('click', () => {
+    const json = JSON.stringify(result);
+    const done = () => { copyBtn.textContent = '✓ Copied'; setTimeout(() => { copyBtn.textContent = '📋 Copy data'; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(done).catch(() => { _pmFallbackCopy(json); done(); });
+    } else { _pmFallbackCopy(json); done(); }
+  });
   wrap.addEventListener('click', (e) => { if (e.target === wrap) pmHideOverlay(); });
+}
+// Clipboard-fallback (iOS Safari icke-secure-context / äldre): temporär textarea + execCommand.
+function _pmFallbackCopy(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+  } catch (_) { /* best-effort */ }
 }
 function pmHideOverlay() {
   const el = document.getElementById('pm-overlay');
@@ -26864,6 +26943,12 @@ function applyHeroSnap(side, snap) {
   side.auraStacks = snap.aus || 0;
   side.auraResetTimer = snap.art || 0;   // nedräkning i debuff-listan (display-only)
   side.adStacks = snap.ads || 0;         // boss 2-ad stack — display-only (grön siffra, Lager B)
+  // Kryx (Gimlu) berserk-mätare: gmBk=1 → charged, 0..1 → andel fylld. Synkad
+  // från server i arena/boss wars MP så joiner ser mätarens barserk-UI korrekt.
+  if (snap.gmBk != null) {
+    if (snap.gmBk >= 1) { side.berserkCharged = true; side.berserkDmgAccum = side.hero.maxHp > 0 ? side.hero.maxHp * BERSERK_FULL_PCT : 0; }
+    else { side.berserkCharged = false; side.berserkDmgAccum = side.hero.maxHp > 0 ? snap.gmBk * side.hero.maxHp * BERSERK_FULL_PCT : 0; }
+  }
   // Elar whirlwind — synka state + flagga meshen (interpolateHeroSnapBuffer
   // hoppar då rotation så animateGltfCharacter äger whirlwind-spinnet).
   side.whirlwindRemaining = snap.wwr || 0;
@@ -33543,6 +33628,7 @@ function tick() {
   // Server-auth (Fas 2): host agerar klient (ingen lokal sim, ingen broadcast) → isBossMpClient.
   const isBossMpClient = bossMpState.matchActive && (bossMpState.role === 'client' || APP.bossServerAuth);
   const isBossMpHost = bossMpState.matchActive && bossMpState.role === 'host' && !APP.bossServerAuth;
+  const _pmSimT0 = _perfMeasure.active ? performance.now() : 0;
   if (isBossMpClient) {
     tickLocalPrediction(dt);
     if (now - bossMpState.lastInputSent > INPUT_SEND_INTERVAL) {
@@ -33570,6 +33656,7 @@ function tick() {
     tickLocalPrediction(dt);
     smoothEntityMeshes(dt);
   }
+  if (_perfMeasure.active) _pmSimMs = performance.now() - _pmSimT0;
   // Arena MP host broadcastar state till klienten — fast 30 Hz-kadens via
   // tids-ackumulator (steg 2 av MP-lagg-planen). Tidigare kollades
   // (now - lastStateSent > intervall) en gång per rAF-frame; 33 ms är ingen
@@ -33704,8 +33791,16 @@ function tick() {
     else _lastRenderMs = _nowMs;
   }
   if (_doRender) {
+    const _pmRT0 = _perfMeasure.active ? performance.now() : 0;
     if (bloomComposer) bloomComposer.render();
     else renderer.render(scene, camera);
+    if (_perfMeasure.active) _pmRenderMs = performance.now() - _pmRT0;
+  } else if (_perfMeasure.active) { _pmRenderMs = 0; }
+  // Telemetri: pusha per-frame sim/render/entity-samples (bara under aktiv mätning).
+  if (_perfMeasure.active) {
+    _perfMeasure.simMs.push(_pmSimMs);
+    _perfMeasure.renderMs.push(_pmRenderMs);
+    _perfMeasure.entCounts.push(_pmEntityCount());
   }
   requestAnimationFrame(tick);
 }
