@@ -24666,8 +24666,8 @@ function heroActiveBuffRemaining(side, key) {
   if (key === 'e' && h === 'zheyna') return side.zheynaWarpathRem || 0;        // Warpath
   if (key === 'f' && h === 'legolas') return side.legolusBuffRemaining || 0;   // Hunter's Focus
   if (key === 'q' && h === 'aragurn') return side.whirlwindRemaining || 0;     // Whirlwind
-  if (key === 'q' && h === 'gimlu') return side.titansTauntRemaining || 0;     // Titan's Taunt
-  if (key === 'f' && h === 'gimlu') return side.ironWillRemaining || 0;        // Iron Will
+  if (key === 'q' && h === 'gimlu') return side.titansStompDrTime || 0;     // Titan's Stomp (DR-fönster)
+  if (key === 'f' && h === 'gimlu') return side.titansRageTime || 0;        // Titan's Rage
   if (key === 'e' && h === 'kostefo') return side.kostefoCloudRemaining || 0;  // Cannabis Cloud
   return 0;
 }
@@ -27502,11 +27502,11 @@ const HERO_INFO = {
   },
   gimlu: {
     skills: {
-      q: { name: 'Titan\'s Taunt', icon: '📢', desc: 'A roar that taunts all enemies within 5.5 m for 3 seconds — they are forced to attack Kryx (auto-attack only, no skills). During the buff Kryx gains 30% damage reduction, heals 20% of all damage he takes and 10% of maxHP per half second.' },
-      f: { name: 'Iron Will', icon: '🛡', desc: '3-second activation window. All damage Kryx takes is stored in a gauge. At the end he explodes in AoE (6 m radius) and deals damage equal to the stored amount to all enemies around.' },
+      q: { name: 'Titan\'s Stomp', icon: '🦶', desc: 'Stomps the ground for AoE damage (25% of each target\'s max HP) and leaves a DoT (5% max HP/s for 3s). Slows hit enemies 40% move + 40% attack speed for 2s. Kryx gains damage reduction per target hit (hero +25%, minion +5%, boss +50%) for 3s, capped at 70% total.' },
+      f: { name: 'Titan\'s Rage', icon: '😤', desc: 'Self-buff for 5s: +25% damage, +25% damage reduction, +25% move & attack speed. Nearby allies get half (+12.5%). Enemy heroes hit are feared for 1s — and for 1s after the fear, all damage they deal heals Kryx 100%.' },
       e: { name: 'Hammer Throw', icon: '🔨', desc: 'Throws the hammer in a straight line (9 m) and it returns. Full damage on the way out, half damage on the way back. Kryx heals 15% of damage done. Press E again while the hammer is out to swap places with it (teleport).' },
     },
-    passive: { name: 'Stalwart Resolve', icon: '🗿', desc: 'Layered defensive passive that triggers at different HP thresholds:\n• Below 80% HP: 10% damage reduction (always on).\n• Below 60% HP: + 2.5% of maxHP regen per second (in addition to DR from tier 1).\n• Below 40% HP: + 10% more damage reduction (20% total) and every 6th incoming damage instance is fully blocked.\n\nBonus: Kryx builds ult energy by tanking damage (5% of damage taken, max 2% per hit).' },
+    passive: { name: 'Berserker Meter', icon: '🔥', desc: 'Kryx fills a berserk meter (3 bars) by taking damage — one bar per 10% max HP lost. When full, his next ability is empowered (and the meter resets):\n• Titan\'s Stomp: 100% larger AoE, +50% damage, +50% stronger slow.\n• Titan\'s Rage: allies get full buff stats, all stats up to 30%, fear 1.5s + a slow after.\n• Hammer Throw: 200% larger, slows 50% move speed, +50% damage, +50% heal.\n\nKryx also builds ult energy by tanking damage.' },
     ult: { name: 'Berserker Rage', icon: '🪓', desc: '5 seconds of rage: Kryx grows to double size, becomes CC-immune (no one can freeze, taunt, fear or slow him) and gains 50% damage reduction. Every 0.5s he pulses an AoE wave around him (4.5 m radius) dealing 3.5% of target max HP — total 35% max HP over 5s (10 pulses). 20% of all damage Kryx deals heals him. The pulses hit monsters, creeps, bosses, the enemy hero and the arena orb.' },
   },
   aragurn: {
@@ -31496,18 +31496,7 @@ function simulateAll(dt) {
         const lost = side.hero.maxHp - side.hero.hp;
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + lost * side.hpRegenLostPct * dt);
       }
-      // Titans Taunt passive heal: 20% av maxHP per sek (+50% med Vengeful Roar-talent)
-      if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
-        const tauntHealMul = arenaHasTalent(side, 'g_taunt_heal') ? 1.5 : 1.0;
-        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * TAUNT_HEAL_PER_SEC * tauntHealMul * dt);
-      }
-      // KryxStalwart Resolve regen: 5%/s när <60% HP
-      if (side.heroId === 'gimlu' && side.hero.hp < side.hero.maxHp) {
-        const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
-        if (ratio < GIMLU_PASSIVE_TIER2_HP) {
-          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * GIMLU_PASSIVE_TIER2_REGEN * dt);
-        }
-      }
+      // (Kryx gamla passive Stalwart Resolve-regen + Titan's Taunt-heal borttagna i reworken.)
     }
   }
   const isArena = APP.gameMode === 'arena1v1';
