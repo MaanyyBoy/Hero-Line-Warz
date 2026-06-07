@@ -2618,6 +2618,16 @@ const TAUNT_HEAL_PCT = 0.20;
 const TAUNT_HEAL_PER_SEC = 0.20;
 const IRON_WILL_DURATION = 3.0;
 const IRON_WILL_EXPLOSION_RADIUS = 6.0;
+// Kryx-rework 2026-06-07 (speglar server): Q Titan's Stomp + F Titan's Rage + berserk-passive.
+const STOMP_RADIUS = 5.5;
+const STOMP_DMG_PCT = 0.25, STOMP_DOT_PCT = 0.05, STOMP_DOT_DUR = 3.0;
+const STOMP_DR_HERO = 0.25, STOMP_DR_MINION = 0.05, STOMP_DR_BOSS = 0.50, STOMP_DR_DUR = 3.0;
+const STOMP_SLOW_MUL = 0.60, STOMP_SLOW_DUR = 2.0;
+const KRYX_DR_CAP = 0.70;
+const TITANS_RAGE_DURATION = 5.0, TITANS_RAGE_SELF = 0.25;
+const BERSERK_FULL_PCT = 0.30;
+const BERSERK_STOMP_RADIUS_MUL = 2.0, BERSERK_STOMP_DMG_MUL = 1.5, BERSERK_STOMP_SLOW_MUL = 0.40;
+const BERSERK_HAMMER_SIZE_MUL = 3.0, BERSERK_HAMMER_DMG_MUL = 1.5, BERSERK_HAMMER_HEAL_MUL = 1.5, BERSERK_HAMMER_SLOW_MUL = 0.50;
 const HAMMER_SPEED = 12;
 const HAMMER_RANGE = 9 * 1.3;        // +30% kast-range
 const HAMMER_RADIUS = 0.8;
@@ -13753,6 +13763,11 @@ function respawnHero(side) {
   side.adStackTimer = 0;
   side.heroSlowMul = 1;
   side.heroSlowTime = 0;
+  // Kryx-rework: nolla Stomp-DR / hjälte-AS-slow / Titan's Rage / berserk-mätare
+  side.titansStompDr = 0; side.titansStompDrTime = 0;
+  side.heroASlowMul = 1; side.heroASlowTime = 0;
+  side.titansRageBuff = 0; side.titansRageTime = 0;
+  side.berserkCharged = false; side.berserkDmgAccum = 0;
   side.titansBlockPending = false;
   side.lingShieldHp = 0;
   side.lingShieldRefreshTimer = 0.5;
@@ -13977,7 +13992,7 @@ function updateHeroAttack(side, dt) {
   const berserkMul = berserkActive ? BERSERK_AA_DMG_MUL : 1;
   // Arena power-up damage-buff: +30% AA-dmg i 8s efter pickup
   const arenaDmgMul = (side.arenaDamageBuff || 0) > 0 ? (1 + ARENA_POWERUP_DAMAGE_BOOST) : 1;
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul * arenaDmgMul;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * furyMul * aragurnPassive * berserkMul * arenaDmgMul * ((side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1);   // Titan's Rage outgoing-dmg
   // Berserk: 25% lifesteal på AA. Stackar additivt med dash-buff (annars dash overrider).
   const berserkLs = berserkActive ? BERSERK_AA_LIFESTEAL : 0;
   const aaLifesteal = dashBuffed ? dashLs : berserkLs;
@@ -14116,7 +14131,9 @@ function updateHeroAttack(side, dt) {
   const bannerAsMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_AS_BONUS) : 1;
   const interval = side.attackInterval || HERO_ATTACK_INTERVAL;
   const warpathAsMul = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_AS) : 1;
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * focusAsMul * berserkAsMul * bannerAsMul * warpathAsMul);
+  const _rageAs = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff
+  const _kryxAsSlow = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;          // Stomp AS-slow
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * furyMul * ultAsMul * focusAsMul * berserkAsMul * bannerAsMul * warpathAsMul * _rageAs * _kryxAsSlow);
 }
 
 function updateProjectiles(side, dt) {
@@ -15756,11 +15773,13 @@ function updateVineTrapsSolo(side, dt) {
 function hostCastGimluTaunt(side) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
-  side.titansTauntRemaining = TAUNT_DURATION;
-  // Lvl 5: reset heal-tracker så vi mäter healing från denna taunts start
-  side.tauntHealAccum = 0;
-  side._tauntHpPrev = side.hero.hp;
-  side.tauntLvl5 = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);
+  // Passive empower (rework): full berserk → 100% AoE, +50% dmg, 60% slow. + Titan's Rage outgoing-dmg.
+  const emp = consumeBerserk(side);
+  const rageMul = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;
+  const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
+  const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
+  const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
+  const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
   // Boss-nivå-FX (decision 136): earth-stomp-explosion. Shake sänkt 0.25→0.15
   // (playtest: Taunt är kort-CD/hög-uptime → enda "spam-shakaren"; circle-shockwave bär punchen).
   spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: 1.6, power: 1, shakeMag: 0.15, shakeDur: 0.18 });
@@ -15787,67 +15806,75 @@ function hostCastGimluTaunt(side) {
       });
     }
   }
-  const r2 = TAUNT_RADIUS * TAUNT_RADIUS;
-  for (const m of side.monsters) {
+  const r2 = eRad * eRad;
+  let drGain = 0;
+  // Monsters (minions + boss): skada (boss-cap i damageMonster) + DoT + MS/AS-slow + DR-gain.
+  for (let i = side.monsters.length - 1; i >= 0; i--) {
+    const m = side.monsters[i];
     const dx = m.mesh.position.x - side.hero.x, dz = m.mesh.position.z - side.hero.z;
-    if (dx * dx + dz * dz < r2) {
-      m.tauntedTime = TAUNT_DURATION;
-      m.chasing = true;
-    }
+    if (dx * dx + dz * dz >= r2) continue;
+    const isBoss = !!m.isBossWarsBoss;
+    const mMax = m.maxHp || m.hp;
+    damageMonster(m, mMax * eDmgPct);
+    m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, eSlow); m.slowTime = Math.max(m.slowTime || 0, STOMP_SLOW_DUR);
+    m.aSlowMul = Math.min(m.aSlowMul == null ? 1 : m.aSlowMul, eSlow); m.aSlowTime = Math.max(m.aSlowTime || 0, STOMP_SLOW_DUR);
+    if (!isBoss) { m.dotRemaining = STOMP_DOT_DUR; m.dotPerSec = mMax * eDotPct; }
+    drGain += isBoss ? STOMP_DR_BOSS : STOMP_DR_MINION;
+    if (m.hp <= 0) hostKillMonster(side, i, side);
   }
   const opp = sides[3 - side.idx];
-  if (opp) for (const c of opp.playerCreeps) {
+  if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
+    const c = opp.playerCreeps[i];
     const dx = c.mesh.position.x - side.hero.x, dz = c.mesh.position.z - side.hero.z;
-    if (dx * dx + dz * dz < r2) c.tauntedTime = TAUNT_DURATION;
+    if (dx * dx + dz * dz >= r2) continue;
+    const cMax = c.maxHp || c.hp;
+    c.hp -= cMax * eDmgPct;
+    c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, eSlow); c.slowTime = Math.max(c.slowTime || 0, STOMP_SLOW_DUR);
+    c.aSlowMul = Math.min(c.aSlowMul == null ? 1 : c.aSlowMul, eSlow); c.aSlowTime = Math.max(c.aSlowTime || 0, STOMP_SLOW_DUR);
+    c.dotRemaining = STOMP_DOT_DUR; c.dotPerSec = cMax * eDotPct;
+    drGain += STOMP_DR_MINION;
+    if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(i, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
   }
-  // Taunt enemy hero — arena 1v1 (PvP) eller classic duel
+  // Enemy hero (arena PvP / duel) — skada + slow + DoT (ingen taunt längre).
   const inDuel = !!duelState.active;
   const inArenaFight = APP.gameMode === 'arena1v1' && arenaState.phase === 'fight';
   if (opp && !opp.hero.dead && (inDuel || inArenaFight)) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz < r2) {
-      const ccMul = Math.max(0, 1 - (opp.ccReductionPct || 0));
-      opp.hero.tauntedTime = TAUNT_DURATION * ccMul;
-      opp.hero.tauntedBy = side.idx;
-      // Lås opp:s AA-target på taunter:s hero (force-attack Gimlu).
-      // Skapa heroTarget lazy om det inte finns (annars triggas force-AA först
-      // när motspelaren gjort sin första AA — kan vara flera frames bort).
-      if (!arenaState.heroTargets) arenaState.heroTargets = {};
-      if (!arenaState.heroTargets[side.idx]) {
-        arenaState.heroTargets[side.idx] = {
-          id: -200 + side.idx, isArenaHero: true, sideIdx: side.idx,
-          get mesh() { return sides[this.sideIdx]?.mesh; },
-        };
-      }
-      opp.aaActive = true;
-      opp.targetId = arenaState.heroTargets[side.idx].id;
-      opp.targetType = 'arena-hero';
+      damageHero(opp, opp.hero.maxHp * eDmgPct);
+      opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, eSlow); opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, STOMP_SLOW_DUR);
+      opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, eSlow); opp.heroASlowTime = Math.max(opp.heroASlowTime || 0, STOMP_SLOW_DUR);
+      opp.hero.dotRemaining = STOMP_DOT_DUR; opp.hero.dotPerSec = opp.hero.maxHp * eDotPct;
+      drGain += STOMP_DR_HERO;
     }
   }
-  // Visuell taunt-ring
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(TAUNT_RADIUS - 0.4, TAUNT_RADIUS, 48),
-    new THREE.MeshBasicMaterial({ color: 0xffaa55, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.set(side.hero.x, 0.1, side.hero.z);
-  scene.add(ring);
-  side.novaEffects.push({ mesh: ring, life: 0.7, maxLife: 0.7 });
-  // Cast-FX för dramatik
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xffaa55, 1.5);
-  triggerCameraShake(0.25, 0.3);
+  if (drGain > 0) { side.titansStompDr = drGain; side.titansStompDrTime = STOMP_DR_DUR; }
+}
+
+// Kryx-rework (solo): berserk-consume + timers (Stomp-DR / hjälte-AS-slow / Titan's Rage).
+function consumeBerserk(side) {
+  if (side.heroId !== 'gimlu' || !side.berserkCharged) return false;
+  side.berserkCharged = false; side.berserkDmgAccum = 0;
+  return true;
+}
+function tickKryxTimers(side, dt) {
+  if ((side.titansStompDrTime || 0) > 0) { side.titansStompDrTime = Math.max(0, side.titansStompDrTime - dt); if (side.titansStompDrTime <= 0) side.titansStompDr = 0; }
+  if ((side.heroASlowTime || 0) > 0) { side.heroASlowTime = Math.max(0, side.heroASlowTime - dt); if (side.heroASlowTime <= 0) side.heroASlowMul = 1; }
+  if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageBuff = 0; }
 }
 
 function hostCastGimluIronWill(side) {
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.ironWillRemaining = IRON_WILL_DURATION;
-  side.ironWillStored = 0;
-  // Boss-nivå-FX (decision 136): holy "fäst sköld"-burst (defensiv buff)
-  spawnElementCast(side.hero.x, side.hero.z, 'holy', 1.5);
-  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffe27a);
-  // Kenney persistent shield-aura under iron-will duration
-  attachIronWillAura(side);
+  // Titan's Rage (rework): self-buff (+25% dmg/DR/MS/AS, 30% empowered). Solo = bara
+  // self-buff (inga enemy-heroes att feara). DR appliceras i damageHero (titansRageBuff);
+  // dmg/MS/AS folds in i AA/move/attackCd-chokepoints.
+  const emp = consumeBerserk(side);
+  side.titansRageTime = TITANS_RAGE_DURATION;
+  side.titansRageBuff = emp ? 0.30 : TITANS_RAGE_SELF;
+  spawnElementCast(side.hero.x, side.hero.z, 'holy', 1.6);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffcc44);
+  triggerCameraShake(0.18, 0.2);
 }
 
 // Persistent defensiv aura runt Kryx under Iron Will. Mesh följer hero,
@@ -16078,8 +16105,9 @@ function hostCastGimluHammer(side, dirX, dirZ) {
     traveled: 0,
     returning: false,
     hit: new Set(),
-    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1),
+    damage: HAMMER_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * ((side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1),
     lvl5Slow: isLvl5,
+    empowered: consumeBerserk(side),   // passive empower: ×3 storlek, +50% dmg/heal, 50% slow
   });
   // Boss-nivå-FX (decision 136): earth-kast-burst
   spawnElementCast(side.hero.x, side.hero.z, 'earth', 1.2);
@@ -16127,32 +16155,37 @@ function updateHammersSolo(side, dt) {
     // Talent: Mighty Throw — återresan får full skada (var 50%)
     const returnMul = arenaHasTalent(side, 'g_hammer_full') ? 1.0 : HAMMER_RETURN_DMG_MUL;
     const dmgMul = h.returning ? returnMul : 1;
-    const dmg = h.damage * dmgMul;
+    // Passive empower: +50% dmg/heal, ×3 hit-radie, 50% MS-slow.
+    const dmg = h.damage * dmgMul * (h.empowered ? BERSERK_HAMMER_DMG_MUL : 1);
+    const lifesteal = HAMMER_LIFESTEAL * (h.empowered ? BERSERK_HAMMER_HEAL_MUL : 1);
+    const hitR = HAMMER_RADIUS * (h.empowered ? BERSERK_HAMMER_SIZE_MUL : 1);
+    const doSlow = h.lvl5Slow || h.empowered;
+    const hSlowMul = h.empowered ? BERSERK_HAMMER_SLOW_MUL : GIMLU_LVL5_HAMMER_SLOW_MUL;
     for (let j = side.monsters.length - 1; j >= 0; j--) {
       const m = side.monsters[j];
       if (h.hit.has(m.id)) continue;
-      if (Math.hypot(m.mesh.position.x - h.mesh.position.x, m.mesh.position.z - h.mesh.position.z) < HAMMER_RADIUS) {
+      if (Math.hypot(m.mesh.position.x - h.mesh.position.x, m.mesh.position.z - h.mesh.position.z) < hitR) {
         h.hit.add(m.id);
         const actual = damageMonster(m, dmg);
-        if (h.lvl5Slow) {
+        if (doSlow) {
           m.slowTime = Math.max(m.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
-          m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+          m.slowMul = Math.min(m.slowMul == null ? 1 : m.slowMul, hSlowMul);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + actual * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + actual * lifesteal);
         if (m.hp <= 0) hostKillMonster(side, j, side);
       }
     }
     if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
       const c = opp.playerCreeps[j];
       if (h.hit.has(c.id)) continue;
-      if (Math.hypot(c.mesh.position.x - h.mesh.position.x, c.mesh.position.z - h.mesh.position.z) < HAMMER_RADIUS) {
+      if (Math.hypot(c.mesh.position.x - h.mesh.position.x, c.mesh.position.z - h.mesh.position.z) < hitR) {
         h.hit.add(c.id);
         c.hp -= dmg;
-        if (h.lvl5Slow) {
+        if (doSlow) {
           c.slowTime = Math.max(c.slowTime || 0, GIMLU_LVL5_HAMMER_SLOW_DURATION);
-          c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, GIMLU_LVL5_HAMMER_SLOW_MUL);
+          c.slowMul = Math.min(c.slowMul == null ? 1 : c.slowMul, hSlowMul);
         }
-        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * HAMMER_LIFESTEAL);
+        if (!side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dmg * lifesteal);
         if (c.hp <= 0) { removeEntityMesh(c.mesh); opp.playerCreeps.splice(j, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
       }
     }
@@ -16683,19 +16716,7 @@ function tickGandulfMarkClient(target, dt) {
 
 function damageHero(side, amount, isCrit = false) {
   if (side.hero.dead) return;
-  let gimluDR = 0;
-  if (side.heroId === 'gimlu') {
-    const ratio = side.hero.maxHp > 0 ? side.hero.hp / side.hero.maxHp : 1;
-    if (ratio < GIMLU_PASSIVE_TIER1_HP) gimluDR += GIMLU_PASSIVE_TIER1_DR;
-    if (ratio < GIMLU_PASSIVE_TIER3_HP) {
-      gimluDR += GIMLU_PASSIVE_TIER3_DR;
-      side.gimluDmgInstanceCount = (side.gimluDmgInstanceCount || 0) + 1;
-      if (side.gimluDmgInstanceCount % GIMLU_PASSIVE_IMMUNE_EVERY === 0) {
-        spawnCcText(side.mesh, 'IMMUNE');
-        return;
-      }
-    }
-  }
+  // (Gimlu passive Stalwart Resolve borttagen i reworken → nya passiven = berserk-mätare.)
   // Titans Armor: var-3:e-AA pending block ELLER procentuell block-chans
   // (efter Gimlu-counter så hans immune-stack inte tappas vid block).
   let blocked = false;
@@ -16717,9 +16738,15 @@ function damageHero(side, amount, isCrit = false) {
   if (hasTitans) {
     side.titansInstanceStacks = Math.min(10, (side.titansInstanceStacks || 0) + 1);
   }
-  const gimluMul = gimluDR > 0 ? (1 - gimluDR) : 1;
+  // Kryx-DR (rework): Titan's Stomp-stack + Titan's Rage(F), cap 70%. (R-ult separat nedan.)
+  let gimluMul = 1;
+  if (side.heroId === 'gimlu') {
+    let kryxDr = 0;
+    if ((side.titansStompDrTime || 0) > 0) kryxDr += (side.titansStompDr || 0);
+    if ((side.titansRageTime || 0) > 0) kryxDr += (side.titansRageBuff || 0);
+    if (kryxDr > 0) gimluMul = 1 - Math.min(KRYX_DR_CAP, kryxDr);
+  }
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
-  const tauntMul = (side.titansTauntRemaining || 0) > 0 ? (1 - TAUNT_DMG_REDUCTION) : 1;
   // Titans Armor instance-stacks → +1% DR per stack
   const taStackMul = 1 - 0.01 * (side.titansInstanceStacks || 0);
   // Magiker laser-ult: 90% DR
@@ -16736,7 +16763,7 @@ function damageHero(side, amount, isCrit = false) {
   const shoutDebuffMul = (side.aragurnShoutDebuff || 0) > 0 ? (1 + SHOUT_DEBUFF_DMG_TAKEN) : 1;
   // Elar banner-aura (Hero Leap lvl5): -20% incoming dmg
   const bannerDrMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * tauntMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * legolusTrapDr * shoutDebuffMul * bannerDrMul;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * gimluMul * taStackMul * laserMul * rageMul * shoutDrSelf * shoutDrAlly * legolusTrapDr * shoutDebuffMul * bannerDrMul;
   // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar ×1.5 (egen HP-pool) → dör snabbt.
   if (side.zheynaClone) {
     side.zheynaClone.hp -= final * ZHEYNA_CLONE_DMG_TAKEN_MUL;
@@ -16768,23 +16795,14 @@ function damageHero(side, amount, isCrit = false) {
   const hpLost = hpBefore - side.hero.hp;
   // Visa skada som faktiskt landade på HP (efter shields/DR)
   if (hpLost > 0.5) spawnHeroDamageText(side, hpLost, isCrit);
-  if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp > 0) {
-    const tauntHeal = final * TAUNT_HEAL_PCT;
-    side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + tauntHeal);
-    if (tauntHeal > 0.5) spawnHeroHealText(side, tauntHeal);
-  }
-  if ((side.ironWillRemaining || 0) > 0) {
-    side.ironWillStored = (side.ironWillStored || 0) + final;
-    // Lvl 5: queue 30% damage-reflect (AoE runt Kryx vid nästa tick)
-    if (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX && final > 0) {
-      side.ironWillReflectQueue = side.ironWillReflectQueue || [];
-      side.ironWillReflectQueue.push(final * GIMLU_LVL5_IW_REFLECT_PCT);
-    }
-  }
   // Kryx tank-mekanik: 5% av damage taken som ult-gain (cap 2% per hit).
-  // Kompenserar långsam AA-frekvens + single-target skills.
   if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
     gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
+    // Passive: berserk-mätare fylls av tagen skada (3 bars = 30% maxHP → empowrar nästa Q/F/E).
+    if (!side.berserkCharged) {
+      side.berserkDmgAccum = (side.berserkDmgAccum || 0) + final;
+      if (side.berserkDmgAccum >= side.hero.maxHp * BERSERK_FULL_PCT) { side.berserkDmgAccum = side.hero.maxHp * BERSERK_FULL_PCT; side.berserkCharged = true; }
+    }
   }
   if (side.hero.hp <= 0) killHero(side);
 }
@@ -16885,6 +16903,15 @@ function tickIceBlock(side, dt) {
       side.heroSlowMul = 1;
     }
   }
+  if ((side.heroFearTime || 0) > 0) side.heroFearTime = Math.max(0, side.heroFearTime - dt);
+  // Universell hjälte-DoT-tick (Stomp/FireWave/Slider satte dotRemaining; var tidigare
+  // bara tickad i Kostefo-pathen → DoT på hero dog i andra matchups). Per-side per-frame.
+  if ((side.hero.dotRemaining || 0) > 0) {
+    side.hero.dotRemaining = Math.max(0, side.hero.dotRemaining - dt);
+    damageHero(side, (side.hero.dotPerSec || 0) * dt);
+    if (side.hero.dotRemaining <= 0) side.hero.dotPerSec = 0;
+  }
+  tickKryxTimers(side, dt);   // Kryx-rework: Stomp-DR + hjälte-AS-slow + Titan's Rage (solo)
 }
 
 function onIceBlockEnd(side) {
@@ -17071,7 +17098,8 @@ function applyMovement(side, joyX, joyZ, dt) {
     ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
   const warpathMs2 = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs2 = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
-  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs2 * ultChargeMs2 * slowMul;
+  const _rageMs = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff
+  const effSpeed = side.moveSpeed * (1 + onyxMs + iceMsBuff + whirlMs + allyShoutMs + invisMs + arenaSpeedMs) * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs2 * ultChargeMs2 * _rageMs * slowMul;
   const nx = side.hero.x + ndx * effSpeed * strength * dt;
   const nz = side.hero.z + ndz * effSpeed * strength * dt;
   if (isHeroWalkable(side.idx, nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
@@ -22341,12 +22369,7 @@ function tickClientKostefoGooseWaves(side, dt) {
 // dot från slider-explosion) eftersom inget annat klient-tick gör det för hero.
 function tickClientKostefoSliders(side, dt) {
   const opp = arenaPrimaryOpp(side);
-  // DoT-tick på opp-hero (slider-explosion satte opp.hero.dotRemaining/dotPerSec)
-  if (opp && !opp.hero.dead && (opp.hero.dotRemaining || 0) > 0) {
-    opp.hero.dotRemaining -= dt;
-    damageHero(opp, (opp.hero.dotPerSec || 0) * dt);
-    if (opp.hero.dotRemaining <= 0) { opp.hero.dotRemaining = 0; opp.hero.dotPerSec = 0; }
-  }
+  // (Hjälte-DoT-tick flyttad till universell per-side-buff-tick — gällde tidigare bara Kostefo.)
   if (!side.kostefoSliders || side.kostefoSliders.length === 0) return;
   const skillMul = side.skillDmgMul || 1;
   const hitR2 = _K_SLIDER_RADIUS * _K_SLIDER_RADIUS;
