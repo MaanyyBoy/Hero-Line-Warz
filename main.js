@@ -14478,9 +14478,9 @@ function hostCastSoulDrain(side, ev) {
     targetType,
   };
   ensureSoulDrainBeam(side);
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x99ff88, 1.6);
+  // Boss-nivå-FX (decision 136): shadow drain-cast-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'shadow', 1.6);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaa44ff);
-  triggerCameraShake(0.12, 0.18);
   // Initial tick direkt — drain ska börja skada vid cast
   const initialTarget = resolveSoulDrainTarget(side, side.soulDrain, opp);
   if (initialTarget) {
@@ -14577,7 +14577,8 @@ function hostCastWindPuff(side, ev) {
     mesh: coneGrp, life: 0.6, maxLife: 0.6,
     dx: dirX, dz: dirZ,
   });
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xccddff, 1.4);
+  // Boss-nivå-FX (decision 136): ice/air wind-puff-cast-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'ice', 1.4);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaccff);
   triggerCameraShake(0.14, 0.20);
   // Kenney-FX: muzzle-burst framåt + 4 smoke-puffar längs cone
