@@ -8021,8 +8021,7 @@ function endWarlordChallengeClient(boss) {
     boss.phase2DrBonus = 0.20;   // +20pp DR i fas 2 (samma som generisk övergång, användarbeslut)
     const bx = boss.mesh ? boss.mesh.position.x : BOSSWARS_CX, bz = boss.mesh ? boss.mesh.position.z : BOSSWARS_CZ;
     if (boss.mesh) applyBossPhase2Glow(boss.mesh, boss.bossTier);
-    spawnGroundImpact(bx, bz, 8, 0xff44aa);
-    triggerCameraShake(0.5, 0.5);
+    spawnExplosion(bx, bz, bossSkillElement(null, boss.bossTier), { scale: 3.0, power: 1.5, shakeMag: 0.5, shakeDur: 0.5 });   // ENRAGE-explosion (decision 136)
   }
   w.prevRoundSymbols = w.roundSymbols;
   w.round++;
@@ -8364,8 +8363,8 @@ function triggerBossPhaseTransition(side, boss) {
     // divergens. Detta rör BARA spawn-schemat (boss2AdWaveSpawnState), inte dödstimern.
     resetBoss2AdWaveSpawnState();
   }
-  // Visuell shake + burst
-  triggerCameraShake(0.6, 0.6);
+  // Visuell fas-2-burst: dramatisk element-explosion (ENRAGE) (decision 136)
+  spawnExplosion(boss.mesh.position.x, boss.mesh.position.z, bossSkillElement(null, boss.bossTier), { scale: 3.0, power: 1.5, shakeMag: 0.55, shakeDur: 0.55 });
   spawnShieldBurstFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44ff);
 }
 
@@ -21563,9 +21562,10 @@ function hostCastLegolasUlt(side, dx, dz) {
   side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
   side.legolusUltAaPending = true;
   side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x44aa66, 1.6);
-  spawnShieldBurstFx(side.hero.x, side.hero.z, 0x44aa66);
-  triggerCameraShake(0.15, 0.20);
+  // "Vanish"-ult (decision 136): löv-burst (nature) + skugg-shimmer så stealth-in
+  // läses tydligt istället för en svag grön ring.
+  spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.3, power: 1.2, shakeMag: 0.22, shakeDur: 0.24 });
+  spawnElementCast(side.hero.x, side.hero.z, 'shadow', 1.8);
 }
 
 // Spawnar en visuell thorn pool på (x,z) och tickar damage 5%maxHp/0.5s i 3s.
@@ -31679,8 +31679,9 @@ combatFx.push = function() {
 // så animationen syns omedelbart även om mesh:n inte hunnit spela attack-clip.
 // Tier styr färg (1=grön, 2=lila, 3=cyan, 4=röd, 5=vit-blå).
 function spawnBossAaChargeFx(x, z, tier) {
-  const tierColors = { 1: 0x80ff60, 2: 0xc060ff, 3: 0x40ffc0, 4: 0xff4030, 5: 0xa0e0ff };
-  const color = tierColors[tier] || 0xff8844;
+  // Element-tema per tier (decision 136): T1 physical-guld, T2 lightning-blå,
+  // T3 poison-grön, T4 shadow-lila, T5 fire-orange — matchar boss-skill-FX.
+  const color = elementFx(bossSkillElement(null, tier)).mid;
   // Expanderande ring vid bossens fot (visar "laddning")
   const ringMat = new THREE.MeshBasicMaterial({
     color, transparent: true, opacity: 0.85,
