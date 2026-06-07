@@ -23761,11 +23761,12 @@ function buildShopItemList() {
         list.push({ itemId, variantId: vid });
       }
     } else {
-      // Skippa items utan stats (stub-items som item6 returnerar {})
       if (typeof def.statsAtLevel !== 'function') { list.push({ itemId }); continue; }
       const sample = def.statsAtLevel(1);
       if (sample && Object.keys(sample).length > 0) list.push({ itemId });
-      else list.push({ itemId });  // Visa även stub men sub-text säger "Coming Soon"
+      // else: skippa stub-items (item6 returnerar {}) — visa INTE en tom "Coming
+      // Soon"-cell (köp-fälla: 200g för inget). Definitionen är kvar i ITEM_TYPES
+      // så den dyker upp automatiskt när riktiga stats läggs till.
     }
   }
   return list;
