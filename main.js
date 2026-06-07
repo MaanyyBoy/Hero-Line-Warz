@@ -15490,8 +15490,8 @@ function hostCastLegolusVineTrap(side, ev) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
   const center = soloResolveSkillGroundTarget(side, ev || {}, VINE_TRAP_CAST_DISTANCE);
-  // Cast-FX: grön burst vid hero + ground-impact vid target
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66cc44, 0.9);
+  // Boss-nivå-FX (decision 136): nature-cast-burst vid hero + burst vid fällan
+  spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.0);
   spawnShieldBurstFx(center.x, center.z, 0x88dd55);
   // Kenney-FX: scratch-mark + sprutande sparks i grön nyans
   if (kenneyTex.size > 0) {
@@ -15568,8 +15568,9 @@ function hostCastLegolusBuff(side) {
   // Talent: Patient Hunter — buff-tid +2s
   const extra = arenaHasTalent(side, 'l_focus_dur') ? 2 : 0;
   side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION + extra;
-  // Visuell aim-buff (gulgrön expanderande ring)
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0xddff55, 1.1);
+  // Boss-nivå-FX (decision 136): nature focus-buff-burst
+  spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.2);
+  spawnShieldBurstFx(side.hero.x, side.hero.z, 0xddff88);
   // Kenney persistent buff-aura: ljus-cirkel följer hero under buff-duration
   // (cleanup i tickLegolusBuffAura nedan när legolusBuffRemaining <= 0)
   attachLegolusBuffAura(side);
@@ -15634,8 +15635,8 @@ function hostCastLegolusDash(side, ev) {
   if (dist < 0.5) return;
   if (stack1Ready) side.skills.e.cd = side.skills.e.max;
   else side.legolasDashStackCd = side.skills.e.max;
-  // Visuella spår — start och slut
-  spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ff88, 0.7);
+  // Boss-nivå-FX (decision 136): physical dash-burst vid start
+  spawnElementCast(side.hero.x, side.hero.z, 'physical', 0.9);
   // Kenney-FX: trace-streak längs dash-vägen (5 sprites mellan start/slut)
   if (kenneyTex.size > 0) {
     const startX = side.hero.x, startZ = side.hero.z;
@@ -15654,7 +15655,7 @@ function hostCastLegolusDash(side, ev) {
   }
   side.hero.x = nx; side.hero.z = nz;
   side.mesh.position.x = nx; side.mesh.position.z = nz;
-  spawnSkillCastFx(nx, nz, 0x66ff88, 0.7);
+  spawnElementCast(nx, nz, 'physical', 0.9);   // boss-nivå: arrival-burst vid dash-slut
   side.legolusDashBuffPending = true;
 }
 
