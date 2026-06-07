@@ -4460,6 +4460,7 @@ const APP = {
   gameMode: 'classic',    // 'classic' (Line Wars) | 'arena1v1'
   arenaTeamSize: 1,       // 1 (1v1) eller 2 (2v2) — antal hjältar per team
   arenaBot: { active: false, difficulty: null },  // arena solo vs AI
+  lineWarsBot: { active: false, difficulty: null },  // line wars solo vs AI-motståndare
   bossWars: { active: false, tier: 0 },           // boss wars solo (eller 3-spelare co-op kommande)
   localSide: 1,           // 1, 2, 3 eller 4 — vilken sida den lokala spelaren styr
   twoSides: false,        // singleplayer = false, multiplayer = true
@@ -21023,18 +21024,21 @@ const BOT_PARAMS = {
     strafeFreq: 0.5, aaInRange: 0.25,
     skillRatePerSec: 0.25,         // ~1 skill per 4s
     ultThreshold: 100, skillReactionMs: 800,
+    economyInterval: 6.5, tierBuffer: 2.6, minionPickTop: 4,   // line wars-ekonomi
   },
   medium: {
     preferredRange: 4.0, minRange: 2.0, jitter: 0.18,
     strafeFreq: 0.9, aaInRange: 0.6,
     skillRatePerSec: 0.7,          // ~1 skill per 1.4s
     ultThreshold: 100, skillReactionMs: 350,
+    economyInterval: 3.8, tierBuffer: 1.7, minionPickTop: 2,
   },
   hard: {
     preferredRange: 3.2, minRange: 1.6, jitter: 0.05,
     strafeFreq: 1.4, aaInRange: 1.0,
     skillRatePerSec: 1.6,          // ~1 skill per 0.6s
     ultThreshold: 100, skillReactionMs: 120,
+    economyInterval: 2.2, tierBuffer: 1.2, minionPickTop: 1,
   },
 };
 
@@ -21122,6 +21126,58 @@ function tickArenaBot(side, dt) {
     }
     applyEvent(side, { type: 'skill', key: k, dx: aimX, dz: aimZ, tap: true });
     bs.lastSkillMs = nowMs;
+  }
+}
+
+// === LINE WARS-BOT (solo) — mirror av server tickLineWarsBot. Ekonomi + hjälte-AI. ===
+function botLineWarsEconomySolo(side, p) {
+  for (let tier = 2; tier <= 5; tier++) {
+    if (!side.tierUnlocks[tier] && side.tierUnlocks[tier - 1]) {
+      const cost = TIER_UNLOCK_COST[tier];
+      if (cost && side.gold > cost * p.tierBuffer) { side.gold -= cost; side.tierUnlocks[tier] = true; }
+      break;
+    }
+  }
+  const affordable = [];
+  for (const id in MINION_TYPES) { const m = MINION_TYPES[id]; if (side.tierUnlocks[m.tier] && side.gold >= m.cost) affordable.push(m); }
+  if (affordable.length) {
+    affordable.sort((a, b) => b.cost - a.cost);
+    const m = affordable[Math.min(affordable.length - 1, (Math.random() * p.minionPickTop) | 0)];
+    side.gold -= m.cost;
+    side.income += Math.floor(m.cost * INCOME_MINION_RATIO);
+    hostSpawnMinion(side, m.id, 1 + ((Math.random() * 2) | 0));
+  }
+}
+function tickLineWarsBotSolo(side, dt) {
+  if (!side || !side.isBot) return;
+  if (!side._botSkillsInited) {
+    side._botSkillsInited = true;
+    side.skillLvl = side.skillLvl || { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) if ((side.skillLvl[k] || 0) < 1) side.skillLvl[k] = 1;
+    recomputeSideStats(side);
+  }
+  const p = BOT_PARAMS[side.botDifficulty] || BOT_PARAMS.medium;
+  side._botEco = (side._botEco || 0) - dt;
+  if (side._botEco <= 0) { side._botEco = p.economyInterval; botLineWarsEconomySolo(side, p); }
+  if (side.hero.dead) return;
+  if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) return;
+  const t = findClosestHostile(side, side.hero.x, side.hero.z, 14);
+  if (t && t.entity && t.entity.mesh) {
+    const dx = t.entity.mesh.position.x - side.hero.x, dz = t.entity.mesh.position.z - side.hero.z, d = Math.hypot(dx, dz) || 1;
+    side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
+    const range = side.attackRange || 4;
+    if (d > range * 0.85) {
+      let mx = dx / d + (Math.random() - 0.5) * p.jitter, mz = dz / d + (Math.random() - 0.5) * p.jitter;
+      const ml = Math.hypot(mx, mz) || 1; applyMovement(side, mx / ml, mz / ml, dt);
+    }
+    if (d <= range + 0.5 && !side.aaActive) applyEvent(side, { type: 'aa' });
+    side._botSkillT = (side._botSkillT || 0) - dt;
+    if (side._botSkillT <= 0 && Math.random() < p.skillRatePerSec * dt) {
+      side._botSkillT = p.skillReactionMs / 1000;
+      const cand = [];   // R (ult) = no-op i classic → hoppas över
+      for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
+      if (cand.length) applyEvent(side, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
+    }
   }
 }
 
@@ -28931,6 +28987,7 @@ const lobbyHeroesEl = document.getElementById('lobby-heroes');
 const lobbyItemsEl = document.getElementById('lobby-items');
 const lobbyHowtoEl = document.getElementById('lobby-howto');
 const lobbyArenaBotEl = document.getElementById('lobby-arena-bot');
+const lobbyLineBotEl = document.getElementById('lobby-line-bot');
 const lobbyLineWarsEl = document.getElementById('lobby-line-wars');
 const lobbyArenaWarsEl = document.getElementById('lobby-arena-wars');
 const lobbyLineTeamEl = document.getElementById('lobby-line-team');
@@ -28950,7 +29007,7 @@ function showLobbyPanel(which) {
   const _lbProfileEl = document.getElementById('lobby-profile');
   const _lbEventEl = document.getElementById('lobby-event');
   const _lbShopEl = document.getElementById('lobby-shop');
-  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl, _lbShopEl]) {
+  for (const el of [lobbyMainEl, lobbyPlayEl, lobbyComingSoonEl, lobbyHostingEl, lobbyJoiningEl, lobbyHeroesEl, lobbyHeroDetailEl, lobbyItemsEl, lobbyHowtoEl, lobbyArenaBotEl, lobbyLineBotEl, lobbyLineWarsEl, lobbyArenaWarsEl, lobbyLineTeamEl, lobbyArenaTeamEl, lobbyArena2v2El, lobbyBossPickEl, lobbyBossModeEl, lobbyBossHostEl, lobbyBossJoinEl, lobbyBossWaitEl, _lbLeaderboardEl, _lbFriendsEl, _lbProfileEl, _lbEventEl, _lbShopEl]) {
     if (el) el.classList.remove('visible');
   }
   if (which === 'main') lobbyMainEl.classList.add('visible');
@@ -28968,6 +29025,7 @@ function showLobbyPanel(which) {
   else if (which === 'items') lobbyItemsEl.classList.add('visible');
   else if (which === 'howto') lobbyHowtoEl.classList.add('visible');
   else if (which === 'arena-bot') lobbyArenaBotEl.classList.add('visible');
+  else if (which === 'line-bot') lobbyLineBotEl.classList.add('visible');
   else if (which === 'line-wars') lobbyLineWarsEl.classList.add('visible');
   else if (which === 'arena-wars') lobbyArenaWarsEl.classList.add('visible');
   else if (which === 'line-team') lobbyLineTeamEl.classList.add('visible');
@@ -29695,6 +29753,15 @@ function setupMatch(mode) {
       const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
       sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
     }
+    // Line Wars Singleplayer vs bot: skapa sides[2] som bot-styrd motståndare
+    if (APP.gameMode === 'classic' && APP.lineWarsBot && APP.lineWarsBot.active) {
+      sides[2] = createSide(2);
+      sides[2].isBot = true;
+      sides[2].botDifficulty = APP.lineWarsBot.difficulty || 'medium';
+      // Begränsa till solo-verifierade hjältar (Kostefo/Zheyna har MP-snap-beroenden).
+      const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
+      sides[2].heroId = heroes[Math.floor(Math.random() * heroes.length)];
+    }
   } else if (mode === 'host') {
     APP.localSide = 1;
     APP.twoSides = true;
@@ -30132,8 +30199,21 @@ lobbyCodeDisplayEl.addEventListener('click', () => {
 document.getElementById('btn-solo').addEventListener('click', () => {
   APP.gameMode = 'classic';
   APP.arenaBot = { active: false, difficulty: null };
-  showHeroPick('solo');
+  showLobbyPanel('line-bot');   // välj bot-motståndarens svårighet först
 });
+function lineWarsSoloStartWithBot(difficulty) {
+  APP.gameMode = 'classic';
+  APP.lineWarsBot = { active: true, difficulty };
+  showHeroPick('solo');
+}
+const btnLineBotBack = document.getElementById('btn-line-bot-back');
+if (btnLineBotBack) btnLineBotBack.addEventListener('click', () => { APP.lineWarsBot = { active: false, difficulty: null }; showLobbyPanel('line-wars'); });
+const btnLineBotEasy = document.getElementById('btn-line-bot-easy');
+if (btnLineBotEasy) btnLineBotEasy.addEventListener('click', () => lineWarsSoloStartWithBot('easy'));
+const btnLineBotMedium = document.getElementById('btn-line-bot-medium');
+if (btnLineBotMedium) btnLineBotMedium.addEventListener('click', () => lineWarsSoloStartWithBot('medium'));
+const btnLineBotHard = document.getElementById('btn-line-bot-hard');
+if (btnLineBotHard) btnLineBotHard.addEventListener('click', () => lineWarsSoloStartWithBot('hard'));
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
 // --- Hemskärm 2.0: Play-fönster (3 lägen) + Coming Soon-fönster ---
@@ -31537,6 +31617,10 @@ function simulateAll(dt) {
   // Arena solo vs bot: driv sides[2] med AI
   if (APP.gameMode === 'arena1v1' && APP.mode === 'solo' && sides[2] && sides[2].isBot && arenaState.phase === 'fight') {
     tickArenaBot(sides[2], dt);
+  }
+  // Line Wars solo vs bot: driv bot-sides (ekonomi + hjälte-AI)
+  if (APP.gameMode === 'classic' && APP.mode === 'solo') {
+    for (const side of activeSides()) if (side && side.isBot) tickLineWarsBotSolo(side, dt);
   }
   // (Klassisk multiplayer-fjärrsidans input hanteras av servern numera.)
   // Fontän-aura: compute närhet till egen fontän + regen, innan andra updates
