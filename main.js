@@ -24735,9 +24735,12 @@ function heroActiveBuffRemaining(side, key) {
 function updateSkillButtonStyles() {
   const side = sides[APP.localSide];
   const unspent = side ? (side.unspentPoints || 0) : 0;
+  // Kryx berserk-mätare full → röd glow på Q/F/E (nästa skill empowras).
+  const berserkReady = !!(side && side.heroId === 'gimlu' && side.berserkCharged);
   for (const key of ['q', 'f', 'e']) {
     const el = skillEls[key];
     if (!el) continue;
+    el.classList.toggle('berserk-charged', berserkReady);
     let cd = side ? side.skills[key].cd : 0;
     // Legolas E lvl5: 2 stacks — visa MIN av stack-CDs (0 om någon redo)
     if (side && key === 'e' && side.heroId === 'legolas' && side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
