@@ -386,7 +386,7 @@
        Default dold; .visible vid skill-touch; .armed när tummen är över den. */
     #skill-cancel {
       position: absolute;
-      right: 110px; bottom: 222px;
+      right: calc(110px + env(safe-area-inset-right)); bottom: calc(222px + env(safe-area-inset-bottom));
       width: 64px; height: 64px;
       border-radius: 50%;
       display: none;
@@ -491,7 +491,7 @@
       #dragon-banner .dg-msg { font-size: 14px; } #dragon-banner .dg-sub { font-size: 11px; }
     }
     #dragon-activate-btn {
-      position: fixed; right: calc(20px + env(safe-area-inset-right)); bottom: calc(220px + env(safe-area-inset-bottom));
+      position: fixed; right: calc(20px + env(safe-area-inset-right)); bottom: calc(320px + env(safe-area-inset-bottom));
       z-index: 360; display: none; padding: 16px 30px; border-radius: 16px;
       background: linear-gradient(180deg, #ffcf52, #e89b18); color: #2a1a00;
       border: 2px solid #fff2c2; font: 900 20px/1 system-ui, sans-serif; letter-spacing: 1px;
@@ -548,12 +548,12 @@
       letter-spacing: 0.5px;
     }
     .skill .sk-plus {
-      position: absolute; top: -4px; right: -4px;
-      width: 22px; height: 22px;
+      position: absolute; top: -8px; right: -8px;
+      width: 30px; height: 30px;
       border-radius: 50%;
       background: linear-gradient(135deg, #ffd34a 0%, #ff9c1a 100%);
       color: #1a1a2a;
-      font: 800 16px/22px system-ui, sans-serif;
+      font: 800 17px/30px system-ui, sans-serif;
       text-align: center;
       box-shadow: 0 2px 6px rgba(0,0,0,0.55), 0 0 8px rgba(255,200,80,0.65);
       z-index: 5; pointer-events: auto;
@@ -1553,8 +1553,8 @@
         overflow-x: auto;
         overflow-y: hidden;
       }
-      .shop-tab { flex: 0 0 auto; min-width: 90px; font-size: 12px; padding: 8px 8px; text-align: center; }
-      #shop-content { top: 130px; left: 0; right: 0; padding: 12px; }
+      .shop-tab { flex: 0 0 auto; min-width: 90px; min-height: 44px; display: flex; align-items: center; justify-content: center; font-size: 12px; padding: 8px 8px; text-align: center; }
+      #shop-content { top: calc(130px + env(safe-area-inset-top)); left: 0; right: 0; padding: 12px; }
       #shop-close { left: auto; right: 12px; top: 80px; }
       /* Currency-display flyttas till bottom på mobil-shop sa den inte krockar */
       #lobby.shop-active #home-currency { right: 12px; }
@@ -1863,13 +1863,13 @@
     #home-currency .curr-icon { font-size: 16px; }
     #home-currency .curr-val { min-width: 30px; text-align: right; }
     #home-currency .curr-plus {
-      width: 22px; height: 22px;
+      width: 30px; height: 30px;
       margin-left: 2px;
       padding: 0;
       background: rgba(255,210,120,0.95);
       color: #2a1808;
       border: 0;
-      border-radius: 11px;
+      border-radius: 15px;
       font: 800 16px/22px system-ui, sans-serif;
       cursor: pointer;
       transition: transform 0.08s, background 0.12s;
@@ -2089,8 +2089,8 @@
       border-radius: 8px;
       color: #d9e2f5;
       padding: 0 12px;
-      font: 600 13px/36px system-ui, sans-serif;
-      height: 36px;
+      font: 600 16px/44px system-ui, sans-serif;
+      height: 44px;
     }
     .friends-filter-row { display: flex; gap: 12px; }
     .filter-pill {
@@ -2266,7 +2266,7 @@
       background: rgba(0,0,0,0.78);
       display: flex; align-items: center; justify-content: center;
       z-index: 700;
-      padding: 20px;
+      padding: max(20px, env(safe-area-inset-top)) max(20px, calc(env(safe-area-inset-right) + 16px)) max(20px, env(safe-area-inset-bottom)) max(20px, calc(env(safe-area-inset-left) + 16px));
     }
     #boss-info-modal.hidden { display: none; }
     #boss-info-card {
@@ -2395,13 +2395,17 @@
       margin: 6px;
       cursor: pointer;
       min-width: 220px;
+      max-width: 100%;
+      box-sizing: border-box;
       touch-action: manipulation;
     }
+    /* Flex-knappar i bot-panelerna (svårighet/count): tillåt krympa under min-width utan overflow på smala skärmar */
+    .lobby-panel > div > .lobby-btn[style*="flex"], .lobby-panel .bb-diff { min-width: 0; }
     .lobby-btn:active { transform: scale(0.97); }
     .lobby-btn.secondary { background: rgba(40,60,90,0.7); border-color: rgba(140,160,200,0.5); }
     .lobby-btn.danger { background: rgba(140,60,60,0.7); border-color: rgba(220,150,150,0.6); }
     .lobby-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #lobby-code-input {
+    #lobby-code-input, #lobby-boss-code-input {
       background: rgba(0,0,0,0.4); color: #fff;
       border: 2px solid rgba(180,200,255,0.5);
       border-radius: 10px;
@@ -2410,6 +2414,8 @@
       letter-spacing: 8px;
       text-align: center;
       width: 200px;
+      min-height: 44px;
+      box-sizing: border-box;
       text-transform: uppercase;
       margin: 6px 0;
     }
