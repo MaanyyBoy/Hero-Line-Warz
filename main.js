@@ -295,6 +295,42 @@ const KENNEY_FX_TEXTURES = [
 const kenneyTex = new Map();  // name → THREE.Texture
 let assetsReady = false;
 
+// === Flipbook-VFX (decision 136, uppgraderad 2026-06-08) =====================
+// Riktiga animerade sprite-sheet-VFX (användaren laddade upp 4K-flipbooks →
+// nedskalade till 512px i assets/vfx_web/). Varje PNG är ett NxN-rutnät av frames.
+// Animeras genom att stega texture.offset över rutnätet i tickCombatFx (kind
+// 'flipbook'). cols/rows = rutnät, fps = uppspelningshastighet, loop = cykla vs
+// spela en gång. frames default = cols*rows (sätt explicit om sheet har tomma
+// sista celler). VRAM: 25 × (512²×4) = ~25 MB — i nivå med EN 2K-karaktärstextur.
+const vfxTex = new Map();   // key → master THREE.Texture (delas; klonas per spawn)
+const FLIPBOOK_VFX = {
+  aura_a:           { cols: 6, rows: 6, fps: 24, loop: true },
+  aura_b:           { cols: 6, rows: 6, fps: 24, loop: true },
+  aura_c:           { cols: 6, rows: 6, fps: 24, loop: true },
+  aura_d:           { cols: 6, rows: 6, fps: 24, loop: true },
+  aura_e:           { cols: 6, rows: 6, fps: 24, loop: true },
+  burst_a:          { cols: 6, rows: 6, fps: 30, loop: false },
+  burst_b:          { cols: 6, rows: 6, fps: 30, loop: false },
+  burst_c:          { cols: 6, rows: 6, fps: 30, loop: false },
+  burst_d:          { cols: 6, rows: 6, fps: 30, loop: false },
+  burst_e:          { cols: 6, rows: 6, fps: 30, loop: false },
+  flame_cone:       { cols: 8, rows: 8, fps: 30, loop: true },
+  groundfire:       { cols: 6, rows: 6, fps: 24, loop: true },
+  fire_loop:        { cols: 8, rows: 8, fps: 28, loop: true },
+  beam:             { cols: 8, rows: 8, fps: 30, loop: true },
+  portal_a:         { cols: 6, rows: 6, fps: 24, loop: true },
+  portal_b:         { cols: 6, rows: 6, fps: 24, loop: true },
+  shield:           { cols: 8, rows: 8, fps: 30, loop: false },
+  tornado_a:        { cols: 8, rows: 8, fps: 30, loop: true },
+  tornado_b:        { cols: 6, rows: 6, fps: 28, loop: true },
+  shockwave_ground: { cols: 7, rows: 7, fps: 36, loop: false },
+  shockwave_air:    { cols: 7, rows: 7, fps: 36, loop: false },
+  sand_tornado:     { cols: 8, rows: 8, fps: 30, loop: true },
+  teleport:         { cols: 8, rows: 8, fps: 36, loop: false },
+  muzzle:           { cols: 6, rows: 6, fps: 36, loop: false },
+  campfire:         { cols: 6, rows: 6, fps: 24, loop: true },
+};
+
 // Mobil-detect används för: batched asset-load (lägre peak-memory), och för
 // att stänga av sekundära WebGL-renderers (hero-portrait-gen + hero-detail-
 // 3D-preview). iOS Safari kraschar med "a problem repeatedly occurred" om
@@ -454,7 +490,36 @@ async function preloadAllAssets() {
       );
     })
   );
-  const allJobs = [...charJobs, ...animJobs, ...envJobs, ...kenneyJobs];
+  // Flipbook-VFX (assets/vfx_web/*.png) — nedskalade animerade sprite-sheets.
+  // Master-textur lagras i vfxTex; spawnFlipbook() klonar per instans (egen UV-
+  // offset, delad GPU-källa). repeat sätts till 1 cell direkt på master.
+  const vfxJobs = Object.keys(FLIPBOOK_VFX).map(key => () =>
+    new Promise(resolve => {
+      const def = FLIPBOOK_VFX[key];
+      texLoader.load(
+        ASSET_BASE + 'vfx_web/' + key + '.png',
+        tex => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.minFilter = THREE.LinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          tex.generateMipmaps = false;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.repeat.set(1 / def.cols, 1 / def.rows);
+          vfxTex.set(key, tex);
+          updateProgress('vfx ' + key);
+          resolve();
+        },
+        undefined,
+        err => {
+          console.warn(`[asset] Failed VFX ${key}:`, err);
+          updateProgress('vfx ' + key + ' (FAILED)');
+          resolve();
+        }
+      );
+    })
+  );
+  const allJobs = [...charJobs, ...animJobs, ...envJobs, ...kenneyJobs, ...vfxJobs];
   for (let i = 0; i < allJobs.length; i += BATCH_SIZE) {
     const batch = allJobs.slice(i, i + BATCH_SIZE);
     await Promise.all(batch.map(fn => fn()));
@@ -24954,6 +25019,32 @@ function updateInventoryDisplay() {
 let cheatBuffer = '';
 let cheatBufferTimer = null;
 
+// DEV: förhandsvisa flipbook-VFX. "all" cyklar genom hela registret med 1.4s
+// mellanrum (sprite + ground-variant), annars spawnar den angivna nyckeln.
+function devPreviewVfx(arg) {
+  const side = sides[APP.localSide];
+  const bx = side && side.mesh ? side.mesh.position.x : 0;
+  const bz = side && side.mesh ? side.mesh.position.z : 0;
+  const spawnOne = (key) => {
+    if (!vfxTex.has(key)) { showCheatNotification(`VFX saknas: ${key}`); return; }
+    spawnFlipbook({ key, x: bx + 1.6, y: 1.4, z: bz, scale: 3.0, additive: true });
+    spawnFlipbook({ key, x: bx - 1.6, z: bz, ground: true, scale: 4.0, additive: true });
+    showCheatNotification(`VFX: ${key}`);
+  };
+  if (arg === 'all') {
+    const keys = Object.keys(FLIPBOOK_VFX);
+    let i = 0;
+    const step = () => {
+      if (i >= keys.length) return;
+      spawnOne(keys[i]); i++;
+      setTimeout(step, 1400);
+    };
+    step();
+  } else {
+    spawnOne(arg);
+  }
+}
+
 function showCheatNotification(text) {
   const el = document.createElement('div');
   el.className = 'income-popup';
@@ -24978,6 +25069,9 @@ window.addEventListener('keydown', (e) => {
         showCheatNotification(`Cheat +${amount}g`);
       }
     }
+    // DEV: "vfx <key>" eller "vfx all" — förhandsvisa flipbook-VFX vid hjälten.
+    const vm = cheatBuffer.match(/vfx\s+([a-z_]+|all)\s*$/i);
+    if (vm) { devPreviewVfx(vm[1].toLowerCase()); }
     cheatBuffer = '';
     return;
   }
@@ -33100,6 +33194,85 @@ function spawnKenneyFx(opts) {
   return mesh;
 }
 
+// === Flipbook-VFX spawn (decision 136) =======================================
+// Spawnar en animerad sprite-sheet-VFX. opts:
+//   key      — FLIPBOOK_VFX-nyckel (krävs)
+//   x,y,z    — världsposition (y default 1.0; ground default _fxGroundY)
+//   scale    — världsstorlek (sprite/plane), scaleEnd valfri för växt
+//   color    — tint (default 0xffffff = orört)
+//   additive — true (default) ger glödande blend; false = normal (rök/mörka)
+//   ground   — true = horisontell plan (mark-AoE); false = camera-facing sprite
+//   opacity, fadeIn, fadeOut — alpha-kuvert (fadeOut default 0.2 för loop, 0 annars)
+//   loop     — override registry-loop
+//   duration — för loop: total livslängd (annars 1.0); för one-shot ignoreras (=anim-längd)
+//   fps, frames — override registry
+//   follow   — {mesh} att följa i XZ (buff-glow på rörlig hjälte)
+//   spin     — rad/s rotation (endast ground-plan)
+// Returnerar mesh eller null (om textur ej laddad — degraderar tyst, som spawnKenneyFx).
+function spawnFlipbook(opts) {
+  const master = vfxTex.get(opts.key);
+  if (!master) return null;
+  const def = FLIPBOOK_VFX[opts.key];
+  // Klon delar GPU-källan (en upload) men har egen offset/repeat → samtidiga
+  // instanser av samma effekt animerar oberoende. Klonen disposas ALDRIG (skulle
+  // riskera att frigöra den delade källan); master i vfxTex håller GPU:n vid liv.
+  const tex = master.clone();   // clone() → copy() sätter needsUpdate=true (delad källa laddas upp en gång)
+  tex.repeat.set(1 / def.cols, 1 / def.rows);
+  tex.offset.set(0, 1 - 1 / def.rows);   // frame 0 = övre-vänstra cellen
+  const color = opts.color != null ? opts.color : 0xffffff;
+  const additive = opts.additive !== false;
+  const ground = !!opts.ground;
+  const blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+  const opacity = opts.opacity != null ? opts.opacity : 1.0;
+  let mesh, mat;
+  if (ground) {
+    mat = new THREE.MeshBasicMaterial({ map: tex, color, transparent: true, opacity, depthWrite: false, blending, side: THREE.DoubleSide });
+    mesh = new THREE.Mesh(_FX_PLANE_GEO, mat);
+    mesh.rotation.x = -Math.PI / 2;
+  } else {
+    mat = new THREE.SpriteMaterial({ map: tex, color, transparent: true, opacity, depthWrite: false, blending });
+    mesh = new THREE.Sprite(mat);
+  }
+  const scale = opts.scale || 2.0;
+  mesh.scale.set(scale, scale, scale);
+  const gy = ground ? (opts.y != null ? opts.y : _fxGroundY()) : (opts.y != null ? opts.y : 1.0);
+  mesh.position.set(opts.x || 0, gy, opts.z || 0);
+  scene.add(mesh);
+  const frames = opts.frames || def.frames || def.cols * def.rows;
+  const fps = opts.fps || def.fps || 24;
+  const loop = opts.loop != null ? opts.loop : def.loop;
+  const animDur = frames / fps;
+  const life = opts.life != null ? opts.life : (loop ? (opts.duration || 1.0) : animDur);
+  combatFx.push({
+    mesh, life, maxLife: life, kind: 'flipbook',
+    fbTex: tex, fbCols: def.cols, fbRows: def.rows, fbFrames: frames, fbFps: fps, fbLoop: loop,
+    fbElapsed: 0,
+    fbScaleStart: scale, fbScaleEnd: opts.scaleEnd != null ? opts.scaleEnd : scale,
+    startOpacity: opacity,
+    fbFadeIn: opts.fadeIn || 0,
+    fbFadeOut: opts.fadeOut != null ? opts.fadeOut : (loop ? 0.25 : 0),
+    fbFollow: opts.follow || null,
+    fbFollowYoff: (opts.follow && opts.y != null) ? opts.y : null,
+    fbSpin: ground ? (opts.spin || 0) : 0,
+    isGround: ground,
+  });
+  return mesh;
+}
+
+// Buff-glow: aura-flipbook som följer hjälten under hela buffens varaktighet, så
+// spelaren ser att en buff är igång (user-krav). loop-aura + mjuk in/ut-fade.
+// Returnerar combatFx-mesh (eller null). För persistent/refreshbar buff: hantera
+// via en managed updater (se hero-batch) istället för upprepade spawns.
+function spawnBuffGlow(side, key, duration, color) {
+  if (!side || !side.mesh) return null;
+  return spawnFlipbook({
+    key, follow: side, x: side.mesh.position.x, z: side.mesh.position.z,
+    y: 1.0, scale: 2.4, color: color != null ? color : 0xffffff,
+    additive: true, loop: true, duration: duration || 3.0, fadeIn: 0.25, fadeOut: 0.4,
+    opacity: 0.85,
+  });
+}
+
 // Visuella effekter för Aragurn-skills på klient (line wars MP).
 // Whirlwind: spin hero-mesh + transient golden aura. Leap: y-arc upp/ner +
 // landings-impact när leap slutar. Server är auktoritativ och skickar
@@ -33300,6 +33473,11 @@ function _disposeCombatFxEntry(e) {
   } else if (e.kind === 'trail' && e.mesh) {
     // Poolad trail-puff: returnera materialet, dela geometrin (disposas aldrig).
     if (e.mesh.material) _trailMatPool.push(e.mesh.material);
+  } else if (e.kind === 'flipbook' && e.mesh) {
+    // Flipbook: dispose:a materialet (färskt per spawn). Geometri delas (sprite-
+    // intern ELLER _FX_PLANE_GEO) → rör ej. fbTex är en klon som delar master-
+    // källan → disposa ALDRIG (skulle frigöra delad GPU-textur).
+    if (e.mesh.material) e.mesh.material.dispose();
   } else if (e.mesh) {
     e.mesh.traverse(o => {
       if (o.geometry) o.geometry.dispose();
@@ -33383,6 +33561,32 @@ function tickCombatFx(dt) {
         const fr = Math.max(0, 1 - 3 * dt); e.vx *= fr; e.vz *= fr;   // luftmotstånd → decel
       }
       if (e.mesh.material) e.mesh.material.opacity = e.startOpacity * (1 - t);
+    } else if (e.kind === 'flipbook') {
+      // Animerad sprite-sheet: stega texture.offset över NxN-rutnätet.
+      e.fbElapsed += dt;
+      const fr = e.fbLoop
+        ? (Math.floor(e.fbElapsed * e.fbFps) % e.fbFrames)
+        : Math.min(e.fbFrames - 1, Math.floor(e.fbElapsed * e.fbFps));
+      const col = fr % e.fbCols;
+      const row = (fr / e.fbCols) | 0;
+      // PNG-rad 0 = överst; UV v=0 = nederst → invertera radindex.
+      e.fbTex.offset.x = col / e.fbCols;
+      e.fbTex.offset.y = 1 - (row + 1) / e.fbRows;
+      if (e.fbScaleEnd !== e.fbScaleStart) {
+        const s = e.fbScaleStart + (e.fbScaleEnd - e.fbScaleStart) * t;
+        e.mesh.scale.set(s, s, s);
+      }
+      if (e.fbSpin && e.isGround) e.mesh.rotation.z += e.fbSpin * dt;
+      if (e.fbFollow && e.fbFollow.mesh) {
+        e.mesh.position.x = e.fbFollow.mesh.position.x;
+        e.mesh.position.z = e.fbFollow.mesh.position.z;
+        if (e.fbFollowYoff != null) e.mesh.position.y = e.fbFollow.mesh.position.y + e.fbFollowYoff;
+      }
+      // Alpha-kuvert: fade-in (av elapsed) × fade-out (av kvarvarande liv).
+      let op = e.startOpacity;
+      if (e.fbFadeIn > 0 && e.fbElapsed < e.fbFadeIn) op *= e.fbElapsed / e.fbFadeIn;
+      if (e.fbFadeOut > 0 && e.life < e.fbFadeOut) op *= e.life / e.fbFadeOut;
+      if (e.mesh.material) e.mesh.material.opacity = op;
     } else if (e.kind === 'aaCharge') {
       // Boss-AA charge: lerp scale start→end + fade-out
       const s = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
