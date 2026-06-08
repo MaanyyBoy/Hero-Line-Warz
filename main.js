@@ -336,6 +336,211 @@ const FLIPBOOK_VFX = {
   glow_disk:        { cols: 1, rows: 1, fps: 1,  loop: true, frames: 1 },
 };
 
+// === Ljud-system (AudioMgr) — procedurell Web Audio-synt (2026-06-09) ==========
+// Inga ljudfiler (inget asset-pipeline lokalt) → alla SFX syntas i realtid med
+// oscillatorer + brus, skräddarsydda per händelse (explosion=boom, eld=prasslande
+// brus, stomp=låg mark-duns, svärd=swish, magi=arpeggio ...). + ambient hemskärms-
+// musik. Mobil: AudioContext är suspended tills första user-gesten (unlock()).
+// Per-namn-throttle hindrar audio-flod/CPU-spik vid impact-stormar. Tyst fallback
+// om Web Audio saknas. Default PÅ; toggle via options-menyn.
+const AudioMgr = (() => {
+  let ctx = null, master = null, sfxGain = null, musicGain = null;
+  let enabled = true, _noiseBuf = null, _musicTimer = null, _musicNodes = null;
+  const _lastPlay = Object.create(null);   // name → senaste ts (throttle)
+
+  function ensure() {
+    if (ctx) return ctx;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain(); master.gain.value = 0.85; master.connect(ctx.destination);
+      sfxGain = ctx.createGain(); sfxGain.gain.value = 0.7;  sfxGain.connect(master);
+      musicGain = ctx.createGain(); musicGain.gain.value = 0.0; musicGain.connect(master);
+    } catch (_) { ctx = null; }
+    return ctx;
+  }
+  function unlock() { const c = ensure(); if (c && c.state === 'suspended') c.resume(); }
+  function setEnabled(v) {
+    enabled = !!v;
+    if (!enabled) stopMusic();
+    return enabled;
+  }
+  function isEnabled() { return enabled; }
+
+  function noiseBuf() {
+    if (_noiseBuf) return _noiseBuf;
+    const len = Math.floor(ctx.sampleRate * 0.5);
+    const b = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    _noiseBuf = b; return b;
+  }
+  // Kort ton med ADSR-liknande gain-kuvert. glideTo → frekvens-svep. dest = sfx/music.
+  function tone(freq, t0, dur, type, peak, glideTo, dest) {
+    const o = ctx.createOscillator(); o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, t0);
+    if (glideTo) o.frequency.exponentialRampToValueAtTime(Math.max(1, glideTo), t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, peak), t0 + Math.min(0.015, dur * 0.2));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || sfxGain);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  // Brus-burst genom filter (lowpass/highpass/bandpass). fGlide → filter-svep.
+  function noise(t0, dur, filterType, fFreq, peak, q, fGlide, dest) {
+    const src = ctx.createBufferSource(); src.buffer = noiseBuf(); src.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = filterType || 'lowpass';
+    f.frequency.setValueAtTime(fFreq, t0);
+    if (fGlide) f.frequency.exponentialRampToValueAtTime(Math.max(40, fGlide), t0 + dur);
+    f.Q.value = q || 1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.001, peak), t0 + Math.min(0.02, dur * 0.25));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(dest || sfxGain);
+    src.start(t0); src.stop(t0 + dur + 0.02);
+  }
+
+  // --- SFX-palett: varje funktion schemalägger ett kort ljud vid ctx.currentTime.
+  const SFX = {
+    melee(t) { noise(t, 0.18, 'bandpass', 2600, 0.5, 1.4, 900); tone(420, t, 0.12, 'square', 0.12, 180); },
+    arrow(t) { noise(t, 0.16, 'highpass', 1800, 0.32, 0.8, 3200); tone(900, t, 0.14, 'triangle', 0.12, 380); },
+    magic(t) { tone(330, t, 0.12, 'triangle', 0.18, 660); tone(495, t + 0.05, 0.16, 'sine', 0.16, 990); tone(660, t + 0.1, 0.2, 'sine', 0.12, 1320); },
+    cast(t) { tone(520, t, 0.1, 'triangle', 0.16, 1040); noise(t, 0.08, 'bandpass', 1400, 0.12, 1.2); },
+    fire(t) { noise(t, 0.5, 'lowpass', 1200, 0.42, 0.6, 380); noise(t, 0.5, 'bandpass', 2400, 0.14, 2.5); tone(120, t, 0.3, 'sawtooth', 0.1, 70); },
+    frost(t) { tone(1400, t, 0.4, 'sine', 0.2, 2100); tone(2100, t + 0.02, 0.35, 'sine', 0.1, 1500); noise(t, 0.3, 'highpass', 5000, 0.1, 0.7); },
+    lightning(t) { noise(t, 0.18, 'highpass', 3000, 0.45, 0.8, 6000); tone(1600, t, 0.06, 'sawtooth', 0.2, 400); tone(220, t + 0.02, 0.12, 'square', 0.12, 90); },
+    stomp(t) { tone(80, t, 0.32, 'sine', 0.5, 38); noise(t, 0.22, 'lowpass', 700, 0.4, 0.7, 120); },
+    explosion(t) { noise(t, 0.6, 'lowpass', 1800, 0.6, 0.5, 180); tone(90, t, 0.45, 'sine', 0.45, 40); tone(150, t, 0.2, 'sawtooth', 0.18, 50); },
+    bossImpact(t, el) {
+      SFX.explosion(t);
+      if (el === 'fire') SFX.fire(t + 0.02);
+      else if (el === 'lightning') SFX.lightning(t + 0.02);
+      else if (el === 'poison' || el === 'nature') tone(180, t, 0.5, 'sawtooth', 0.16, 80);
+      else if (el === 'shadow') tone(70, t, 0.6, 'sawtooth', 0.2, 45);
+      else tone(60, t, 0.55, 'sine', 0.25, 35);   // earth/physical/holy = tung sub
+    },
+    roar(t) { tone(110, t, 0.7, 'sawtooth', 0.32, 55); tone(165, t + 0.03, 0.6, 'sawtooth', 0.2, 70); noise(t, 0.5, 'lowpass', 900, 0.2, 0.6); },
+    heal(t) { tone(523, t, 0.5, 'sine', 0.16, 784); tone(659, t + 0.08, 0.5, 'sine', 0.14, 880); tone(784, t + 0.16, 0.5, 'sine', 0.12, 1046); },
+    buff(t) { noise(t, 0.4, 'lowpass', 400, 0.2, 0.6, 1800); tone(220, t, 0.4, 'sawtooth', 0.16, 660); },
+    teleport(t) { noise(t, 0.3, 'bandpass', 1200, 0.3, 3, 3600); tone(660, t, 0.25, 'sine', 0.14, 1980); },
+    dash(t) { noise(t, 0.2, 'bandpass', 1600, 0.26, 2, 600); },
+    hit(t) { noise(t, 0.07, 'bandpass', 2000, 0.22, 1.5); },
+    uiClick(t) { tone(880, t, 0.06, 'sine', 0.14, 1320); },
+  };
+
+  function play(name, opts) {
+    if (!enabled) return;
+    const c = ensure(); if (!c) return;
+    if (c.state === 'suspended') { c.resume(); }
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const minGap = (opts && opts.minGap != null) ? opts.minGap : 45;   // throttle per namn (ms)
+    if (_lastPlay[name] && (now - _lastPlay[name]) < minGap) return;
+    _lastPlay[name] = now;
+    const fn = SFX[name]; if (!fn) return;
+    try { fn(c.currentTime + 0.001, opts && opts.el); } catch (_) {}
+  }
+
+  // --- Ambient hemskärms-musik: långsam pad (detune-oscillatorer + lowpass-LFO)
+  // + sparsam arpeggio. Loopar tills stopMusic. Mjuk in/ut-fade på musicGain.
+  function startMusic() {
+    if (!enabled) return;
+    const c = ensure(); if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    if (_musicNodes) return;   // redan igång
+    const t = c.currentTime;
+    const padGain = c.createGain(); padGain.gain.value = 0.5; padGain.connect(musicGain);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600; lp.Q.value = 0.7; lp.connect(padGain);
+    // LFO som sveper filtret långsamt (levande pad)
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.06;
+    const lfoG = c.createGain(); lfoG.gain.value = 280; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
+    // Pad-ackord (A-moll-ish): A2, E3, A3, C4 — lätt detune för bredd
+    const freqs = [110, 164.81, 220, 261.63];
+    const oscs = [], oscGains = [];
+    for (const f of freqs) {
+      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+      o.detune.value = (Math.random() * 8 - 4);
+      const og = c.createGain(); og.gain.value = 0.22;
+      o.connect(og); og.connect(lp); o.start(t); oscs.push(o); oscGains.push(og);
+    }
+    _musicNodes = { padGain, lp, lfo, lfoG, oscs, oscGains };
+    musicGain.gain.cancelScheduledValues(t);
+    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+    musicGain.gain.exponentialRampToValueAtTime(0.3, t + 2.0);   // fade in
+    // Sparsam arpeggio ovanpå paden (var ~1.6s en mjuk ton ur skalan)
+    const scale = [220, 261.63, 329.63, 392, 440, 523.25];
+    _musicTimer = setInterval(() => {
+      if (!ctx || !_musicNodes) return;
+      const tt = ctx.currentTime + 0.02;
+      const f = scale[Math.floor(Math.random() * scale.length)];
+      tone(f, tt, 1.2, 'triangle', 0.06, 0, musicGain);   // 0 = ingen glide (stadig ton)
+    }, 1600);
+  }
+  function stopMusic() {
+    if (_musicTimer) { clearInterval(_musicTimer); _musicTimer = null; }
+    if (!ctx || !_musicNodes) return;
+    const t = ctx.currentTime;
+    const n = _musicNodes; _musicNodes = null;
+    try {
+      musicGain.gain.cancelScheduledValues(t);
+      musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+      musicGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+      const stopAt = t + 1.3;
+      for (const o of n.oscs) { try { o.stop(stopAt); } catch (_) {} }
+      try { n.lfo.stop(stopAt); } catch (_) {}
+      setTimeout(() => {
+        try {
+          n.padGain.disconnect(); n.lp.disconnect(); n.lfoG.disconnect();
+          if (n.oscGains) for (const og of n.oscGains) { try { og.disconnect(); } catch (_) {} }
+        } catch (_) {}
+      }, 1500);
+    } catch (_) {}
+  }
+
+  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled };
+})();
+
+// Mobil/desktop autoplay-policy: lås upp AudioContext + starta hemskärms-musik
+// vid första user-gesten (krävs av iOS/Chrome). En gång.
+let _audioUnlocked = false;
+function _unlockAudioOnce() {
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+  AudioMgr.unlock();
+  // Starta hemskärms-musik om vi inte redan är i en match
+  if (!document.body.classList.contains('in-game')) AudioMgr.startMusic();
+  window.removeEventListener('pointerdown', _unlockAudioOnce);
+  window.removeEventListener('touchstart', _unlockAudioOnce);
+  window.removeEventListener('click', _unlockAudioOnce);
+  window.removeEventListener('keydown', _unlockAudioOnce);
+}
+window.addEventListener('pointerdown', _unlockAudioOnce, { passive: true });
+window.addEventListener('touchstart', _unlockAudioOnce, { passive: true });
+window.addEventListener('click', _unlockAudioOnce, { passive: true });
+window.addEventListener('keydown', _unlockAudioOnce, { passive: true });
+
+// UI-klick-ljud (delegerat): kort blip när en knapp trycks.
+window.addEventListener('pointerdown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'BUTTON' || (t.closest && t.closest('button')))) AudioMgr.play('uiClick', { minGap: 50 });
+}, { passive: true });
+
+// Mappar hero-skill-flipbook-key → SFX-namn (för spawnHeroCastFb-hooken).
+const SKILL_SFX_BY_KEY = {
+  groundfire: 'fire', flame_cone: 'fire', fire_loop: 'fire', fire_blast: 'fire',
+  shockwave_ground: 'stomp', shockwave_air: 'stomp',
+  burst_a: 'magic', burst_b: 'magic', burst_c: 'magic', burst_d: 'magic', burst_e: 'magic',
+  muzzle: 'cast', beam: 'lightning',
+  portal_a: 'magic', portal_b: 'magic',
+  tornado_a: 'teleport', tornado_b: 'teleport', sand_tornado: 'teleport',
+  teleport: 'teleport', shield: 'buff',
+  aura_a: 'buff', aura_b: 'buff', aura_c: 'buff', aura_d: 'buff', aura_e: 'buff',
+};
+// Hero-AoE-entitet (reconcile) → SFX (MP-ljud-paritet, matchar AOE_FILL_KEYS).
+const AOE_SFX_BY_KEY = { novaEffects: 'frost', blackHoles: 'magic', vineTraps: 'magic', thornPools: 'magic' };
+
 // Mobil-detect används för: batched asset-load (lägre peak-memory), och för
 // att stänga av sekundära WebGL-renderers (hero-portrait-gen + hero-detail-
 // 3D-preview). iOS Safari kraschar med "a problem repeatedly occurred" om
@@ -14147,6 +14352,11 @@ function updateHeroAttack(side, dt) {
   const target = maintainTargetLock(side);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
+  // Ljud: bara LOKALA spelarens AA (annars ljuder varje motståndar-/bot-AA).
+  // Melee-hjältar (Aragurn/Kryx) = svärds-swish; övriga = pil-/projektil-skott.
+  if (side.idx === APP.localSide) {
+    AudioMgr.play((side.heroId === 'aragurn' || side.heroId === 'gimlu') ? 'melee' : 'arrow', { minGap: 70 });
+  }
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
 
   // ---- Ling & Lang: Fury Stacks ----
@@ -17737,7 +17947,10 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
       if (e.ry !== undefined) mesh.rotation.y = e.ry;
       // MP-VFX-paritet: hero-AoE-entitet dök upp → glöd-fyllnad täcker hela cirkeln online.
       const _aoeFill = AOE_FILL_KEYS[key];
-      if (_aoeFill) spawnAoeFill(e.x, e.z, e.r || _aoeFill.r, _aoeFill.color);
+      if (_aoeFill) {
+        spawnAoeFill(e.x, e.z, e.r || _aoeFill.r, _aoeFill.color);
+        const _aoeSfx = AOE_SFX_BY_KEY[key]; if (_aoeSfx) AudioMgr.play(_aoeSfx, { minGap: 80 });
+      }
     }
     if (interpolate) {
       // Decision 044: mutera _target istället för realloc (0 GC per snap).
@@ -30398,6 +30611,7 @@ function enterPlayPhase() {
   APP.arenaServerAuth = false;   // decision 120: sätts true nedan bara för arena MP (server-auth)
   APP.bossServerAuth = false;    // decision 122 Fas 2: sätts true nedan bara för boss wars MP (server-auth)
   document.body.classList.add('in-game');
+  AudioMgr.stopMusic();   // tysta hemskärms-musiken under match (in-game-SFX tar över)
   // Arena-mode body-class — styr CSS-bands för Arena-specifika UI-element
   // (göm tower-HP/wave/gold; visa orb-spawn-timer).
   document.body.classList.toggle('arena-mode', APP.gameMode === 'arena1v1');
@@ -30704,6 +30918,13 @@ function openOptionsOverlay() { if (optionsOverlayEl) optionsOverlayEl.classList
 function closeOptionsOverlay() { if (optionsOverlayEl) optionsOverlayEl.classList.add('hidden'); }
 if (optionsBtnEl) optionsBtnEl.addEventListener('click', openOptionsOverlay);
 if (optResumeBtn) optResumeBtn.addEventListener('click', closeOptionsOverlay);
+// Ljud-toggle: på/av för musik + SFX. Uppdaterar etiketten.
+const optSoundBtn = document.getElementById('opt-sound');
+if (optSoundBtn) optSoundBtn.addEventListener('click', () => {
+  const on = AudioMgr.setEnabled(!AudioMgr.isEnabled());
+  optSoundBtn.textContent = 'Sound: ' + (on ? 'On' : 'Off');
+  if (on && !document.body.classList.contains('in-game')) AudioMgr.startMusic();
+});
 if (optLeaveBtn) optLeaveBtn.addEventListener('click', () => {
   closeOptionsOverlay();
   returnToLobby();
@@ -30758,6 +30979,7 @@ function returnToLobby() {
   _netPending.classic = _netPending.arena = _netPending.boss = null;
   endgameEl.classList.remove('visible');
   document.body.classList.remove('in-game');
+  AudioMgr.startMusic();   // tillbaka till hemskärm → återuppta ambient-musik
   clearAllDragonVisuals();   // boss 5: dölj ev. kvarvarande banner/aktiverings-knapp (decision 135)
   document.body.classList.remove('arena-mode');
   document.body.classList.remove('bosswars-mode');
@@ -31969,6 +32191,7 @@ function bossWarsStartTest(tier) {
 function bossWarsExitTest() {
   if (!APP.bossWars || !APP.bossWars.testMode) return;
   document.body.classList.remove('in-game');
+  AudioMgr.startMusic();   // tillbaka till hemskärm → återuppta ambient-musik
   const exitBtn = document.getElementById('bosswars-test-exit');
   if (exitBtn) exitBtn.classList.add('hidden');
   // Rensa scen
@@ -33376,6 +33599,8 @@ function _spawnSyncedBossImpact(pi) {
 // så hela cirkeln får effekt. + centrerad luft-burst (capad så billboarden inte
 // blir absurt stor på enorma AoE:er). opts.burst=false → bara mark (multiCircle-flod).
 function spawnBossImpactFb(x, z, element, radius, opts = {}) {
+  // Ljud: tung boss-impact (explosion + element-flavour). Throttlad mot multiCircle-flod.
+  if (opts.burst !== false) AudioMgr.play('bossImpact', { el: element, minGap: 90 });
   const p = bossFb(element);
   const fx = elementFx(element);
   const gy = _fxGroundY();
@@ -33555,6 +33780,8 @@ function spawnFlipbook(opts) {
 // Default camera-facing sprite. Milder skala/opacity → hero-skills ska inte
 // överrösta boss-effekterna (user-krav). Degraderar tyst om textur saknas.
 function spawnHeroCastFb(x, z, key, color, scale, opts = {}) {
+  // Ljud: spela skill-cast-SFX mappat på flipbook-key (eld/stomp/magi/buff...).
+  const _sfx = SKILL_SFX_BY_KEY[key]; if (_sfx) AudioMgr.play(_sfx);
   // Ground-AoE-skills: lägg en mjuk glöd-FYLLNAD under själva effekten så hela
   // skill-cirkeln fylls (inte bara ring/kant). Endast riktiga AoE:er (ground +
   // scale ≥ 3) — håller draw calls nere och undviker glöd under små streaks/dashar.
