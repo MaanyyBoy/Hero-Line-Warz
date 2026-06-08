@@ -27549,6 +27549,11 @@ function applyHeroSnap(side, snap) {
   side._srvLaser = snap.lz || null;             // magiker laser: {dx,dz} eller null
   side._srvRage = snap.rg || 0;                 // gimlu rage: sek kvar
   side._srvBerserk = snap.bz || 0;              // aragurn berserk: sek kvar
+  // Gimlu (Kryx) taunt/iron-will i arena + boss wars MP: serializeArenaHero skickar nu
+  // taunt/iw/iwS → klienten synkar taunt-ring + IW-UI korrekt (serialize-paritet fix).
+  side.titansTauntRemaining = snap.taunt || 0;
+  side.ironWillRemaining = snap.iw || 0;
+  side.ironWillStored = snap.iwS || 0;
   // Legolas Shadow Volley-invis + Kostefo Joint Avengers (motståndarens ult-visualer):
   // updateLegolusInvisVisibility göm:er enemy; updateKostefoMeshes spawnar joints.
   side.legolusInvisRemaining = snap.lInv || 0;

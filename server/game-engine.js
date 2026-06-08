@@ -2024,6 +2024,7 @@ function _makeHeroSnapBuf() {
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
     gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
+    taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2072,6 +2073,11 @@ function serializeArenaHero(side, buf) {
   buf.aus = nz(side.auraStacks);
   buf.art = nzr2(side.auraResetTimer);
   buf.ads = nz(side.adStacks);
+  // Gimlu (Kryx): taunt-timer + iron-will-timer/stored → klient renderar taunt-ring + IW-UI (MP-paritet).
+  // Saknade i arena/boss-wars-snapen (var bara i serializeSide för classic) → klienten såg alltid 0.
+  buf.taunt = nzr2(side.titansTauntRemaining);
+  buf.iw = nzr2(side.ironWillRemaining);
+  buf.iwS = nzr1(side.ironWillStored);
   // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (MP-paritet).
   buf.zc = side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined;
   buf.zsp = side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined;
@@ -2997,6 +3003,9 @@ function bossWarsExecuteSkill(state, boss, cast) {
     cast.timer = 0.45; cast.extras = { done: true };
     applyBossCircleDmg(state, boss, cast);
     if (s.knockback) applyBossKnockback(state, cast.targetX, cast.targetZ, s.radius, s.knockback);
+    // leaveBurn: spawna en brand-DoT-pool vid impact-positionen (server-parity med solo-vägen).
+    // Demon Prince infernoStrike (tier 4) använder detta — pool radius 70% av skill-radius, 3s, 30% dpsMul.
+    if (s.leaveBurn) spawnBossWarsPool(state, boss, cast.targetX, cast.targetZ, (s.radius || 3) * 0.7, 3.0, 0.3, null);
     return;
   }
   if (s.kind === 'cone') {
