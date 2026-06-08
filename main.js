@@ -11101,6 +11101,12 @@ function bossExecuteSkill(side, m, cast) {
       const cmx = cast.originX + cast.dirX * s.length * 0.5, cmz = cast.originZ + cast.dirZ * s.length * 0.5;
       const cy = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.4;
       spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(5.0, s.length * 0.7), color: p.tintCone, additive: true, fadeOut: 0.2 });
+      // Fyll konens WEDGE med element-discs på marken så hela arean täcks (user 2026-06-08)
+      const fxe = elementFx(cast.element), gy2 = _fxGroundY();
+      for (const f of [0.35, 0.65, 0.95]) {
+        const dd = s.length * f, hw = Math.max(1.6, dd * Math.tan(s.halfAngle || 0.5));
+        spawnKenneyFx({ texName: 'aoe_disc', x: cast.originX + cast.dirX * dd, y: gy2, z: cast.originZ + cast.dirZ * dd, color: fxe.mid, scale: hw * 2.0, scaleEnd: hw * 2.2, life: 0.5, ground: true, opacity: 0.55, additive: true });
+      }
     }
     applyBossConeDmg(side, m, cast);
     return;
@@ -33062,6 +33068,24 @@ function generateProceduralFxTextures() {
     x.lineWidth = 3; x.beginPath(); x.moveTo(C + 10, C * 0.7); x.lineTo(C + 30, C * 1.05); x.stroke();
     _registerFxTexture('lightning_bolt', cv);
   }
+  // AoE-fyllnadsdisk: mjuk radiell glow som FYLLER hela cirkeln (de nedladdade
+  // flipbooks är ringar/små bursts → fyller ej disken). Tintas per element och
+  // skalas till AoE-radien → hela skill-arean får effekt (user 2026-06-08).
+  {
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    const x = cv.getContext('2d');
+    const g = x.createRadialGradient(C, C, 0, C, C, C);
+    g.addColorStop(0, 'rgba(255,255,255,0.85)');
+    g.addColorStop(0.45, 'rgba(255,255,255,0.52)');
+    g.addColorStop(0.82, 'rgba(255,255,255,0.30)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(C, C, C, 0, Math.PI * 2); x.fill();
+    // Het inre kärna för djup
+    const g2 = x.createRadialGradient(C, C, 0, C, C, C * 0.5);
+    g2.addColorStop(0, 'rgba(255,255,255,0.55)'); g2.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g2; x.beginPath(); x.arc(C, C, C * 0.5, 0, Math.PI * 2); x.fill();
+    _registerFxTexture('aoe_disc', cv);
+  }
 }
 
 // Signaturpalett per element. burst/smoke/cast/sparkTex = textur-namn (laddade
@@ -33242,10 +33266,17 @@ function bossFb(el) { return BOSS_FB[el] || BOSS_FB.physical; }
 // blir absurt stor på enorma AoE:er). opts.burst=false → bara mark (multiCircle-flod).
 function spawnBossImpactFb(x, z, element, radius, opts = {}) {
   const p = bossFb(element);
+  const fx = elementFx(element);
   const gy = _fxGroundY();
   const by = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.1;
   const r = radius || 3;
-  spawnFlipbook({ key: p.ground, x, y: gy, z, ground: true, scale: Math.max(3.0, r * 2.2), color: p.tintGround, additive: true, opacity: 0.95, fadeOut: 0.2 });
+  // 1) FYLLD element-disk som täcker HELA AoE-cirkeln (proc-textur, scale = diameter).
+  //    Detta är det som garanterar att hela skill-arean får effekt (user 2026-06-08).
+  spawnKenneyFx({ texName: 'aoe_disc', x, y: gy, z, color: fx.mid, scale: r * 2.0, scaleEnd: r * 2.3, life: 0.55, ground: true, opacity: 0.62, additive: true });
+  spawnKenneyFx({ texName: 'aoe_disc', x, y: gy + 0.01, z, color: fx.core, scale: r * 1.2, scaleEnd: r * 1.5, life: 0.45, ground: true, opacity: 0.5, additive: true });
+  // 2) Animerad shockwave-ring som sveper ut till AoE-kanten (rörelse + boundary).
+  spawnFlipbook({ key: p.ground, x, y: gy + 0.03, z, ground: true, scale: r * 2.4, color: p.tintGround, additive: true, opacity: 0.9, fadeOut: 0.2 });
+  // 3) Luft-burst för pop (capad så billboarden inte blir absurd på enorma AoE:er).
   if (opts.burst !== false) {
     spawnFlipbook({ key: p.burst, x, y: by, z, scale: Math.max(2.8, Math.min(r * 1.5, 12)), color: p.tintBurst, additive: true });
   }
