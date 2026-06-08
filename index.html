@@ -1040,7 +1040,7 @@
     }
     .income-popup {
       position: fixed;
-      top: 52px;
+      top: max(52px, calc(env(safe-area-inset-top) + 44px));   /* safe-area (mobil-UI-audit C3) */
       left: 50%;
       color: #ffd34a;
       font: 700 16px/1 system-ui, sans-serif;
@@ -1146,6 +1146,9 @@
     #perf-meter.warn #perf-bar-fill { background: linear-gradient(90deg, #ffaa55 0%, #ffcc55 100%); }
     #perf-meter.bad { color: #ff7766; border-color: rgba(255,120,90,0.6); }
     #perf-meter.bad #perf-bar-fill { background: linear-gradient(90deg, #ff4422 0%, #ff7766 100%); }
+    /* Boss Wars: boss-HP-baren bor top-center och kan nå perf-mätaren på smala
+       skärmar → putta ner mätaren under baren i boss-läge (mobil-UI-audit C1). */
+    body.bosswars-mode #perf-meter { top: max(46px, calc(env(safe-area-inset-top) + 46px)); }
 
     /* Boss HP-bar (top center i boss wars). Synlig under hela boss-fighten.
        User-onskemal 2026-05-27: HOGST UPP pa skarmen (top 54 → top 4). */
@@ -3115,7 +3118,8 @@
       color: #fff;
       border: 2px solid rgba(180,200,255,0.55);
       border-radius: 9px;
-      padding: 11px 16px;
+      padding: 13px 16px;
+      min-height: 44px;            /* Apple-touch-target (mobil-UI-audit C2) */
       font: 600 14px/1 system-ui, sans-serif;
       cursor: pointer;
       touch-action: manipulation;
