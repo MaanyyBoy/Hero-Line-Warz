@@ -201,6 +201,7 @@ const CHARACTER_ASSETS = {
 // ("a problem repeatedly occurred"). ensureCharactersLoaded() hämtar dem
 // on-demand via triggers i bossWarsShow() + enterPlayPhase().
 const WAVE_BOSS_KEYS = ['parasite_boss', 'gun_zombie_boss', 'alien_boss', 'elk_head_boss', 'undead_boss'];
+const WAVE_MONSTER_KEYS = ['wave_t1', 'wave_t2', 'wave_t3', 'wave_t4', 'wave_t5'];   // Quaternius tier-monster (förvärms i classic)
 const BOSSWARS_BOSS_KEYS = ['bosswars_1', 'bosswars_2', 'bosswars_3', 'bosswars_4', 'bosswars_5'];
 const DEFERRED_CHARACTER_KEYS = new Set([...WAVE_BOSS_KEYS, ...BOSSWARS_BOSS_KEYS]);
 // Rig_Medium_*.glb innehåller animations-clips som matchar både hero- och
@@ -30007,17 +30008,30 @@ function prewarmCharacterShaders(keys, i = 0) {
     // loadedCharacters.has (ej CHARACTER_ASSETS) → annars kan makeMonsterMesh falla
     // till BoxGeometry-fallbacken (färska geo/material som no-dispose skulle läcka).
     if (loadedCharacters.has(key)) {
-      const m = makeMonsterMesh(key);
+      // wave_t* = Quaternius tier-monster (2:a arg), annars wave-boss (1:a arg).
+      const m = key.startsWith('wave_t') ? makeMonsterMesh(null, key) : makeMonsterMesh(key);
       m.position.set(9999, -999, 9999);   // off-screen
       scene.add(m);
-      renderer.compile(scene, camera);
+      renderer.compile(scene, camera);    // kompilerar shaders
+      // Tvinga textur-upload (renderer.compile garanterar inte alla maps på iOS →
+      // annars uploadas texturen först vid riktig render = mid-game-stall). Telemetri
+      // 2026-06-08 visade kvarstående 276ms-spik trots compile → detta är fixen.
+      m.traverse(o => {
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mat of mats) {
+          if (!mat) continue;
+          for (const slot of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) {
+            if (mat[slot] && renderer.initTexture) { try { renderer.initTexture(mat[slot]); } catch (_) {} }
+          }
+        }
+      });
       scene.remove(m);
-      // makeMonsterMesh registrerar en anim-mixer i activeMixers → rensa explicit
-      // (annars tickas idle-anim på off-screen-mesh tills validate-loopen hinner ikapp).
+      // makeMonsterMesh registrerar en anim-mixer i activeMixers → rensa explicit.
       if (m.userData && m.userData.mixer) activeMixers.delete(m.userData.mixer);
     }
   } catch (_) { /* best-effort */ }
-  setTimeout(() => prewarmCharacterShaders(keys, i + 1), 700);
+  setTimeout(() => prewarmCharacterShaders(keys, i + 1), 500);
 }
 function startMatch(mode) {
   setupMatch(mode);
@@ -30064,7 +30078,7 @@ function enterPlayPhase() {
   if (APP.gameMode === 'classic') {
     // Telemetri 2026-06-08: maxRenderMs 251ms = wave-boss-asset-stall mid-strid.
     // Förvärm shaders+texturer i lugna tidiga waves (staggrat) → ingen frys vid boss-spawn.
-    ensureCharactersLoaded(WAVE_BOSS_KEYS).then(() => prewarmCharacterShaders(WAVE_BOSS_KEYS)).catch(() => {});
+    ensureCharactersLoaded(WAVE_BOSS_KEYS).then(() => prewarmCharacterShaders([...WAVE_MONSTER_KEYS, ...WAVE_BOSS_KEYS])).catch(() => {});
   } else if (APP.gameMode === 'bosswars') {
     ensureCharactersLoaded(BOSSWARS_BOSS_KEYS);
   }
