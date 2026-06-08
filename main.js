@@ -9427,7 +9427,7 @@ function startArenaRound(roundNum) {
       s.soulDrain = null;
     }
     // Zheyna (decision 134): rensa klon/spjut/ult-spjut + buffar mellan rundor (annars läcker).
-    if (s.zheynaClone && s.zheynaClone.mesh) { scene.remove(s.zheynaClone.mesh); zheynaDispose(s.zheynaClone.mesh); }
+    if (s.zheynaClone && s.zheynaClone.mesh) { scene.remove(s.zheynaClone.mesh); zheynaDisposeClone(s.zheynaClone.mesh); }
     if (s.zheynaSpear && s.zheynaSpear.mesh) { scene.remove(s.zheynaSpear.mesh); zheynaDispose(s.zheynaSpear.mesh); }
     if (s.zheynaUltSpear && s.zheynaUltSpear.mesh) { scene.remove(s.zheynaUltSpear.mesh); zheynaDispose(s.zheynaUltSpear.mesh); }
     if (s.zheynaChargeMesh) { scene.remove(s.zheynaChargeMesh); zheynaDispose(s.zheynaChargeMesh); }
@@ -10161,7 +10161,7 @@ function removeSide(side) {
   if (side.soulDrainBeam && side.soulDrainBeam.auraLight) releaseFxLight(side.soulDrainBeam.auraLight);
   if (side.soulExplosions) for (const e of side.soulExplosions) if (e.light) releaseFxLight(e.light);
   // Zheyna-entiteter (decision 134): fresh-geo meshes → dispose vid match-slut.
-  if (side.zheynaClone && side.zheynaClone.mesh) { scene.remove(side.zheynaClone.mesh); zheynaDispose(side.zheynaClone.mesh); }
+  if (side.zheynaClone && side.zheynaClone.mesh) { scene.remove(side.zheynaClone.mesh); zheynaDisposeClone(side.zheynaClone.mesh); }
   if (side.zheynaSpear && side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); }
   if (side.zheynaUltSpear && side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); }
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); }
@@ -21433,10 +21433,56 @@ function makeZheynaSpearMesh() {
 }
 function makeZheynaCloneMesh() {
   const grp = new THREE.Group();
-  const body = new THREE.Mesh(THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.32, 0.9, 4, 8) : new THREE.CylinderGeometry(0.32, 0.32, 1.4, 8),
-    new THREE.MeshStandardMaterial({ color: 0x66ddff, emissive: 0x227799, emissiveIntensity: 0.7, transparent: true, opacity: 0.55 }));
-  body.position.y = 1.0; grp.add(body);
+  // Klonen ska se ut EXAKT som Zheyna (decision 134-uppföljning): instansiera
+  // samma Viking_Female-GLTF med samma skala som riktiga hjälten. En spektral
+  // cyan-glöd + lätt genomskinlighet gör att man ändå kan skilja klon från
+  // original. VIKTIGT: SkeletonUtils.clone DELAR material+geometry med GLTF-
+  // cachen → vi MÅSTE klona materialen innan vi tintar (annars färgas riktiga
+  // Zheyna också). Geometry rörs ej; material-clones disposas i zheynaDisposeClone.
+  const inner = instantiateCharacter(HERO_GLTF_MAP.zheyna, 'mixamo_hero');
+  if (inner) {
+    const sc = HERO_GLTF_SCALE.zheyna;
+    inner.scale.set(sc.x, sc.y, sc.z);
+    const tint = (m) => {
+      const c = m.clone();
+      c.transparent = true; c.opacity = 0.72; c.depthWrite = true;
+      if (c.emissive) { c.emissive.setHex(0x2299cc); c.emissiveIntensity = 0.55; }
+      return c;
+    };
+    inner.traverse(o => {
+      if ((o.isMesh || o.isSkinnedMesh) && o.material) {
+        o.material = Array.isArray(o.material) ? o.material.map(tint) : tint(o.material);
+      }
+    });
+    grp.add(inner);
+    grp.userData.inner = inner;
+    grp.userData.mixer = inner.userData.mixer;
+    grp.userData.actions = inner.userData.actions;
+    activeMixers.add(inner.userData.mixer);
+    startDefaultIdle(grp);
+  } else {
+    // Fallback: gamla glödande kapseln om Viking_Female-assetn inte hunnit ladda.
+    const body = new THREE.Mesh(THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.32, 0.9, 4, 8) : new THREE.CylinderGeometry(0.32, 0.32, 1.4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x66ddff, emissive: 0x227799, emissiveIntensity: 0.7, transparent: true, opacity: 0.55 }));
+    body.position.y = 1.0; grp.add(body);
+  }
   return grp;
+}
+// Klon-specifik dispose: GLTF-klonen delar geometry via cachen (får EJ disposas)
+// → ta bort mixern + dispose ENDAST de tintade material-clonesen. Fallback-
+// kapseln (ingen mixer) har egen geometry → full dispose via zheynaDispose.
+function zheynaDisposeClone(mesh) {
+  if (!mesh) return;
+  if (mesh.userData && mesh.userData.mixer) {
+    activeMixers.delete(mesh.userData.mixer);
+    mesh.traverse(o => {
+      if ((o.isMesh || o.isSkinnedMesh) && o.material) {
+        Array.isArray(o.material) ? o.material.forEach(m => m && m.dispose()) : o.material.dispose();
+      }
+    });
+  } else {
+    zheynaDispose(mesh);
+  }
 }
 function makeZheynaUltSpearMesh(width) {
   const grp = new THREE.Group();
@@ -21566,7 +21612,7 @@ function hostCastZheynaClone(side) {
   spawnSkillCastFx(mesh.position.x, mesh.position.z, 0x88ddff, 0.9);
   side.zheynaClone = { hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR, mesh };
 }
-function zheynaDisposeCloneSolo(side) { const cl = side.zheynaClone; if (cl && cl.mesh) { scene.remove(cl.mesh); zheynaDispose(cl.mesh); } side.zheynaClone = null; }
+function zheynaDisposeCloneSolo(side) { const cl = side.zheynaClone; if (cl && cl.mesh) { scene.remove(cl.mesh); zheynaDisposeClone(cl.mesh); } side.zheynaClone = null; }
 function tickZheynaCloneSolo(side, dt) {
   const cl = side.zheynaClone; if (!cl) return;
   cl.remaining -= dt;
