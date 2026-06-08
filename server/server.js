@@ -450,8 +450,9 @@ wss.on('connection', (ws) => {
     try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
 
     if (msg.t === 'ping') {
-      // Keepalive från klient — håller WS levande mot proxy. Svara med pong-app.
-      send(ws, { t: 'pong' });
+      // Keepalive från klient — håller WS levande mot proxy. Svara med pong.
+      // Eko:a klientens ts tillbaka → klienten kan räkna RTT (round-trip-latens).
+      send(ws, msg.ts != null ? { t: 'pong', ts: msg.ts } : { t: 'pong' });
       ws.isAlive = true;
       return;
     }

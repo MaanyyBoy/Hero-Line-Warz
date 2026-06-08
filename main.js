@@ -19220,6 +19220,17 @@ let _pmLongFirstTapMs = 0;
 
 function pmCollectFrame(frameMs) {
   // Anropas per frame från tick() — bara om active.
+  // RTT-sampling: skicka ping var 1.2s i MP så RTT-snittet bygger upp under mätningen.
+  {
+    const _mp = (isMpMode && isMpMode()) || (bossMpState && bossMpState.matchActive);
+    if (_mp && wsOpen && wsOpen()) {
+      const _nowMs = performance.now();
+      if (_nowMs - _rtt.lastPingMs > 1200) {
+        _rtt.lastPingMs = _nowMs;
+        try { APP.ws.send(JSON.stringify({ t: 'ping', ts: _nowMs })); } catch (_) {}
+      }
+    }
+  }
   _perfMeasure.frameMs.push(frameMs);
   if (renderer && renderer.info) {
     if (renderer.info.render) {
@@ -19295,11 +19306,29 @@ function _pmEntityCount() {
 let _pmSimMs = 0, _pmRenderMs = 0;
 // Nät-telemetri-snapshot (MP). RTT kräver ping-protokoll (ej byggt) — rapporterar
 // state-recv/apply-totaler + värsta burst (max recv/frame; >1 = state-bunching = jitter).
+// RTT (round-trip-latens) via ping/pong. Servern eko:ar klientens ts → RTT = now - ts.
+const _rtt = { samples: [], lastPingMs: 0 };
+function _recordPong(env) {
+  APP._lastPongMs = performance.now();
+  if (env && env.ts != null) {
+    const r = performance.now() - env.ts;
+    if (r >= 0 && r < 5000) { _rtt.samples.push(r); if (_rtt.samples.length > 240) _rtt.samples.shift(); }
+  }
+}
 function _pmNetStats() {
   try {
     const mp = (isMpMode && isMpMode()) || (bossMpState && bossMpState.matchActive);
-    if (!mp || !_netDiag) return null;
-    return { stateRecv: _netDiag.recv, stateApply: _netDiag.apply, maxRecvPerFrame: _netDiag.maxPerFrame };
+    if (!mp) return null;
+    const out = _netDiag ? { stateRecv: _netDiag.recv, stateApply: _netDiag.apply, maxRecvPerFrame: _netDiag.maxPerFrame } : {};
+    if (_rtt.samples.length) {
+      const s = _rtt.samples.slice().sort((a, b) => a - b);
+      const avg = _rtt.samples.reduce((x, y) => x + y, 0) / _rtt.samples.length;
+      out.rttMs = {
+        avg: Math.round(avg), min: Math.round(s[0]), max: Math.round(s[s.length - 1]),
+        p95: Math.round(s[Math.min(s.length - 1, Math.floor(s.length * 0.95))]), n: _rtt.samples.length,
+      };
+    }
+    return out;
   } catch (_) { return null; }
 }
 
@@ -19354,6 +19383,7 @@ function pmFinish() {
 function pmStart(durationMs, sampleGeo) {
   if (_perfMeasure.active) return;
   _perfMeasure.active = true;
+  _rtt.samples.length = 0;   // fresh RTT-fönster per mätning
   _perfMeasure.startMs = performance.now();
   _perfMeasure.durationMs = durationMs || PERF_MEASURE_DURATION_MS;
   _perfMeasure.sampleGeo = !!sampleGeo;
@@ -19579,7 +19609,8 @@ function pmShowOverlay(result) {
       '<div style="color:#ffd86a;font-weight:800;margin-bottom:3px;">FRAME BREAKDOWN</div>' +
       'sim ' + result.avgSimMs + 'ms (max ' + result.maxSimMs + ') · render ' + result.avgRenderMs + 'ms (max ' + result.maxRenderMs + ')<br>' +
       'worst frame ' + result.worstFrameMs + 'ms · entities avg ' + result.avgEntities + ' / max ' + result.maxEntities +
-      (result.net ? '<br>net: recv ' + result.net.stateRecv + ' apply ' + result.net.stateApply + ' maxBurst/f ' + result.net.maxRecvPerFrame : '') +
+      (result.net ? (result.net.stateRecv != null ? '<br>net: recv ' + result.net.stateRecv + ' apply ' + result.net.stateApply + ' maxBurst/f ' + result.net.maxRecvPerFrame : '') +
+        (result.net.rttMs ? '<br><span style="color:#ffd86a;">RTT ' + result.net.rttMs.avg + 'ms</span> (min ' + result.net.rttMs.min + ' p95 ' + result.net.rttMs.p95 + ' max ' + result.net.rttMs.max + ', n=' + result.net.rttMs.n + ')' : '<br>RTT: (väntar på samples)') : '') +
     '</div>' +
     '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">' +
       '<button id="pm-rerun" style="flex:1;min-width:120px;padding:10px;background:linear-gradient(135deg,#ffd86a,#d4a830);color:#2a1808;' +
@@ -29388,7 +29419,7 @@ function handleRelayEnvelope(e) {
       closeRelay();
       return;
     }
-    if (env.t === 'pong') { APP._lastPongMs = performance.now(); return; }
+    if (env.t === 'pong') { _recordPong(env); return; }
     if (env.t === 'msg') { handleNetworkMessage(env.d); return; }
     return;
   }
@@ -29418,8 +29449,7 @@ function handleRelayEnvelope(e) {
     closeRelay();
     showLobbyPanel('main');
   } else if (env.t === 'pong') {
-    // Keepalive-svar — bara markera att vi är vid liv
-    APP._lastPongMs = performance.now();
+    _recordPong(env);   // keepalive-svar + RTT-sampling (om ts ekoad)
   } else if (env.t === 'msg') {
     handleNetworkMessage(env.d);
   }
@@ -29453,7 +29483,7 @@ function startWsKeepalive() {
   stopWsKeepalive();
   APP._kaInterval = setInterval(() => {
     if (wsOpen()) {
-      try { APP.ws.send(JSON.stringify({ t: 'ping' })); } catch (_) {}
+      try { APP.ws.send(JSON.stringify({ t: 'ping', ts: performance.now() })); } catch (_) {}
     }
   }, 25000);
 }
