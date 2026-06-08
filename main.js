@@ -9508,7 +9508,7 @@ function startArenaRound(roundNum) {
     }
     // Zheyna (decision 134): rensa klon/spjut/ult-spjut + buffar mellan rundor (annars läcker).
     if (s.zheynaClone && s.zheynaClone.mesh) { scene.remove(s.zheynaClone.mesh); zheynaDisposeClone(s.zheynaClone.mesh); }
-    if (s.zheynaSpear && s.zheynaSpear.mesh) { scene.remove(s.zheynaSpear.mesh); zheynaDispose(s.zheynaSpear.mesh); }
+    if (s.zheynaSpear) { _disposeZheynaSpearIndicator(s.zheynaSpear); if (s.zheynaSpear.mesh) { scene.remove(s.zheynaSpear.mesh); zheynaDispose(s.zheynaSpear.mesh); } }
     if (s.zheynaUltSpear && s.zheynaUltSpear.mesh) { scene.remove(s.zheynaUltSpear.mesh); zheynaDispose(s.zheynaUltSpear.mesh); }
     if (s.zheynaChargeMesh) { scene.remove(s.zheynaChargeMesh); zheynaDispose(s.zheynaChargeMesh); }
     if (s.zheynaWarpathMesh) { scene.remove(s.zheynaWarpathMesh); zheynaDispose(s.zheynaWarpathMesh); }
@@ -10242,7 +10242,7 @@ function removeSide(side) {
   if (side.soulExplosions) for (const e of side.soulExplosions) if (e.light) releaseFxLight(e.light);
   // Zheyna-entiteter (decision 134): fresh-geo meshes → dispose vid match-slut.
   if (side.zheynaClone && side.zheynaClone.mesh) { scene.remove(side.zheynaClone.mesh); zheynaDisposeClone(side.zheynaClone.mesh); }
-  if (side.zheynaSpear && side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); }
+  if (side.zheynaSpear) { _disposeZheynaSpearIndicator(side.zheynaSpear); if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } }
   if (side.zheynaUltSpear && side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); }
   if (side.zheynaChargeMesh) { scene.remove(side.zheynaChargeMesh); zheynaDispose(side.zheynaChargeMesh); }
   if (side.zheynaWarpathMesh) { scene.remove(side.zheynaWarpathMesh); zheynaDispose(side.zheynaWarpathMesh); }
@@ -21678,6 +21678,33 @@ function updateZheynaWarpathAura(side, active) {
     scene.remove(side.zheynaWarpathMesh); zheynaDispose(side.zheynaWarpathMesh); side.zheynaWarpathMesh = null;
   }
 }
+// Landnings-/varnings-indikator för Zheynas spjut (user 2026-06-08): pulserande
+// mark-cirkel (storlek = stun/teleport-radien) som visar VAR spjutet landar, så
+// fiender ser att en skill är på väg. Persistent mesh på sp.indicator.
+function makeZheynaLandIndicator() {
+  const grp = new THREE.Group();
+  const r = ZHEYNA_Q_STUN_RADIUS;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(r * 0.84, r, 44),
+    new THREE.MeshBasicMaterial({ color: 0x44ddff, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06;
+  grp.add(ring);
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(r, 40),
+    new THREE.MeshBasicMaterial({ color: 0x1aa0e0, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false })
+  );
+  disc.rotation.x = -Math.PI / 2; disc.position.y = 0.05;
+  grp.add(disc);
+  return grp;
+}
+function _disposeZheynaSpearIndicator(sp) {
+  if (sp && sp.indicator) {
+    scene.remove(sp.indicator);
+    sp.indicator.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    sp.indicator = null;
+  }
+}
 function hostCastZheynaQ(side, ev) {
   if (side.hero.dead) return;
   if (side.zheynaSpear && (side.zheynaSpear.repress || 0) > 0) { zheynaTeleportToSpearSolo(side); return; }
@@ -21691,12 +21718,24 @@ function hostCastZheynaQ(side, ev) {
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.0);
   spawnHitSparkFx(side.hero.x + dx * 0.8, y, side.hero.z + dz * 0.8, 0x88ddff);
   spawnHeroCastFb(side.hero.x + dx * 1.0, side.hero.z + dz * 1.0, 'muzzle', 0x88ddff, 2.4, { y });   // spjut-kast-flash (flipbook)
-  side.zheynaSpear = { x: side.hero.x, z: side.hero.z, dx, dz, traveled: 0, destX: side.hero.x + dx * ZHEYNA_Q_RANGE, destZ: side.hero.z + dz * ZHEYNA_Q_RANGE, landed: false, hit: false, repress: ZHEYNA_Q_REPRESS, mesh, y };
+  const destX = side.hero.x + dx * ZHEYNA_Q_RANGE, destZ = side.hero.z + dz * ZHEYNA_Q_RANGE;
+  side.zheynaSpear = { x: side.hero.x, z: side.hero.z, dx, dz, traveled: 0, destX, destZ, landed: false, hit: false, repress: ZHEYNA_Q_REPRESS, mesh, y };
+  // Landnings-indikator vid projicerad landningspunkt (följer spjutet tills det landar)
+  const ind = makeZheynaLandIndicator();
+  ind.position.set(destX, _fxGroundY(), destZ);
+  scene.add(ind);
+  side.zheynaSpear.indicator = ind;
 }
 function updateZheynaSpearSolo(side, dt) {
   const sp = side.zheynaSpear; if (!sp) return;
   sp.repress = Math.max(0, sp.repress - dt);
-  if (sp.repress <= 0) { if (sp.mesh) { scene.remove(sp.mesh); zheynaDispose(sp.mesh); } side.zheynaSpear = null; return; }
+  if (sp.repress <= 0) { _disposeZheynaSpearIndicator(sp); if (sp.mesh) { scene.remove(sp.mesh); zheynaDispose(sp.mesh); } side.zheynaSpear = null; return; }
+  // Landnings-indikator följer projicerad/faktisk landningspunkt + pulserar (telegraph).
+  if (sp.indicator) {
+    sp.indicator.position.x = sp.destX; sp.indicator.position.z = sp.destZ;
+    const ring = sp.indicator.children[0];
+    if (ring && ring.material) ring.material.opacity = 0.55 + 0.35 * Math.abs(Math.sin(performance.now() * 0.008));
+  }
   if (!sp.landed) {
     const step = ZHEYNA_Q_SPEED * dt;
     for (const e of zheynaEnemiesSolo(side)) {
@@ -21734,6 +21773,7 @@ function zheynaTeleportToSpearSolo(side) {
   spawnGroundImpact(tx, tz, ZHEYNA_Q_STUN_RADIUS, 0x66ccff);
   spawnHeroCastFb(tx, tz, 'teleport', 0x77ddff, Math.max(3.0, ZHEYNA_Q_STUN_RADIUS * 1.8), { y: 0.9 });   // teleport-till-spjut, täcker stun-radien (flipbook)
   spawnHeroCastFb(tx, tz, 'shockwave_ground', 0x66ccff, Math.max(3.0, ZHEYNA_Q_STUN_RADIUS * 2.2), { ground: true, opacity: 0.8 });   // stun-AoE-mark
+  _disposeZheynaSpearIndicator(sp);
   if (sp.mesh) { scene.remove(sp.mesh); zheynaDispose(sp.mesh); }
   side.zheynaSpear = null;
 }
@@ -21800,7 +21840,7 @@ function updateZheynaUltSpearSolo(side, dt) {
 // Solo använder tickZheynaSolo i stället (modes är mutually exclusive). Klassisk MP = ej täckt än.
 function zheynaCleanupMpVisuals(side) {
   if (side.zheynaClone) zheynaDisposeCloneSolo(side);
-  if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
+  if (side.zheynaSpear) { _disposeZheynaSpearIndicator(side.zheynaSpear); if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
   if (side.zheynaUltSpear) { if (side.zheynaUltSpear.mesh) { scene.remove(side.zheynaUltSpear.mesh); zheynaDispose(side.zheynaUltSpear.mesh); } side.zheynaUltSpear = null; }
   if (side.zheynaChargeMesh) disposeZheynaChargeIndicatorSolo(side);
   updateZheynaWarpathAura(side, false);
@@ -21819,10 +21859,16 @@ function updateZheynaMpVisuals(side, snap) {
   } else if (side.zheynaClone) { zheynaDisposeCloneSolo(side); }
   // Spjut (Q)
   if (snap.zsp) {
-    if (!side.zheynaSpear || !side.zheynaSpear.mesh) { const m = makeZheynaSpearMesh(); scene.add(m); side.zheynaSpear = { mesh: m }; }
+    if (!side.zheynaSpear || !side.zheynaSpear.mesh) { if (side.zheynaSpear) _disposeZheynaSpearIndicator(side.zheynaSpear); const m = makeZheynaSpearMesh(); scene.add(m); side.zheynaSpear = { mesh: m }; }
     side.zheynaSpear.mesh.position.set(snap.zsp.x, baseY + 1.0, snap.zsp.z);
     side.zheynaSpear.mesh.rotation.y = Math.atan2(snap.zsp.dx || 0, snap.zsp.dz || 1);
-  } else if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
+    // Landnings-/varnings-indikator följer spjutet (sätter sig vid landning när
+    // positionen slutar ändras) — MP saknar dest-punkt i snap (decision 134).
+    if (!side.zheynaSpear.indicator) { const ind = makeZheynaLandIndicator(); scene.add(ind); side.zheynaSpear.indicator = ind; }
+    side.zheynaSpear.indicator.position.set(snap.zsp.x, _fxGroundY(), snap.zsp.z);
+    const _ring = side.zheynaSpear.indicator.children[0];
+    if (_ring && _ring.material) _ring.material.opacity = 0.55 + 0.35 * Math.abs(Math.sin(performance.now() * 0.008));
+  } else if (side.zheynaSpear) { _disposeZheynaSpearIndicator(side.zheynaSpear); if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
   // Ult-spjut (R)
   if (snap.zus) {
     if (!side.zheynaUltSpear || !side.zheynaUltSpear.mesh) { const m = makeZheynaUltSpearMesh(snap.zus.w || 3); scene.add(m); side.zheynaUltSpear = { mesh: m }; }
@@ -21850,7 +21896,7 @@ function tickZheynaSolo(side, dt) {
   if (!side || side.heroId !== 'zheyna') return;
   if (side.hero.dead) {
     if (side.zheynaClone) zheynaDisposeCloneSolo(side);
-    if (side.zheynaSpear) { if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
+    if (side.zheynaSpear) { _disposeZheynaSpearIndicator(side.zheynaSpear); if (side.zheynaSpear.mesh) { scene.remove(side.zheynaSpear.mesh); zheynaDispose(side.zheynaSpear.mesh); } side.zheynaSpear = null; }
     side.zheynaUltCharging = false; side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
     disposeZheynaChargeIndicatorSolo(side);
     updateZheynaWarpathAura(side, false);
