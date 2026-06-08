@@ -29870,6 +29870,21 @@ function onHosted(code) {
   pendingHostCode = code;
   lobbyCodeDisplayEl.textContent = code;
   lobbyHostMsgEl.textContent = 'Waiting for players...';
+  // Line Wars vs bot (online): be servern starta direkt mot en bot (auto-confirmad).
+  // Servern svarar med peer-joined → vanliga classic-pick-flödet kör (showHeroPick('host')).
+  if (APP._lwBotOnline) {
+    const diff = APP._lwBotOnline;
+    APP._lwBotOnline = null;
+    lobbyHostMsgEl.textContent = 'Starting vs bot...';
+    sendGameMsg({ t: 'lw-bot-start', bot: diff });
+  }
+}
+// Line Wars host-vs-bot ONLINE (server-auth, mätbart i MP). Till skillnad från
+// offline-solo-vs-bot går detta genom Render-servern (engine kör simmen + bot:en).
+function lineWarsHostVsBotOnline(difficulty) {
+  APP.gameMode = 'classic';
+  APP._lwBotOnline = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+  hostGame();
 }
 
 function onPeerJoined() {
@@ -29891,6 +29906,7 @@ async function hostGame() {
   try {
     await openRelay();
   } catch (err) {
+    APP._lwBotOnline = null;   // teardown: stale bot-trigger ska ej läcka till nästa host
     showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
@@ -29901,6 +29917,7 @@ async function hostGame() {
 }
 
 function cancelHosting() {
+  APP._lwBotOnline = null;   // teardown: undvik stale bot-trigger i nästa host
   closeRelay();
   pendingHostCode = null;
   lobbyCodeDisplayEl.textContent = '----';
@@ -30362,6 +30379,7 @@ function returnToLobby() {
   closeOptionsOverlay();
   bossMpCleanupAfterMatch();   // ingen-op om inte aktiv
   closeRelay();
+  APP._lwBotOnline = null;     // teardown: stale line-wars-online-bot-trigger
   pendingHostCode = null;
   // Städar alla 4 sidor (2v2 kan ha sides[3]/[4])
   for (const i of [1, 2, 3, 4]) {
@@ -30476,6 +30494,11 @@ const btnLineBotMedium = document.getElementById('btn-line-bot-medium');
 if (btnLineBotMedium) btnLineBotMedium.addEventListener('click', () => lineWarsSoloStartWithBot('medium'));
 const btnLineBotHard = document.getElementById('btn-line-bot-hard');
 if (btnLineBotHard) btnLineBotHard.addEventListener('click', () => lineWarsSoloStartWithBot('hard'));
+// Online (server-auth, mätbart i MP) vs bot
+for (const d of ['easy', 'medium', 'hard']) {
+  const b = document.getElementById('btn-line-bot-online-' + d);
+  if (b) b.addEventListener('click', () => lineWarsHostVsBotOnline(d));
+}
 document.getElementById('btn-heroes').addEventListener('click', () => { renderHeroesBrowser(); showLobbyPanel('heroes'); });
 document.getElementById('btn-items').addEventListener('click', () => { renderItemsBrowser(); showLobbyPanel('items'); });
 // --- Hemskärm 2.0: Play-fönster (3 lägen) + Coming Soon-fönster ---

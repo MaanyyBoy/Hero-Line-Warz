@@ -87,6 +87,25 @@ function startGame(room) {
   console.log(`[${room.code}] game started`);
 }
 
+// Line Wars host-vs-bot (server-auth): host begär en classic-match mot en bot.
+// Startar engine:n + sätter sides[2] som bot (auto-confirmad hjälte) + skickar ett
+// peer-joined till host så host:ens vanliga classic-pick-flöde kör oförändrat (host
+// blir server-auth-klient som vanligt). tickLineWarsBot driver bot:en i tickGame.
+function startLineWarsBotMatch(room, fromWs, payload) {
+  if (fromWs !== room.host || room.mode !== 'classic' || room.game) return;
+  startGame(room);
+  const g = room.game;
+  if (!g || !g.sides || !g.sides[2]) return;
+  const s2 = g.sides[2];
+  s2.isBot = true;
+  s2.botDifficulty = ['easy', 'medium', 'hard'].includes(payload.bot) ? payload.bot : 'medium';
+  const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
+  s2.heroId = heroes[(Math.random() * heroes.length) | 0];
+  s2.heroPickConfirmed = true;   // bot auto-confirmar → pick-fasen väntar bara på host
+  send(room.host, { t: 'peer-joined', peersTotal: 2, maxPeers: room.maxPeers });
+  console.log(`[${room.code}] line wars vs bot (${s2.botDifficulty}) started`);
+}
+
 function stopGame(room) {
   if (room.tickHandle) {
     clearTimeout(room.tickHandle);
@@ -562,6 +581,8 @@ wss.on('connection', (ws) => {
         handleArenaMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
         handleBossMessage(room, ws, msg);
+      } else if (payload && payload.t === 'lw-bot-start') {
+        startLineWarsBotMatch(room, ws, payload);
       } else {
         handleGameInput(room, ws, payload);
       }
