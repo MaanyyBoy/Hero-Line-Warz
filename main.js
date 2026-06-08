@@ -10835,7 +10835,7 @@ function startBossCast(side, m, skill, skillIdx) {
     {
       const p = bossFb(cast.element);
       const ay = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.2;
-      spawnFlipbook({ key: p.aura, x: m.mesh.position.x, y: ay, z: m.mesh.position.z, scale: 3.0, color: p.tintBurst, additive: true, loop: true, duration: Math.max(0.5, skill.telegraph), fadeIn: 0.2, fadeOut: 0.25, opacity: 0.8 });
+      spawnFlipbook({ key: p.aura, x: m.mesh.position.x, y: ay, z: m.mesh.position.z, scale: 4.5, color: p.tintBurst, additive: true, loop: true, duration: Math.max(0.5, skill.telegraph), fadeIn: 0.2, fadeOut: 0.25, opacity: 0.85 });
     }
     triggerCameraShake(0.16, 0.18);
     // Bumpa aaCount så klienter delta-detect:ar och triggar attack-clip lokalt
@@ -11053,7 +11053,7 @@ function bossExecuteSkill(side, m, cast) {
     cast.timer = 0.45;   // visuell flash-tid
     cast.extras = { meshes: [], done: true };
     spawnExplosion(cast.targetX, cast.targetZ, cast.element, { scale: Math.max(0.8, s.radius / 4), power: 1, shakeMag: 0.18 });
-    spawnBossImpactFb(cast.targetX, cast.targetZ, cast.element, Math.max(0.8, s.radius / 4));
+    spawnBossImpactFb(cast.targetX, cast.targetZ, cast.element, s.radius);   // mark-FX täcker hela cirkeln
     applyBossCircleDmg(side, m, cast);
     if (s.knockback) applyBossKnockback(side, cast.targetX, cast.targetZ, s.radius, s.knockback);
     if (s.leaveBurn) spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius * 0.7, 3.0, 0.3, elementFx(cast.element).deep);
@@ -11095,12 +11095,12 @@ function bossExecuteSkill(side, m, cast) {
     spawnConeFlash(cast.originX, cast.originZ, cast.dirX, cast.dirZ, s.length, s.halfAngle, elementFx(cast.element).mid);
     // Element-burst en bit ut i konen för "träff"-känsla
     spawnExplosion(cast.originX + cast.dirX * s.length * 0.5, cast.originZ + cast.dirZ * s.length * 0.5, cast.element, { scale: 1.1, power: 0.7, shake: false });
-    // Mäktig cone-flipbook (eld/virvel) en bit ut i konens riktning (decision 136)
+    // Mäktig cone-flipbook (eld/virvel) som täcker konens längd (decision 136 / user 2026-06-08)
     {
       const p = bossFb(cast.element);
-      const cmx = cast.originX + cast.dirX * s.length * 0.45, cmz = cast.originZ + cast.dirZ * s.length * 0.45;
+      const cmx = cast.originX + cast.dirX * s.length * 0.5, cmz = cast.originZ + cast.dirZ * s.length * 0.5;
       const cy = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.4;
-      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(3.0, s.length * 0.35), color: p.tintCone, additive: true, fadeOut: 0.2 });
+      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(5.0, s.length * 0.7), color: p.tintCone, additive: true, fadeOut: 0.2 });
     }
     applyBossConeDmg(side, m, cast);
     return;
@@ -11147,7 +11147,7 @@ function bossExecuteSkill(side, m, cast) {
       const p = bossFb(cast.element);
       const cmx = cast.originX + cast.dirX * s.length * 0.45, cmz = cast.originZ + cast.dirZ * s.length * 0.45;
       const cy = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.4;
-      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(3.2, s.length * 0.4), color: p.tintCone, additive: true, loop: true, duration: s.sustainDuration, fadeIn: 0.2, fadeOut: 0.4 });
+      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(5.0, s.length * 0.7), color: p.tintCone, additive: true, loop: true, duration: s.sustainDuration, fadeIn: 0.2, fadeOut: 0.4 });
     }
     return;
   }
@@ -11175,7 +11175,7 @@ function tickBossExecute(side, m, cast, dt) {
     }
     if (cast.timer <= 0) {
       e.done = true;
-      if (!e._endBoom) { e._endBoom = true; spawnExplosion(cx, cz, cast.element, { scale: 1.2, power: 1 }); spawnBossImpactFb(cx, cz, cast.element, 1.5); }
+      if (!e._endBoom) { e._endBoom = true; spawnExplosion(cx, cz, cast.element, { scale: 1.2, power: 1 }); spawnBossImpactFb(cx, cz, cast.element, Math.max(4, s.width || 3)); }
     }
     return;
   }
@@ -11209,9 +11209,9 @@ function tickBossExecute(side, m, cast, dt) {
         sub.phase = 'done';
         cleanupTelegraphMesh(sub);
         spawnElementImpact(sub.targetX, sub.targetZ, cast.element, s.radius);
-        // Nedslag per cirkel (meteor/regn): bara burst (många samtidiga → lättare
-        // än ground+burst, undviker FX-flod på mobil) (decision 136)
-        { const pf = bossFb(cast.element); spawnFlipbook({ key: pf.burst, x: sub.targetX, y: (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.0, z: sub.targetZ, scale: Math.max(2.0, s.radius * 0.5), color: pf.tintBurst, additive: true }); }
+        // Nedslag per cirkel (meteor/regn): mark-FX täcker HELA cirkeln, burst skippas
+        // (många samtidiga → undviker FX-flod på mobil) (decision 136 / user 2026-06-08)
+        spawnBossImpactFb(sub.targetX, sub.targetZ, cast.element, s.radius, { burst: false });
         applyBossCircleDmg(side, m, sub);
       }
       if (sub.phase === 'done' && sub.timer < -0.5) e.circles.splice(i, 1);
@@ -11244,7 +11244,7 @@ function tickBossExecute(side, m, cast, dt) {
       const p = bossFb(cast.element);
       const tx = cast.originX + cast.dirX * s.length, tz = cast.originZ + cast.dirZ * s.length;
       const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 1.0 : 1.0;
-      spawnFlipbook({ key: p.burst, x: tx, y: ey, z: tz, scale: 2.0, color: p.tintBurst, additive: true });
+      spawnFlipbook({ key: p.burst, x: tx, y: ey, z: tz, scale: 4.0, color: p.tintBurst, additive: true });
     }
     e.damageTimer -= dt;
     if (e.damageTimer <= 0) {
@@ -11442,7 +11442,7 @@ function spawnBossProjectile(side, m, x, z, dx, dz, skill, element) {
   grp.position.set(x, 1.1, z);
   scene.add(grp);
   // Muzzle-flash vid avfyrning (decision 136)
-  spawnFlipbook({ key: 'muzzle', x, y: 1.1, z, scale: 1.5, color: fx.core, additive: true });
+  spawnFlipbook({ key: 'muzzle', x, y: 1.1, z, scale: 2.6, color: fx.core, additive: true });
   side.bossProjectiles.push({
     mesh: grp, x, z, dx, dz,
     speed: skill.speed || 14,
@@ -11476,7 +11476,7 @@ function tickBossProjectiles(side, dt) {
     }
     if (hit) {
       spawnExplosion(p.x, p.z, p.element, { scale: 0.9, power: 0.6, y: 1.0, shake: false });   // element-impact (decision 136)
-      { const pf = bossFb(p.element); spawnFlipbook({ key: pf.burst, x: p.x, y: 1.1, z: p.z, scale: 1.9, color: pf.tintBurst, additive: true }); }
+      { const pf = bossFb(p.element); spawnFlipbook({ key: pf.burst, x: p.x, y: 1.1, z: p.z, scale: Math.max(3.0, (p.radius || 1) * 2.2), color: pf.tintBurst, additive: true }); }
       if (p.mesh.geometry) p.mesh.geometry.dispose?.();
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
@@ -14693,7 +14693,7 @@ function hostCastSoulDrain(side, ev) {
   // Boss-nivå-FX (decision 136): shadow drain-cast-burst
   spawnElementCast(side.hero.x, side.hero.z, 'shadow', 1.6);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaa44ff);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'portal_a', 0x9a4fff, 2.4);   // shadow-virvel (flipbook)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'portal_a', 0x9a4fff, 3.4);   // shadow-virvel (flipbook)
   // Initial tick direkt — drain ska börja skada vid cast
   const initialTarget = resolveSoulDrainTarget(side, side.soulDrain, opp);
   if (initialTarget) {
@@ -14764,26 +14764,13 @@ function hostCastWindPuff(side, ev) {
   else { dirX /= len; dirZ /= len; }
   const opp = arenaPrimaryOpp(side);
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
-  // Visuell cone-effekt (lagras i side.fireWaves — updateFireballs-tick:n
-  // itererar mesh.children.forEach för opacity-fade, så cone:n MÅSTE wrappas
-  // i en Group eller mesh.children är tom → ingen fade.
+  // Wind Puff-visual (user 2026-06-08): den gamla vita ConeGeometry-meshen ("lego-
+  // fyrkanten") är BORTTAGEN. Vinden renderas nu helt via flipbook-VFX nedan. Vi
+  // behåller en tom fireWaves-entry för struktur (updateFireballs-tick:n itererar
+  // mesh.children → tom = no-op, expirerar efter 0.6s).
   side.fireWaves = side.fireWaves || [];
   const coneGrp = new THREE.Group();
-  const coneMat = new THREE.MeshBasicMaterial({
-    color: 0xddeeff, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
-  });
-  const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(WIND_PUFF_LENGTH * Math.tan(WIND_PUFF_HALF_ANGLE), WIND_PUFF_LENGTH, 18, 1, true),
-    coneMat
-  );
-  cone.rotation.x = -Math.PI / 2;
-  coneGrp.add(cone);
-  coneGrp.rotation.y = Math.atan2(dirX, dirZ);
-  coneGrp.position.set(
-    side.hero.x + dirX * (WIND_PUFF_LENGTH / 2),
-    0.6,
-    side.hero.z + dirZ * (WIND_PUFF_LENGTH / 2),
-  );
+  coneGrp.position.set(side.hero.x + dirX * (WIND_PUFF_LENGTH / 2), 0.6, side.hero.z + dirZ * (WIND_PUFF_LENGTH / 2));
   scene.add(coneGrp);
   side.fireWaves.push({
     id: ++_fwIdSeq,
@@ -14793,7 +14780,13 @@ function hostCastWindPuff(side, ev) {
   // Boss-nivå-FX (decision 136): ice/air wind-puff-cast-burst
   spawnElementCast(side.hero.x, side.hero.z, 'ice', 1.4);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaccff);
-  spawnHeroCastFb(side.hero.x + dirX * WIND_PUFF_LENGTH * 0.5, side.hero.z + dirZ * WIND_PUFF_LENGTH * 0.5, 'tornado_b', 0xd6ecff, 2.6, { y: 1.2 });   // luft-virvel (flipbook)
+  // Riktig vind-VÅG (user 2026-06-08): stor mark-flipbook som täcker hela konen,
+  // framåt i sikt-riktningen + en luftvirvel ovanför. Tydligt cyan (ej vit).
+  {
+    const wcx = side.hero.x + dirX * WIND_PUFF_LENGTH * 0.55, wcz = side.hero.z + dirZ * WIND_PUFF_LENGTH * 0.55;
+    spawnHeroCastFb(wcx, wcz, 'sand_tornado', 0x7fc8ff, WIND_PUFF_LENGTH * 1.9, { ground: true, opacity: 0.85, fadeOut: 0.2 });   // vind-svep på marken
+    spawnHeroCastFb(wcx, wcz, 'tornado_b', 0x88d0ff, WIND_PUFF_LENGTH * 0.9, { y: 1.4 });   // luftvirvel
+  }
   triggerCameraShake(0.14, 0.20);
   // Kenney-FX: muzzle-burst framåt + 4 smoke-puffar längs cone
   if (kenneyTex.size > 0) {
@@ -15075,9 +15068,9 @@ function spawnSoulDrainExplosion(side, opp, x, z, damage) {
     life: 0.55, maxLife: 0.55,
   });
   _leakDiag.nc.soulExplosionSpawn++;
-  // Mäktig slut-explosion (user-exempel, decision 136): burst-flipbook + mark-shockwave
-  spawnHeroCastFb(x, z, 'burst_c', 0xb6ff7a, Math.max(2.8, SOULDRAIN_EXPLOSION_RADIUS * 0.9), { y: 1.0 });
-  spawnHeroCastFb(x, z, 'shockwave_ground', 0x88ff66, Math.max(3.0, SOULDRAIN_EXPLOSION_RADIUS), { ground: true, opacity: 0.9 });
+  // Mäktig slut-explosion (user-exempel, decision 136): täcker hela explosionsradien
+  spawnHeroCastFb(x, z, 'burst_c', 0xb6ff7a, Math.max(3.0, SOULDRAIN_EXPLOSION_RADIUS * 1.6), { y: 1.0 });
+  spawnHeroCastFb(x, z, 'shockwave_ground', 0x88ff66, Math.max(3.2, SOULDRAIN_EXPLOSION_RADIUS * 2.2), { ground: true, opacity: 0.9 });
   // Burst-partiklar runt explosion-center
   for (let i = 0; i < 16; i++) {
     const ang = Math.random() * Math.PI * 2;
@@ -15323,7 +15316,7 @@ function hostCastFrostnova(side, ev) {
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ddff, 1.0);
   spawnSkillCastFx(center.x, center.z, 0xaaeeff, 1.2);
   spawnShieldBurstFx(center.x, center.z, 0x66ccff);
-  spawnHeroCastFb(center.x, center.z, 'shockwave_air', 0x9fe0ff, Math.max(2.4, NOVA_RADIUS * 0.9), { y: 0.9 });   // frost-ring (flipbook)
+  spawnHeroCastFb(center.x, center.z, 'shockwave_ground', 0x9fe0ff, Math.max(3.0, NOVA_RADIUS * 2.2), { ground: true, opacity: 0.9 });   // frost-ring täcker hela cirkeln (flipbook)
   triggerCameraShake(0.18, 0.22);
   // Huvud-ring + inner glow + light
   const ring = new THREE.Mesh(
@@ -15514,7 +15507,7 @@ function hostCastBlink(side, ev) {
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(center.x, 0.05, center.z);
   scene.add(ring);
-  spawnHeroCastFb(center.x, center.z, 'portal_b', 0xb070ff, BLACKHOLE_RADIUS * 1.6, { y: 0.8, fadeOut: 0.3 });   // void öppnas (flipbook)
+  spawnHeroCastFb(center.x, center.z, 'portal_b', 0xb070ff, Math.max(3.0, BLACKHOLE_RADIUS * 2.0), { ground: true, opacity: 0.9, fadeOut: 0.3 });   // void täcker hela cirkeln (flipbook)
   side.blackHoles = side.blackHoles || [];
   // Talent: Singularity — radie +30% (pull + explosion)
   const sizeMul = arenaHasTalent(side, 'm_bh_radius') ? 1.30 : 1.0;
@@ -15690,6 +15683,9 @@ function updateBlackHolesSolo(side, dt) {
       // med gnistor/skärvor + ljuspuls + shake i ALLA modes (var tidigare bara en
       // svag flare + scorch, shake endast i arena → kändes "tom").
       spawnExplosion(bh.x, bh.z, 'shadow', { scale: Math.max(1.1, expR / 2.5), power: 1.4, shakeMag: 0.2, shakeDur: 0.25 });   // shake 0.3→0.2: se kropparna i smällen (playtest)
+      // Kollaps-explosion lika stor som black hole-cirkeln (user 2026-06-08)
+      spawnHeroCastFb(bh.x, bh.z, 'shockwave_ground', 0x9a4fff, Math.max(3.5, bhRadius * 2.2), { ground: true, opacity: 0.92 });
+      spawnHeroCastFb(bh.x, bh.z, 'burst_c', 0xc090ff, Math.max(3.5, bhRadius * 2.0), { y: 1.0 });
       scene.remove(bh.sphere);
       if (bh.sphere.geometry) bh.sphere.geometry.dispose();
       if (bh.sphere.material) bh.sphere.material.dispose();
@@ -15718,7 +15714,7 @@ function hostCastLegolusVineTrap(side, ev) {
   // Boss-nivå-FX (decision 136): nature-cast-burst vid hero + burst vid fällan
   spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.0);
   spawnShieldBurstFx(center.x, center.z, 0x88dd55);
-  spawnHeroCastFb(center.x, center.z, 'shockwave_ground', 0x6fcf3a, Math.max(2.2, VINE_TRAP_RADIUS * 1.6), { ground: true, opacity: 0.85 });   // natur-fälla sätts (flipbook)
+  spawnHeroCastFb(center.x, center.z, 'shockwave_ground', 0x6fcf3a, Math.max(3.0, VINE_TRAP_RADIUS * 2.2), { ground: true, opacity: 0.85 });   // natur-fälla täcker hela ytan (flipbook)
   // Kenney-FX: scratch-mark + sprutande sparks i grön nyans
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -15797,7 +15793,7 @@ function hostCastLegolusBuff(side) {
   // Boss-nivå-FX (decision 136): nature focus-buff-burst
   spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.2);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xddff88);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_e', 0xb7f06a, 2.2);   // focus-aktivering (flipbook); persistent glow via updateHeroBuffGlows
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_e', 0xb7f06a, 3.2, { y: 1.2 });   // focus-aktivering (flipbook); persistent glow via updateHeroBuffGlows
   // Kenney persistent buff-aura: ljus-cirkel följer hero under buff-duration
   // (cleanup i tickLegolusBuffAura nedan när legolusBuffRemaining <= 0)
   attachLegolusBuffAura(side);
@@ -15883,7 +15879,7 @@ function hostCastLegolusDash(side, ev) {
   side.hero.x = nx; side.hero.z = nz;
   side.mesh.position.x = nx; side.mesh.position.z = nz;
   spawnElementCast(nx, nz, 'physical', 0.9);   // boss-nivå: arrival-burst vid dash-slut
-  spawnHeroCastFb(nx, nz, 'muzzle', 0x88ff99, 1.8);   // dash-arrival-streak (flipbook)
+  spawnHeroCastFb(nx, nz, 'muzzle', 0x88ff99, 2.8);   // dash-arrival-streak (flipbook)
   side.legolusDashBuffPending = true;
 }
 
@@ -15988,7 +15984,7 @@ function hostCastGimluTaunt(side) {
   // Boss-nivå-FX (decision 136): earth-stomp-explosion. Vanlig Stomp = nedtonad shake
   // (kort-CD/hög-uptime spam). Empowered = full berserk-payoff → kraftigare shake + scale.
   spawnExplosion(side.hero.x, side.hero.z, 'earth', { scale: emp ? 2.6 : 1.6, power: emp ? 1.4 : 1, shakeMag: emp ? 0.28 : 0.15, shakeDur: emp ? 0.24 : 0.18 });
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'shockwave_ground', emp ? 0xffae50 : 0xe8c890, emp ? Math.max(3.2, eRad * 1.2) : Math.max(2.4, STOMP_RADIUS), { ground: true, opacity: 0.9 });   // jord-stötvåg (flipbook)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'shockwave_ground', emp ? 0xffae50 : 0xe8c890, Math.max(4.0, eRad * 2.4), { ground: true, opacity: 0.92 });   // jord-stötvåg täcker hela AoE:n + Kryx +50% (flipbook)
   // Kenney-FX: stor shockwave-burst runt Kryx vid skrik + 6 sparks splash:ar
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -16080,7 +16076,7 @@ function hostCastGimluIronWill(side) {
   side.titansRageBuff = emp ? 0.30 : TITANS_RAGE_SELF;
   spawnElementCast(side.hero.x, side.hero.z, 'holy', 1.6);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffcc44);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'shield', emp ? 0xff6a30 : 0xffb347, 2.6, { y: 1.2 });   // rage/iron-will-aktivering (flipbook); persistent glow via updateHeroBuffGlows
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'shield', emp ? 0xff6a30 : 0xffb347, 4.0, { y: 1.2 });   // rage/iron-will-aktivering (flipbook) Kryx +50%; persistent glow via updateHeroBuffGlows
   triggerCameraShake(0.18, 0.2);
 }
 
@@ -16284,7 +16280,7 @@ function hostCastGimluHammer(side, dirX, dirZ) {
     // Boss-nivå-FX: earth-impact vid teleport-landning + burst där hammer låg
     spawnElementCast(h.mesh.position.x, h.mesh.position.z, 'earth', 1.2);
     spawnExplosion(tx, tz, 'earth', { scale: 1.0, power: 0.6, shakeMag: 0.15, shakeDur: 0.15 });
-    spawnHeroCastFb(tx, tz, 'burst_d', 0xbcd9ff, 2.4);   // hammar-slam (lightning, flipbook)
+    spawnHeroCastFb(tx, tz, 'burst_d', 0xbcd9ff, 3.8, { y: 0.9 });   // hammar-slam (lightning, flipbook) Kryx +50%
     scene.remove(h.mesh);
     side.hammers.splice(0, 1);
     // Lvl 5: +50% MS i 1s efter tp till hammer
@@ -16319,7 +16315,7 @@ function hostCastGimluHammer(side, dirX, dirZ) {
   });
   // Boss-nivå-FX (decision 136): earth-kast-burst
   spawnElementCast(side.hero.x, side.hero.z, 'earth', 1.2);
-  spawnHeroCastFb(side.hero.x + dirX * 1.0, side.hero.z + dirZ * 1.0, 'muzzle', 0xbcd9ff, 1.6);   // hammar-kast-flash (flipbook)
+  spawnHeroCastFb(side.hero.x + dirX * 1.0, side.hero.z + dirZ * 1.0, 'muzzle', 0xbcd9ff, 2.6);   // hammar-kast-flash (flipbook) Kryx +50%
 }
 
 function updateHammersSolo(side, dt) {
@@ -21688,7 +21684,7 @@ function hostCastZheynaQ(side, ev) {
   // Kast-feedback (decision 136): cast-burst + framåt-gnista
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.0);
   spawnHitSparkFx(side.hero.x + dx * 0.8, y, side.hero.z + dz * 0.8, 0x88ddff);
-  spawnHeroCastFb(side.hero.x + dx * 1.0, side.hero.z + dz * 1.0, 'muzzle', 0x88ddff, 1.5, { y });   // spjut-kast-flash (flipbook)
+  spawnHeroCastFb(side.hero.x + dx * 1.0, side.hero.z + dz * 1.0, 'muzzle', 0x88ddff, 2.4, { y });   // spjut-kast-flash (flipbook)
   side.zheynaSpear = { x: side.hero.x, z: side.hero.z, dx, dz, traveled: 0, destX: side.hero.x + dx * ZHEYNA_Q_RANGE, destZ: side.hero.z + dz * ZHEYNA_Q_RANGE, landed: false, hit: false, repress: ZHEYNA_Q_REPRESS, mesh, y };
 }
 function updateZheynaSpearSolo(side, dt) {
@@ -21730,7 +21726,8 @@ function zheynaTeleportToSpearSolo(side) {
   const buff = heroStuns * ZHEYNA_Q_BUFF_HERO + minionStuns * ZHEYNA_Q_BUFF_MINION;
   if (buff > 0) { side.zheynaDmgBuffMul = 1 + buff; side.zheynaDmgBuffRem = ZHEYNA_Q_BUFF_DUR; }
   spawnGroundImpact(tx, tz, ZHEYNA_Q_STUN_RADIUS, 0x66ccff);
-  spawnHeroCastFb(tx, tz, 'teleport', 0x77ddff, 2.4, { y: 0.9 });   // teleport-till-spjut (flipbook)
+  spawnHeroCastFb(tx, tz, 'teleport', 0x77ddff, Math.max(3.0, ZHEYNA_Q_STUN_RADIUS * 1.8), { y: 0.9 });   // teleport-till-spjut, täcker stun-radien (flipbook)
+  spawnHeroCastFb(tx, tz, 'shockwave_ground', 0x66ccff, Math.max(3.0, ZHEYNA_Q_STUN_RADIUS * 2.2), { ground: true, opacity: 0.8 });   // stun-AoE-mark
   if (sp.mesh) { scene.remove(sp.mesh); zheynaDispose(sp.mesh); }
   side.zheynaSpear = null;
 }
@@ -21742,7 +21739,7 @@ function hostCastZheynaClone(side) {
   // Spawn-poof (decision 136): klonen "splittras" fram istället för att bara poppa in
   spawnShieldBurstFx(mesh.position.x, mesh.position.z, 0x66ddff);
   spawnSkillCastFx(mesh.position.x, mesh.position.z, 0x88ddff, 0.9);
-  spawnHeroCastFb(mesh.position.x, mesh.position.z, 'burst_d', 0x88ddff, 2.0);   // klon-spawn (flipbook)
+  spawnHeroCastFb(mesh.position.x, mesh.position.z, 'burst_d', 0x88ddff, 3.0, { y: 1.0 });   // klon-spawn (flipbook)
   side.zheynaClone = { hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR, mesh };
 }
 function zheynaDisposeCloneSolo(side) { const cl = side.zheynaClone; if (cl && cl.mesh) { scene.remove(cl.mesh); zheynaDisposeClone(cl.mesh); } side.zheynaClone = null; }
@@ -21756,7 +21753,7 @@ function tickZheynaCloneSolo(side, dt) {
   cl.mesh.position.y = y;
   if (side.mesh) cl.mesh.rotation.y = side.mesh.rotation.y;
 }
-function hostCastZheynaWarpath(side) { if (side.hero.dead || side.skills.e.cd > 0) return; side.skills.e.cd = side.skills.e.max; side.zheynaWarpathRem = ZHEYNA_E_DUR; spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.6); spawnShieldBurstFx(side.hero.x, side.hero.z, 0x88ddff); spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_e', 0xff5577, 2.4); triggerCameraShake(0.15, 0.18); }   // E-aktiverings-punch + warpath-burst (decision 136); persistent glow via updateHeroBuffGlows
+function hostCastZheynaWarpath(side) { if (side.hero.dead || side.skills.e.cd > 0) return; side.skills.e.cd = side.skills.e.max; side.zheynaWarpathRem = ZHEYNA_E_DUR; spawnSkillCastFx(side.hero.x, side.hero.z, 0x66ddff, 1.6); spawnShieldBurstFx(side.hero.x, side.hero.z, 0x88ddff); spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_e', 0xff5577, 3.2, { y: 1.2 }); triggerCameraShake(0.15, 0.18); }   // E-aktiverings-punch + warpath-burst (decision 136); persistent glow via updateHeroBuffGlows
 function startZheynaUltChargeSolo(side) {
   if (side.hero.dead || side.zheynaUltCharging) return;
   if ((side.level || 1) < ULT_UNLOCK_LEVEL) return;
@@ -21783,9 +21780,9 @@ function fireZheynaUltSolo(side) {
   mesh.position.set(ox, y, oz); mesh.rotation.y = Math.atan2(dx, dz); scene.add(mesh);
   side.zheynaUltSpear = { x: ox, z: oz, dx, dz, traveled: 0, mesh, y };
   if (typeof triggerCameraShake === 'function') triggerCameraShake(0.4, 0.3);
-  // Spear God release (decision 136): laddnings-burst vid hero + muzzle-flash framåt
-  spawnHeroCastFb(ox, oz, 'burst_d', 0x88ddff, 3.2, { y: 1.1 });
-  spawnHeroCastFb(ox + dx * 1.6, oz + dz * 1.6, 'muzzle', 0xaaf0ff, 2.4, { y });
+  // Spear God release (decision 136): laddnings-burst vid hero + stötvåg längs banan
+  spawnHeroCastFb(ox, oz, 'burst_d', 0x88ddff, 4.0, { y: 1.1 });
+  spawnHeroCastFb(ox + dx * ZHEYNA_R_RANGE * 0.5, oz + dz * ZHEYNA_R_RANGE * 0.5, 'shockwave_ground', 0x88ddff, Math.max(4.0, ZHEYNA_R_RANGE * 0.8), { ground: true, opacity: 0.8 });
 }
 function updateZheynaUltSpearSolo(side, dt) {
   const sp = side.zheynaUltSpear; if (!sp) return;
@@ -21972,7 +21969,7 @@ function hostCastMagikerUlt(side, dx, dz) {
   // Visuell start-effekt
   spawnSkillCastFx(side.hero.x, side.hero.z, 0x88ccff, 2.0);
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xaaddff);
-  spawnHeroCastFb(side.hero.x + dx * 0.8, side.hero.z + dz * 0.8, 'burst_d', 0xaaddff, 2.8, { y: 1.0 });   // laser-release-burst (flipbook)
+  spawnHeroCastFb(side.hero.x + dx * 0.8, side.hero.z + dz * 0.8, 'burst_d', 0xaaddff, 3.8, { y: 1.0 });   // laser-release-burst (flipbook)
   triggerCameraShake(0.30, 0.35);
   // Initial tick direkt — laser ska börja skada omedelbart (6 ticks under 3s, varannan 0.5s)
   applyLaserBeamTick(side);
@@ -22107,7 +22104,7 @@ function hostCastLegolasUlt(side, dx, dz) {
   // läses tydligt istället för en svag grön ring.
   spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.3, power: 1.2, shakeMag: 0.22, shakeDur: 0.24 });
   spawnElementCast(side.hero.x, side.hero.z, 'shadow', 1.8);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'teleport', 0x9fe04a, 2.6, { y: 1.0 });   // vanish/stealth-in (flipbook)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'teleport', 0x9fe04a, 3.6, { y: 1.0 });   // vanish/stealth-in (flipbook)
 }
 
 // Spawnar en visuell thorn pool på (x,z) och tickar damage 5%maxHp/0.5s i 3s.
@@ -22348,9 +22345,9 @@ function spawnKostefoSliderExplosionFx(x, z) {
     grp.add(flame);
   }
   scene.add(grp);
-  // Riktig eld-explosion (decision 136): groundfire-mark + fire-burst
-  spawnHeroCastFb(x, z, 'groundfire', 0xffffff, 3.0, { ground: true, opacity: 0.95 });
-  spawnHeroCastFb(x, z, 'burst_a', 0xffc070, 2.4, { y: 0.9 });
+  // Riktig eld-explosion (decision 136): groundfire-mark + fire-burst (täcker explosionen)
+  spawnHeroCastFb(x, z, 'groundfire', 0xffffff, 5.0, { ground: true, opacity: 0.95 });
+  spawnHeroCastFb(x, z, 'burst_a', 0xffc070, 3.6, { y: 0.9 });
   // Point-light via FX-poolen (ingen shader-rekompilering). grp ligger på
   // (x, 0.6, z) → ljuset på y≈1.0. Lagras som fxLight, släpps i tickCombatFx.
   const fxLight = acquireFxLight(0xff5522, 3.5, 5.0, x, 1.0, z);
@@ -22607,7 +22604,7 @@ function hostCastKostefoJointAttack(side, ev) {
   });
   // Boss-nivå-FX (decision 136): nature-cast-burst
   spawnElementCast(side.hero.x, side.hero.z, 'nature', 1.6);
-  spawnHeroCastFb(cx, cz, 'burst_a', 0x8fe26a, 2.4, { y: 1.0 });   // joint-wave-burst (flipbook)
+  spawnHeroCastFb(cx, cz, 'sand_tornado', 0x8fe26a, Math.max(3.2, _K_GOOSEWAVE_LENGTH * 1.5), { ground: true, opacity: 0.85 });   // joint-wave täcker hela ytan (flipbook)
 }
 
 // F: Joint Slider — piercing projectile, 6m, exploderar vid slut.
@@ -22668,7 +22665,8 @@ function hostCastKostefoCannabisCloud(side) {
   side.kostefoCloudX = side.hero.x;
   side.kostefoCloudZ = side.hero.z;
   side.kostefoInCloud = true;
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_b', 0x88dd66, 2.6, { y: 1.0 });   // moln-aktivering (flipbook); persistent glow via updateHeroBuffGlows
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'groundfire', 0x88dd66, Math.max(3.2, _K_CLOUD_RADIUS * 2.2), { ground: true, opacity: 0.7 });   // moln täcker hela radien (flipbook)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_b', 0x88dd66, 3.0, { y: 1.2 });   // moln-aktivering; persistent glow via updateHeroBuffGlows
   // Lvl 5: +20% radie + spawn 1HP decoy-klon
   const isLvl5 = !!(side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
   side.kostefoCloudRadiusMul = isLvl5 ? KOSTEFO_LVL5_CLOUD_RADIUS_MUL : 1;
@@ -22777,7 +22775,7 @@ function hostCastKostefoJointAvengers(side) {
   }
   // Boss-nivå-FX (decision 136): nature companion-summon. Shake sänkt 0.3→0.22 (summon, ej nuke)
   spawnExplosion(side.hero.x, side.hero.z, 'nature', { scale: 1.6, power: 1.2, shakeMag: 0.22, shakeDur: 0.28 });
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'portal_b', 0x9fe26a, 3.0, { y: 0.9, fadeOut: 0.3 });   // avengers-summon-portal (flipbook)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'portal_b', 0x9fe26a, 4.4, { y: 0.9, fadeOut: 0.3 });   // avengers-summon-portal (flipbook)
 }
 
 // Hjälpare: applicera dmg på opp.hero (arena) — använder damageHero som
@@ -23363,7 +23361,7 @@ function hostCastGimluUlt(side) {
   // Boss-nivå-FX (decision 136): fire-rage-aktivering. Shake sänkt 0.42→0.3 (playtest)
   spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.3, shakeDur: 0.34 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xff6633);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_a', 0xffb060, 3.0, { y: 1.1 });   // rage-release (flipbook); persistent brinnande aura via updateHeroBuffGlows (rageRemaining)
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_a', 0xffb060, 4.6, { y: 1.1 });   // rage-release (flipbook) Kryx +50%; persistent brinnande aura via updateHeroBuffGlows (rageRemaining)
 }
 
 function tickGimluRage(side, dt) {
@@ -23606,7 +23604,7 @@ function hostCastAragurnShout(side, dirX, dirZ) {
   spawnConeFlash(side.hero.x, side.hero.z, dirX, dirZ, length, halfAng, 0xffe399);
   // Boss-nivå-FX (decision 136): holy shout-out-burst runt Elar (var generisk impact)
   spawnExplosion(side.hero.x, side.hero.z, 'holy', { scale: 1.4, power: 0.9, shakeMag: 0.18, shakeDur: 0.2 });
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'shockwave_air', 0xffe39a, 2.8, { y: 1.1 });   // ljud-stötvåg (flipbook)
+  spawnHeroCastFb(side.hero.x + dirX * length * 0.4, side.hero.z + dirZ * length * 0.4, 'shockwave_ground', 0xffe39a, Math.max(4.0, length * 1.6), { ground: true, opacity: 0.85 });   // ljud-stötvåg täcker konen (flipbook)
   // Kenney shout-burst framåt + ground-scorch i cone
   if (kenneyTex.size > 0) {
     spawnKenneyFx({
@@ -23864,7 +23862,7 @@ function applyAragurnLeapImpact(side, x, z) {
   // Boss-nivå-FX (decision 136): earth-landnings-explosion. Shake sänkt 0.4→0.28
   // (playtest: egen hjälte ska ej skaka som boss-ENRAGE; läsbarhet vid landning).
   spawnExplosion(x, z, 'earth', { scale: Math.max(1, LEAP_RADIUS / 3), power: 1.2, shakeMag: 0.28, shakeDur: 0.3 });
-  spawnHeroCastFb(x, z, 'shockwave_ground', 0xffae50, Math.max(2.8, LEAP_RADIUS * 1.4), { ground: true, opacity: 0.9 });   // landnings-stötvåg (flipbook)
+  spawnHeroCastFb(x, z, 'shockwave_ground', 0xffae50, Math.max(3.2, LEAP_RADIUS * 2.2), { ground: true, opacity: 0.9 });   // landnings-stötvåg täcker hela AoE:n (flipbook)
   // Kenney-FX: scorch-decal + central flare + dust-burst (decal kortad 1.5→0.7s /
   // ×2.4→×1.8 så stridsmarken under landningen blir läsbar snabbt igen).
   if (kenneyTex.size > 0) {
@@ -23985,7 +23983,7 @@ function hostCastAragurnUlt(side) {
   // Boss-nivå-FX (decision 136): fire berserk-aktivering. Shake sänkt 0.4→0.3 (playtest)
   spawnExplosion(side.hero.x, side.hero.z, 'fire', { scale: 2.0, power: 1.3, shakeMag: 0.3, shakeDur: 0.34 });
   spawnShieldBurstFx(side.hero.x, side.hero.z, 0xffaa55);
-  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_a', 0xffb060, 3.2, { y: 1.2 });   // berserk-release (flipbook); glödande svärd = persistent indikator
+  spawnHeroCastFb(side.hero.x, side.hero.z, 'burst_a', 0xffb060, 4.4, { y: 1.2 });   // berserk-release (flipbook); glödande svärd = persistent indikator
 }
 
 function tickAragurnBerserk(side, dt) {
@@ -33232,12 +33230,19 @@ function bossFb(el) { return BOSS_FB[el] || BOSS_FB.physical; }
 
 // Mäktig boss-impact: stor mark-effekt + luft-burst. Layeras OVANPÅ befintlig
 // spawnExplosion/element-FX (ren visual). scale ~ skill-radie/4.
-function spawnBossImpactFb(x, z, element, scale) {
+// Mäktig boss-impact som TÄCKER hela AoE-cirkeln (user-krav 2026-06-08).
+// radius = skill-radie i world-units → mark-flipbook skalas till ~diametern (2.2r)
+// så hela cirkeln får effekt. + centrerad luft-burst (capad så billboarden inte
+// blir absurt stor på enorma AoE:er). opts.burst=false → bara mark (multiCircle-flod).
+function spawnBossImpactFb(x, z, element, radius, opts = {}) {
   const p = bossFb(element);
   const gy = _fxGroundY();
   const by = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.1;
-  spawnFlipbook({ key: p.ground, x, y: gy, z, ground: true, scale: Math.max(2.5, scale * 2.4), color: p.tintGround, additive: true, opacity: 0.95, fadeOut: 0.15 });
-  spawnFlipbook({ key: p.burst, x, y: by, z, scale: Math.max(2.2, scale * 1.9), color: p.tintBurst, additive: true });
+  const r = radius || 3;
+  spawnFlipbook({ key: p.ground, x, y: gy, z, ground: true, scale: Math.max(3.0, r * 2.2), color: p.tintGround, additive: true, opacity: 0.95, fadeOut: 0.2 });
+  if (opts.burst !== false) {
+    spawnFlipbook({ key: p.burst, x, y: by, z, scale: Math.max(2.8, Math.min(r * 1.5, 12)), color: p.tintBurst, additive: true });
+  }
 }
 
 function spawnSkillCastFx(x, z, color, radius = 0.6) {
@@ -33758,11 +33763,11 @@ function tickCombatFx(dt) {
 // En aura per hjälte-buff; distinkta texturer/färger → ingen överanvändning.
 function activeBuffGlowInfo(s) {
   const h = s.heroId;
-  // Ult-tier (rageRemaining = Gimlu R) prioriteras + större aura.
-  if (h === 'gimlu'   && (s.rageRemaining || 0) > 0)        return { key: 'aura_a', color: 0xff4020, scale: 3.4 };  // Rage-ult (eld)
-  if (h === 'gimlu'   && (s.titansRageTime || 0) > 0)       return { key: 'aura_a', color: 0xff5530 };  // Titan's Rage (eld/raseri)
+  // Ult-tier (rageRemaining = Gimlu R) prioriteras + större aura. (scale default 2.9)
+  if (h === 'gimlu'   && (s.rageRemaining || 0) > 0)        return { key: 'aura_a', color: 0xff4020, scale: 4.2 };  // Rage-ult (eld)
+  if (h === 'gimlu'   && (s.titansRageTime || 0) > 0)       return { key: 'aura_a', color: 0xff5530, scale: 3.4 };  // Titan's Rage (eld/raseri)
   if (h === 'gimlu'   && (s.titansStompDrTime || 0) > 0)    return { key: 'aura_d', color: 0x66c8ff };  // Stomp DR (blå sköld)
-  if (h === 'aragurn' && (s.whirlwindRemaining || 0) > 0)   return { key: 'aura_b', color: 0xffe399, scale: 3.0 };  // Whirlwind (guld)
+  if (h === 'aragurn' && (s.whirlwindRemaining || 0) > 0)   return { key: 'aura_b', color: 0xffe399, scale: 3.8 };  // Whirlwind (guld)
   if (h === 'legolas' && (s.legolusBuffRemaining || 0) > 0) return { key: 'aura_e', color: 0x9fe04a };  // Hunter's Focus (natur)
   if (h === 'kostefo' && (s.kostefoCloudRemaining || 0) > 0) return { key: 'aura_c', color: 0x88dd66 }; // Cannabis Cloud (grön)
   if (h === 'zheyna'  && (s.zheynaWarpathRem || 0) > 0)     return { key: 'aura_b', color: 0xff5577 };  // Warpath (crimson)
@@ -33781,7 +33786,7 @@ function ensureHeroBuffGlow(side, key, color, scale) {
   tex.offset.set(0, 1 - 1 / def.rows);
   const mat = new THREE.SpriteMaterial({ map: tex, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
   const spr = new THREE.Sprite(mat);
-  const sc = scale || 2.3;
+  const sc = scale || 2.9;
   spr.scale.set(sc, sc, sc);
   spr.position.y = 1.0;
   spr._key = key; spr._tex = tex; spr._def = def; spr._fps = def.fps; spr._elapsed = 0;
@@ -33804,8 +33809,8 @@ function updateHeroBuffGlows(dt) {
         const col = fr % spr._def.cols, row = (fr / spr._def.cols) | 0;
         spr._tex.offset.x = col / spr._def.cols;
         spr._tex.offset.y = 1 - (row + 1) / spr._def.rows;
-        // mjuk in-fade
-        spr.material.opacity = Math.min(0.7, spr.material.opacity + dt * 2.5);
+        // mjuk in-fade (tydligare glow under hela buffen)
+        spr.material.opacity = Math.min(0.88, spr.material.opacity + dt * 2.5);
       }
     } else {
       const g = s.mesh.userData.buffGlow;
