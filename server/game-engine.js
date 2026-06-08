@@ -1623,7 +1623,55 @@ function tickGimluRageServer(state, side, dt) {
   if (side.rageRemaining <= 0) side.rageRemaining = 0;
 }
 
+// Arena online-vs-bot (server-auth). Speglar klientens tickArenaBot: target enemy-hero,
+// chase/kite/strafe, AA + skills (ult tillåten). Driver sides[idx].isBot via lastInputs/applyEvent.
+function tickArenaBotServer(state, sideIdx, dt) {
+  const side = state.sides[sideIdx];
+  if (!side || !side.isBot || side.hero.dead) return;
+  const enemy = state.sides[3 - sideIdx];
+  if (!enemy) return;
+  if (!side._botSkillsInited) {
+    side._botSkillsInited = true;
+    side.skillLvl = side.skillLvl || { q: 0, f: 0, e: 0 };
+    for (const k of ['q', 'f', 'e']) if ((side.skillLvl[k] || 0) < 1) side.skillLvl[k] = 1;
+  }
+  const input = state.lastInputs[sideIdx];
+  if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.hero.tauntedTime || 0) > 0) { if (input) input.j = null; return; }
+  const p = BOT_PARAMS[side.botDifficulty] || BOT_PARAMS.medium;
+  const enemyAlive = !enemy.hero.dead;
+  const dx = enemy.hero.x - side.hero.x, dz = enemy.hero.z - side.hero.z;
+  const d = Math.hypot(dx, dz) || 0.001;
+  side._botState = side._botState || { strafePhase: Math.random() * Math.PI * 2 };
+  const bs = side._botState;
+  let mx = 0, mz = 0;
+  if (enemyAlive && d > 0.05) {
+    const nx = dx / d, nz = dz / d;
+    const range = side.attackRange || HERO_ATTACK_RANGE;
+    if (d > range + 0.4) { mx = nx; mz = nz; }              // chase
+    else if (d < range * 0.5) { mx = -nx; mz = -nz; }       // kite
+    else { const ph = Math.sin(Date.now() * 0.001 * (p.strafeFreq || 1) + bs.strafePhase); const s_ = ph > 0 ? 1 : -1; mx = -nz * s_; mz = nx * s_; }  // strafe
+    mx += (Math.random() - 0.5) * p.jitter; mz += (Math.random() - 0.5) * p.jitter;
+    const ml = Math.hypot(mx, mz) || 1; mx /= ml; mz /= ml;
+    side.hero.facingX = nx; side.hero.facingZ = nz;
+  }
+  if (input) input.j = (mx || mz) ? { x: mx, z: mz } : null;
+  const aaRange = side.attackRange || HERO_ATTACK_RANGE;
+  if (enemyAlive && d <= aaRange + 0.5 && !side.aaActive) applyEvent(state, sideIdx, { type: 'aa' });
+  else if (side.aaActive && d > aaRange + 2.0) applyEvent(state, sideIdx, { type: 'aa-cancel' });
+  if (!enemyAlive) return;
+  side._botSkillT = (side._botSkillT || 0) - dt;
+  if (side._botSkillT <= 0 && Math.random() < p.skillRatePerSec * dt) {
+    side._botSkillT = p.skillReactionMs / 1000;
+    const cand = [];
+    for (const k of ['q', 'f', 'e']) if (side.skills[k] && side.skills[k].cd <= 0) cand.push(k);
+    if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX) cand.push('r');   // ult funkar i arena
+    if (cand.length) applyEvent(state, sideIdx, { type: 'skill', key: cand[(Math.random() * cand.length) | 0], dx: dx / d, dz: dz / d, tap: true });
+  }
+}
+
 function tickArenaCombat(state, dt) {
+  // Bot-AI (arena online-vs-bot): sätt rörelse-input + AA/skill före rörelse-loopen.
+  for (const sideIdx of _SIDE_KEYS) if (state.sides[sideIdx] && state.sides[sideIdx].isBot) tickArenaBotServer(state, sideIdx, dt);
   for (const sideIdx of _SIDE_KEYS) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx] && state.lastInputs[sideIdx].j;
@@ -1784,7 +1832,7 @@ function startArenaRound(state, roundNum) {
   state.fightTimer = 0;
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
-  state.ready = { 1: false, 2: false };
+  state.ready = { 1: false, 2: (state.sides[2] && state.sides[2].isBot) ? true : false };   // bot auto-ready varje runda
   for (const idx of _SIDE_KEYS) {
     if (!state.talents[idx]) state.talents[idx] = { points: 0, chosen: [] };
     state.talents[idx].points += 1;                 // +1 talent-poäng/runda
@@ -1812,7 +1860,7 @@ function transitionArenaToFight(state) {
   state.fightTimer = 0;
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
-  state.ready = { 1: false, 2: false };
+  state.ready = { 1: false, 2: (state.sides[2] && state.sides[2].isBot) ? true : false };   // bot auto-ready varje runda
   // Orb spawnar direkt vid fight-start
   state.orb.alive = true;
   state.orb.hp = state.orb.maxHp;

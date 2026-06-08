@@ -29878,6 +29878,18 @@ function onHosted(code) {
     lobbyHostMsgEl.textContent = 'Starting vs bot...';
     sendGameMsg({ t: 'lw-bot-start', bot: diff });
   }
+  // Arena vs bot (online): skippa peer-vänta + map-vote → hero-pick mot förvald bot-opp.
+  // _arenaBotOnline nollas i a-sim-start-sändningen (enterPlayPhase).
+  if (APP._arenaBotOnline) {
+    lobbyHostMsgEl.textContent = 'Starting vs bot...';
+    const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn'];
+    const botHero = heroes[(Math.random() * heroes.length) | 0];
+    showHeroPick('host');   // setupMatch('host') skapar sides + nollar heroPickState
+    heroPickState.oppSelected = botHero;
+    heroPickState.oppConfirmed = true;   // bot "klar" → host:ens confirm startar direkt
+    if (sides[2]) sides[2].heroId = botHero;
+    if (hpOppStatusEl) hpOppStatusEl.textContent = 'Bot ready';
+  }
 }
 // Line Wars host-vs-bot ONLINE (server-auth, mätbart i MP). Till skillnad från
 // offline-solo-vs-bot går detta genom Render-servern (engine kör simmen + bot:en).
@@ -29906,7 +29918,7 @@ async function hostGame() {
   try {
     await openRelay();
   } catch (err) {
-    APP._lwBotOnline = null;   // teardown: stale bot-trigger ska ej läcka till nästa host
+    APP._lwBotOnline = null; APP._arenaBotOnline = null;   // teardown: stale bot-trigger ska ej läcka
     showLobbyError('Kunde inte nå servern: ' + (err.message || 'okänt fel'));
     return;
   }
@@ -29917,7 +29929,7 @@ async function hostGame() {
 }
 
 function cancelHosting() {
-  APP._lwBotOnline = null;   // teardown: undvik stale bot-trigger i nästa host
+  APP._lwBotOnline = null; APP._arenaBotOnline = null;   // teardown: undvik stale bot-trigger i nästa host
   closeRelay();
   pendingHostCode = null;
   lobbyCodeDisplayEl.textContent = '----';
@@ -30148,7 +30160,8 @@ function enterPlayPhase() {
       resetArenaState();
       APP.arenaServerAuth = true;
       if (APP.mode === 'host') {
-        sendGameMsg({ t: 'a-sim-start', heroes: { 1: sides[1] && sides[1].heroId, 2: sides[2] && sides[2].heroId } });
+        sendGameMsg({ t: 'a-sim-start', heroes: { 1: sides[1] && sides[1].heroId, 2: sides[2] && sides[2].heroId }, bots: APP._arenaBotOnline || undefined });
+        APP._arenaBotOnline = null;   // teardown
       }
       // Båda peers: göm lobby-paneler, vänta på serverns första a-state.
       hideArenaPrep();
@@ -30379,7 +30392,7 @@ function returnToLobby() {
   closeOptionsOverlay();
   bossMpCleanupAfterMatch();   // ingen-op om inte aktiv
   closeRelay();
-  APP._lwBotOnline = null;     // teardown: stale line-wars-online-bot-trigger
+  APP._lwBotOnline = null; APP._arenaBotOnline = null;   // teardown: stale online-bot-triggers
   pendingHostCode = null;
   // Städar alla 4 sidor (2v2 kan ha sides[3]/[4])
   for (const i of [1, 2, 3, 4]) {
@@ -31426,6 +31439,16 @@ function arenaSoloStartWithBot(difficulty) {
   arenaState.mapIdx = Math.floor(Math.random() * ARENA_MAPS.length);
   showHeroPick('solo');
 }
+// Arena host-vs-bot ONLINE (server-auth, mätbart i MP). Går genom Render-servern
+// (engine kör simmen + tickArenaBotServer). Skippar peer-vänta + map-vote.
+function arenaHostVsBotOnline(difficulty) {
+  APP.gameMode = 'arena1v1';
+  APP.arenaTeamSize = 1;
+  APP.arenaBot = { active: false, difficulty: null };   // ingen LOKAL bot (server äger den)
+  APP._arenaBotOnline = ['easy', 'medium', 'hard'].includes(difficulty) ? difficulty : 'medium';
+  arenaState.mapIdx = Math.floor(Math.random() * ARENA_MAPS.length);
+  hostGame();
+}
 const btnArenaHost = document.getElementById('btn-arena-host');
 if (btnArenaHost) btnArenaHost.addEventListener('click', hostArena);
 const btnArenaJoin = document.getElementById('btn-arena-join');
@@ -31440,6 +31463,11 @@ const btnBotMedium = document.getElementById('btn-bot-medium');
 if (btnBotMedium) btnBotMedium.addEventListener('click', () => arenaSoloStartWithBot('medium'));
 const btnBotHard = document.getElementById('btn-bot-hard');
 if (btnBotHard) btnBotHard.addEventListener('click', () => arenaSoloStartWithBot('hard'));
+// Arena online (server-auth, mätbart i MP) vs bot
+for (const d of ['easy', 'medium', 'hard']) {
+  const b = document.getElementById('btn-arena-bot-online-' + d);
+  if (b) b.addEventListener('click', () => arenaHostVsBotOnline(d));
+}
 
 // ---- Mode-knappar (Line Wars / Arena Wars) — visar team-väljare ----
 const btnModeLine = document.getElementById('btn-mode-line');

@@ -296,15 +296,21 @@ function relayPeerSend(peer, envelope, isState) {
 // P2P-relä-beteende (host-auth) → deploy av servern ensam bryter inget. När den
 // nya klientens host skickar a-sim-start startar servern arena-engine:n och äger
 // a-state; host:ens egna a-state ignoreras då.
-function startArenaSim(room, heroes) {
+function startArenaSim(room, heroes, bots) {
   if (room.game || room.tickHandle) return;        // redan igång
   room.arenaSim = true;
   room.game = engine.initArenaMatch(heroes);
+  // Host-vs-bot online: sides[2] = bot + auto-ready så prep-fasen går vidare utan peer.
+  if (bots && room.game.sides && room.game.sides[2]) {
+    room.game.sides[2].isBot = true;
+    room.game.sides[2].botDifficulty = ['easy', 'medium', 'hard'].includes(bots) ? bots : 'medium';
+    if (room.game.ready) room.game.ready[2] = true;
+  }
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
   room.nextTickAt = Date.now();
   scheduleNextTick(room);
-  console.log(`[${room.code}] arena sim started (server-auth)`);
+  console.log(`[${room.code}] arena sim started (server-auth${bots ? ', vs bot ' + bots : ''})`);
 }
 
 function applyArenaInput(room, ws, payload) {
@@ -397,7 +403,7 @@ function handleArenaMessage(room, fromWs, envelope) {
   const t = payload && payload.t;
   // Host begär server-auth-sim (skickas vid fight-start). Bara host.
   if (t === 'a-sim-start') {
-    if (fromWs === room.host) startArenaSim(room, payload.heroes);
+    if (fromWs === room.host) startArenaSim(room, payload.heroes, payload.bots);
     return;
   }
   if (room.arenaSim) {

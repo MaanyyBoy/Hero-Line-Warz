@@ -4254,11 +4254,17 @@
 
     <div class="lobby-panel" id="lobby-arena-bot">
       <div style="font-size: 26px; color: #ff7733; letter-spacing: 1.5px; font-weight: 800; margin-bottom: 6px;">🏟 Arena Wars · Singleplayer</div>
-      <div class="sub" style="margin-bottom: 18px;">Choose bot difficulty</div>
+      <div class="sub" style="margin-bottom: 6px; opacity:0.85;">Offline (instant, no server):</div>
       <button class="lobby-btn" id="btn-bot-easy" style="background: rgba(80,170,90,0.85); border-color: rgba(160,255,180,0.7);">Easy <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Calm bot, rarely casts, easy to dodge</small></button>
       <button class="lobby-btn" id="btn-bot-medium" style="background: rgba(190,140,40,0.85); border-color: rgba(255,210,120,0.7);">Medium <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">More aggressive, strafes, combo skills</small></button>
       <button class="lobby-btn" id="btn-bot-hard" style="background: rgba(180,40,40,0.85); border-color: rgba(255,140,140,0.7);">Hard <small style="display:block;font-size:11px;opacity:0.7;margin-top:3px;">Maxes skills, dodges, kites hard</small></button>
-      <button class="lobby-btn secondary" id="btn-arena-bot-back" style="margin-top: 18px;">← Back</button>
+      <div class="sub" style="margin-top:12px; margin-bottom:4px; opacity:0.85;">Online (server-auth · measurable MP):</div>
+      <div style="display:flex; gap:6px;">
+        <button class="lobby-btn" id="btn-arena-bot-online-easy" style="flex:1; background: rgba(60,110,150,0.85);">🌐 Easy</button>
+        <button class="lobby-btn" id="btn-arena-bot-online-medium" style="flex:1; background: rgba(60,110,150,0.85);">Medium</button>
+        <button class="lobby-btn" id="btn-arena-bot-online-hard" style="flex:1; background: rgba(60,110,150,0.85);">Hard</button>
+      </div>
+      <button class="lobby-btn secondary" id="btn-arena-bot-back" style="margin-top: 14px;">← Back</button>
     </div>
 
     <div class="lobby-panel" id="lobby-line-bot">
