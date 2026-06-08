@@ -17645,6 +17645,14 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
       scene.remove(tg);
       mesh.userData._bossTelegraph = null;
     }
+    // MP-VFX-paritet (2026-06-09): line-wars wave-boss-impact syns nu online. När
+    // telegraph-fasen tar slut (skill resolvar) avfyras impact-flipbooken. Solo gör
+    // det i bossExecuteSkill; klienten renderar bara från snapshot. Lagra vid
+    // telegraph-spawn, avfyra vid telegraph-end → robust mot korta execute-fönster.
+    if (prevKey.endsWith('|telegraph') && mesh.userData._pendingImpact) {
+      _spawnSyncedBossImpact(mesh.userData._pendingImpact);
+      mesh.userData._pendingImpact = null;
+    }
     if (newCast && newCast.ph === 'telegraph' && newCast.n) {
       // Pseudo-monster för spawnBossTelegraph (har samma fält som riktig boss)
       const pseudoMonster = { mesh, x: mesh.position.x, z: mesh.position.z };
@@ -17670,6 +17678,7 @@ function syncBossSkillTelegraphsFromSnap(sideIdx, monsterList) {
       };
       try { spawnBossTelegraph(null, pseudoMonster, pseudoCast); } catch (_) {}
       mesh.userData._bossTelegraph = pseudoCast.telegraphMesh;
+      mesh.userData._pendingImpact = _makePendingImpact(newCast, m.tier || m.bossTier, mesh.position);
     }
     mesh.userData._bossCastKey = newKey;
   }
@@ -26778,6 +26787,16 @@ function applyBossWarsState(msg) {
           });
           boss._syncedTelegraph = null;
         }
+        // MP-VFX-paritet (2026-06-09): när telegraph-fasen TAR SLUT (skill resolvar)
+        // spawnar klienten boss-impact-flipbooken. Solo gör det i bossExecuteSkill;
+        // i MP renderar klienten bara från snapshot → utan detta var boss-AoE osynlig
+        // online. Vi lagrar impact-infon vid telegraph-spawn och avfyrar när cast-key
+        // lämnar telegraph (→execute ELLER borta) → robust även om execute-fönstret är
+        // kortare än en snapshot (33 ms). Fires EN gång per cast.
+        if (prevCastKey.endsWith('|telegraph') && boss._pendingImpact) {
+          _spawnSyncedBossImpact(boss._pendingImpact);
+          boss._pendingImpact = null;
+        }
         // Spawna ny om vi nu är i telegraph-fas
         if (newCast && newCast.ph === 'telegraph' && newCast.n) {
           const pseudoSkill = {
@@ -26803,6 +26822,7 @@ function applyBossWarsState(msg) {
           };
           spawnBossTelegraph(null, boss, pseudoCast);
           boss._syncedTelegraph = pseudoCast.telegraphMesh;
+          boss._pendingImpact = _makePendingImpact(newCast, msg.tr || boss.bossTier || 1, boss.mesh.position);
         }
       }
       boss._prevSyncedCastKey = newCastKey;
@@ -33312,6 +33332,29 @@ const BOSS_FB = {
   holy:      { burst: 'burst_a', ground: 'shockwave_air',    cone: 'tornado_b',    aura: 'aura_a', tintBurst: 0xfff0a0, tintGround: 0xffe27a, tintCone: 0xffe9a0 },
 };
 function bossFb(el) { return BOSS_FB[el] || BOSS_FB.physical; }
+
+// MP-VFX-paritet (2026-06-09): bygger ett impact-jobb från en synkad boss-cast
+// (klientens snapshot) så joinaren kan spawna boss-impact-flipbooken vid execute,
+// precis som solo gör i bossExecuteSkill. Element härleds från skill-id.
+function _makePendingImpact(c, tier, fallbackPos) {
+  if (!c) return null;
+  return {
+    el: bossSkillElement(c.n, tier),
+    ix: c.tx != null ? c.tx : (c.ox != null ? c.ox : (fallbackPos ? fallbackPos.x : 0)),
+    iz: c.tz != null ? c.tz : (c.oz != null ? c.oz : (fallbackPos ? fallbackPos.z : 0)),
+    rad: c.rad || 0, len: c.len || 0, w: c.w || 0,
+    dx: c.dx != null ? c.dx : 0, dz: c.dz != null ? c.dz : 1,
+  };
+}
+function _spawnSyncedBossImpact(pi) {
+  if (!pi) return;
+  if (pi.rad > 0) {
+    spawnBossImpactFb(pi.ix, pi.iz, pi.el, pi.rad);
+  } else if (pi.len > 0) {
+    // cone/beam/lineDash: burst längs riktningen (mittpunkt av längden)
+    spawnBossImpactFb(pi.ix + pi.dx * pi.len * 0.5, pi.iz + pi.dz * pi.len * 0.5, pi.el, Math.max(3, pi.w || pi.len * 0.3));
+  }
+}
 
 // Mäktig boss-impact: stor mark-effekt + luft-burst. Layeras OVANPÅ befintlig
 // spawnExplosion/element-FX (ren visual). scale ~ skill-radie/4.
