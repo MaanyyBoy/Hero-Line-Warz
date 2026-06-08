@@ -29962,6 +29962,33 @@ function setupMatch(mode) {
   resetIncomeTickTracking();
   lobbyEl.classList.add('hidden');
 }
+// Pre-warm: kompilera shaders + uploada texturer för tunga karaktärer (wave-bossar)
+// MEDAN spelaren är i lugna tidiga waves, istället för en ~250ms-frys när bossen
+// dyker upp mitt i strid (telemetri 2026-06-08: maxRenderMs 251 = asset-load-stall).
+// Instansierar mesh off-screen → renderer.compile (shader-program + textur cachas
+// GLOBALT av three.js) → scene.remove UTAN dispose (delade GLB-resurser måste vara
+// kvar varma för den riktiga spawnen; wrapper-objektet GC:as, inga GPU-allokeringar
+// läcker eftersom clones delar GLB:ns buffrar). Staggrat 700ms → inga samtidiga frysar.
+function prewarmCharacterShaders(keys, i = 0) {
+  // Stoppa om spelaren lämnat matchen (annars compile på lobby-scen + mixer-läcka).
+  if (!renderer || !camera || !keys || i >= keys.length || APP.mode === 'lobby') return;
+  const key = keys[i];
+  try {
+    // loadedCharacters.has (ej CHARACTER_ASSETS) → annars kan makeMonsterMesh falla
+    // till BoxGeometry-fallbacken (färska geo/material som no-dispose skulle läcka).
+    if (loadedCharacters.has(key)) {
+      const m = makeMonsterMesh(key);
+      m.position.set(9999, -999, 9999);   // off-screen
+      scene.add(m);
+      renderer.compile(scene, camera);
+      scene.remove(m);
+      // makeMonsterMesh registrerar en anim-mixer i activeMixers → rensa explicit
+      // (annars tickas idle-anim på off-screen-mesh tills validate-loopen hinner ikapp).
+      if (m.userData && m.userData.mixer) activeMixers.delete(m.userData.mixer);
+    }
+  } catch (_) { /* best-effort */ }
+  setTimeout(() => prewarmCharacterShaders(keys, i + 1), 700);
+}
 function startMatch(mode) {
   setupMatch(mode);
   enterPlayPhase();
@@ -30005,7 +30032,9 @@ function enterPlayPhase() {
   // först vid wave 10 — gott om runway, fire-and-forget. Bosswars: backup-
   // trigger (bossWarsShow har normalt redan startat laddningen).
   if (APP.gameMode === 'classic') {
-    ensureCharactersLoaded(WAVE_BOSS_KEYS);
+    // Telemetri 2026-06-08: maxRenderMs 251ms = wave-boss-asset-stall mid-strid.
+    // Förvärm shaders+texturer i lugna tidiga waves (staggrat) → ingen frys vid boss-spawn.
+    ensureCharactersLoaded(WAVE_BOSS_KEYS).then(() => prewarmCharacterShaders(WAVE_BOSS_KEYS)).catch(() => {});
   } else if (APP.gameMode === 'bosswars') {
     ensureCharactersLoaded(BOSSWARS_BOSS_KEYS);
   }
