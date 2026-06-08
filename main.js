@@ -13759,9 +13759,13 @@ function damageMonster(m, rawDmg) {
   if (m.isBossWarsBoss && m._dragon && m._dragon.active) return 0;     // immun under boss 5-mekanik (decision 135)
   if (m.isBossWarsBoss && (m.phaseTransitionRemaining || 0) > 0) return 0;
   const dr = computeBossWarsDmgReduction(m);
-  let dmg = rawDmg * (1 - dr);
+  let dmg = rawDmg;
   // Cap: tier-graderat per-hit-tak (T1 6% → T5 4%) — hindrar burst-one-shots.
+  // Appliceras på RÅ skada FÖRE DR (user 2026-06-08): annars maskerar taket DR för
+  // %maxHP-skills (rå×(1−DR) > tak → min väljer taket → DR försvinner). Med taket
+  // först reducerar DR ALLTID, även %maxHP-skills, och one-shot-skyddet kvarstår.
   if (m.isBossWarsBoss) dmg = Math.min(dmg, m.maxHp * (BOSSWARS_TIER_MAX_HIT_FRAC[m.bossTier] || BOSSWARS_MAX_HIT_FRAC));
+  dmg *= (1 - dr);
   const actual = Math.min(dmg, Math.max(0, m.hp));
   m.hp -= dmg;
   return actual;

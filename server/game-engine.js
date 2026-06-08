@@ -3139,8 +3139,12 @@ function bossWarsDmgMod(m, dmg) {
   // phase2DrBonus: +20pp DR additivt i fas 2 (sätts vid fas-övergång). Cap 70% totalt.
   const dr = Math.min(m.dmgReductionCap || 0.70, (m.dmgReductionBase || 0) + steps * (m.dmgReductionStep || 0.05) + (m.phase2DrBonus || 0));
   // Cap: tier-graderat per-hit-tak (T1 6% → T5 4%) — hindrar burst-one-shots.
+  // Taket appliceras på RÅ skada FÖRE DR (user 2026-06-08): annars maskerar taket
+  // DR för %maxHP-skills (rå×(1−DR) > tak → min väljer taket → DR försvinner). Med
+  // taket först reducerar DR ALLTID, även %maxHP-skills; one-shot-skyddet kvarstår
+  // (slutlig ≤ tak). Måste matcha solo-vägen i main.js damageMonster.
   const cap = BOSSWARS_TIER_MAX_HIT_FRAC[m.bossTier] || BOSSWARS_MAX_HIT_FRAC;
-  return Math.min(dmg * (1 - dr), m.maxHp * cap);
+  return Math.min(dmg, m.maxHp * cap) * (1 - dr);
 }
 // Fas-övergång (slice 3a): vid phaseThreshold-HP → bossPhase 2. Stun+push heroes, immun flyup 2.5s,
 // cleanse boss-debuffs (behåll positiv buff), swap till phase2-skills vid landning. Port av main.js.
