@@ -514,7 +514,7 @@ const STAT_PER_POINT = {
 const PICK_PHASE_DURATION = 60; // sek
 
 // Duel-system: var 5:e min stannar lane-fas och båda hjältar slåss i arena
-const DUEL_INTERVAL = 60;      // TEMP-TEST 2026-06-08: 1 min (snabbtesta duel-bot). ÅTERSTÄLL TILL 600 (10 min) efter user mätt line wars.
+const DUEL_INTERVAL = 600;      // sekunder mellan dueler (10 min — första duel 10 min in)
 const DUEL_DURATION = 90;       // max sekunder per duel
 const DUEL_MAX_COUNT = 4;
 const DUEL_REWARDS_GOLD = [500, 1500, 5000, 10000];
