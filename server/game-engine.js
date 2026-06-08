@@ -514,7 +514,7 @@ const STAT_PER_POINT = {
 const PICK_PHASE_DURATION = 60; // sek
 
 // Duel-system: var 5:e min stannar lane-fas och båda hjältar slåss i arena
-const DUEL_INTERVAL = 300;      // sekunder mellan dueler
+const DUEL_INTERVAL = 600;      // sekunder mellan dueler (10 min — första duel 10 min in)
 const DUEL_DURATION = 90;       // max sekunder per duel
 const DUEL_MAX_COUNT = 4;
 const DUEL_REWARDS_GOLD = [500, 1500, 5000, 10000];
@@ -8419,6 +8419,9 @@ function tickGame(state, dt) {
   if (state.duelAnnounceTimer > 0) state.duelAnnounceTimer = Math.max(0, state.duelAnnounceTimer - dt);
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
   if (state.duelActive) {
+    // Bot-AI: duellen är hjälte-vs-hjälte (som arena) → återanvänd arena-bot:en så
+    // bot:en faktiskt slåss istället för att stå still (annars passiv docka i duellen).
+    for (const sideIdx of [1, 2]) if (state.sides[sideIdx] && state.sides[sideIdx].isBot) tickArenaBotServer(state, sideIdx, dt);
     // Movement
     for (const sideIdx of [1, 2]) {
       const side = state.sides[sideIdx];
@@ -8475,6 +8478,17 @@ function tickGame(state, dt) {
       }
       updateNovaEffects(side, dt);
       updateActiveBuffs(side, dt);
+      // CC/DoT/regen-timers (duel-blocket tickade dem EJ → frusen/tauntad/feared/slowad
+      // hjälte fastnade hela duellen; gällde även människor — pre-existerande, fixat här).
+      if ((side.hero.frozenTime || 0) > 0) side.hero.frozenTime = Math.max(0, side.hero.frozenTime - dt);
+      if ((side.hero.tauntedTime || 0) > 0) side.hero.tauntedTime = Math.max(0, side.hero.tauntedTime - dt);
+      if ((side.hero.dotRemaining || 0) > 0) { side.hero.dotRemaining = Math.max(0, side.hero.dotRemaining - dt); damageHero(side, (side.hero.dotPerSec || 0) * dt); }
+      if ((side.hero.poisonRemaining || 0) > 0) side.hero.poisonRemaining = Math.max(0, side.hero.poisonRemaining - dt);
+      if ((side.heroSlowTime || 0) > 0) { side.heroSlowTime = Math.max(0, side.heroSlowTime - dt); if (side.heroSlowTime <= 0) { side.heroSlowTime = 0; side.heroSlowMul = 1; } }
+      tickKryxTimers(side, dt);
+      if ((side.heroFearTime || 0) > 0) side.heroFearTime = Math.max(0, side.heroFearTime - dt);
+      if ((side.iceBlockRemaining || 0) > 0) side.iceBlockRemaining = Math.max(0, side.iceBlockRemaining - dt);
+      if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
     }
     // Pickup-orbs (heal + speed) + big duel-arena orb
     tickDuelOrbs(state, dt);

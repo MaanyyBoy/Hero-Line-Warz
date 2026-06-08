@@ -30088,9 +30088,9 @@ function enterPlayPhase() {
   // (event-bubbling efter hero-pick-confirm har triggat den i singleplayer).
   const _ap = document.getElementById('avatar-picker');
   if (_ap) _ap.classList.remove('visible');
-  // Starta duel-timer (5 min) så fort matchen börjar. MP får detta från servern;
-  // i solo tickas den lokalt via simulateAll/tick.
-  duelState.timer = 300;   // 5 min mellan dueler (MP får detta från servern)
+  // Starta duel-timer (10 min) så fort matchen börjar. MP får detta från servern;
+  // i solo tickas den lokalt via simulateAll/tick (bara HUD — solo triggar ingen duel).
+  duelState.timer = 600;   // 10 min mellan dueler (MP får detta från servern)
   duelState.count = 0;
   duelState.active = false;
   duelState.matchTimer = 0;
