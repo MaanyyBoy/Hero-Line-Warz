@@ -346,6 +346,10 @@ const FLIPBOOK_VFX = {
 const AudioMgr = (() => {
   let ctx = null, master = null, sfxGain = null, musicGain = null;
   let enabled = true, _noiseBuf = null, _musicTimer = null, _musicNodes = null;
+  let _voices = 0;   // SFX-anrop denna frame (hård cap mot node-alloc-spik, perf-pass)
+  // Eget UA-test (INTE IS_MOBILE_UA): den const:en deklareras längre ner i filen än
+  // denna IIFE → typeof räddar inte från TDZ (ReferenceError vid module-load).
+  const MAX_VOICES = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent || '') ? 4 : 8;
   const _lastPlay = Object.create(null);   // name → senaste ts (throttle)
 
   function ensure() {
@@ -438,10 +442,15 @@ const AudioMgr = (() => {
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const minGap = (opts && opts.minGap != null) ? opts.minGap : 45;   // throttle per namn (ms)
     if (_lastPlay[name] && (now - _lastPlay[name]) < minGap) return;
+    // Hård cap på antal SFX (= node-alloc-batchar) per frame → ingen main-thread-spik
+    // när många OLIKA ljud triggas samma frame (3-hjälte-co-op-burst). Perf-pass.
+    if (_voices >= MAX_VOICES) return;
+    _voices++;
     _lastPlay[name] = now;
     const fn = SFX[name]; if (!fn) return;
     try { fn(c.currentTime + 0.001, opts && opts.el); } catch (_) {}
   }
+  function frameReset() { _voices = 0; }   // anropas en gång/frame från tick()
 
   // --- Ambient hemskärms-musik: långsam pad (detune-oscillatorer + lowpass-LFO)
   // + sparsam arpeggio. Loopar tills stopMusic. Mjuk in/ut-fade på musicGain.
@@ -456,30 +465,53 @@ const AudioMgr = (() => {
     // LFO som sveper filtret långsamt (levande pad)
     const lfo = c.createOscillator(); lfo.frequency.value = 0.06;
     const lfoG = c.createGain(); lfoG.gain.value = 280; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
-    // Pad-ackord (A-moll-ish): A2, E3, A3, C4 — lätt detune för bredd
-    const freqs = [110, 164.81, 220, 261.63];
+    // Ackord-progression (Am - F - C - G), roterar var 8s → paden ANDAS istället för
+    // en evig statisk ton (playtest #1: musiken är förstaintrycket och blev tjatig).
+    const CHORDS = [
+      [110.00, 164.81, 220.00, 261.63],   // Am  (A2 E3 A3 C4)
+      [ 87.31, 174.61, 220.00, 261.63],   // F   (F2 F3 A3 C4)
+      [ 98.00, 196.00, 246.94, 329.63],   // C/G (G2 G3 B3 E4)
+      [ 98.00, 146.83, 196.00, 246.94],   // G   (G2 D3 G3 B3)
+    ];
+    const ARP = [
+      [220, 261.63, 329.63, 440],         // Am
+      [174.61, 220, 261.63, 349.23],      // F
+      [196, 246.94, 329.63, 392],         // C
+      [196, 246.94, 293.66, 392],         // G
+    ];
+    let chordIdx = 0;
     const oscs = [], oscGains = [];
-    for (const f of freqs) {
-      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+    for (let i = 0; i < 4; i++) {
+      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = CHORDS[0][i];
       o.detune.value = (Math.random() * 8 - 4);
-      const og = c.createGain(); og.gain.value = 0.22;
+      const og = c.createGain(); og.gain.value = 0.2;
       o.connect(og); og.connect(lp); o.start(t); oscs.push(o); oscGains.push(og);
     }
     _musicNodes = { padGain, lp, lfo, lfoG, oscs, oscGains };
     musicGain.gain.cancelScheduledValues(t);
     musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
     musicGain.gain.exponentialRampToValueAtTime(0.3, t + 2.0);   // fade in
-    // Sparsam arpeggio ovanpå paden (var ~1.6s en mjuk ton ur skalan)
-    const scale = [220, 261.63, 329.63, 392, 440, 523.25];
+    // Ackord-rotation var 8s: ramp varje oscillator mjukt (1.2s) till nästa ackord.
+    _musicNodes._chordTimer = setInterval(() => {
+      if (!ctx || !_musicNodes) return;
+      chordIdx = (chordIdx + 1) % CHORDS.length;
+      const tt = ctx.currentTime;
+      for (let i = 0; i < oscs.length; i++) {
+        try { oscs[i].frequency.exponentialRampToValueAtTime(CHORDS[chordIdx][i], tt + 1.2); } catch (_) {}
+      }
+    }, 8000);
+    // Sparsam arpeggio ur AKTUELLT ackord, var 3s (var 1.6s → kändes rastlöst).
     _musicTimer = setInterval(() => {
       if (!ctx || !_musicNodes) return;
       const tt = ctx.currentTime + 0.02;
-      const f = scale[Math.floor(Math.random() * scale.length)];
-      tone(f, tt, 1.2, 'triangle', 0.06, 0, musicGain);   // 0 = ingen glide (stadig ton)
-    }, 1600);
+      const a = ARP[chordIdx];
+      const f = a[Math.floor(Math.random() * a.length)];
+      tone(f, tt, 1.4, 'triangle', 0.05, 0, musicGain);
+    }, 3000);
   }
   function stopMusic() {
     if (_musicTimer) { clearInterval(_musicTimer); _musicTimer = null; }
+    if (_musicNodes && _musicNodes._chordTimer) { clearInterval(_musicNodes._chordTimer); _musicNodes._chordTimer = null; }
     if (!ctx || !_musicNodes) return;
     const t = ctx.currentTime;
     const n = _musicNodes; _musicNodes = null;
@@ -499,7 +531,7 @@ const AudioMgr = (() => {
     } catch (_) {}
   }
 
-  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled };
+  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset };
 })();
 
 // Mobil/desktop autoplay-policy: lås upp AudioContext + starta hemskärms-musik
@@ -10430,6 +10462,7 @@ function removeSide(side) {
       m._syncedTelegraph.traverse?.(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
       m._syncedTelegraph = null;
     }
+    m._pendingImpact = null;   // konsekvens: varje set har ett clear (client-correctness #2)
   }
   for (const c of side.playerCreeps) removeEntityMesh(c.mesh);
   for (const p of side.projectiles) scene.remove(p.mesh);
@@ -27500,6 +27533,12 @@ function applyHeroSnap(side, snap) {
     skill.cd = snapCd;
   };
   setCdSticky('q'); setCdSticky('f'); setCdSticky('e');
+  // Ljud: lokala spelarens AA i MP. updateHeroAttack (där solo-AA-ljudet sitter) körs
+  // INTE på snapshot-klienten → detektera attackCounter-delta här istället (gate till
+  // lokal sida). minGap-throttlen dedupar mot ev. host-auth-dubbel. (client-correctness #1)
+  if (isOwnLocalSide && (snap.ac || 0) > (side.attackCounter || 0)) {
+    AudioMgr.play((side.heroId === 'aragurn' || side.heroId === 'gimlu') ? 'melee' : 'arrow', { minGap: 70 });
+  }
   side.attackCounter = snap.ac;
   // Skip-0-värden i snap → || 0 fallback för alla state-fält som kan vara 0.
   // Tidigare guard `if (snap.X !== undefined)` fastnade på sista positiva värde
@@ -33604,8 +33643,9 @@ function _spawnSyncedBossImpact(pi) {
 // så hela cirkeln får effekt. + centrerad luft-burst (capad så billboarden inte
 // blir absurt stor på enorma AoE:er). opts.burst=false → bara mark (multiCircle-flod).
 function spawnBossImpactFb(x, z, element, radius, opts = {}) {
-  // Ljud: tung boss-impact (explosion + element-flavour). Throttlad mot multiCircle-flod.
-  if (opts.burst !== false) AudioMgr.play('bossImpact', { el: element, minGap: 90 });
+  // Ljud: tung boss-impact (explosion + element-flavour). Gles throttle (180 ms) så
+  // mäktiga slag känns mäktiga och inte som statisk distortion vid fas-2-flod (playtest #6).
+  if (opts.burst !== false) AudioMgr.play('bossImpact', { el: element, minGap: 180 });
   const p = bossFb(element);
   const fx = elementFx(element);
   const gy = _fxGroundY();
@@ -33624,11 +33664,33 @@ function spawnBossImpactFb(x, z, element, radius, opts = {}) {
   }
 }
 
+// True om en boss-3 (symbol-reveal) eller boss-5 (pussel) golv-mekanik är aktiv →
+// då ska heltäckande additiv glöd INTE läggas (washar ut golv-markörer). Playtest #2.
+let _lastAoeFill = null;
+function _bossFloorMechanicActive() {
+  if (APP.gameMode !== 'bosswars') return false;
+  for (let i = 1; i <= 3; i++) {
+    const s = sides[i]; if (!s || !s.monsters) continue;
+    for (const m of s.monsters) {
+      if (m && m.isBossWarsBoss && ((m.warlord && m.warlord.engaged) || (m._dragon && m._dragon.active))) return true;
+    }
+  }
+  return false;
+}
+
 // AoE-fyllnad: mjuk glöd-disk (glow_disk, PolyOne-paketet) som täcker HELA skill-
 // cirkeln + en tätare kärna. Central helper så BÅDE boss- och hero-AoE får samma
 // "fylld area"-känsla (user-krav 2026-06-08: hela AoE-arean ska ha en effekt, inte
 // bara kant/ring). radius = skill-radie i world-units. Tyst fallback om textur saknas.
 function spawnAoeFill(x, z, radius, color, opts = {}) {
+  // Skydda boss-3/boss-5 golv-mekanik-markörer från utwashning (playtest #2).
+  if (_bossFloorMechanicActive()) return;
+  // Dedupe: en skill-cast kan anropa fyllnaden två ggr (burst + ground-FB) → två
+  // diskar staplas → utbränt centrum (playtest #5). Hoppa near-duplicate.
+  const _now = performance.now();
+  if (_lastAoeFill && (_now - _lastAoeFill.t) < 120 &&
+      Math.abs(x - _lastAoeFill.x) < 1.5 && Math.abs(z - _lastAoeFill.z) < 1.5) return;
+  _lastAoeFill = { x, z, t: _now };
   const r = radius || 3;
   const gy = (opts.y != null) ? opts.y : _fxGroundY();
   const life = opts.life != null ? opts.life : 0.6;
@@ -33640,8 +33702,8 @@ function spawnAoeFill(x, z, radius, color, opts = {}) {
   const flood = (typeof COMBAT_FX_CAP === 'number') && combatFx.length > COMBAT_FX_CAP * 0.7;
   // Yttre glöd täcker hela diametern (2r) — ALLTID (det är fyllnaden user vill ha).
   spawnFlipbook({ key: 'glow_disk', x, y: gy + 0.02, z, ground: true, scale: r * 2.0, scaleEnd: r * 2.18, color: col, additive: true, opacity: op, life, fadeOut: 0.28 });
-  // Tätare kärna ger centrum-tyngd. Hoppas under flod (extra draw call + overdraw).
-  if (opts.core !== false && !flood) {
+  // Tätare kärna ger centrum-tyngd. Hoppas under flod + på mobil (extra overdraw).
+  if (opts.core !== false && !flood && !IS_MOBILE_UA) {
     spawnFlipbook({ key: 'glow_disk', x, y: gy + 0.03, z, ground: true, scale: r * 1.05, scaleEnd: r * 1.2, color: col, additive: true, opacity: op * 0.85, life: life * 0.9, fadeOut: 0.22 });
   }
 }
@@ -34642,6 +34704,7 @@ function tickLocalPrediction(dt) {
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
+  AudioMgr.frameReset();   // nollställ SFX-voice-budget för denna frame (perf-cap)
   resetFxPopupBudget();
   // Decision 113: reset mesh-spawn-budget för wave-start-stutter-fix
   _meshSpawnsThisFrame = 0;
