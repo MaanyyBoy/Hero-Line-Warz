@@ -17696,6 +17696,16 @@ const STAGGER_KEYS = new Set(['monsters', 'playerCreeps']);
 // Återanvänd ETT scratch-Set istället för new Set() per anrop (~900-1500/sek i MP → GC-press
 // på mobil). Synkron användning inom funktionen → ingen reentrancy-risk.
 const _reconcileSeen = new Set();
+// MP-VFX-paritet (2026-06-09): hero-AoE-entiteter som syncas till klienten ska få
+// samma glöd-FYLLNAD som täcker hela cirkeln som i solo (spawnHeroCastFb auto-fill
+// körs bara host/solo-side). När entiteten först dyker upp i en snapshot spawnar vi
+// en engångs-fyllnad. r = entitetens radie om synkad (thornPools), annars konstant.
+const AOE_FILL_KEYS = {
+  novaEffects: { r: NOVA_RADIUS,       color: 0x9fe0ff },
+  blackHoles:  { r: BLACKHOLE_RADIUS,  color: 0xb070ff },
+  vineTraps:   { r: VINE_TRAP_RADIUS,  color: 0x6fcf3a },
+  thornPools:  { r: 4,                 color: 0xb6ff7a },
+};
 function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) {
   if (!clientMeshes[key].has(sideIdx)) clientMeshes[key].set(sideIdx, new Map());
   const map = clientMeshes[key].get(sideIdx);
@@ -17725,6 +17735,9 @@ function clientReconcileEntities(sideIdx, key, list, makeMesh, disposeOnRemove) 
       mesh.position.z = e.z;
       if (e.y !== undefined) mesh.position.y = e.y;
       if (e.ry !== undefined) mesh.rotation.y = e.ry;
+      // MP-VFX-paritet: hero-AoE-entitet dök upp → glöd-fyllnad täcker hela cirkeln online.
+      const _aoeFill = AOE_FILL_KEYS[key];
+      if (_aoeFill) spawnAoeFill(e.x, e.z, e.r || _aoeFill.r, _aoeFill.color);
     }
     if (interpolate) {
       // Decision 044: mutera _target istället för realloc (0 GC per snap).
