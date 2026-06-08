@@ -329,6 +329,11 @@ const FLIPBOOK_VFX = {
   teleport:         { cols: 8, rows: 8, fps: 36, loop: false },
   muzzle:           { cols: 6, rows: 6, fps: 36, loop: false },
   campfire:         { cols: 6, rows: 6, fps: 24, loop: true },
+  // PolyOne Fire Effects-paket (fx_pack_fire_effects.unitypackage, 2026-06-08).
+  // fire_blast = 6×6 eld-burst (vit/tintbar). glow_disk = mjuk radiell glöd (1 frame)
+  // → används som AoE-FYLLNAD som täcker hela skill-cirkeln (user-krav).
+  fire_blast:       { cols: 6, rows: 6, fps: 30, loop: false },
+  glow_disk:        { cols: 1, rows: 1, fps: 1,  loop: true, frames: 1 },
 };
 
 // Mobil-detect används för: batched asset-load (lägre peak-memory), och för
@@ -33293,7 +33298,7 @@ function bossSkillElement(skillId, bossTier) {
 // mellan bossar) → unik look utan 60 unika assets. Neutrala burst_*-texturer
 // tintar rent; eldiga (groundfire/flame_cone) lämnas ~vita så deras egen färg syns.
 const BOSS_FB = {
-  fire:      { burst: 'burst_a', ground: 'groundfire',       cone: 'flame_cone',   aura: 'aura_a', tintBurst: 0xffd9a0, tintGround: 0xffffff, tintCone: 0xffffff },
+  fire:      { burst: 'fire_blast', ground: 'groundfire',    cone: 'flame_cone',   aura: 'aura_a', tintBurst: 0xffcaa0, tintGround: 0xffffff, tintCone: 0xffffff },
   shadow:    { burst: 'burst_c', ground: 'shockwave_ground', cone: 'tornado_a',    aura: 'aura_c', tintBurst: 0xce93ff, tintGround: 0xb070ff, tintCone: 0xc090ff },
   lightning: { burst: 'burst_d', ground: 'shockwave_ground', cone: 'beam',         aura: 'aura_d', tintBurst: 0xcfe2ff, tintGround: 0x9fc4ff, tintCone: 0xbcd9ff },
   poison:    { burst: 'burst_e', ground: 'shockwave_ground', cone: 'sand_tornado', aura: 'aura_e', tintBurst: 0xc8ff5a, tintGround: 0x9ee22a, tintCone: 0xaaff5a },
@@ -33316,15 +33321,38 @@ function spawnBossImpactFb(x, z, element, radius, opts = {}) {
   const gy = _fxGroundY();
   const by = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.1;
   const r = radius || 3;
-  // 1) FYLLD element-disk som täcker HELA AoE-cirkeln (proc-textur, scale = diameter).
-  //    Detta är det som garanterar att hela skill-arean får effekt (user 2026-06-08).
-  spawnKenneyFx({ texName: 'aoe_disc', x, y: gy, z, color: fx.mid, scale: r * 2.0, scaleEnd: r * 2.3, life: 0.55, ground: true, opacity: 0.62, additive: true });
-  spawnKenneyFx({ texName: 'aoe_disc', x, y: gy + 0.01, z, color: fx.core, scale: r * 1.2, scaleEnd: r * 1.5, life: 0.45, ground: true, opacity: 0.5, additive: true });
+  // 1) FYLLD element-glöd (glow_disk-textur) som täcker HELA AoE-cirkeln (user 2026-06-08).
+  //    Riktig mjuk radiell glöd (PolyOne-paketet) — fyller hela skill-arean, inte bara
+  //    kanten. spawnAoeFill innehåller redan yttre disk + core (flod-gatad) → ett anrop.
+  //    Låg opacity: additiv heltäckande disk är fillrate-tung på mobil (perf-pass).
+  spawnAoeFill(x, z, r, fx.mid, { y: gy, opacity: 0.46, life: 0.6 });
   // 2) Animerad shockwave-ring som sveper ut till AoE-kanten (rörelse + boundary).
   spawnFlipbook({ key: p.ground, x, y: gy + 0.03, z, ground: true, scale: r * 2.4, color: p.tintGround, additive: true, opacity: 0.9, fadeOut: 0.2 });
   // 3) Luft-burst för pop (capad så billboarden inte blir absurd på enorma AoE:er).
   if (opts.burst !== false) {
     spawnFlipbook({ key: p.burst, x, y: by, z, scale: Math.max(2.8, Math.min(r * 1.5, 12)), color: p.tintBurst, additive: true });
+  }
+}
+
+// AoE-fyllnad: mjuk glöd-disk (glow_disk, PolyOne-paketet) som täcker HELA skill-
+// cirkeln + en tätare kärna. Central helper så BÅDE boss- och hero-AoE får samma
+// "fylld area"-känsla (user-krav 2026-06-08: hela AoE-arean ska ha en effekt, inte
+// bara kant/ring). radius = skill-radie i world-units. Tyst fallback om textur saknas.
+function spawnAoeFill(x, z, radius, color, opts = {}) {
+  const r = radius || 3;
+  const gy = (opts.y != null) ? opts.y : _fxGroundY();
+  const life = opts.life != null ? opts.life : 0.6;
+  // Additiv heltäckande disk är fillrate-tung på mobil (overdraw över halva skärmen)
+  // — håll opacity låg och hoppa core-lagret under FX-flod (perf-pass 2026-06-08:
+  // undvik fillrate-explosion i 16-cirkels boss-meteorer).
+  const op = opts.opacity != null ? opts.opacity : 0.38;
+  const col = color != null ? color : 0xffffff;
+  const flood = (typeof COMBAT_FX_CAP === 'number') && combatFx.length > COMBAT_FX_CAP * 0.7;
+  // Yttre glöd täcker hela diametern (2r) — ALLTID (det är fyllnaden user vill ha).
+  spawnFlipbook({ key: 'glow_disk', x, y: gy + 0.02, z, ground: true, scale: r * 2.0, scaleEnd: r * 2.18, color: col, additive: true, opacity: op, life, fadeOut: 0.28 });
+  // Tätare kärna ger centrum-tyngd. Hoppas under flod (extra draw call + overdraw).
+  if (opts.core !== false && !flood) {
+    spawnFlipbook({ key: 'glow_disk', x, y: gy + 0.03, z, ground: true, scale: r * 1.05, scaleEnd: r * 1.2, color: col, additive: true, opacity: op * 0.85, life: life * 0.9, fadeOut: 0.22 });
   }
 }
 
@@ -33467,6 +33495,14 @@ function spawnFlipbook(opts) {
 // Default camera-facing sprite. Milder skala/opacity → hero-skills ska inte
 // överrösta boss-effekterna (user-krav). Degraderar tyst om textur saknas.
 function spawnHeroCastFb(x, z, key, color, scale, opts = {}) {
+  // Ground-AoE-skills: lägg en mjuk glöd-FYLLNAD under själva effekten så hela
+  // skill-cirkeln fylls (inte bara ring/kant). Endast riktiga AoE:er (ground +
+  // scale ≥ 3) — håller draw calls nere och undviker glöd under små streaks/dashar.
+  // Central så ALLA hero-AoE får samma "fylld area"-look (user-krav 2026-06-08).
+  if (opts.ground && (scale || 0) >= 3 && opts.aoeFill !== false) {
+    const fy = (opts.y != null ? opts.y : _fxGroundY()) - 0.01;
+    spawnAoeFill(x, z, (scale || 0) * 0.5, color, { y: fy, opacity: 0.4, life: opts.duration || 0.6 });
+  }
   return spawnFlipbook({
     key, x, z,
     y: opts.y != null ? opts.y : 1.1,
