@@ -8478,6 +8478,16 @@ function triggerBossPhaseTransition(side, boss) {
     if (s.mesh) s.mesh.position.set(nx, (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y : 0, nz);
     spawnSkillCastFx(boss.mesh.position.x, boss.mesh.position.z, 0xff44aa, 4.0);
   }
+  // Mäktig ENRAGE-burst vid fas-övergången (decision 136)
+  if (boss.mesh) {
+    const el = bossSkillElement(null, boss.bossTier);
+    const p = bossFb(el);
+    const bx = boss.mesh.position.x, bz = boss.mesh.position.z;
+    const gy = _fxGroundY();
+    spawnFlipbook({ key: p.ground, x: bx, y: gy, z: bz, ground: true, scale: 9.0, color: p.tintGround, additive: true, opacity: 0.95 });
+    spawnFlipbook({ key: p.burst, x: bx, y: (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 2.0, z: bz, scale: 6.0, color: p.tintBurst, additive: true });
+    triggerCameraShake(0.5, 0.6);
+  }
   // Boss flyger upp + landar (~2.5s total). Under den tiden tar bossen ingen skada
   // (phaseTransitionRemaining > 0). Vi animerar y-pos i monster-loopen.
   boss.phaseTransitionRemaining = 2.5;
@@ -10816,6 +10826,12 @@ function startBossCast(side, m, skill, skillIdx) {
   // istället för generisk lila ring. Alla bossar (ej bara boss wars).
   if (m.mesh) {
     spawnElementCast(m.mesh.position.x, m.mesh.position.z, cast.element, 1.8);
+    // Uppladdnings-aura som glöder vid bossen under telegraph-tiden (decision 136)
+    {
+      const p = bossFb(cast.element);
+      const ay = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.2;
+      spawnFlipbook({ key: p.aura, x: m.mesh.position.x, y: ay, z: m.mesh.position.z, scale: 3.0, color: p.tintBurst, additive: true, loop: true, duration: Math.max(0.5, skill.telegraph), fadeIn: 0.2, fadeOut: 0.25, opacity: 0.8 });
+    }
     triggerCameraShake(0.16, 0.18);
     // Bumpa aaCount så klienter delta-detect:ar och triggar attack-clip lokalt
     if (m.isBossWarsBoss) m.aaCount = (m.aaCount || 0) + 1;
@@ -11032,6 +11048,7 @@ function bossExecuteSkill(side, m, cast) {
     cast.timer = 0.45;   // visuell flash-tid
     cast.extras = { meshes: [], done: true };
     spawnExplosion(cast.targetX, cast.targetZ, cast.element, { scale: Math.max(0.8, s.radius / 4), power: 1, shakeMag: 0.18 });
+    spawnBossImpactFb(cast.targetX, cast.targetZ, cast.element, Math.max(0.8, s.radius / 4));
     applyBossCircleDmg(side, m, cast);
     if (s.knockback) applyBossKnockback(side, cast.targetX, cast.targetZ, s.radius, s.knockback);
     if (s.leaveBurn) spawnPoolDot(side, m, cast.targetX, cast.targetZ, s.radius * 0.7, 3.0, 0.3, elementFx(cast.element).deep);
@@ -11073,6 +11090,13 @@ function bossExecuteSkill(side, m, cast) {
     spawnConeFlash(cast.originX, cast.originZ, cast.dirX, cast.dirZ, s.length, s.halfAngle, elementFx(cast.element).mid);
     // Element-burst en bit ut i konen för "träff"-känsla
     spawnExplosion(cast.originX + cast.dirX * s.length * 0.5, cast.originZ + cast.dirZ * s.length * 0.5, cast.element, { scale: 1.1, power: 0.7, shake: false });
+    // Mäktig cone-flipbook (eld/virvel) en bit ut i konens riktning (decision 136)
+    {
+      const p = bossFb(cast.element);
+      const cmx = cast.originX + cast.dirX * s.length * 0.45, cmz = cast.originZ + cast.dirZ * s.length * 0.45;
+      const cy = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.4;
+      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(3.0, s.length * 0.35), color: p.tintCone, additive: true, fadeOut: 0.2 });
+    }
     applyBossConeDmg(side, m, cast);
     return;
   }
@@ -11113,6 +11137,13 @@ function bossExecuteSkill(side, m, cast) {
       damageTimer: 0,
     };
     spawnSustainedConeMesh(cast);
+    // Loopande cone-flipbook (eld/virvel) under hela sustain-tiden (decision 136)
+    {
+      const p = bossFb(cast.element);
+      const cmx = cast.originX + cast.dirX * s.length * 0.45, cmz = cast.originZ + cast.dirZ * s.length * 0.45;
+      const cy = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.4;
+      spawnFlipbook({ key: p.cone, x: cmx, y: cy, z: cmz, scale: Math.max(3.2, s.length * 0.4), color: p.tintCone, additive: true, loop: true, duration: s.sustainDuration, fadeIn: 0.2, fadeOut: 0.4 });
+    }
     return;
   }
   cast.timer = 0.1; cast.extras = { meshes: [], done: true };
@@ -11139,7 +11170,7 @@ function tickBossExecute(side, m, cast, dt) {
     }
     if (cast.timer <= 0) {
       e.done = true;
-      if (!e._endBoom) { e._endBoom = true; spawnExplosion(cx, cz, cast.element, { scale: 1.2, power: 1 }); }
+      if (!e._endBoom) { e._endBoom = true; spawnExplosion(cx, cz, cast.element, { scale: 1.2, power: 1 }); spawnBossImpactFb(cx, cz, cast.element, 1.5); }
     }
     return;
   }
@@ -11173,6 +11204,9 @@ function tickBossExecute(side, m, cast, dt) {
         sub.phase = 'done';
         cleanupTelegraphMesh(sub);
         spawnElementImpact(sub.targetX, sub.targetZ, cast.element, s.radius);
+        // Nedslag per cirkel (meteor/regn): bara burst (många samtidiga → lättare
+        // än ground+burst, undviker FX-flod på mobil) (decision 136)
+        { const pf = bossFb(cast.element); spawnFlipbook({ key: pf.burst, x: sub.targetX, y: (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.0, z: sub.targetZ, scale: Math.max(2.0, s.radius * 0.5), color: pf.tintBurst, additive: true }); }
         applyBossCircleDmg(side, m, sub);
       }
       if (sub.phase === 'done' && sub.timer < -0.5) e.circles.splice(i, 1);
@@ -11197,6 +11231,15 @@ function tickBossExecute(side, m, cast, dt) {
       const tx = cast.originX + cast.dirX * s.length, tz = cast.originZ + cast.dirZ * s.length;
       const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 1.0 : 1.0;
       spawnKenneyFx({ texName: fx.sparkTex, x: tx, y: ey, z: tz, color: fx.spark, scale: 0.6, scaleEnd: 0.15, life: 0.3, vy: 1.0, additive: true });
+    }
+    // Mäktig burst vid strålens spets (långsammare kadens → ingen FX-flod) (decision 136)
+    e.fbAccum = (e.fbAccum || 0) + dt;
+    if (e.fbAccum >= (IS_MOBILE_UA ? 0.5 : 0.35)) {
+      e.fbAccum = 0;
+      const p = bossFb(cast.element);
+      const tx = cast.originX + cast.dirX * s.length, tz = cast.originZ + cast.dirZ * s.length;
+      const ey = (APP.gameMode === 'bosswars') ? BOSSWARS_FLOOR_Y + 1.0 : 1.0;
+      spawnFlipbook({ key: p.burst, x: tx, y: ey, z: tz, scale: 2.0, color: p.tintBurst, additive: true });
     }
     e.damageTimer -= dt;
     if (e.damageTimer <= 0) {
@@ -11393,6 +11436,8 @@ function spawnBossProjectile(side, m, x, z, dx, dz, skill, element) {
   grp.rotation.y = Math.atan2(dx, dz);
   grp.position.set(x, 1.1, z);
   scene.add(grp);
+  // Muzzle-flash vid avfyrning (decision 136)
+  spawnFlipbook({ key: 'muzzle', x, y: 1.1, z, scale: 1.5, color: fx.core, additive: true });
   side.bossProjectiles.push({
     mesh: grp, x, z, dx, dz,
     speed: skill.speed || 14,
@@ -11426,6 +11471,7 @@ function tickBossProjectiles(side, dt) {
     }
     if (hit) {
       spawnExplosion(p.x, p.z, p.element, { scale: 0.9, power: 0.6, y: 1.0, shake: false });   // element-impact (decision 136)
+      { const pf = bossFb(p.element); spawnFlipbook({ key: pf.burst, x: p.x, y: 1.1, z: p.z, scale: 1.9, color: pf.tintBurst, additive: true }); }
       if (p.mesh.geometry) p.mesh.geometry.dispose?.();
       p.mesh.traverse(o => { if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose(); } });
       scene.remove(p.mesh);
@@ -33122,6 +33168,33 @@ function bossSkillElement(skillId, bossTier) {
   if (skillId && BOSS_SKILL_ELEMENT[skillId]) return BOSS_SKILL_ELEMENT[skillId];
   const byTier = { 1: 'physical', 2: 'lightning', 3: 'poison', 4: 'shadow', 5: 'fire' };
   return byTier[bossTier] || 'physical';
+}
+
+// === Boss-flipbook-VFX (decision 136, mäktiga) ===============================
+// Per element: en luft-burst, en mark-effekt och en cone/sustained-effekt. Valet
+// styrs av skill-KIND (varierar inom en boss) och tintas på ELEMENT (varierar
+// mellan bossar) → unik look utan 60 unika assets. Neutrala burst_*-texturer
+// tintar rent; eldiga (groundfire/flame_cone) lämnas ~vita så deras egen färg syns.
+const BOSS_FB = {
+  fire:      { burst: 'burst_a', ground: 'groundfire',       cone: 'flame_cone',   aura: 'aura_a', tintBurst: 0xffd9a0, tintGround: 0xffffff, tintCone: 0xffffff },
+  shadow:    { burst: 'burst_c', ground: 'shockwave_ground', cone: 'tornado_a',    aura: 'aura_c', tintBurst: 0xce93ff, tintGround: 0xb070ff, tintCone: 0xc090ff },
+  lightning: { burst: 'burst_d', ground: 'shockwave_ground', cone: 'beam',         aura: 'aura_d', tintBurst: 0xcfe2ff, tintGround: 0x9fc4ff, tintCone: 0xbcd9ff },
+  poison:    { burst: 'burst_e', ground: 'shockwave_ground', cone: 'sand_tornado', aura: 'aura_e', tintBurst: 0xc8ff5a, tintGround: 0x9ee22a, tintCone: 0xaaff5a },
+  nature:    { burst: 'burst_e', ground: 'shockwave_ground', cone: 'tornado_b',    aura: 'aura_e', tintBurst: 0xbbf06a, tintGround: 0x9fce30, tintCone: 0xb7f06a },
+  earth:     { burst: 'burst_b', ground: 'shockwave_ground', cone: 'sand_tornado', aura: 'aura_b', tintBurst: 0xe6c896, tintGround: 0xd8bd8a, tintCone: 0xd8bd8a },
+  physical:  { burst: 'burst_b', ground: 'shockwave_ground', cone: 'tornado_b',    aura: 'aura_b', tintBurst: 0xffe6a0, tintGround: 0xffffff, tintCone: 0xffe6c0 },
+  holy:      { burst: 'burst_a', ground: 'shockwave_air',    cone: 'tornado_b',    aura: 'aura_a', tintBurst: 0xfff0a0, tintGround: 0xffe27a, tintCone: 0xffe9a0 },
+};
+function bossFb(el) { return BOSS_FB[el] || BOSS_FB.physical; }
+
+// Mäktig boss-impact: stor mark-effekt + luft-burst. Layeras OVANPÅ befintlig
+// spawnExplosion/element-FX (ren visual). scale ~ skill-radie/4.
+function spawnBossImpactFb(x, z, element, scale) {
+  const p = bossFb(element);
+  const gy = _fxGroundY();
+  const by = (APP.gameMode === 'bosswars' ? BOSSWARS_FLOOR_Y : 0) + 1.1;
+  spawnFlipbook({ key: p.ground, x, y: gy, z, ground: true, scale: Math.max(2.5, scale * 2.4), color: p.tintGround, additive: true, opacity: 0.95, fadeOut: 0.15 });
+  spawnFlipbook({ key: p.burst, x, y: by, z, scale: Math.max(2.2, scale * 1.9), color: p.tintBurst, additive: true });
 }
 
 function spawnSkillCastFx(x, z, color, radius = 0.6) {
