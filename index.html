@@ -1109,27 +1109,28 @@
        frame-time (ms) + FPS. Färg-kod: blå/grön <20ms, gul 20-33ms, röd >33ms.
        Mini-bar visar prestanda-marginal mot 60 fps. Synlig bara in-game. */
     #perf-meter {
-      /* Pinnad till höger om kugghjulet (top-left) i st f centrerad i top-row.
-         Kugghjul: left 8px, bredd 44px → höger kant 52px; +8px gap = left 60px. */
+      /* Pinnad PRECIS till höger om kugghjulet (top-left). Kugghjul: left 8px,
+         bredd 44px → höger kant 52px; +6px gap = left 58px. 50% mindre än förr
+         (user 2026-06-08). Body-barn (ej i #top-row) → fixed = viewport-relativ. */
       position: fixed;
       top: max(8px, calc(env(safe-area-inset-top) + 8px));
-      left: max(60px, calc(env(safe-area-inset-left) + 60px));
+      left: max(58px, calc(env(safe-area-inset-left) + 58px));
       z-index: 60;
       background: rgba(15,25,40,0.72);
       color: #88ddff;
-      font: 600 11px/1.2 ui-monospace, "SF Mono", monospace;
-      padding: 5px 9px 6px;
-      border-radius: 7px;
-      border: 1px solid rgba(140,200,255,0.35);
+      font: 600 8px/1.15 ui-monospace, "SF Mono", monospace;
+      padding: 2px 5px 3px;
+      border-radius: 5px;
+      border: 1px solid rgba(140,200,255,0.3);
       pointer-events: none;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.2px;
       text-align: right;
-      min-width: 92px;
+      /* min-width borttagen → krymper till innehållet, sträcker sig aldrig mot mitten */
     }
     #perf-meter .perf-row { white-space: nowrap; }
     #perf-bar {
-      margin-top: 3px;
-      height: 3px;
+      margin-top: 2px;
+      height: 2px;
       background: rgba(0,0,0,0.5);
       border-radius: 2px;
       overflow: hidden;
@@ -4450,12 +4451,16 @@
     </div>
   </div>
 
+  <!-- Performance-mätare (frame-time/FPS) — FRISTÅENDE, utanför #top-row. #top-row
+       har transform:translateX(-50%) vilket gör fixed-positionering relativ till
+       top-row (CSS-gotcha) → mätaren hamnade i mitten. Som body-barn blir left:58px
+       viewport-relativ = precis till höger om kugghjulet, samma på alla modes. -->
+  <div id="perf-meter">
+    <div class="perf-row"><span id="perf-ms">16.7</span> ms · <span id="perf-fps">60</span> fps</div>
+    <div id="perf-bar"><div id="perf-bar-fill"></div></div>
+  </div>
+
   <div id="top-row">
-    <!-- Performance-mätare (frame-time/FPS) — flyttad in i top-row som första item -->
-    <div id="perf-meter">
-      <div class="perf-row"><span id="perf-ms">16.7</span> ms · <span id="perf-fps">60</span> fps</div>
-      <div id="perf-bar"><div id="perf-bar-fill"></div></div>
-    </div>
     <div id="income-display">Income: 2g / 15s</div>
     <div id="wave-display"><span id="wave-text">Wave 1</span></div>
     <div id="arena-orb-timer" class="hidden">🔮 Orb <span id="arena-orb-timer-text">15s</span></div>
