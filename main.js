@@ -23374,9 +23374,15 @@ function tickGimluRage(side, dt) {
   side.heroSlowTime = 0;
   side.heroSlowMul = 1;
   // Pulse-damage var 0.5s (max 10 pulser över 5s)
+  let _pulsed = false;
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
     side.rageTickAccum -= RAGE_TICK_INTERVAL;
     applyRagePulse(side);
+    _pulsed = true;
+  }
+  // Mark-shockwave per puls som TÄCKER hela skade-radien (user 2026-06-08).
+  if (_pulsed && side.mesh) {
+    spawnFlipbook({ key: 'shockwave_ground', x: side.hero.x, z: side.hero.z, ground: true, scale: RAGE_PULSE_RADIUS * 2.2, color: 0xff5530, additive: true, opacity: 0.8, life: 0.55 });
   }
   if (side.rageRemaining <= 0) {
     side.rageRemaining = 0;
