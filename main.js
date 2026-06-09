@@ -456,56 +456,80 @@ const AudioMgr = (() => {
     const fn = SFX[name]; if (!fn) return;
     try { fn(c.currentTime + 0.001, opts && opts.el); } catch (_) {}
   }
+  // Per-sample-justering: vissa Kenney-ljud (lasriga) tonas ner + mörkas (user
+  // 2026-06-09: archer-dashen m.fl. ('cast') lät för ljust/barnsligt → -70% gain +
+  // lowpass + lägre pitch). gain = multiplikator, lp = lowpass-Hz, rate = playbackRate.
+  const _SFX_ADJ = {
+    cast: { gain: 0.3, lp: 1100, rate: 0.82 },
+  };
   // Lågnivå sample-uppspelning UTAN throttle/voice-gate (play() har redan gatat).
   function _playSampleRaw(name, opts) {
     const buf = _samples.get(name); if (!buf || !ctx) return;
+    const adj = _SFX_ADJ[name];
     const src = ctx.createBufferSource(); src.buffer = buf;
-    const g = ctx.createGain(); g.gain.value = (opts && opts.gain != null) ? opts.gain : 1;
-    src.connect(g);
+    let gain = (opts && opts.gain != null) ? opts.gain : 1;
+    if (adj && adj.gain != null) gain *= adj.gain;
+    const g = ctx.createGain(); g.gain.value = gain;
+    // Mörkare via lowpass (ej för boss — boss-bussen mörkar redan).
+    let head = src;
+    if (adj && adj.lp && !(opts && (opts.boss || name === 'bossImpact'))) {
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = adj.lp;
+      src.connect(lp); head = lp;
+    }
+    head.connect(g);
     if (opts && (opts.boss || name === 'bossImpact')) {   // boss → tung/ekande buss + lägre pitch
       src.playbackRate.value = (opts.rate != null) ? opts.rate : 0.78;
       g.connect(_makeBossBus());
     } else {
       if (opts && opts.rate != null) src.playbackRate.value = opts.rate;
+      else if (adj && adj.rate != null) src.playbackRate.value = adj.rate;
       g.connect(sfxGain);
     }
     try { src.start(); } catch (_) {}
   }
   function frameReset() { _voices = 0; }   // anropas en gång/frame från tick()
 
-  // --- Ambient hemskärms-musik: långsam pad (detune-oscillatorer + lowpass-LFO)
-  // + sparsam arpeggio. Loopar tills stopMusic. Mjuk in/ut-fade på musicGain.
-  function startMusic() {
-    if (!enabled) return;
-    const c = ensure(); if (!c) return;
-    if (c.state === 'suspended') c.resume();
-    if (_musicNodes) return;   // redan igång
-    const t = c.currentTime;
+  // === Musik-motor (hemskärm + 5 boss-teman) =================================
+  // En parameteriserad groove: mörk pad (detune-osc + lowpass-LFO) + subtil
+  // groove (bas/kick/hats/lead). Home + boss-teman är bara olika params. Snabb
+  // fade-in (user: musiken ska börja direkt). _switchTo byter låt (boss wars).
+  let _currentTrack = null;
+  const _mhz = m => 440 * Math.pow(2, (m - 69) / 12);                       // MIDI → Hz
+  const _voice = r => [_mhz(r), _mhz(r + 7), _mhz(r + 12), _mhz(r + 15)];   // mörk öppen voicing
+  const _leadV = r => [_mhz(r + 12), _mhz(r + 15), _mhz(r + 19)];
+  function _buildTheme(prog, bpm, lp, gain, opts) {
+    opts = opts || {};
+    return {
+      chords: prog.map(_voice), roots: prog.map(_mhz), lead: prog.map(_leadV),
+      bpm, lp, lpLfo: opts.lpLfo != null ? opts.lpLfo : 240, gain,
+      padType: opts.padType || 'sawtooth', bassType: opts.bassType || 'sawtooth',
+      kickFreq: opts.kickFreq || 64, hatLevel: opts.hatLevel != null ? opts.hatLevel : 0.05,
+      leadLevel: opts.leadLevel != null ? opts.leadLevel : 0.07, bassLevel: opts.bassLevel != null ? opts.bassLevel : 0.2,
+    };
+  }
+  // Hemskärm: mörk lätt-energisk vamp Am-G-F-E (MIDI 45/43/41/40).
+  const HOME_THEME = _buildTheme([45, 43, 41, 40], 100, 600, 0.32, { lpLfo: 280 });
+  // 5 boss-teman — mörka/elaka/spännande, olika tonart + tempo + ljusstyrka.
+  // Lägre gain (bakgrund, inte för högt men hörbart). Tier-rotade moll-progressioner.
+  const BOSS_THEMES = {
+    1: _buildTheme([45, 53, 50, 52], 96, 560, 0.20, { lpLfo: 220 }),                       // Captain: Am F Dm E
+    2: _buildTheme([50, 46, 43, 45], 90, 500, 0.20, { lpLfo: 200 }),                       // General: Dm Bb Gm A
+    3: _buildTheme([48, 44, 41, 43], 82, 430, 0.19, { lpLfo: 170, padType: 'triangle' }),  // Warlord: Cm Ab Fm G (kallt)
+    4: _buildTheme([52, 48, 46, 47], 104, 540, 0.21, { lpLfo: 240, kickFreq: 58 }),        // Demon: Em C Bb B (tritone)
+    5: _buildTheme([54, 50, 52, 49], 112, 620, 0.22, { lpLfo: 260, bassLevel: 0.24 }),     // Dragon: F#m D E C# (episkt)
+  };
+
+  function _buildGroove(theme) {
+    const c = ctx, t = c.currentTime;
     const padGain = c.createGain(); padGain.gain.value = 0.5; padGain.connect(musicGain);
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 600; lp.Q.value = 0.7; lp.connect(padGain);
-    // LFO som sveper filtret långsamt (levande pad)
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = theme.lp; lp.Q.value = 0.7; lp.connect(padGain);
     const lfo = c.createOscillator(); lfo.frequency.value = 0.06;
-    const lfoG = c.createGain(); lfoG.gain.value = 280; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
-    // Mörk, lätt energisk vamp (Am - G - F - E = i-VII-VI-V) + en SUBTIL groove
-    // (bas-puls + mjuk kick + lätta hi-hats + lead-accent) → mer liv utan att bli
-    // barnsligt (user 2026-06-09: action/mörk/energisk men "lite lätta ändringar").
-    const CHORDS = [
-      [110.00, 164.81, 220.00, 261.63],   // Am  (A2 E3 A3 C4)
-      [ 98.00, 146.83, 196.00, 246.94],   // G   (G2 D3 G3 B3)
-      [ 87.31, 130.81, 174.61, 261.63],   // F   (F2 C3 F3 C4)
-      [ 82.41, 123.47, 164.81, 246.94],   // E   (E2 B2 E3 B3) — V ger spänning/mörker
-    ];
-    const ROOTS = [110.00, 98.00, 87.31, 82.41];
-    const LEAD = [
-      [220, 261.63, 329.63],              // Am  (A3 C4 E4)
-      [246.94, 293.66, 392],              // G   (B3 D4 G4)
-      [261.63, 349.23, 440],              // F   (C4 F4 A4)
-      [246.94, 329.63, 415.30],           // E   (B3 E4 G#4-spänning)
-    ];
+    const lfoG = c.createGain(); lfoG.gain.value = theme.lpLfo; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
+    const CH = theme.chords, RT = theme.roots, LD = theme.lead;
     let chordIdx = 0;
     const oscs = [], oscGains = [];
     for (let i = 0; i < 4; i++) {
-      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = CHORDS[0][i];
+      const o = c.createOscillator(); o.type = theme.padType; o.frequency.value = CH[0][i];
       o.detune.value = (Math.random() * 8 - 4);
       const og = c.createGain(); og.gain.value = 0.18;
       o.connect(og); og.connect(lp); o.start(t); oscs.push(o); oscGains.push(og);
@@ -513,47 +537,49 @@ const AudioMgr = (() => {
     _musicNodes = { padGain, lp, lfo, lfoG, oscs, oscGains };
     musicGain.gain.cancelScheduledValues(t);
     musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
-    musicGain.gain.exponentialRampToValueAtTime(0.32, t + 2.0);   // fade in
-    // Stepper @ 8th-noter (100 BPM = 0.3s). 8 steg/takt; ackordbyte per takt (2.4s).
-    // Driver: bas-puls (varje beat), kick (beat 1 & 3), hi-hats (off-beats), lead-accent.
+    musicGain.gain.exponentialRampToValueAtTime(theme.gain, t + 0.5);   // snabb fade-in (~0.5s)
+    const stepMs = 30000 / theme.bpm;   // 8th-not i ms
     let step = 0;
     _musicTimer = setInterval(() => {
       if (!ctx || !_musicNodes) return;
       const tt = ctx.currentTime + 0.02;
       const bs = step % 8;
-      if (bs === 0) {   // ny takt → byt ackord (mjuk ramp på paden)
-        chordIdx = (chordIdx + 1) % CHORDS.length;
-        for (let i = 0; i < oscs.length; i++) { try { oscs[i].frequency.exponentialRampToValueAtTime(CHORDS[chordIdx][i], tt + 0.3); } catch (_) {} }
-      }
-      const root = ROOTS[chordIdx];
-      if (bs % 2 === 0) tone(root, tt, 0.26, 'sawtooth', 0.2, 0, musicGain);             // bas-puls på varje beat
-      if (bs === 0 || bs === 4) tone(64, tt, 0.16, 'sine', 0.4, 40, musicGain);           // kick på beat 1 & 3
-      if (bs % 2 === 1) noise(tt, 0.045, 'highpass', 7000, 0.05, 0.7, 9000, musicGain);    // mjuka hi-hats på off-beats
-      if (bs === 0 || bs === 4) { const a = LEAD[chordIdx]; tone(a[Math.floor(Math.random() * a.length)], tt, 0.55, 'triangle', 0.07, 0, musicGain); }  // lead-accent
+      if (bs === 0) { chordIdx = (chordIdx + 1) % CH.length; for (let i = 0; i < oscs.length; i++) { try { oscs[i].frequency.exponentialRampToValueAtTime(CH[chordIdx][i], tt + 0.3); } catch (_) {} } }
+      const root = RT[chordIdx];
+      if (bs % 2 === 0) tone(root, tt, 0.26, theme.bassType, theme.bassLevel, 0, musicGain);
+      if (bs === 0 || bs === 4) tone(theme.kickFreq, tt, 0.16, 'sine', 0.4, 40, musicGain);
+      if ((bs % 2 === 1) && theme.hatLevel) noise(tt, 0.045, 'highpass', 7000, theme.hatLevel, 0.7, 9000, musicGain);
+      if (bs === 0 || bs === 4) { const a = LD[chordIdx]; tone(a[Math.floor(Math.random() * a.length)], tt, 0.55, 'triangle', theme.leadLevel, 0, musicGain); }
       step++;
-    }, 300);
+    }, stepMs);
   }
-  function stopMusic() {
+  function _switchTo(track, theme) {
+    if (!enabled) return;
+    const c = ensure(); if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    if (_currentTrack === track && _musicNodes) return;   // redan denna låt
+    if (_musicNodes) _stopMusicNow();   // byt låt → fade ut nuvarande först
+    _buildGroove(theme);
+    _currentTrack = track;
+  }
+  function startMusic() { _switchTo('home', HOME_THEME); }
+  function startBossMusic(tier) { _switchTo('boss' + tier, BOSS_THEMES[tier] || BOSS_THEMES[1]); }
+  function _stopMusicNow() {
     if (_musicTimer) { clearInterval(_musicTimer); _musicTimer = null; }
-    if (_musicNodes && _musicNodes._chordTimer) { clearInterval(_musicNodes._chordTimer); _musicNodes._chordTimer = null; }
     if (!ctx || !_musicNodes) return;
     const t = ctx.currentTime;
     const n = _musicNodes; _musicNodes = null;
     try {
       musicGain.gain.cancelScheduledValues(t);
       musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
-      musicGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-      const stopAt = t + 1.3;
+      musicGain.gain.exponentialRampToValueAtTime(0.0001, t + 1.0);
+      const stopAt = t + 1.1;
       for (const o of n.oscs) { try { o.stop(stopAt); } catch (_) {} }
       try { n.lfo.stop(stopAt); } catch (_) {}
-      setTimeout(() => {
-        try {
-          n.padGain.disconnect(); n.lp.disconnect(); n.lfoG.disconnect();
-          if (n.oscGains) for (const og of n.oscGains) { try { og.disconnect(); } catch (_) {} }
-        } catch (_) {}
-      }, 1500);
+      setTimeout(() => { try { n.padGain.disconnect(); n.lp.disconnect(); n.lfoG.disconnect(); if (n.oscGains) for (const og of n.oscGains) { try { og.disconnect(); } catch (_) {} } } catch (_) {} }, 1300);
     } catch (_) {}
   }
+  function stopMusic() { _currentTrack = null; _stopMusicNow(); }
 
   // --- Sample-uppspelning (Kenney-filer) ------------------------------------
   // Boss-effekt-buss: gör vanliga Kenney-ljud "tyngre + mer eko" så bossar inte
@@ -643,7 +669,7 @@ const AudioMgr = (() => {
     return true;
   }
 
-  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample, preloadSamples, playVoice };
+  return { play, startMusic, startBossMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample, preloadSamples, playVoice };
 })();
 
 // Kenney-SFX manifest: event-namn → fil i assets/sfx/. play() spelar samplet om det
@@ -717,6 +743,7 @@ function tickVoiceLines(dt) {
   if (_voiceState.bossId !== bid) {
     _voiceState.bossId = bid; _voiceState.bossLoaded = false; _voiceState.spawnPending = true;
     _voiceState.bossPhase = boss.bossPhase || 1; _voiceState.tauntTimer = 14 + Math.random() * 12;
+    AudioMgr.startBossMusic(boss.bossTier || 1);   // tier-specifik mörk boss-musik
   }
   if (!_voiceState.bossLoaded) {
     const def = VOICE_FILES.boss[bid];
