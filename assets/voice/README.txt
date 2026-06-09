@@ -13,8 +13,11 @@ man spelar). Det är TYST tills du lägger in röstfilerna nedan. Lägg .mp3-fil
     demon_spawn.mp3     demon_enrage.mp3     demon_taunt1.mp3     demon_taunt2.mp3
     dragon_spawn.mp3    dragon_enrage.mp3    dragon_taunt1.mp3    dragon_taunt2.mp3
 
-  assets/voice/heroes/
-    magiker_1.mp3  magiker_2.mp3  magiker_3.mp3   (= Zyro/magikern)
+  assets/voice/heroes/   (KLART — 3 per hjälte, döpta efter LÄNGD: short/medium/long)
+    magiker_short.mp3  magiker_medium.mp3  magiker_long.mp3   (= Zyro/magikern)
+    + legolas_/aragurn_/kostefo_/gimlu_/zheyna_ short/medium/long
+    Regel: KORT sägs direkt vid match-start; MEDIUM 15s in, sen rotation kort/
+    medium (~40-55s); LÅNG endast vid ult-cast eller när ulten blir full-charged.
     legolas_1.mp3  legolas_2.mp3  legolas_3.mp3
     aragurn_1.mp3  aragurn_2.mp3  aragurn_3.mp3
     kostefo_1.mp3  kostefo_2.mp3  kostefo_3.mp3

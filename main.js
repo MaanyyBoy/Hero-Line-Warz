@@ -747,37 +747,59 @@ const VOICE_FILES = {
     dragon:  { spawn: 'boss/dragon_spawn.mp3',  enrage: 'boss/dragon_enrage.mp3',  taunt: ['boss/dragon_taunt1.mp3', 'boss/dragon_taunt2.mp3'] },
   },
   hero: {
-    magiker: ['heroes/magiker_1.mp3', 'heroes/magiker_2.mp3', 'heroes/magiker_3.mp3'],   // Zyro (intern-id 'magiker', ej 'gandulf')
-    legolas: ['heroes/legolas_1.mp3', 'heroes/legolas_2.mp3', 'heroes/legolas_3.mp3'],
-    aragurn: ['heroes/aragurn_1.mp3', 'heroes/aragurn_2.mp3', 'heroes/aragurn_3.mp3'],
-    kostefo: ['heroes/kostefo_1.mp3', 'heroes/kostefo_2.mp3', 'heroes/kostefo_3.mp3'],
-    gimlu:   ['heroes/gimlu_1.mp3', 'heroes/gimlu_2.mp3', 'heroes/gimlu_3.mp3'],
-    zheyna:  ['heroes/zheyna_1.mp3', 'heroes/zheyna_2.mp3', 'heroes/zheyna_3.mp3'],
+    magiker: { short: 'heroes/magiker_short.mp3', medium: 'heroes/magiker_medium.mp3', long: 'heroes/magiker_long.mp3' },   // Zyro (intern-id 'magiker')
+    legolas: { short: 'heroes/legolas_short.mp3', medium: 'heroes/legolas_medium.mp3', long: 'heroes/legolas_long.mp3' },
+    aragurn: { short: 'heroes/aragurn_short.mp3', medium: 'heroes/aragurn_medium.mp3', long: 'heroes/aragurn_long.mp3' },
+    kostefo: { short: 'heroes/kostefo_short.mp3', medium: 'heroes/kostefo_medium.mp3', long: 'heroes/kostefo_long.mp3' },
+    gimlu:   { short: 'heroes/gimlu_short.mp3', medium: 'heroes/gimlu_medium.mp3', long: 'heroes/gimlu_long.mp3' },
+    zheyna:  { short: 'heroes/zheyna_short.mp3', medium: 'heroes/zheyna_medium.mp3', long: 'heroes/zheyna_long.mp3' },
   },
 };
-const _voiceState = { heroId: null, heroLoaded: false, heroTimer: 0, bossId: null, bossLoaded: false, spawnPending: false, bossPhase: 1, tauntTimer: 0 };
+const _voiceState = { heroId: null, heroLoaded: false, heroShortPending: false, lineTimer: 0, nextKind: 'medium', prevUltReady: false, bossId: null, bossLoaded: false, spawnPending: false, bossPhase: 1, tauntTimer: 0 };
 // Driver för röst-fraser. Anropas en gång/frame i tick() (gateas internt på in-game).
 // Delta-detekterar boss-spawn/enrage centralt (inga edits i spawn/transition-koden).
 function tickVoiceLines(dt) {
   if (!document.body.classList.contains('in-game')) return;
-  // --- Lokala hjältens repliker (då och då medan man spelar) ---
+  // --- Lokala hjältens repliker (user-regel 2026-06-09) ---
+  // KORT fras DIREKT vid match-start. MEDIUM efter 15s, sen rotation kort/medium.
+  // LÅNG fras ENDAST vid ult-cast eller när ulten blir full-charged.
   const me = sides[APP.localSide];
   if (me && me.heroId) {
+    const hv = VOICE_FILES.hero[me.heroId];
     if (_voiceState.heroId !== me.heroId) {
       _voiceState.heroId = me.heroId; _voiceState.heroLoaded = false;
-      _voiceState.heroTimer = 18 + Math.random() * 22;
+      _voiceState.heroShortPending = true;   // kort direkt vid start
+      _voiceState.lineTimer = 15;            // medium 15s in
+      _voiceState.nextKind = 'medium';
+      _voiceState.prevUltReady = false;
     }
-    if (!_voiceState.heroLoaded) {
-      const files = VOICE_FILES.hero[me.heroId];
-      if (files) files.forEach((f, i) => AudioMgr.loadSample('vh_' + me.heroId + '_' + i, ASSET_BASE + 'voice/' + f));
+    if (!_voiceState.heroLoaded && hv) {
+      AudioMgr.loadSample('vh_' + me.heroId + '_short', ASSET_BASE + 'voice/' + hv.short);
+      AudioMgr.loadSample('vh_' + me.heroId + '_medium', ASSET_BASE + 'voice/' + hv.medium);
+      AudioMgr.loadSample('vh_' + me.heroId + '_long', ASSET_BASE + 'voice/' + hv.long);
       _voiceState.heroLoaded = true;
     }
-    if (me.hero && !me.hero.dead) {
-      _voiceState.heroTimer -= dt;
-      if (_voiceState.heroTimer <= 0) {
-        _voiceState.heroTimer = 50 + Math.random() * 40;   // ~50-90 s mellan repliker
-        const files = VOICE_FILES.hero[me.heroId];
-        if (files && files.length) AudioMgr.playVoice('vh_' + me.heroId + '_' + Math.floor(Math.random() * files.length), { gap: 6000 });
+    if (hv && me.hero && !me.hero.dead) {
+      const pre = 'vh_' + me.heroId + '_';
+      // 1) KORT direkt (så snart laddad)
+      if (_voiceState.heroShortPending && AudioMgr.hasSample(pre + 'short')) {
+        if (AudioMgr.playVoice(pre + 'short', { gap: 0 })) _voiceState.heroShortPending = false;
+      }
+      // 2) Rotation: 15s → medium, sen växla kort/medium (~40-55s)
+      if (!_voiceState.heroShortPending) {
+        _voiceState.lineTimer -= dt;
+        if (_voiceState.lineTimer <= 0) {
+          AudioMgr.playVoice(pre + _voiceState.nextKind, { gap: 5000 });
+          _voiceState.nextKind = (_voiceState.nextKind === 'medium') ? 'short' : 'medium';
+          _voiceState.lineTimer = 40 + Math.random() * 15;
+        }
+      }
+      // 3) LÅNG endast vid ult-laddad ELLER ult-cast (edge-detekterad readiness).
+      const ultReady = (me.heroId === 'gimlu') ? !!me.berserkCharged
+        : (((me.ultEnergy || 0) >= ULT_ENERGY_MAX) && ((me.level || 1) >= ULT_UNLOCK_LEVEL));
+      if (ultReady !== _voiceState.prevUltReady) {   // false→true=charged, true→false=cast
+        _voiceState.prevUltReady = ultReady;
+        AudioMgr.playVoice(pre + 'long', { gap: 3000 });
       }
     }
   }
