@@ -449,8 +449,26 @@ const AudioMgr = (() => {
     if (_voices >= MAX_VOICES) return;
     _voices++;
     _lastPlay[name] = now;
+    // Sample-först: finns en laddad Kenney-fil för detta namn → spela den (boss-event
+    // routas genom boss-bussen = tyngre + eko). Annars fall tillbaka på syntljudet.
+    if (_samples.has(name)) { _playSampleRaw(name, opts); return; }
     const fn = SFX[name]; if (!fn) return;
     try { fn(c.currentTime + 0.001, opts && opts.el); } catch (_) {}
+  }
+  // Lågnivå sample-uppspelning UTAN throttle/voice-gate (play() har redan gatat).
+  function _playSampleRaw(name, opts) {
+    const buf = _samples.get(name); if (!buf || !ctx) return;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const g = ctx.createGain(); g.gain.value = (opts && opts.gain != null) ? opts.gain : 1;
+    src.connect(g);
+    if (opts && (opts.boss || name === 'bossImpact')) {   // boss → tung/ekande buss + lägre pitch
+      src.playbackRate.value = (opts.rate != null) ? opts.rate : 0.78;
+      g.connect(_makeBossBus());
+    } else {
+      if (opts && opts.rate != null) src.playbackRate.value = opts.rate;
+      g.connect(sfxGain);
+    }
+    try { src.start(); } catch (_) {}
   }
   function frameReset() { _voices = 0; }   // anropas en gång/frame från tick()
 
@@ -595,8 +613,24 @@ const AudioMgr = (() => {
     try { src.start(); } catch (_) {}
   }
 
-  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample };
+  // Preload en hel manifest { eventName: filename } från en bas-URL. decodeAudioData
+  // funkar på suspended context → kan köras vid asset-load innan första gesten.
+  function preloadSamples(manifest, base) {
+    const c = ensure(); if (!c || !manifest) return;
+    for (const nm of Object.keys(manifest)) loadSample(nm, (base || '') + manifest[nm]);
+  }
+
+  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample, preloadSamples };
 })();
+
+// Kenney-SFX manifest: event-namn → fil i assets/sfx/. play() spelar samplet om det
+// är laddat (annars syntljud). bossImpact routas genom boss-bussen (tyngre + eko).
+const SFX_FILES = {
+  explosion: 'explosion.mp3', bossImpact: 'bossImpact.mp3', stomp: 'stomp.mp3',
+  magic: 'magic.mp3', lightning: 'lightning.mp3', fire: 'fire.mp3', buff: 'buff.mp3',
+  teleport: 'teleport.mp3', cast: 'cast.mp3', frost: 'frost.mp3', uiClick: 'uiClick.mp3',
+  heal: 'heal.mp3', melee: 'melee.mp3', hit: 'hit.mp3',
+};
 
 // Mobil/desktop autoplay-policy: lås upp AudioContext + starta hemskärms-musik
 // vid första user-gesten (krävs av iOS/Chrome). En gång.
@@ -605,6 +639,7 @@ function _unlockAudioOnce() {
   if (_audioUnlocked) return;
   _audioUnlocked = true;
   AudioMgr.unlock();
+  AudioMgr.preloadSamples(SFX_FILES, ASSET_BASE + 'sfx/');   // ladda Kenney-MP3:erna
   // Starta hemskärms-musik om vi inte redan är i en match
   if (!document.body.classList.contains('in-game')) AudioMgr.startMusic();
   window.removeEventListener('pointerdown', _unlockAudioOnce);
