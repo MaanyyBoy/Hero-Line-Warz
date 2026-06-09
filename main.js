@@ -351,6 +351,8 @@ const AudioMgr = (() => {
   // denna IIFE → typeof räddar inte från TDZ (ReferenceError vid module-load).
   const MAX_VOICES = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent || '') ? 4 : 8;
   const _lastPlay = Object.create(null);   // name → senaste ts (throttle)
+  const _samples = new Map();   // name → AudioBuffer (uppladdade Kenney-filer)
+  let _bossBus = null;          // delad boss-effekt-buss (tyngre + eko); skapas lazy
 
   function ensure() {
     if (ctx) return ctx;
@@ -531,7 +533,69 @@ const AudioMgr = (() => {
     } catch (_) {}
   }
 
-  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset };
+  // --- Sample-uppspelning (Kenney-filer) ------------------------------------
+  // Boss-effekt-buss: gör vanliga Kenney-ljud "tyngre + mer eko" så bossar inte
+  // låter som hjältar (user-krav 2026-06-09 — samma bibliotek, annan känsla).
+  // Kedja: lowpass (mörkare) → lowshelf (+bas/tyngre) → dry + feedback-delay (eko)
+  // + convolver-reverb, allt ut på sfxGain. Skapas EN gång; returnerar input-noden.
+  function _makeBossBus() {
+    if (_bossBus) return _bossBus;
+    const input = ctx.createGain(); input.gain.value = 1;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1300; lp.Q.value = 0.6;
+    const ls = ctx.createBiquadFilter(); ls.type = 'lowshelf'; ls.frequency.value = 180; ls.gain.value = 7;
+    input.connect(lp); lp.connect(ls);
+    const dry = ctx.createGain(); dry.gain.value = 0.85; ls.connect(dry); dry.connect(sfxGain);
+    // Eko (feedback-delay)
+    const delay = ctx.createDelay(0.6); delay.delayTime.value = 0.19;
+    const fb = ctx.createGain(); fb.gain.value = 0.33;
+    const echoOut = ctx.createGain(); echoOut.gain.value = 0.5;
+    ls.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(echoOut); echoOut.connect(sfxGain);
+    // Reverb (convolver med syntetisk avtagande-brus-impuls = rums-eko)
+    const len = Math.floor(ctx.sampleRate * 1.4);
+    const irb = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = irb.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.8); }
+    const conv = ctx.createConvolver(); conv.buffer = irb;
+    const revOut = ctx.createGain(); revOut.gain.value = 0.35;
+    ls.connect(conv); conv.connect(revOut); revOut.connect(sfxGain);
+    _bossBus = input;
+    return input;
+  }
+  // Ladda en ljudfil → AudioBuffer (decodeAudioData). OBS: iOS Safari avkodar INTE
+  // OGG → använd .wav/.mp3. Tyst fallback om laddning/avkodning misslyckas.
+  function loadSample(name, url) {
+    const c = ensure(); if (!c) return Promise.resolve(false);
+    return fetch(url).then(r => r.arrayBuffer()).then(a => c.decodeAudioData(a))
+      .then(buf => { _samples.set(name, buf); return true; })
+      .catch(e => { console.warn('[audio] sample-laddning misslyckades:', name, e); return false; });
+  }
+  function hasSample(name) { return _samples.has(name); }
+  // Spela ett laddat sample. opts.boss=true → routa genom boss-bussen (tyngre + eko +
+  // lägre pitch via playbackRate). opts.rate, opts.gain, opts.minGap valfria.
+  function playSample(name, opts) {
+    if (!enabled) return;
+    const c = ensure(); if (!c) return;
+    if (c.state === 'suspended') c.resume();
+    const buf = _samples.get(name); if (!buf) return;
+    const key = 's_' + name;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const minGap = (opts && opts.minGap != null) ? opts.minGap : 45;
+    if (_lastPlay[key] && (now - _lastPlay[key]) < minGap) return;
+    if (_voices >= MAX_VOICES) return;
+    _voices++; _lastPlay[key] = now;
+    const src = c.createBufferSource(); src.buffer = buf;
+    const g = c.createGain(); g.gain.value = (opts && opts.gain != null) ? opts.gain : 1;
+    src.connect(g);
+    if (opts && opts.boss) {
+      src.playbackRate.value = (opts.rate != null) ? opts.rate : 0.78;   // lägre pitch = tyngre
+      g.connect(_makeBossBus());
+    } else {
+      if (opts && opts.rate != null) src.playbackRate.value = opts.rate;
+      g.connect(sfxGain);
+    }
+    try { src.start(); } catch (_) {}
+  }
+
+  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample };
 })();
 
 // Mobil/desktop autoplay-policy: lås upp AudioContext + starta hemskärms-musik
