@@ -507,8 +507,6 @@ const AudioMgr = (() => {
       leadLevel: opts.leadLevel != null ? opts.leadLevel : 0.07, bassLevel: opts.bassLevel != null ? opts.bassLevel : 0.2,
     };
   }
-  // Hemskärm: mörk lätt-energisk vamp Am-G-F-E (MIDI 45/43/41/40).
-  const HOME_THEME = _buildTheme([45, 43, 41, 40], 100, 600, 0.32, { lpLfo: 280 });
   // 5 boss-teman — mörka/elaka/spännande, olika tonart + tempo + ljusstyrka.
   // Lägre gain (bakgrund, inte för högt men hörbart). Tier-rotade moll-progressioner.
   const BOSS_THEMES = {
@@ -553,17 +551,70 @@ const AudioMgr = (() => {
       step++;
     }, stepMs);
   }
-  function _switchTo(track, theme) {
+  // Hemskärm: KRIGISK/episk musik (user 2026-06-09) — INGEN konstant beat. En
+  // STIGANDE melodi (öppna kvinter = heroiskt) som bygger upp + GLESA krigstrummor,
+  // kulminerar, TYSTNAR några sekunder, sen om igen. Lång cykel (~18.5s) = mindre
+  // repetitivt. Dynamiken styrs av phraseGain (per-cykel-svall), drummar glesnar/
+  // tätnar med intensiteten men aldrig "dum-dum-dum".
+  function _buildHomeWar() {
+    const c = ctx, t = c.currentTime;
+    const phraseGain = c.createGain(); phraseGain.gain.value = 0.0001; phraseGain.connect(musicGain);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 720; lp.Q.value = 0.6; lp.connect(phraseGain);
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.05;
+    const lfoG = c.createGain(); lfoG.gain.value = 220; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
+    const PROG = [50, 46, 48, 45];   // Dm Bb C A (rötter) — episk i-VI-VII-V
+    const chordsOf = r => [_mhz(r - 12), _mhz(r), _mhz(r + 7), _mhz(r + 12)];   // öppna kvinter (heroiskt)
+    let chordIdx = 0;
+    const oscs = [], oscGains = [];
+    for (let i = 0; i < 4; i++) {
+      const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = chordsOf(PROG[0])[i];
+      o.detune.value = (Math.random() * 6 - 3);
+      const og = c.createGain(); og.gain.value = 0.16;
+      o.connect(og); og.connect(lp); o.start(t); oscs.push(o); oscGains.push(og);
+    }
+    _musicNodes = { padGain: phraseGain, lp, lfo, lfoG, oscs, oscGains };
+    musicGain.gain.cancelScheduledValues(t);
+    musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+    musicGain.gain.exponentialRampToValueAtTime(0.34, t + 0.5);   // snabb master-fade-in
+    const MEL = [62, 65, 67, 69, 70, 69, 72, 69, 70, 72, 74, 72, 74, 76, 77, 76, 81, 79, 77];   // stigande D-moll → A5
+    const stepMs = 60000 / 78;   // ~78 BPM kvartsnoter (grandiost)
+    const CYCLE = 24;            // 0-15 build, 16-18 klimax, 19 drop, 20-23 TYSTNAD (~3s)
+    let step = 0;
+    _musicTimer = setInterval(() => {
+      if (!ctx || !_musicNodes) return;
+      const tt = ctx.currentTime + 0.02;
+      const pos = step % CYCLE;
+      let intensity;
+      if (pos <= 15) intensity = 0.15 + 0.85 * (pos / 15);   // bygg upp
+      else if (pos <= 18) intensity = 1.0;                    // klimax
+      else if (pos === 19) intensity = 0.45;                  // snabb drop
+      else intensity = 0.03;                                  // tystnad
+      try { phraseGain.gain.cancelScheduledValues(tt); phraseGain.gain.setValueAtTime(Math.max(0.0001, phraseGain.gain.value), tt); phraseGain.gain.linearRampToValueAtTime(Math.max(0.001, intensity), tt + stepMs / 1000 * 0.9); } catch (_) {}
+      if (pos % 4 === 0 && pos <= 16) { chordIdx = (chordIdx + 1) % PROG.length; const ch = chordsOf(PROG[chordIdx]); for (let i = 0; i < oscs.length; i++) { try { oscs[i].frequency.exponentialRampToValueAtTime(ch[i], tt + 0.4); } catch (_) {} } }
+      // Glesa krigstrummor (ej i drop/tystnad) — tätare när intensiteten stiger.
+      if (pos <= 18) {
+        const dense = intensity > 0.72 ? 2 : (intensity > 0.45 ? 4 : 8);
+        if (pos % dense === 0) { tone(52, tt, 0.4, 'sine', 0.4 * intensity, 30, musicGain); noise(tt, 0.12, 'lowpass', 600, 0.16 * intensity, 0.6, 180, musicGain); }
+      }
+      // Stigande melodi (ej i drop/tystnad). Octav-dubbling vid hög intensitet = episkt.
+      if (pos <= 18 && MEL[pos] != null) {
+        tone(_mhz(MEL[pos]), tt, 0.85, 'triangle', 0.11 * (0.5 + intensity * 0.5), 0, phraseGain);
+        if (intensity > 0.6) tone(_mhz(MEL[pos] + 12), tt, 0.6, 'sine', 0.035, 0, phraseGain);
+      }
+      step++;
+    }, stepMs);
+  }
+  function _switchTo(track, build) {
     if (!enabled) return;
     const c = ensure(); if (!c) return;
     if (c.state === 'suspended') c.resume();
     if (_currentTrack === track && _musicNodes) return;   // redan denna låt
     if (_musicNodes) _stopMusicNow();   // byt låt → fade ut nuvarande först
-    _buildGroove(theme);
+    build();
     _currentTrack = track;
   }
-  function startMusic() { _switchTo('home', HOME_THEME); }
-  function startBossMusic(tier) { _switchTo('boss' + tier, BOSS_THEMES[tier] || BOSS_THEMES[1]); }
+  function startMusic() { _switchTo('home', _buildHomeWar); }
+  function startBossMusic(tier) { _switchTo('boss' + tier, () => _buildGroove(BOSS_THEMES[tier] || BOSS_THEMES[1])); }
   function _stopMusicNow() {
     if (_musicTimer) { clearInterval(_musicTimer); _musicTimer = null; }
     if (!ctx || !_musicNodes) return;
