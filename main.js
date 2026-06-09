@@ -347,6 +347,7 @@ const AudioMgr = (() => {
   let ctx = null, master = null, sfxGain = null, musicGain = null;
   let enabled = true, _noiseBuf = null, _musicTimer = null, _musicNodes = null;
   let _voices = 0;   // SFX-anrop denna frame (hård cap mot node-alloc-spik, perf-pass)
+  let _lastVoiceAt = 0;   // global röst-cooldown (fraser ska aldrig överlappa)
   // Eget UA-test (INTE IS_MOBILE_UA): den const:en deklareras längre ner i filen än
   // denna IIFE → typeof räddar inte från TDZ (ReferenceError vid module-load).
   const MAX_VOICES = /iPad|iPhone|iPod|Android|Mobile/i.test(navigator.userAgent || '') ? 4 : 8;
@@ -619,8 +620,27 @@ const AudioMgr = (() => {
     const c = ensure(); if (!c || !manifest) return;
     for (const nm of Object.keys(manifest)) loadSample(nm, (base || '') + manifest[nm]);
   }
+  // Röst-fras: spelar ett laddat röst-sample med GLOBAL röst-cooldown (fraser ska
+  // aldrig överlappa varandra). opts.boss → boss-bussen (eko/bas) men mildare pitch-
+  // sänkning (0.85) så talet förblir begripligt. Returnerar true om den spelade.
+  function playVoice(key, opts) {
+    if (!enabled) return false;
+    const c = ensure(); if (!c) return false;
+    if (c.state === 'suspended') c.resume();
+    const buf = _samples.get(key); if (!buf) return false;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - _lastVoiceAt < ((opts && opts.gap != null) ? opts.gap : 4000)) return false;
+    _lastVoiceAt = now;
+    const src = c.createBufferSource(); src.buffer = buf;
+    const g = c.createGain(); g.gain.value = (opts && opts.gain != null) ? opts.gain : 1.0;
+    src.connect(g);
+    if (opts && opts.boss) { src.playbackRate.value = (opts.rate != null) ? opts.rate : 0.85; g.connect(_makeBossBus()); }
+    else g.connect(sfxGain);
+    try { src.start(); } catch (_) {}
+    return true;
+  }
 
-  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample, preloadSamples };
+  return { play, startMusic, stopMusic, unlock, setEnabled, isEnabled, frameReset, loadSample, playSample, hasSample, preloadSamples, playVoice };
 })();
 
 // Kenney-SFX manifest: event-namn → fil i assets/sfx/. play() spelar samplet om det
@@ -631,6 +651,97 @@ const SFX_FILES = {
   teleport: 'teleport.mp3', cast: 'cast.mp3', frost: 'frost.mp3', uiClick: 'uiClick.mp3',
   heal: 'heal.mp3', melee: 'melee.mp3', hit: 'hit.mp3',
 };
+
+// === Röst-fraser (bossar + heroes) ===========================================
+// Filer i assets/voice/ (boss/ + heroes/). TYST tills filerna finns (graceful —
+// loadSample faller tyst om 404). Bossar: spawn + enrage + periodiska taunts genom
+// boss-bussen (eko/bas). Heroes: repliker då och då medan man spelar. User genererar
+// rösterna (TTS/inspelning) — se assets/voice/README.txt för fraser + instruktioner.
+const BOSS_TIER_VOICE = { 1: 'captain', 2: 'general', 3: 'warlord', 4: 'demon', 5: 'dragon' };
+const VOICE_FILES = {
+  boss: {
+    captain: { spawn: 'boss/captain_spawn.mp3', enrage: 'boss/captain_enrage.mp3', taunt: ['boss/captain_taunt1.mp3', 'boss/captain_taunt2.mp3'] },
+    general: { spawn: 'boss/general_spawn.mp3', enrage: 'boss/general_enrage.mp3', taunt: ['boss/general_taunt1.mp3', 'boss/general_taunt2.mp3'] },
+    warlord: { spawn: 'boss/warlord_spawn.mp3', enrage: 'boss/warlord_enrage.mp3', taunt: ['boss/warlord_taunt1.mp3', 'boss/warlord_taunt2.mp3'] },
+    demon:   { spawn: 'boss/demon_spawn.mp3',   enrage: 'boss/demon_enrage.mp3',   taunt: ['boss/demon_taunt1.mp3', 'boss/demon_taunt2.mp3'] },
+    dragon:  { spawn: 'boss/dragon_spawn.mp3',  enrage: 'boss/dragon_enrage.mp3',  taunt: ['boss/dragon_taunt1.mp3', 'boss/dragon_taunt2.mp3'] },
+  },
+  hero: {
+    gandulf: ['heroes/gandulf_1.mp3', 'heroes/gandulf_2.mp3', 'heroes/gandulf_3.mp3'],
+    legolas: ['heroes/legolas_1.mp3', 'heroes/legolas_2.mp3', 'heroes/legolas_3.mp3'],
+    aragurn: ['heroes/aragurn_1.mp3', 'heroes/aragurn_2.mp3', 'heroes/aragurn_3.mp3'],
+    kostefo: ['heroes/kostefo_1.mp3', 'heroes/kostefo_2.mp3', 'heroes/kostefo_3.mp3'],
+    gimlu:   ['heroes/gimlu_1.mp3', 'heroes/gimlu_2.mp3', 'heroes/gimlu_3.mp3'],
+    zheyna:  ['heroes/zheyna_1.mp3', 'heroes/zheyna_2.mp3', 'heroes/zheyna_3.mp3'],
+  },
+};
+const _voiceState = { heroId: null, heroLoaded: false, heroTimer: 0, bossId: null, bossLoaded: false, spawnPending: false, bossPhase: 1, tauntTimer: 0 };
+// Driver för röst-fraser. Anropas en gång/frame i tick() (gateas internt på in-game).
+// Delta-detekterar boss-spawn/enrage centralt (inga edits i spawn/transition-koden).
+function tickVoiceLines(dt) {
+  if (!document.body.classList.contains('in-game')) return;
+  // --- Lokala hjältens repliker (då och då medan man spelar) ---
+  const me = sides[APP.localSide];
+  if (me && me.heroId) {
+    if (_voiceState.heroId !== me.heroId) {
+      _voiceState.heroId = me.heroId; _voiceState.heroLoaded = false;
+      _voiceState.heroTimer = 18 + Math.random() * 22;
+    }
+    if (!_voiceState.heroLoaded) {
+      const files = VOICE_FILES.hero[me.heroId];
+      if (files) files.forEach((f, i) => AudioMgr.loadSample('vh_' + me.heroId + '_' + i, ASSET_BASE + 'voice/' + f));
+      _voiceState.heroLoaded = true;
+    }
+    if (me.hero && !me.hero.dead) {
+      _voiceState.heroTimer -= dt;
+      if (_voiceState.heroTimer <= 0) {
+        _voiceState.heroTimer = 50 + Math.random() * 40;   // ~50-90 s mellan repliker
+        const files = VOICE_FILES.hero[me.heroId];
+        if (files && files.length) AudioMgr.playVoice('vh_' + me.heroId + '_' + Math.floor(Math.random() * files.length), { gap: 6000 });
+      }
+    }
+  }
+  // --- Boss-repliker (boss wars) ---
+  if (APP.gameMode !== 'bosswars') { _voiceState.bossId = null; return; }
+  let boss = null;
+  for (let i = 1; i <= 3 && !boss; i++) {
+    const s = sides[i]; if (!s || !s.monsters) continue;
+    for (const m of s.monsters) { if (m && m.isBossWarsBoss && m.hp > 0) { boss = m; break; } }
+  }
+  if (!boss) { _voiceState.bossId = null; return; }
+  const bid = BOSS_TIER_VOICE[boss.bossTier];
+  if (!bid) return;
+  if (_voiceState.bossId !== bid) {
+    _voiceState.bossId = bid; _voiceState.bossLoaded = false; _voiceState.spawnPending = true;
+    _voiceState.bossPhase = boss.bossPhase || 1; _voiceState.tauntTimer = 14 + Math.random() * 12;
+  }
+  if (!_voiceState.bossLoaded) {
+    const def = VOICE_FILES.boss[bid];
+    if (def) {
+      if (def.spawn) AudioMgr.loadSample('vb_' + bid + '_spawn', ASSET_BASE + 'voice/' + def.spawn);
+      if (def.enrage) AudioMgr.loadSample('vb_' + bid + '_enrage', ASSET_BASE + 'voice/' + def.enrage);
+      (def.taunt || []).forEach((f, i) => AudioMgr.loadSample('vb_' + bid + '_t' + i, ASSET_BASE + 'voice/' + f));
+    }
+    _voiceState.bossLoaded = true;
+  }
+  // Spawn-replik (en gång, så snart filen laddats)
+  if (_voiceState.spawnPending && AudioMgr.hasSample('vb_' + bid + '_spawn')) {
+    if (AudioMgr.playVoice('vb_' + bid + '_spawn', { boss: true, gap: 0 })) _voiceState.spawnPending = false;
+  }
+  // Enrage-replik (fas 1→2). Liten gap (600ms) så den aldrig staplas på spawn samma
+  // frame (genuint fasbyte sker långt efter spawn → blockeras ej i praktiken).
+  const ph = boss.bossPhase || 1;
+  if (ph > _voiceState.bossPhase) { _voiceState.bossPhase = ph; AudioMgr.playVoice('vb_' + bid + '_enrage', { boss: true, gap: 600 }); }
+  // Periodiska taunts — ej mitt i en tyst golv-mekanik (boss 3/5)
+  if (!(boss.warlord && boss.warlord.engaged) && !(boss._dragon && boss._dragon.active)) {
+    _voiceState.tauntTimer -= dt;
+    if (_voiceState.tauntTimer <= 0) {
+      _voiceState.tauntTimer = 26 + Math.random() * 20;   // ~26-46 s mellan taunts
+      const def = VOICE_FILES.boss[bid], t = def && def.taunt;
+      if (t && t.length) AudioMgr.playVoice('vb_' + bid + '_t' + Math.floor(Math.random() * t.length), { boss: true });
+    }
+  }
+}
 
 // Mobil/desktop autoplay-policy: lås upp AudioContext + starta hemskärms-musik
 // vid första user-gesten (krävs av iOS/Chrome). En gång.
@@ -34801,6 +34912,7 @@ function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   const now = performance.now() / 1000;
   AudioMgr.frameReset();   // nollställ SFX-voice-budget för denna frame (perf-cap)
+  tickVoiceLines(dt);      // boss-/hjälte-röst-fraser (tyst tills röstfiler finns)
   resetFxPopupBudget();
   // Decision 113: reset mesh-spawn-budget för wave-start-stutter-fix
   _meshSpawnsThisFrame = 0;
