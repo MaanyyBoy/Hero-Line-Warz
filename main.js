@@ -553,10 +553,13 @@ window.addEventListener('touchstart', _unlockAudioOnce, { passive: true });
 window.addEventListener('click', _unlockAudioOnce, { passive: true });
 window.addEventListener('keydown', _unlockAudioOnce, { passive: true });
 
-// UI-klick-ljud (delegerat): kort blip när en knapp trycks.
+// UI-klick-ljud (delegerat): kort blip när en MENY-knapp trycks. Hoppar in-match
+// action-knappar ([data-key] = ATK/skills) — ATK ska vara tyst (AA-ljud spelas vid
+// TRÄFF), skills har egna cast-ljud. (user 2026-06-09)
 window.addEventListener('pointerdown', (e) => {
   const t = e.target;
-  if (t && (t.tagName === 'BUTTON' || (t.closest && t.closest('button')))) AudioMgr.play('uiClick', { minGap: 50 });
+  const btn = t && (t.tagName === 'BUTTON' ? t : (t.closest && t.closest('button')));
+  if (btn && !btn.hasAttribute('data-key')) AudioMgr.play('uiClick', { minGap: 50 });
 }, { passive: true });
 
 // Mappar hero-skill-flipbook-key → SFX-namn (för spawnHeroCastFb-hooken).
@@ -14385,11 +14388,6 @@ function updateHeroAttack(side, dt) {
   const target = maintainTargetLock(side);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
-  // Ljud: bara LOKALA spelarens AA (annars ljuder varje motståndar-/bot-AA).
-  // Melee-hjältar (Aragurn/Kryx) = svärds-swish; övriga = pil-/projektil-skott.
-  if (side.idx === APP.localSide) {
-    AudioMgr.play((side.heroId === 'aragurn' || side.heroId === 'gimlu') ? 'melee' : 'arrow', { minGap: 70 });
-  }
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
 
   // ---- Ling & Lang: Fury Stacks ----
@@ -14617,6 +14615,11 @@ function updateProjectiles(side, dt) {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 0.4) {
       const ix = tp.x, iz = tp.z;
+      // Ljud: AA-ljudet spelas vid TRÄFF (inte vid avfyrning/ATK-tryck) — user-krav
+      // 2026-06-09. Bara lokala spelaren. Melee-hjältar = swish-impakt, övriga = impakt.
+      if (side.idx === APP.localSide) {
+        AudioMgr.play((side.heroId === 'aragurn' || side.heroId === 'gimlu') ? 'melee' : 'hit', { minGap: 60 });
+      }
       // AA-träff → ult-energy gain + rage-lifesteal om aktiv.
       // "Ingen skada → ingen reward": skippa BÅDA om träffen är på en boss som
       // är damage-immune under phase-transition (annars kan man farma ult-energi
@@ -27533,12 +27536,6 @@ function applyHeroSnap(side, snap) {
     skill.cd = snapCd;
   };
   setCdSticky('q'); setCdSticky('f'); setCdSticky('e');
-  // Ljud: lokala spelarens AA i MP. updateHeroAttack (där solo-AA-ljudet sitter) körs
-  // INTE på snapshot-klienten → detektera attackCounter-delta här istället (gate till
-  // lokal sida). minGap-throttlen dedupar mot ev. host-auth-dubbel. (client-correctness #1)
-  if (isOwnLocalSide && (snap.ac || 0) > (side.attackCounter || 0)) {
-    AudioMgr.play((side.heroId === 'aragurn' || side.heroId === 'gimlu') ? 'melee' : 'arrow', { minGap: 70 });
-  }
   side.attackCounter = snap.ac;
   // Skip-0-värden i snap → || 0 fallback för alla state-fält som kan vara 0.
   // Tidigare guard `if (snap.X !== undefined)` fastnade på sista positiva värde
