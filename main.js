@@ -747,7 +747,7 @@ const VOICE_FILES = {
     dragon:  { spawn: 'boss/dragon_spawn.mp3',  enrage: 'boss/dragon_enrage.mp3',  taunt: ['boss/dragon_taunt1.mp3', 'boss/dragon_taunt2.mp3'] },
   },
   hero: {
-    gandulf: ['heroes/gandulf_1.mp3', 'heroes/gandulf_2.mp3', 'heroes/gandulf_3.mp3'],
+    magiker: ['heroes/magiker_1.mp3', 'heroes/magiker_2.mp3', 'heroes/magiker_3.mp3'],   // Zyro (intern-id 'magiker', ej 'gandulf')
     legolas: ['heroes/legolas_1.mp3', 'heroes/legolas_2.mp3', 'heroes/legolas_3.mp3'],
     aragurn: ['heroes/aragurn_1.mp3', 'heroes/aragurn_2.mp3', 'heroes/aragurn_3.mp3'],
     kostefo: ['heroes/kostefo_1.mp3', 'heroes/kostefo_2.mp3', 'heroes/kostefo_3.mp3'],

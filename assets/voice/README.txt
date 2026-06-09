@@ -14,7 +14,7 @@ man spelar). Det är TYST tills du lägger in röstfilerna nedan. Lägg .mp3-fil
     dragon_spawn.mp3    dragon_enrage.mp3    dragon_taunt1.mp3    dragon_taunt2.mp3
 
   assets/voice/heroes/
-    gandulf_1.mp3  gandulf_2.mp3  gandulf_3.mp3
+    magiker_1.mp3  magiker_2.mp3  magiker_3.mp3   (= Zyro/magikern)
     legolas_1.mp3  legolas_2.mp3  legolas_3.mp3
     aragurn_1.mp3  aragurn_2.mp3  aragurn_3.mp3
     kostefo_1.mp3  kostefo_2.mp3  kostefo_3.mp3
