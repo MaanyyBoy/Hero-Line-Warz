@@ -486,49 +486,52 @@ const AudioMgr = (() => {
     // LFO som sveper filtret långsamt (levande pad)
     const lfo = c.createOscillator(); lfo.frequency.value = 0.06;
     const lfoG = c.createGain(); lfoG.gain.value = 280; lfo.connect(lfoG); lfoG.connect(lp.frequency); lfo.start(t);
-    // Ackord-progression (Am - F - C - G), roterar var 8s → paden ANDAS istället för
-    // en evig statisk ton (playtest #1: musiken är förstaintrycket och blev tjatig).
+    // Mörk, lätt energisk vamp (Am - G - F - E = i-VII-VI-V) + en SUBTIL groove
+    // (bas-puls + mjuk kick + lätta hi-hats + lead-accent) → mer liv utan att bli
+    // barnsligt (user 2026-06-09: action/mörk/energisk men "lite lätta ändringar").
     const CHORDS = [
       [110.00, 164.81, 220.00, 261.63],   // Am  (A2 E3 A3 C4)
-      [ 87.31, 174.61, 220.00, 261.63],   // F   (F2 F3 A3 C4)
-      [ 98.00, 196.00, 246.94, 329.63],   // C/G (G2 G3 B3 E4)
       [ 98.00, 146.83, 196.00, 246.94],   // G   (G2 D3 G3 B3)
+      [ 87.31, 130.81, 174.61, 261.63],   // F   (F2 C3 F3 C4)
+      [ 82.41, 123.47, 164.81, 246.94],   // E   (E2 B2 E3 B3) — V ger spänning/mörker
     ];
-    const ARP = [
-      [220, 261.63, 329.63, 440],         // Am
-      [174.61, 220, 261.63, 349.23],      // F
-      [196, 246.94, 329.63, 392],         // C
-      [196, 246.94, 293.66, 392],         // G
+    const ROOTS = [110.00, 98.00, 87.31, 82.41];
+    const LEAD = [
+      [220, 261.63, 329.63],              // Am  (A3 C4 E4)
+      [246.94, 293.66, 392],              // G   (B3 D4 G4)
+      [261.63, 349.23, 440],              // F   (C4 F4 A4)
+      [246.94, 329.63, 415.30],           // E   (B3 E4 G#4-spänning)
     ];
     let chordIdx = 0;
     const oscs = [], oscGains = [];
     for (let i = 0; i < 4; i++) {
       const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.value = CHORDS[0][i];
       o.detune.value = (Math.random() * 8 - 4);
-      const og = c.createGain(); og.gain.value = 0.2;
+      const og = c.createGain(); og.gain.value = 0.18;
       o.connect(og); og.connect(lp); o.start(t); oscs.push(o); oscGains.push(og);
     }
     _musicNodes = { padGain, lp, lfo, lfoG, oscs, oscGains };
     musicGain.gain.cancelScheduledValues(t);
     musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
-    musicGain.gain.exponentialRampToValueAtTime(0.3, t + 2.0);   // fade in
-    // Ackord-rotation var 8s: ramp varje oscillator mjukt (1.2s) till nästa ackord.
-    _musicNodes._chordTimer = setInterval(() => {
-      if (!ctx || !_musicNodes) return;
-      chordIdx = (chordIdx + 1) % CHORDS.length;
-      const tt = ctx.currentTime;
-      for (let i = 0; i < oscs.length; i++) {
-        try { oscs[i].frequency.exponentialRampToValueAtTime(CHORDS[chordIdx][i], tt + 1.2); } catch (_) {}
-      }
-    }, 8000);
-    // Sparsam arpeggio ur AKTUELLT ackord, var 3s (var 1.6s → kändes rastlöst).
+    musicGain.gain.exponentialRampToValueAtTime(0.32, t + 2.0);   // fade in
+    // Stepper @ 8th-noter (100 BPM = 0.3s). 8 steg/takt; ackordbyte per takt (2.4s).
+    // Driver: bas-puls (varje beat), kick (beat 1 & 3), hi-hats (off-beats), lead-accent.
+    let step = 0;
     _musicTimer = setInterval(() => {
       if (!ctx || !_musicNodes) return;
       const tt = ctx.currentTime + 0.02;
-      const a = ARP[chordIdx];
-      const f = a[Math.floor(Math.random() * a.length)];
-      tone(f, tt, 1.4, 'triangle', 0.05, 0, musicGain);
-    }, 3000);
+      const bs = step % 8;
+      if (bs === 0) {   // ny takt → byt ackord (mjuk ramp på paden)
+        chordIdx = (chordIdx + 1) % CHORDS.length;
+        for (let i = 0; i < oscs.length; i++) { try { oscs[i].frequency.exponentialRampToValueAtTime(CHORDS[chordIdx][i], tt + 0.3); } catch (_) {} }
+      }
+      const root = ROOTS[chordIdx];
+      if (bs % 2 === 0) tone(root, tt, 0.26, 'sawtooth', 0.2, 0, musicGain);             // bas-puls på varje beat
+      if (bs === 0 || bs === 4) tone(64, tt, 0.16, 'sine', 0.4, 40, musicGain);           // kick på beat 1 & 3
+      if (bs % 2 === 1) noise(tt, 0.045, 'highpass', 7000, 0.05, 0.7, 9000, musicGain);    // mjuka hi-hats på off-beats
+      if (bs === 0 || bs === 4) { const a = LEAD[chordIdx]; tone(a[Math.floor(Math.random() * a.length)], tt, 0.55, 'triangle', 0.07, 0, musicGain); }  // lead-accent
+      step++;
+    }, 300);
   }
   function stopMusic() {
     if (_musicTimer) { clearInterval(_musicTimer); _musicTimer = null; }
