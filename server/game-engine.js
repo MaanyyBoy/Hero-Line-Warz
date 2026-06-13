@@ -97,6 +97,39 @@ function zheynaTurnToward(side, ndx, ndz, dt) {
 // (30 Hz × N anrop = märkbar GC-tryck i Render free-tier Node). Frysta = immutable.
 const _SIDE_KEYS = Object.freeze([1, 2]);
 
+// ── Team-arena (2v2/3v3, Task 18) — ADDITIVT. Classic/1v1 saknar state.teamSize
+// → arenaOpp ger EXAKT gamla `sides[3 - idx]` och arenaKeys ger [1,2]: noll
+// beteendeskillnad för live-lägena. I team-läge är "opp" = NÄRMASTE LEVANDE
+// fiende-hero (v1-semantik: varje skill/AA påverkar sin opp; AoE multi-träff
+// över flera fiender är en v2-förbättring, dokumenterad i TEAM_ARENA_PLAN.md).
+function arenaKeys(state) { return (state && state.sideKeys) || _SIDE_KEYS; }
+function arenaOpp(state, idx) {
+  if (!state || !state.teamSize || state.teamSize <= 1) return state.sides[3 - idx];
+  const me = state.sides[idx];
+  if (!me) return state.sides[3 - idx] || null;
+  let best = null, bestD = Infinity, anyEnemy = null;
+  for (const k of state.sideKeys) {
+    const s = state.sides[k];
+    if (!s || (s.team || k) === (me.team || idx)) continue;
+    if (!anyEnemy) anyEnemy = s;
+    if (s.hero.dead) continue;
+    const dx = s.hero.x - me.hero.x, dz = s.hero.z - me.hero.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD) { bestD = d2; best = s; }
+  }
+  return best || anyEnemy;   // alla fiender döda → valfri fiende-side (callers dead-guardar)
+}
+// Spawn-position: 1v1 = exakt gamla SPAWN1/2; team = båge kring väst/öst-punkten.
+function arenaSpawnFor(idx, teamSize) {
+  if (!teamSize || teamSize <= 1) return (idx === 1) ? ARENA1V1_SPAWN1 : ARENA1V1_SPAWN2;
+  const team = idx <= teamSize ? 1 : 2;
+  const member = idx - (team === 1 ? 1 : teamSize + 1);
+  const baseAngle = team === 1 ? Math.PI : 0;
+  const offset = (member - (teamSize - 1) / 2) * 0.45;
+  const radius = 40 * ARENA1V1_SCALE;
+  return { x: Math.cos(baseAngle + offset) * radius, z: ARENA1V1_Z + Math.sin(baseAngle + offset) * radius };
+}
+
 const PASSIVE_EVERY = 4;
 const PASSIVE_AOE_RADIUS = 2.0;
 
@@ -1480,34 +1513,50 @@ const RAGE_HEAL_PCT = 0.20;
 const BERSERK_DURATION = 5.0;
 const BERSERK_AA_DMG_MUL = 2.50;     // +150% AA-damage
 const BERSERK_AA_LIFESTEAL = 0.25;
-function createArenaState() {
-  const s1 = createSide(1);
-  const s2 = createSide(2);
-  // Arena-spawns (createSide sätter classic-lane-positioner). Heroes startar på
-  // motsatta sidor; facing in mot mitten.
-  s1.hero.x = ARENA1V1_SPAWN1.x; s1.hero.z = ARENA1V1_SPAWN1.z;
-  s1.hero.facingX = 1; s1.hero.facingZ = 0;
-  s2.hero.x = ARENA1V1_SPAWN2.x; s2.hero.z = ARENA1V1_SPAWN2.z;
-  s2.hero.facingX = -1; s2.hero.facingZ = 0;
-  // inArena1v1 → applyMovement använder arena1v1-walkability (ej duel-cirkeln/classic).
-  s1.inArena1v1 = true; s2.inArena1v1 = true;
+function createArenaState(teamSize) {
+  // Team-arena (Task 18): teamSize 1 = exakt gamla 1v1; 2/3 = sides 1..2N där
+  // 1..N = team 1 (väst) och N+1..2N = team 2 (öst). Allt nedan är formbevarat
+  // för 1v1 (sideKeys [1,2], team-fält ignoreras av arenaOpp utan teamSize>1).
+  const size = (teamSize === 2 || teamSize === 3) ? teamSize : 1;
+  const keys = [];
+  for (let i = 1; i <= size * 2; i++) keys.push(i);
+  const sides = {};
+  const inputs = {};
+  const talents = {};
+  const ready = {};
+  for (const idx of keys) {
+    const s = createSide(idx);
+    // team-fältet sätts BARA i team-läge — 1v1-payloaden (hero-snapens tm) förblir orörd.
+    if (size > 1) s.team = idx <= size ? 1 : 2;
+    const spawn = arenaSpawnFor(idx, size);
+    s.hero.x = spawn.x; s.hero.z = spawn.z;
+    s.hero.facingX = (s.team || idx) === 1 ? 1 : -1; s.hero.facingZ = 0;
+    // inArena1v1 → applyMovement använder arena1v1-walkability (ej duel-cirkeln/classic).
+    s.inArena1v1 = true;
+    sides[idx] = s;
+    inputs[idx] = { j: { x: 0, z: 0 } };
+    talents[idx] = { points: 0, chosen: [] };
+    ready[idx] = false;
+  }
   return {
     mode: 'arena1v1',
-    sides: { 1: s1, 2: s2 },
+    teamSize: size,
+    sideKeys: keys,
+    sides,
     nextEntityId: 1,
     // duelActive=true aktiverar engine:ns hero-vs-hero-combat (skill-träffar mot opp.hero,
     // AA-targeting, isHeroPvpActive) — samma gate duel-deathmatchen använder. Arena kör
     // tickArena (ej tickGame:s duelActive-gren) så ingen dubbel-tick.
     duelActive: true,
-    lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
+    lastInputs: inputs,
     // matchState så server.js:gameLoopTick:s `room.game.matchState.gameOver`-guard
     // fungerar för arena också (sätts i transitionArenaMatchEnd).
     matchState: { gameOver: false, winner: 0 },
     // Arena-flöde (speglar arenaState i main.js / a-state-formen)
     phase: 'prep',             // prep | fight | roundEnd | matchEnd
     roundNum: 1,
-    wins: { 1: 0, 2: 0 },
-    ready: { 1: false, 2: false },
+    wins: { 1: 0, 2: 0 },      // per TEAM i team-läge (1v1: team == side)
+    ready,
     prepTimer: 0,
     startingTimer: 0,
     startingPhaseShown: false,
@@ -1517,7 +1566,7 @@ function createArenaState() {
     fightTimer: 0,
     shrinkRadius: 0,
     mapIdx: 0,
-    talents: { 1: { points: 0, chosen: [] }, 2: { points: 0, chosen: [] } },
+    talents,
     // x/z på orb-objektet sätts här en gång för alla — undviker ny position-wrapper
     // i findClosestHostile varje tick (var { entity: { x,z,hp,maxHp }, ... } ).
     orb: { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0, x: 0, z: ARENA1V1_Z },
@@ -1547,7 +1596,7 @@ function applyLaserBeamTickServer(state, side) {
     boss.hp = Math.max(0, boss.hp - bossWarsDmgMod(boss, boss.maxHp * LASER_TICK_DMG_PCT));   // fas-immunitet+DR; clamp (death=slice 4)
     return;
   }
-  const opp = state.sides[3 - side.idx];
+  const opp = arenaOpp(state, side.idx);
   if (!opp || opp.hero.dead) return;
   const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
   const along = ddx * lb.dx + ddz * lb.dz;
@@ -1593,7 +1642,7 @@ function tickGimluRageServer(state, side, dt) {
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.iceBlockRemaining = 0;
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
-  const opp = state.sides[3 - side.idx];
+  const opp = arenaOpp(state, side.idx);
   // Boss wars (co-op): rage-pulserna träffar boss-monstret i st f motståndar-hjälte.
   const bossTarget = (state.mode === 'bosswars') ? state.boss : null;
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
@@ -1628,7 +1677,7 @@ function tickGimluRageServer(state, side, dt) {
 function tickArenaBotServer(state, sideIdx, dt) {
   const side = state.sides[sideIdx];
   if (!side || !side.isBot || side.hero.dead) return;
-  const enemy = state.sides[3 - sideIdx];
+  const enemy = arenaOpp(state, sideIdx);
   if (!enemy) return;
   if (!side._botSkillsInited) {
     side._botSkillsInited = true;
@@ -1671,15 +1720,15 @@ function tickArenaBotServer(state, sideIdx, dt) {
 
 function tickArenaCombat(state, dt) {
   // Bot-AI (arena online-vs-bot): sätt rörelse-input + AA/skill före rörelse-loopen.
-  for (const sideIdx of _SIDE_KEYS) if (state.sides[sideIdx] && state.sides[sideIdx].isBot) tickArenaBotServer(state, sideIdx, dt);
-  for (const sideIdx of _SIDE_KEYS) {
+  for (const sideIdx of arenaKeys(state)) if (state.sides[sideIdx] && state.sides[sideIdx].isBot) tickArenaBotServer(state, sideIdx, dt);
+  for (const sideIdx of arenaKeys(state)) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx] && state.lastInputs[sideIdx].j;
     if (j) applyMovement(side, j.x, j.z, dt);
   }
-  for (const sideIdx of _SIDE_KEYS) {
+  for (const sideIdx of arenaKeys(state)) {
     const side = state.sides[sideIdx];
-    const opp = state.sides[3 - sideIdx];
+    const opp = arenaOpp(state, sideIdx);
     updateSkillCooldowns(side, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -1758,7 +1807,7 @@ function tickArenaCombat(state, dt) {
 // updateArenaOrb, men ENBART logik-delarna. 1v1 (sides 1,2).
 function _arenaResetHero(state, side, spawn, roundNum) {
   side.hero.x = spawn.x; side.hero.z = spawn.z;
-  side.hero.facingX = (side.idx === 1) ? 1 : -1;
+  side.hero.facingX = ((side.team || side.idx) === 1) ? 1 : -1;
   side.hero.facingZ = 0;
   side.hero.dead = false;
   side.hero.respawnTimer = 0;
@@ -1825,6 +1874,16 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
 }
 
+// Bot auto-ready: alla bot-sides är alltid redo (gäller 1v1 OCH team-läge).
+function _arenaResetReady(state) {
+  const ready = {};
+  for (const idx of arenaKeys(state)) {
+    const s = state.sides[idx];
+    ready[idx] = !!(s && s.isBot);
+  }
+  state.ready = ready;
+}
+
 function startArenaRound(state, roundNum) {
   state.roundNum = roundNum;
   state.phase = 'prep';
@@ -1832,26 +1891,26 @@ function startArenaRound(state, roundNum) {
   state.fightTimer = 0;
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
-  state.ready = { 1: false, 2: (state.sides[2] && state.sides[2].isBot) ? true : false };   // bot auto-ready varje runda
-  for (const idx of _SIDE_KEYS) {
+  _arenaResetReady(state);
+  for (const idx of arenaKeys(state)) {
     if (!state.talents[idx]) state.talents[idx] = { points: 0, chosen: [] };
     state.talents[idx].points += 1;                 // +1 talent-poäng/runda
   }
   // x/z behövs för AA-targeting (findClosestHostile/resolveTargetEntity läser target.x/z).
   state.orb = { hp: 0, maxHp: ARENA_ORB_MAX_HP, alive: false, spawnTimer: 0, x: 0, z: ARENA1V1_Z };
-  _arenaResetHero(state, state.sides[1], ARENA1V1_SPAWN1, roundNum);
-  _arenaResetHero(state, state.sides[2], ARENA1V1_SPAWN2, roundNum);
+  for (const idx of arenaKeys(state))
+    _arenaResetHero(state, state.sides[idx], arenaSpawnFor(idx, state.teamSize), roundNum);
 }
 
 function transitionArenaToStarting(state) {
   state.phase = 'starting';
   state.startingTimer = ARENA_STARTING_DURATION;
   state.startingPhaseShown = '3';   // countdown-label klienten visar (3→2→1→FIGHT!)
-  for (const idx of _SIDE_KEYS) {
+  for (const idx of arenaKeys(state)) {
     const s = state.sides[idx];
-    const spawn = (idx === 1) ? ARENA1V1_SPAWN1 : ARENA1V1_SPAWN2;
+    const spawn = arenaSpawnFor(idx, state.teamSize);
     s.hero.x = spawn.x; s.hero.z = spawn.z;
-    s.hero.facingX = (idx === 1) ? 1 : -1; s.hero.facingZ = 0;
+    s.hero.facingX = ((s.team || idx) === 1) ? 1 : -1; s.hero.facingZ = 0;
   }
 }
 
@@ -1860,22 +1919,26 @@ function transitionArenaToFight(state) {
   state.fightTimer = 0;
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
-  state.ready = { 1: false, 2: (state.sides[2] && state.sides[2].isBot) ? true : false };   // bot auto-ready varje runda
+  _arenaResetReady(state);
   // Orb spawnar direkt vid fight-start
   state.orb.alive = true;
   state.orb.hp = state.orb.maxHp;
   state.orb.spawnTimer = 0;
 }
 
-function transitionArenaRoundEnd(state, winnerIdx) {
+function transitionArenaRoundEnd(state, winnerTeam) {
   state.phase = 'roundEnd';
-  state.roundWinner = winnerIdx;
+  state.roundWinner = winnerTeam;   // 1v1: side == team
   state.endTimer = ARENA_ROUND_END_PAUSE;
-  if (winnerIdx === 1 || winnerIdx === 2) {
-    state.wins[winnerIdx] = (state.wins[winnerIdx] || 0) + 1;
-    if (state.talents[winnerIdx]) state.talents[winnerIdx].points += 1;
-    const ws = state.sides[winnerIdx];
-    if (ws) ws.gold = (ws.gold || 0) + ARENA_GOLD_WIN_BONUS;
+  if (winnerTeam === 1 || winnerTeam === 2) {
+    state.wins[winnerTeam] = (state.wins[winnerTeam] || 0) + 1;
+    // Belöning till HELA vinnande laget (1v1: exakt gamla beteendet — ett medlem).
+    for (const idx of arenaKeys(state)) {
+      const s = state.sides[idx];
+      if (!s || (s.team || idx) !== winnerTeam) continue;
+      if (state.talents[idx]) state.talents[idx].points += 1;
+      s.gold = (s.gold || 0) + ARENA_GOLD_WIN_BONUS;
+    }
   }
 }
 
@@ -1889,9 +1952,9 @@ function transitionArenaMatchEnd(state, winnerIdx) {
 // Skapar + initierar en arena-match server-side: sätter valda hjältar, kör
 // startArenaRound(1) (recompute-stats + full HP + gold + talent-poäng). Anropas
 // av server.js när host skickar a-sim-start. heroes = { 1: heroId, 2: heroId }.
-function initArenaMatch(heroes) {
-  const state = createArenaState();
-  for (const idx of _SIDE_KEYS) {
+function initArenaMatch(heroes, teamSize) {
+  const state = createArenaState(teamSize);
+  for (const idx of arenaKeys(state)) {
     const side = state.sides[idx];
     if (heroes && typeof heroes[idx] === 'string') {
       side.heroId = heroes[idx];
@@ -1910,10 +1973,23 @@ function initArenaMatch(heroes) {
 }
 
 function checkArenaRoundEnd(state) {
-  const d1 = state.sides[1].hero.dead, d2 = state.sides[2].hero.dead;
-  if (d1 && d2) { transitionArenaRoundEnd(state, 0); return; }
-  if (d1) { transitionArenaRoundEnd(state, 2); return; }
-  if (d2) { transitionArenaRoundEnd(state, 1); return; }
+  if (!state.teamSize || state.teamSize <= 1) {
+    const d1 = state.sides[1].hero.dead, d2 = state.sides[2].hero.dead;
+    if (d1 && d2) { transitionArenaRoundEnd(state, 0); return; }
+    if (d1) { transitionArenaRoundEnd(state, 2); return; }
+    if (d2) { transitionArenaRoundEnd(state, 1); return; }
+    return;
+  }
+  // Team-läge: rundan slutar när HELA ett lag är dött.
+  let alive1 = 0, alive2 = 0;
+  for (const idx of state.sideKeys) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    if ((s.team || idx) === 1) alive1++; else alive2++;
+  }
+  if (alive1 === 0 && alive2 === 0) transitionArenaRoundEnd(state, 0);
+  else if (alive1 === 0) transitionArenaRoundEnd(state, 2);
+  else if (alive2 === 0) transitionArenaRoundEnd(state, 1);
 }
 
 function tickArenaShrink(state, dt) {
@@ -1926,7 +2002,7 @@ function tickArenaShrink(state, dt) {
   state.shrinkDamageAccum = (state.shrinkDamageAccum || 0) + dt;
   while (state.shrinkDamageAccum >= A_SHRINK_TICK_INTERVAL) {
     state.shrinkDamageAccum -= A_SHRINK_TICK_INTERVAL;
-    for (const idx of _SIDE_KEYS) {
+    for (const idx of arenaKeys(state)) {
       const s = state.sides[idx];
       if (!s || s.hero.dead) continue;
       const dx = s.hero.x - 0;
@@ -1976,7 +2052,8 @@ function tickArena(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;   // matchen slut — server.js stoppar loopen
   if (state.phase === 'prep') {
     state.prepTimer = Math.max(0, state.prepTimer - dt);
-    const allReady = state.ready[1] && state.ready[2];
+    let allReady = true;
+    for (const k of arenaKeys(state)) if (!state.ready[k]) { allReady = false; break; }
     if (state.prepTimer <= 0 || allReady) transitionArenaToStarting(state);
   } else if (state.phase === 'starting') {
     state.startingTimer = Math.max(0, state.startingTimer - dt);
@@ -2025,10 +2102,14 @@ function _makeHeroSnapBuf() {
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
     gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
     taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
+    tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
 const _heroSnapBuf2 = _makeHeroSnapBuf();
+// Team-arena: buffrar för sides 3..6 (1v1 rör dem aldrig).
+const _heroSnapBufs = { 1: _heroSnapBuf1, 2: _heroSnapBuf2,
+  3: _makeHeroSnapBuf(), 4: _makeHeroSnapBuf(), 5: _makeHeroSnapBuf(), 6: _makeHeroSnapBuf() };
 
 // Serialisera arena-side → heroSnap-form (matchar main.js heroSnap / klientens
 // applyHeroSnap). Läser engine:ns logiska side-state. Optional-fält utelämnas via
@@ -2078,6 +2159,7 @@ function serializeArenaHero(side, buf) {
   buf.taunt = nzr2(side.titansTauntRemaining);
   buf.iw = nzr2(side.ironWillRemaining);
   buf.iwS = nzr1(side.ironWillStored);
+  buf.tm = side.team || undefined;   // team-arena (1v1: undefined → skippas)
   // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (MP-paritet).
   buf.zc = side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined;
   buf.zsp = side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined;
@@ -2102,10 +2184,10 @@ const _ARENA_EMPTY_ARR = _ARENA_EMPTY_PU;   // samma fryst tomma array
 const _arenaSSnap = {
   t: 'a-state',
   ph: '', rn: 0, w: null, pt: 0, sst: 0, spl: false, et: 0,
-  rw: 0, mw: 0, rdy: null, tal: undefined,
+  rw: 0, mw: 0, rdy: null, tal: undefined, ts: undefined,
   o: { hp: 0, a: false, sp: 0 },
   mp: 0, sr: 0, ft: 0, pu: _ARENA_EMPTY_PU,
-  h1: null, h2: null,
+  h1: null, h2: null, h3: undefined, h4: undefined, h5: undefined, h6: undefined,
   bh: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
   fw: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
   nv: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
@@ -2132,7 +2214,6 @@ const _arenaTalSnap = {
 // Perf: muterar _arenaSSnap på plats (undviker ~40 objekt-allokeringar/tick).
 // Klienten ser exakt samma fält-struktur som tidigare — ingen format-skillnad.
 function serializeArenaState(state) {
-  const s1 = state.sides[1], s2 = state.sides[2];
   const snap = _arenaSSnap;
   snap.ph = state.phase;
   snap.rn = state.roundNum;
@@ -2147,14 +2228,22 @@ function serializeArenaState(state) {
   snap.mp = state.mapIdx || 0;
   snap.sr = r2(state.shrinkRadius || 0);
   snap.ft = r2(state.fightTimer || 0);
+  // Team-arena: ts + tm bara i team-läge — 1v1-payloaden förblir identisk.
+  snap.ts = (state.teamSize && state.teamSize > 1) ? state.teamSize : undefined;
   // tal skickas bara under prep/roundEnd/matchEnd (då talents kan ändras).
   // Under fight/starting ändras de aldrig → klient behåller föregående snap.
   // chosen.slice() allokerar bara under dessa faser (ej fight-hot-path).
   if (state.phase === 'prep' || state.phase === 'roundEnd' || state.phase === 'matchEnd') {
-    _arenaTalSnap[1].p = state.talents[1].points;
-    _arenaTalSnap[1].c = state.talents[1].chosen.slice();
-    _arenaTalSnap[2].p = state.talents[2].points;
-    _arenaTalSnap[2].c = state.talents[2].chosen.slice();
+    for (let i = 1; i <= 6; i++) {
+      const tal = state.talents[i];
+      if (tal) {
+        if (!_arenaTalSnap[i]) _arenaTalSnap[i] = { p: 0, c: [] };
+        _arenaTalSnap[i].p = tal.points;
+        _arenaTalSnap[i].c = tal.chosen.slice();
+      } else if (_arenaTalSnap[i]) {
+        _arenaTalSnap[i] = undefined;   // sides 3-6 i 1v1 → fältet skippas i JSON
+      }
+    }
     snap.tal = _arenaTalSnap;
   } else {
     snap.tal = undefined;
@@ -2163,32 +2252,30 @@ function serializeArenaState(state) {
   snap.o.hp = state.orb.hp;
   snap.o.a = state.orb.alive;
   snap.o.sp = state.orb.spawnTimer;
-  // Hero-snapshots: muterar persistenta buffrar _heroSnapBuf1/_heroSnapBuf2.
-  snap.h1 = serializeArenaHero(s1, _heroSnapBuf1);
-  snap.h2 = serializeArenaHero(s2, _heroSnapBuf2);
-  // Entity-arrayer: arrOpt returnerar undefined om tom (nytt array bara vid aktiva entiteter).
+  // Hero-snapshots + entity-arrayer per side: 1..2*teamSize aktiva, resten
+  // undefined → skippas i JSON (1v1 = exakt gamla payloaden).
   // _ARENA_EMPTY_ARR = konstant fryst [] → JSON.stringify skriver "[]" utan ny allokering.
-  snap.bh[1] = arrOpt(s1.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-  snap.bh[2] = arrOpt(s2.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-  snap.fw[1] = arrOpt(s1.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
-  snap.fw[2] = arrOpt(s2.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
-  snap.nv[1] = arrOpt(s1.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
-  snap.nv[2] = arrOpt(s2.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
-  snap.ab[1] = arrOpt(s1.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-  snap.ab[2] = arrOpt(s2.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-  snap.kg[1] = arrOpt(s1.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
-  snap.kg[2] = arrOpt(s2.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
-  snap.ks[1] = arrOpt(s1.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
-  snap.ks[2] = arrOpt(s2.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
-  // Legolas vine traps + thorn pools, Gimlu hammers + iron-will-explosions.
-  snap.vt[1] = arrOpt(s1.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
-  snap.vt[2] = arrOpt(s2.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
-  snap.tp[1] = arrOpt(s1.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
-  snap.tp[2] = arrOpt(s2.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
-  snap.hm[1] = arrOpt(s1.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
-  snap.hm[2] = arrOpt(s2.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
-  snap.iwe[1] = arrOpt(s1.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
-  snap.iwe[2] = arrOpt(s2.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
+  for (let i = 1; i <= 6; i++) {
+    const s = state.sides[i];
+    snap['h' + i] = s ? serializeArenaHero(s, _heroSnapBufs[i]) : undefined;
+    if (!s) {
+      snap.bh[i] = undefined; snap.fw[i] = undefined; snap.nv[i] = undefined;
+      snap.ab[i] = undefined; snap.kg[i] = undefined; snap.ks[i] = undefined;
+      snap.vt[i] = undefined; snap.tp[i] = undefined; snap.hm[i] = undefined;
+      snap.iwe[i] = undefined;
+      continue;
+    }
+    snap.bh[i] = arrOpt(s.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+    snap.fw[i] = arrOpt(s.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
+    snap.nv[i] = arrOpt(s.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
+    snap.ab[i] = arrOpt(s.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
+    snap.kg[i] = arrOpt(s.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
+    snap.ks[i] = arrOpt(s.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
+    snap.vt[i] = arrOpt(s.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
+    snap.tp[i] = arrOpt(s.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
+    snap.hm[i] = arrOpt(s.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
+    snap.iwe[i] = arrOpt(s.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
+  }
   return snap;
 }
 
@@ -5028,7 +5115,7 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
     if (opp && !opp.hero.dead) {
       const dx = opp.hero.x - x, dz = opp.hero.z - z;
       const d2 = dx * dx + dz * dz;
-      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
+      if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: opp.idx }; }
     }
     if (state.duelBigOrb && state.duelBigOrb.alive) {
       const dx = state.duelBigOrb.x - x, dz = state.duelBigOrb.z - z;
@@ -5050,7 +5137,7 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
   if (state && isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - x, dz = opp.hero.z - z;
     const d2 = dx * dx + dz * dz;
-    if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: 3 - side.idx }; }
+    if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: opp.idx }; }
   }
   for (let i = 0; i < side.monsters.length; i++) {
     const m = side.monsters[i];
@@ -5232,7 +5319,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsHero: !!target.isHero,
     targetIsDuelOrb: !!target.isDuelOrb,
     targetIsArenaOrb: !!target.isArenaOrb,
-    targetSideIdx: target.isHero ? (3 - side.idx) : 0,
+    targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
     lifestealRatio: dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs),
@@ -5247,7 +5334,7 @@ function updateHeroAttack(state, side, opp, dt) {
       id: state.nextEntityId++, x: side.zheynaClone.x, y: 1.2, z: side.zheynaClone.z,
       target: target.entity, targetIsMonster: !!target.isMonster, targetIsHero: !!target.isHero,
       targetIsDuelOrb: !!target.isDuelOrb, targetIsArenaOrb: !!target.isArenaOrb,
-      targetSideIdx: target.isHero ? (3 - side.idx) : 0, ownerSideIdx: side.idx,
+      targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0, ownerSideIdx: side.idx,
       damage: aaDmg * ZHEYNA_CLONE_DMG_MUL, isAoE: false, isCrit,
       lifestealRatio: 0, knockback: 0, legolusBuffed: false, appliesPoison: false,
     });
@@ -5513,7 +5600,7 @@ function tickThornPools(state, side, dt) {
   if (!side.thornPools || side.thornPools.length === 0) return;
   // Boss wars: co-op (3 sides) → `3 - side.idx` ger en MEDSPELARE/undefined (sides[0]).
   // Inget krasch (opp guardas nedan) men opp ska vara null i co-op (ingen fiende-hjälte/creeps).
-  const opp = (state.mode === 'bosswars') ? null : state.sides[3 - side.idx];
+  const opp = (state.mode === 'bosswars') ? null : arenaOpp(state, side.idx);
   for (let i = side.thornPools.length - 1; i >= 0; i--) {
     const p = side.thornPools[i];
     p.remaining -= dt;
@@ -5557,7 +5644,7 @@ function castEldklot(state, sideIdx, dirX, dirZ) {
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
   side.skills.q.cd = side.skills.q.max * gandulfCdrMul(side);
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const passiveMul = gandulfSkillDmgMul(side);
   const directDmg = FIREWAVE_DIRECT_DMG * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * passiveMul;
   const dotDps = FIREWAVE_DOT_DPS * (side.skillDmgMul || 1) * passiveMul;
@@ -5655,7 +5742,7 @@ function castFrostnova(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max * gandulfCdrMul(side);
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, NOVA_CAST_DISTANCE);
   side.novaEffects.push({
     id: state.nextEntityId++,
@@ -5744,7 +5831,7 @@ function updateNovaEffects(side, dt) {
 function castBlink(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, BLACKHOLE_CAST_DISTANCE);
   side.skills.e.cd = side.skills.e.max * gandulfCdrMul(side);
   if (!side.blackHoles) side.blackHoles = [];
@@ -5840,7 +5927,7 @@ function castLegolusVineTrap(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const center = resolveSkillGroundTarget(state, side, opp, ev || {}, VINE_TRAP_CAST_DISTANCE);
   if (!side.vineTraps) side.vineTraps = [];
   const vineDotMul = engineHasTalent(state, side, 'l_vine_dot') ? 2 : 1;
@@ -5990,7 +6077,7 @@ function castGimluTaunt(state, sideIdx) {
     if (m.hp <= 0) killMonster(side, i, side);
   }
   // Opp playerCreeps (invaderande minions)
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   if (opp) for (let i = opp.playerCreeps.length - 1; i >= 0; i--) {
     const c = opp.playerCreeps[i];
     const dx = c.x - side.hero.x, dz = c.z - side.hero.z;
@@ -6142,7 +6229,7 @@ function castGimluIronWill(state, sideIdx) {
     if (dx * dx + dz * dz <= r2) { a.titansRageTime = TITANS_RAGE_DURATION; a.titansRageBuff = ally; }
   }
   // Fear + heal-redirect på enemy-hero (PvP only — bossar/minions kan ej feares)
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
     const dx = opp.hero.x - side.hero.x, dz = opp.hero.z - side.hero.z;
     if (dx * dx + dz * dz <= r2) {
@@ -6330,7 +6417,7 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   // Spawn cone-FX (klient renderar via fireWaves-reconcile — orange-ish, OK för wind)
   side.fireWaves = side.fireWaves || [];
@@ -6409,7 +6496,7 @@ function castSoulDrain(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.q.cd > 0) return;
   if (side.soulDrain) side.soulDrain = null;
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   // Sätt CD FÖRST så klientens optimistic CD synkar med server, även om vi
   // bail:ar utan target nedan. Annars: klient ser CD i 4s utan att server
   // har satt det → vid nästa cast är klient blockerad men server tillåter.
@@ -6566,7 +6653,7 @@ function aragurnNearbyCount(state, side) {
     if (dx * dx + dz * dz < r2) count++;
   }
   // Boss wars co-op: `3 - side.idx` ger medspelare/undefined → null (bossen räknas redan via side.monsters ovan).
-  const opp = (state.mode === 'bosswars') ? null : state.sides[3 - side.idx];
+  const opp = (state.mode === 'bosswars') ? null : arenaOpp(state, side.idx);
   if (opp) {
     for (const c of opp.playerCreeps) {
       const dx = c.x - hx, dz = c.z - hz;
@@ -6624,7 +6711,7 @@ function castAragurnWhirlwind(state, sideIdx) {
   side.whirlwindRemaining = WHIRLWIND_DURATION + (engineHasTalent(state, side, 'a_spin_extend') ? 1.5 : 0);
   side.whirlwindTickAccum = 0;
   // Initial tick direkt
-  applyWhirlwindTick(state, side, state.sides[3 - sideIdx]);
+  applyWhirlwindTick(state, side, arenaOpp(state, sideIdx));
 }
 
 function applyWhirlwindTick(state, side, opp) {
@@ -6708,7 +6795,7 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   // HoT på Aragurn
   side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
   side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   // a_shout_radius talent: +30% cone length and half-angle
   const shoutRangeMul = engineHasTalent(state, side, 'a_shout_radius') ? 1.30 : 1.0;
@@ -6815,7 +6902,7 @@ function castAragurnLeap(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
   if (side.aragurnLeap) return;   // redan i luften
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const target = resolveSkillGroundTarget(state, side, opp, ev || {}, LEAP_MAX_DISTANCE);
   let tx = target.x, tz = target.z;
   const walkOpts = { inEnemyTerritory: side.inEnemyTerritory };
@@ -7037,7 +7124,7 @@ function castKostefoCannabisCloud(state, sideIdx) {
   // Initial heal: 25% maxHP direct
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * KOSTEFO_CLOUD_HEAL_PCT);
   // Initial stun + dmg-tick på alla inom radie (radien skalas vid lvl5)
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const cx = side.kostefoCloudX, cz = side.kostefoCloudZ;
   const cloudR = KOSTEFO_CLOUD_RADIUS * (side.kostefoCloudRadiusMul || 1);
   const r2 = cloudR * cloudR;
@@ -7557,9 +7644,9 @@ function zheynaWalk(side) {
 // Mode-agnostisk lista över giltiga fiender med {ent (har x/z + hp/maxHp), isHero/isMonster/isCreep}.
 function zheynaEnemies(state, side) {
   const out = [];
-  const opp = state.sides[3 - side.idx];
+  const opp = arenaOpp(state, side.idx);
   if (opp && opp.hero && !opp.hero.dead && (state.duelActive || side.inArena1v1 || (typeof isHeroPvpActive === 'function' && isHeroPvpActive(state)))) {
-    out.push({ ent: opp.hero, isHero: true, sideIdx: 3 - side.idx });
+    out.push({ ent: opp.hero, isHero: true, sideIdx: opp.idx });
   }
   for (const m of side.monsters) if (m && m.hp > 0) out.push({ ent: m, isMonster: true });
   if (opp && opp.playerCreeps) for (const c of opp.playerCreeps) if (c && c.hp > 0) out.push({ ent: c, isCreep: true });
@@ -7579,7 +7666,7 @@ function zheynaApplyHitDamage(state, side, e, dmg) {
     e.ent.hp -= bossWarsDmgMod(e.ent, dmg);
     if (e.ent.hp <= 0) { const k = side.monsters.indexOf(e.ent); if (k >= 0) killMonster(side, k, side); }
   } else if (e.isCreep) {
-    const opp = state.sides[3 - side.idx];
+    const opp = arenaOpp(state, side.idx);
     e.ent.hp -= dmg;
     if (e.ent.hp <= 0 && opp) { const k = opp.playerCreeps.indexOf(e.ent); if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(e.ent); gainXp(side, minionXp(e.ent)); } }
   }
@@ -7784,7 +7871,7 @@ function applyEvent(state, sideIdx, ev) {
   }
   if (ev.type === 'aa') {
     if (side.hero.dead) return;
-    const opp = state.sides[3 - sideIdx];
+    const opp = arenaOpp(state, sideIdx);
     // Manuell AA: aktivera bara om någon fiende redan finns inom range.
     // Inget auto-aktiverande "väntar"-läge — hero attackerar bara efter explicit
     // tryck mot ett konkret target.
@@ -7889,7 +7976,7 @@ function applyEvent(state, sideIdx, ev) {
     let dx = ev.dx, dz = ev.dz;
     const useTargetAim = (ev.tap === true) && side.targetId;
     if (useTargetAim) {
-      const opp = state.sides[3 - sideIdx];
+      const opp = arenaOpp(state, sideIdx);
       const t = resolveTargetEntity(side, opp, state);
       if (t) {
         const ddx = t.x - side.hero.x, ddz = t.z - side.hero.z;
@@ -8392,7 +8479,7 @@ function tickLineWarsBot(state, sideIdx, dt) {
   if ((side.hero.frozenTime || 0) > 0 || (side.heroFearTime || 0) > 0 || (side.hero.tauntedTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0) {
     if (input) input.j = null; return;
   }
-  const opp = state.sides[3 - sideIdx];
+  const opp = arenaOpp(state, sideIdx);
   const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, 14, state);
   let mx = 0, mz = 0;
   if (t && t.entity) {
@@ -8445,7 +8532,7 @@ function tickGame(state, dt) {
     // Hero-attacker (mot opp.hero, hanteras i findClosestHostile när state.duelActive)
     for (const sideIdx of [1, 2]) {
       const side = state.sides[sideIdx];
-      const opp = state.sides[3 - sideIdx];
+      const opp = arenaOpp(state, sideIdx);
       updateSkillCooldowns(side, dt);
       if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
       updateProjectiles(state, side, opp, dt);
@@ -8603,7 +8690,7 @@ function tickGame(state, dt) {
   }
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
-    const opp = state.sides[3 - sideIdx];
+    const opp = arenaOpp(state, sideIdx);
     updateSkillCooldowns(side, dt);
     updateWaves(state, side, dt);
     updateMonsters(state, side, opp, dt);

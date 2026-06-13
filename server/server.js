@@ -203,8 +203,8 @@ function gameLoopTick(room) {
       if (room.client && room.client.readyState === 1 && room.client.bufferedAmount < BACKPRESSURE_LIMIT) {
         try { room.client.send(payload); } catch (_) {}
       }
-      // 3-peer (boss wars): broadcasta även till extra-klienterna i room.clients[].
-      if (_isBoss && room.clients) {
+      // Multi-peer (boss wars 3p / team-arena 4-6p): broadcasta till room.clients[].
+      if ((_isBoss || _isArena) && room.clients) {
         for (const c of room.clients) {
           if (c && c.readyState === 1 && c.bufferedAmount < BACKPRESSURE_LIMIT) {
             try { c.send(payload); } catch (_) {}
@@ -297,26 +297,40 @@ function relayPeerSend(peer, envelope, isState) {
 // P2P-relä-beteende (host-auth) → deploy av servern ensam bryter inget. När den
 // nya klientens host skickar a-sim-start startar servern arena-engine:n och äger
 // a-state; host:ens egna a-state ignoreras då.
-function startArenaSim(room, heroes, bots) {
+function startArenaSim(room, heroes, bots, teamSize) {
   if (room.game || room.tickHandle) return;        // redan igång
   room.arenaSim = true;
-  room.game = engine.initArenaMatch(heroes);
-  // Host-vs-bot online: sides[2] = bot + auto-ready så prep-fasen går vidare utan peer.
-  if (bots && room.game.sides && room.game.sides[2]) {
-    room.game.sides[2].isBot = true;
-    room.game.sides[2].botDifficulty = ['easy', 'medium', 'hard'].includes(bots) ? bots : 'medium';
-    if (room.game.ready) room.game.ready[2] = true;
+  // Team-arena (Task 18): teamSize 2/3 → sides 1..4/1..6 (team 1 = 1..N, team 2 = N+1..2N).
+  room.game = engine.initArenaMatch(heroes, teamSize);
+  // Bots: 1v1-legacy = en difficulty-STRÄNG för sides[2]; team-läge = dict
+  // { "3": "medium", "5": "hard" } för tomma slots (peerIdx-baserat, som boss wars).
+  if (bots && room.game.sides) {
+    if (typeof bots === 'string' && room.game.sides[2]) {
+      room.game.sides[2].isBot = true;
+      room.game.sides[2].botDifficulty = ['easy', 'medium', 'hard'].includes(bots) ? bots : 'medium';
+      if (room.game.ready) room.game.ready[2] = true;
+    } else if (typeof bots === 'object' && !Array.isArray(bots)) {
+      for (const k of Object.keys(bots)) {
+        const idx = Number(k);
+        const side = room.game.sides[idx];
+        if (side && idx >= 2) {
+          side.isBot = true;
+          side.botDifficulty = ['easy', 'medium', 'hard'].includes(bots[k]) ? bots[k] : 'medium';
+          if (room.game.ready) room.game.ready[idx] = true;
+        }
+      }
+    }
   }
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
   room.nextTickAt = Date.now();
   scheduleNextTick(room);
-  console.log(`[${room.code}] arena sim started (server-auth${bots ? ', vs bot ' + bots : ''})`);
+  console.log(`[${room.code}] arena sim started (server-auth${teamSize > 1 ? ', ' + teamSize + 'v' + teamSize : ''}${bots ? ', bots' : ''})`);
 }
 
 function applyArenaInput(room, ws, payload) {
   if (!room.game) return;
-  const sideIdx = (ws === room.host) ? 1 : 2;       // socket-identitet, ej payload (spoof-skydd)
+  const sideIdx = ws.peerIdx || ((ws === room.host) ? 1 : 2);   // socket-identitet, ej payload (spoof-skydd)
   const inp = room.game.lastInputs[sideIdx];
   if (inp) {
     let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
@@ -404,7 +418,7 @@ function handleArenaMessage(room, fromWs, envelope) {
   const t = payload && payload.t;
   // Host begär server-auth-sim (skickas vid fight-start). Bara host.
   if (t === 'a-sim-start') {
-    if (fromWs === room.host) startArenaSim(room, payload.heroes, payload.bots);
+    if (fromWs === room.host) startArenaSim(room, payload.heroes, payload.bots, payload.teamSize);
     return;
   }
   if (room.arenaSim) {
@@ -413,12 +427,12 @@ function handleArenaMessage(room, fromWs, envelope) {
     if (t === 'a-input') { applyArenaInput(room, fromWs, payload); return; }
     if (t === 'a-state') return;
     if (t === 'a-ready') {
-      const sideIdx = (fromWs === room.host) ? 1 : 2;
-      if (room.game && room.game.ready) room.game.ready[sideIdx] = !!payload.value;
+      const sideIdx = fromWs.peerIdx || ((fromWs === room.host) ? 1 : 2);
+      if (room.game && room.game.ready && room.game.ready[sideIdx] !== undefined) room.game.ready[sideIdx] = !!payload.value;
       return;
     }
     if (t === 'a-talent') {
-      const sideIdx = (fromWs === room.host) ? 1 : 2;
+      const sideIdx = fromWs.peerIdx || ((fromWs === room.host) ? 1 : 2);
       const tal = room.game && room.game.talents && room.game.talents[sideIdx];
       if (tal) {
         const id = payload.talentId;
@@ -441,8 +455,16 @@ function handleArenaMessage(room, fromWs, envelope) {
 function relayArenaMessage(room, fromWs, envelope) {
   // Spoof-skydd: bara host får broadcasta auktoritativ state.
   if (envelope.d && envelope.d.t === 'a-state' && fromWs !== room.host) return;
-  const peer = (fromWs === room.host) ? room.client : room.host;
   const isState = isStateMsgType(envelope.d && envelope.d.t);
+  // Team-arena (4-6 peers): broadcast till alla utom avsändaren (lobby-flödet
+  // a-pick/a-mvote når alla). 2-peer: exakt gamla peer-till-peer-relät.
+  if (room.maxPeers && room.maxPeers > 2) {
+    if (room.host && fromWs !== room.host) relayPeerSend(room.host, envelope, isState);
+    if (room.client && fromWs !== room.client) relayPeerSend(room.client, envelope, isState);
+    for (const c of (room.clients || [])) if (c !== fromWs) relayPeerSend(c, envelope, isState);
+    return;
+  }
+  const peer = (fromWs === room.host) ? room.client : room.host;
   relayPeerSend(peer, envelope, isState);
 }
 
@@ -486,8 +508,8 @@ wss.on('connection', (ws) => {
     if (msg.t === 'host') {
       if (ws.roomCode) return;
       const code = genCode();
-      // maxPeers default 2 (klassisk + arena). Boss Wars host skickar 3 för 3-spelar-co-op.
-      const maxPeers = Math.max(2, Math.min(3, parseInt(msg.maxPeers, 10) || 2));
+      // maxPeers default 2 (klassisk + arena 1v1). Boss Wars = 3; team-arena = 4/6.
+      const maxPeers = Math.max(2, Math.min(6, parseInt(msg.maxPeers, 10) || 2));
       const room = {
         code, host: ws, client: null,
         clients: [],          // multi-peer: lista av extra klienter (utöver host)
