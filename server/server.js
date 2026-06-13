@@ -514,6 +514,7 @@ wss.on('connection', (ws) => {
         code, host: ws, client: null,
         clients: [],          // multi-peer: lista av extra klienter (utöver host)
         maxPeers,
+        private: !!msg.private, // privat = visas INTE i browse-listan (join bara via kod)
         // Spel-läge från host-meddelandet. Arena är host-auktoritativt i
         // webbläsaren → servern ska INTE köra den klassiska engine:n för
         // arena-rum (se 'join'-handlern nedan). Saniteras: bara 'arena1v1'
@@ -527,6 +528,16 @@ wss.on('connection', (ws) => {
       ws.peerIdx = 1;          // host = peer 1
       send(ws, { t: 'hosted', code, maxPeers, peerIdx: 1 });
       console.log(`[${code}] hosted maxPeers=${maxPeers} (rooms=${rooms.size})`);
+    } else if (msg.t === 'list-rooms') {
+      // Browse: returnera publika, joinbara rum (ej privata, ej fulla, ej igång).
+      const list = [];
+      for (const [c, room] of rooms) {
+        if (room.private || !room.host || room.game) continue;
+        const peers = 1 + (room.client ? 1 : 0) + (room.clients ? room.clients.length : 0);
+        if (peers >= room.maxPeers) continue;
+        list.push({ code: c, mode: room.mode, peers, max: room.maxPeers });
+      }
+      send(ws, { t: 'rooms', list });
     } else if (msg.t === 'reclaim') {
       // Host försöker återansluta till sitt gamla rum efter WS-disconnect
       if (ws.roomCode) return;
