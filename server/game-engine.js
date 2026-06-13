@@ -63,6 +63,14 @@ const HERO_DEFS = {
     attackInterval: 1.5,  // AA-takt (1.8→1.5 balans 2026-06-08)
     baseMoveSpeed: 6.0,
   },
+  ganji: {
+    name: 'Ganji',
+    baseHp: 110,          // melee sword ninja
+    baseDmg: 9,
+    attackRange: 2.6,     // melee
+    attackInterval: 0.9,
+    baseMoveSpeed: 6.4,
+  },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 // ===== ZHEYNA (spjut-carry) konstanter (decision 134) =====
@@ -6042,6 +6050,37 @@ function castLegolusDash(state, sideIdx, ev) {
   side.legolusDashBuffPending = true;
 }
 
+// === Ganji (melee sword ninja) — v1 server kit reusing proven, hero-agnostic effects.
+// Q = Thousand Slashes -> Whirlwind (spinning melee AoE). F = Shadow Step (blink).
+// E = Ninja's Speed (Hunter's Focus AA buff + Warpath MS/AS). R = invis (in the ult block).
+// Clone + the exact channel/passive are deferred to a later pass. ===
+const GANJI_STEP_DISTANCE = 8;
+function castGanjiStep(state, sideIdx, ev) { // F: blink to the aim direction
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.f.cd > 0) return;
+  let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) { dx = side.hero.facingX || 0; dz = side.hero.facingZ || 1; }
+  else { dx /= len; dz /= len; }
+  let dist = GANJI_STEP_DISTANCE, nx, nz;
+  while (dist >= 0.5) {
+    nx = side.hero.x + dx * dist;
+    nz = side.hero.z + dz * dist;
+    if (heroWalk(side, nx, nz)) break;
+    dist -= 0.5;
+  }
+  if (dist < 0.5) return;
+  side.skills.f.cd = side.skills.f.max;
+  side.hero.x = nx; side.hero.z = nz;
+}
+function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff
+  const side = state.sides[sideIdx];
+  if (side.hero.dead || side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION; // +AA dmg/crit/attack-speed (agnostic effect)
+  side.zheynaWarpathRem = ZHEYNA_E_DUR;              // +move/attack speed (agnostic effect)
+}
+
 // === Gimlu-skills ===
 // Q: Titan's Stomp (rework 2026-06-07) — AoE-stamp: 25% maxHP-skada + DoT (5% maxHP/s, 3s)
 // + 40% MS/AS-slow (2s). Kryx får DR per träff (hero +25% / minion +5% / boss +50%, 3s, cap 70%).
@@ -7925,6 +7964,11 @@ function applyEvent(state, sideIdx, ev) {
           side.legolusUltAaPending = true;
           side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
         }
+        // Ganji Ninja's Mastery: 5 s invisibility (+move speed, agnostic effect).
+        // Clone + the empowered break-AA are deferred to a later pass.
+        if (side.heroId === 'ganji' && !side.hero.dead) {
+          side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
+        }
         // Kostefo Joint Avengers: summona 8 joints som orbiterar + kopierar AA
         if (side.heroId === 'kostefo' && !side.hero.dead) {
           side.kostefoUltRemaining = KOSTEFO_ULT_DURATION;
@@ -7989,6 +8033,7 @@ function applyEvent(state, sideIdx, ev) {
     const isAragurn = side.heroId === 'aragurn';
     const isKostefo = side.heroId === 'kostefo';
     const isZheyna = side.heroId === 'zheyna';
+    const isGanji = side.heroId === 'ganji';
     // Wrap-around-cast: bumpa side.skillDmgMul med per-skill-level-mult under
     // cast-tid. Bake-at-cast skills (projektiler, fireballs, dotPerSec etc) får
     // automatiskt rätt skalning. Tick-skills som läser side.skillDmgMul live ska
@@ -8004,6 +8049,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
         else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
         else if (isZheyna) castZheynaQ(state, sideIdx, ev);
+        else if (isGanji) castAragurnWhirlwind(state, sideIdx); // Ganji Q = Thousand Slashes (spinning AoE)
         else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
       } else if (ev.key === 'f') {
         if (isLegolus) castLegolusBuff(state, sideIdx);
@@ -8011,6 +8057,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isAragurn) castAragurnShout(state, sideIdx, dx, dz);
         else if (isKostefo) castKostefoJointSlider(state, sideIdx, dx, dz);
         else if (isZheyna) castZheynaClone(state, sideIdx);
+        else if (isGanji) castGanjiStep(state, sideIdx, ev); // Ganji F = Shadow Step (blink)
         else castFrostnova(state, sideIdx, ev);
       } else if (ev.key === 'e') {
         if (isLegolus) castLegolusDash(state, sideIdx, ev);
@@ -8018,6 +8065,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isAragurn) castAragurnLeap(state, sideIdx, ev);
         else if (isKostefo) castKostefoCannabisCloud(state, sideIdx);
         else if (isZheyna) castZheynaWarpath(state, sideIdx);
+        else if (isGanji) castGanjiSpeed(state, sideIdx); // Ganji E = Ninja's Speed (self buff)
         else castBlink(state, sideIdx, ev);
       }
     } finally {
