@@ -5388,6 +5388,7 @@ function updateHeroAttack(state, side, opp, dt) {
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
     legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
+    ganjiMark: ganjiEmpowered,          // → vid hit: 5% maxHP/s DoT (ej boss) + 20% slow
   });
   // Zheyna Clone: kopierar AA (50% dmg) från klon-position mot samma target.
   if (side.heroId === 'zheyna' && side.zheynaClone) {
@@ -5500,6 +5501,25 @@ function updateProjectiles(state, side, opp, dt) {
         if (ts && !ts.hero.dead) {
           ts.hero.poisonStacks = (ts.hero.poisonStacks || 0) + 1;
           ts.hero.poisonRemaining = POISON_DURATION;
+        }
+      }
+      // Ganji passive "Katana's Slice"-märke: slow alla, DoT på allt utom boss.
+      if (p.ganjiMark) {
+        if (p.targetIsHero) {
+          const ts = state.sides[p.targetSideIdx];
+          if (ts && !ts.hero.dead) {
+            ts.heroSlowMul = Math.min(ts.heroSlowMul == null ? 1 : ts.heroSlowMul, GANJI_MARK_SLOW_MUL);
+            ts.heroSlowTime = Math.max(ts.heroSlowTime || 0, GANJI_MARK_DUR);
+            ts.heroASlowMul = Math.min(ts.heroASlowMul == null ? 1 : ts.heroASlowMul, GANJI_MARK_SLOW_MUL);
+            ts.heroASlowTime = Math.max(ts.heroASlowTime || 0, GANJI_MARK_DUR);
+            ts.hero.dotRemaining = GANJI_MARK_DUR; ts.hero.dotPerSec = ts.hero.maxHp * GANJI_MARK_DOT_PCT;
+          }
+        } else if (p.targetIsMonster && tp) {
+          applyGanjiSlow(tp);
+          if (!tp.isBossWarsBoss) { tp.dotRemaining = GANJI_MARK_DUR; tp.dotPerSec = (tp.maxHp || tp.hp) * GANJI_MARK_DOT_PCT; }
+        } else if (!p.targetIsDuelOrb && !p.targetIsArenaOrb && tp) { // playerCreep
+          applyGanjiSlow(tp);
+          tp.dotRemaining = GANJI_MARK_DUR; tp.dotPerSec = (tp.maxHp || tp.hp) * GANJI_MARK_DOT_PCT;
         }
       }
       let aaDmgDealt = 0;   // För Aragurn-passive lifesteal — räkna utdelad AA-skada
@@ -6113,6 +6133,15 @@ const GANJI_STEP_DISTANCE = 8;
 // lägen (fylls i applyMovement + Shadow Step). Mätaren serialiseras som gjMk (klient-bar).
 const GANJI_METER_METERS = 10;
 const GANJI_EMPOWER_DMG_MUL = 1.5;
+// Empowrad AA stämplar ett märke: 5% maxHP/s DoT i 3s + 20% MS/AS-slow (solo-paritet).
+// DoT EJ på boss (uncappat %maxHP skulle bryta boss-dmg-taket, samma regel som Stomp).
+const GANJI_MARK_DUR = 3, GANJI_MARK_DOT_PCT = 0.05, GANJI_MARK_SLOW_MUL = 0.80;
+function applyGanjiSlow(ent) {
+  ent.slowMul = Math.min(ent.slowMul == null ? 1 : ent.slowMul, GANJI_MARK_SLOW_MUL);
+  ent.slowTime = Math.max(ent.slowTime || 0, GANJI_MARK_DUR);
+  ent.aSlowMul = Math.min(ent.aSlowMul == null ? 1 : ent.aSlowMul, GANJI_MARK_SLOW_MUL);
+  ent.aSlowTime = Math.max(ent.aSlowTime || 0, GANJI_MARK_DUR);
+}
 function ganjiAddMeter(side, meters) {
   if (side.heroId !== 'ganji' || side.ganjiPassiveReady || !(meters > 0)) return;
   side.ganjiMeter = Math.min(1, (side.ganjiMeter || 0) + meters / GANJI_METER_METERS);
