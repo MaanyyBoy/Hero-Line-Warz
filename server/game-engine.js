@@ -1891,6 +1891,7 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.titansStompDrTime = 0; side.titansStompDr = 0; side.titansRageTime = 0; side.titansRageBuff = 0;
   side.rageLeechStart = 0; side.rageLeechTime = 0; side.rageLeechOwner = 0;
   side.berserkCharged = false; side.berserkDmgAccum = 0;   // berserk-mätare
+  side.ganjiMeter = 0; side.ganjiPassiveReady = false;     // Ganji Katana's Slice-mätare
   side.iceBlockRemaining = 0;
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
 }
@@ -2165,6 +2166,7 @@ function serializeArenaHero(side, buf) {
   buf.rg = nzr2(side.rageRemaining);
   buf.bz = nzr2(side.berserkRemaining);
   buf.gmBk = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : 0);   // Gimlu berserk-mätare: 1 = charged, 0..1 = andel
+  buf.gjMk = side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : 0);   // Ganji Katana's Slice-mätare
   buf.lInv = nzr2(side.legolusInvisRemaining);
   buf.kUlt = nzr2(side.kostefoUltRemaining);
   buf.kJoints = arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) }));
@@ -5329,6 +5331,14 @@ function updateHeroAttack(state, side, opp, dt) {
     critChance = 1.0;
     side.legolusDashBuffPending = false;
   }
+  // Ganji passive "Katana's Slice": full meter → this AA is a guaranteed crit + 50% bonus
+  // dmg, then the meter resets. Mirrors the Legolus dash-buff pattern (one empowered AA).
+  const ganjiEmpowered = side.heroId === 'ganji' && !!side.ganjiPassiveReady;
+  if (ganjiEmpowered) {
+    critChance = 1.0;
+    side.ganjiPassiveReady = false;
+    side.ganjiMeter = 0;
+  }
   const isCrit = critChance > 0 && Math.random() < critChance;
   const critMul = isCrit ? critMulBase : 1;
   // Legolus passive: var 3:e AA ger split-buff till nästa AA
@@ -5343,7 +5353,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars) && (side.berserkRemaining || 0) > 0;
   const rageDmgMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/bosswars only)
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -6098,6 +6108,16 @@ function castLegolusDash(state, sideIdx, ev) {
 // E = Ninja's Speed (Hunter's Focus AA buff + Warpath MS/AS). R = invis (in the ult block).
 // Clone + the exact channel/passive are deferred to a later pass. ===
 const GANJI_STEP_DISTANCE = 8;
+// Ganji passive "Katana's Slice" (port av GanjiKit): rörelse fyller en mätare; full vid
+// 10 m → nästa AA garanterad crit + 50% bonus-dmg, sen nollas mätaren. Server-auth, alla
+// lägen (fylls i applyMovement + Shadow Step). Mätaren serialiseras som gjMk (klient-bar).
+const GANJI_METER_METERS = 10;
+const GANJI_EMPOWER_DMG_MUL = 1.5;
+function ganjiAddMeter(side, meters) {
+  if (side.heroId !== 'ganji' || side.ganjiPassiveReady || !(meters > 0)) return;
+  side.ganjiMeter = Math.min(1, (side.ganjiMeter || 0) + meters / GANJI_METER_METERS);
+  if (side.ganjiMeter >= 1) side.ganjiPassiveReady = true;
+}
 function castGanjiStep(state, sideIdx, ev) { // F: blink to the aim direction
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
@@ -6115,6 +6135,7 @@ function castGanjiStep(state, sideIdx, ev) { // F: blink to the aim direction
   if (dist < 0.5) return;
   side.skills.f.cd = side.skills.f.max;
   side.hero.x = nx; side.hero.z = nz;
+  ganjiAddMeter(side, dist); // Shadow Step distance counts toward the passive (solo parity)
 }
 function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff
   const side = state.sides[sideIdx];
@@ -7711,9 +7732,11 @@ function applyMovement(side, joyX, joyZ, dt) {
               : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
               : (x, z) => isHeroWalkable(side.idx, x, z, opts);
+  const ox = side.hero.x, oz = side.hero.z;
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
   else if (check(side.hero.x, nz)) side.hero.z = nz;
+  if (side.heroId === 'ganji') ganjiAddMeter(side, Math.hypot(side.hero.x - ox, side.hero.z - oz));
 }
 
 // ===== ZHEYNA SKILLS (server-auth, decision 134) =====
@@ -9032,6 +9055,8 @@ function serializeSide(side) {
     // Kryx berserk-mätare i classic MP (duel): 1 = charged, 0..1 = andel.
     // Skippar fältet helt när 0 (nz → undefined → JSON.stringify utelämnar det).
     gmBk: side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : undefined),
+    // Ganji passive-mätare (Katana's Slice) i classic MP: 1 = full/armed, 0..1 = bygger.
+    gjMk: side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : undefined),
   };
 }
 
