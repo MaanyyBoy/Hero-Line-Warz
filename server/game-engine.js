@@ -152,6 +152,10 @@ const MONSTER_MELEE_INTERVAL = 1.0;
 // Gäller ENBART minions (ej bossar/mini-bossar — de träffar direkt).
 const MINION_MELEE_WINDUP = 0.5;
 const MINION_PROJ_RANGE_MUL = 2.0;
+// Fountain (the old "tower") no longer self-heals; standing near YOUR fountain regenerates
+// the hero 2% max HP/sec (user 2026-06-14). Radius covers the base area around it.
+const FOUNTAIN_REGEN_RADIUS = 9.0;
+const FOUNTAIN_REGEN_PCT = 0.02;
 const GOLD_PER_KILL = 5;
 const RESPAWN_TIME = 5.0;
 
@@ -745,9 +749,11 @@ const ITEM_TYPES = {
 };
 
 // === Side config === (decision 041: lane-Z ×1.2, lane-X ×1.3)
+// Lanes widened (~+25%: laneZ + half-width ×1.25) and lengthened (~+30%: west extent),
+// base scaled to match (user 2026-06-14). Client LineWarsMpMode geometry mirrors these.
 const SIDE_CFG = {
-  1: { laneZ: { 1: 14.4, 2: 4.8 },   spawnX: -38, baseZRange: [0.5, 17.5],   tower: { x: 24, z: 9.6 },  heroSpawn: { x: 15, z: 9.6 } },
-  2: { laneZ: { 1: -4.8, 2: -14.4 }, spawnX: -38, baseZRange: [-17.5, -0.5], tower: { x: 24, z: -9.6 }, heroSpawn: { x: 15, z: -9.6 } },
+  1: { laneZ: { 1: 18, 2: 6 },   spawnX: -53, baseZRange: [0.5, 22.5],   tower: { x: 24, z: 12 },  heroSpawn: { x: 15, z: 12 } },
+  2: { laneZ: { 1: -6, 2: -18 }, spawnX: -53, baseZRange: [-22.5, -0.5], tower: { x: 24, z: -12 }, heroSpawn: { x: 15, z: -12 } },
 };
 
 // Portal-feature: lvl-30 hero kan teleportera till motståndarens lanes för PvP-raid.
@@ -757,18 +763,18 @@ const PORTAL_ENEMY_DURATION = 30;    // 30s i fiendens territorium
 const PORTAL_REQUIRED_LEVEL = 30;
 const PORTAL_ENTER_RADIUS = 1.3;
 const PORTAL_POS = {
-  // Matchar visuella portal-mesharna (decision 041: z ±15.6, x 22)
-  1: { x: 22, z: 15.6 },
-  2: { x: 22, z: -15.6 },
+  // Matchar visuella portal-mesharna (skalat med lane-bredden ×1.25)
+  1: { x: 22, z: 19.5 },
+  2: { x: 22, z: -19.5 },
 };
-// Teleport-destination i motståndarens territorium (decision 041: z ±8 → ±9.6)
+// Teleport-destination i motståndarens territorium (skalat ×1.25)
 const PORTAL_DEST = {
-  1: { x: 0, z: -9.6 },
-  2: { x: 0, z: 9.6 },
+  1: { x: 0, z: -12 },
+  2: { x: 0, z: 12 },
 };
 // === Walk-checks === (decision 041: lane-X ×1.3, lane-Z ×1.2)
 function inLane(x, z, centerZ) {
-  return x >= -39.35 && x <= 11 && z >= centerZ - 3.42 && z <= centerZ + 3.42;
+  return x >= -54.5 && x <= 11 && z >= centerZ - 4.28 && z <= centerZ + 4.28;
 }
 function inSideLanes(idx, x, z) {
   const cfg = SIDE_CFG[idx];
@@ -798,11 +804,12 @@ function isArenaWalkable(x, z) {
   return (dx * dx + dz * dz) < (ARENA_RADIUS - HERO_R) * (ARENA_RADIUS - HERO_R);
 }
 function isCreepPos(x, z) {
-  // Decision 041: bas-z 14.55 → 17.5, lane-bounds utvidgade bakåt -45 → -55, laneZ skalade ×1.2
-  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 17.5) return true;
-  if (x >= 10.6 && x <= 27.55 && z >= -17.5 && z <= -0.5) return true;
-  const inLaneWide = (cz) => x >= -55 && x <= 11 && z >= cz - 3.42 && z <= cz + 3.42;
-  return inLaneWide(14.4) || inLaneWide(4.8) || inLaneWide(-4.8) || inLaneWide(-14.4);
+  // Scaled with the wider/longer lanes (2026-06-14). Lane x-min covers the spawn clumps
+  // behind spawnX (-53 minus ~3 rows). Base z ±22.5, lane half-width 4.28.
+  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 22.5) return true;
+  if (x >= 10.6 && x <= 27.55 && z >= -22.5 && z <= -0.5) return true;
+  const inLaneWide = (cz) => x >= -58 && x <= 11 && z >= cz - 4.28 && z <= cz + 4.28;
+  return inLaneWide(18) || inLaneWide(6) || inLaneWide(-6) || inLaneWide(-18);
 }
 
 // ===== BOSS WARS — arena-walkability (server-auth Fas 2, decision 122) =====
@@ -8827,12 +8834,14 @@ function tickGame(state, dt) {
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
-    // Decision 105: tornet helar 5% av max-HP per sek.
-    if (side.tower.hp > 0 && side.tower.hp < side.tower.maxHp) {
-      side._towerHealAccum = (side._towerHealAccum || 0) + side.tower.maxHp * 0.05 * dt;
-      while (side._towerHealAccum >= 1) {
-        side._towerHealAccum -= 1;
-        side.tower.hp = Math.min(side.tower.maxHp, side.tower.hp + 1);
+    // Fountain no longer self-heals (user 2026-06-14). Instead a hero standing NEAR its
+    // OWN fountain regenerates 2% max HP/sec.
+    if (side.hero && !side.hero.dead && side.hero.hp < side.hero.maxHp) {
+      const ft = SIDE_CFG[side.idx] && SIDE_CFG[side.idx].tower;
+      if (ft) {
+        const fdx = side.hero.x - ft.x, fdz = side.hero.z - ft.z;
+        if (fdx * fdx + fdz * fdz <= FOUNTAIN_REGEN_RADIUS * FOUNTAIN_REGEN_RADIUS)
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * FOUNTAIN_REGEN_PCT * dt);
       }
     }
   }
