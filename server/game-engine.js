@@ -146,6 +146,12 @@ const MONSTER_LEASH_RANGE = 7.5;
 const TOWER_REACH = 2.3;
 const MONSTER_MELEE_DAMAGE = 8;       // fallback om monster saknar damage
 const MONSTER_MELEE_INTERVAL = 1.0;
+// Minion melee wind-up (user 2026-06-14): minion-melee-skada landar 0.5s EFTER att
+// slaget startar, och bara om hjälten fortfarande är i range → bra MS låter dig springa
+// förbi. Range-projektiler dör om hjälten är > 2× minionens range från avfyrningspunkten.
+// Gäller ENBART minions (ej bossar/mini-bossar — de träffar direkt).
+const MINION_MELEE_WINDUP = 0.5;
+const MINION_PROJ_RANGE_MUL = 2.0;
 const GOLD_PER_KILL = 5;
 const RESPAWN_TIME = 5.0;
 
@@ -4432,15 +4438,27 @@ function updateMonsters(state, side, opp, dt) {
     if ((m.legolasMarked || 0) > 0) m.legolasMarked = Math.max(0, m.legolasMarked - dt);
     const atkRange = m.attackRange || 1.2;
     const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
+    // Minion melee wind-up resolve: skadan landar MINION_MELEE_WINDUP sek efter slaget,
+    // och bara om hjälten FORTFARANDE är i range (nuvarande positioner) → springer du ur
+    // melee-range hinner du undan. (Bossar går aldrig denna väg — de träffar direkt.)
+    if ((m.meleeWindup || 0) > 0) {
+      m.meleeWindup -= dt;
+      if (m.meleeWindup <= 0) {
+        const wdx = heroX - m.x, wdz = heroZ - m.z;
+        if (heroAlive && (wdx * wdx + wdz * wdz) <= atkRange * atkRange) damageHero(side, m.meleeDmg || MONSTER_MELEE_DAMAGE);
+      }
+    }
     if (heroVisible && distHero < atkRange && m.atkCd <= 0) {
       m.aac = (m.aac || 0) + 1;          // triggar attack-animation på klient (delta)
       m.ry = Math.atan2(dxh, dzh);       // vänd mot målet vid AA
       // Range-monster (inkl. range-bossar): damage tillämpas vid projektil-impact.
-      // Melee-bossar/mini-bossar/melee-monster: damage direkt.
       if (m.attackType === 'range') {
         spawnMonsterProjectile(state, side, m);
+      } else if (m.isBoss || m.isMiniBoss) {
+        damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);   // bossar/mini-bossar: direkt
       } else {
-        damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);
+        m.meleeWindup = MINION_MELEE_WINDUP;                  // minion: wind-up + range-recheck
+        m.meleeDmg = m.damage || MONSTER_MELEE_DAMAGE;
       }
       m.atkCd = atkInterval / (m.aSlowMul || 1);
     }
@@ -4823,6 +4841,15 @@ function updatePlayerCreeps(state, side, opp, dt) {
       continue;
     }
     c.atkCd = Math.max(0, c.atkCd - dt);
+    // Minion (creep) melee wind-up resolve vs the defending hero — skadan landar efter
+    // wind-up och bara om hjälten fortfarande är i range (springa förbi = miss).
+    if ((c.meleeWindup || 0) > 0) {
+      c.meleeWindup -= dt;
+      if (c.meleeWindup <= 0 && opp && !opp.hero.dead) {
+        const wdx = opp.hero.x - c.x, wdz = opp.hero.z - c.z;
+        if ((wdx * wdx + wdz * wdz) <= c.range * c.range) damageHero(opp, c.meleeDmg || c.damage);
+      }
+    }
     // Lvl-5 attack-speed-slow tick (för player-creeps mottagliga för Frost Nova lvl5)
     if ((c.aSlowTime || 0) > 0) {
       c.aSlowTime -= dt;
@@ -4864,7 +4891,7 @@ function updatePlayerCreeps(state, side, opp, dt) {
       if (c.atkCd <= 0) {
         c.aac = (c.aac || 0) + 1;     // triggar attack-animation på klient (delta)
         if (c.attackType === 'melee') {
-          if (targetType === 'hero') damageHero(opp, c.damage);
+          if (targetType === 'hero') { c.meleeWindup = MINION_MELEE_WINDUP; c.meleeDmg = c.damage; } // wind-up + range-recheck
           else {
             target.hp -= c.damage;
             if (target.hp <= 0) killMonster(opp, opp.monsters.indexOf(target), side);
@@ -4899,6 +4926,7 @@ function updatePlayerCreeps(state, side, opp, dt) {
 // olika travel-time (m.projTime, 0.5/1.0/1.5s) så hjälten ser olika hot.
 function spawnMonsterProjectile(state, side, m) {
   const travel = m.projTime || 1.0;
+  const isBossKind = !!m.isBoss || !!m.isMiniBoss;
   side.monsterProjectiles.push({
     id: state.nextEntityId++,
     x: m.x, y: MONSTER_PROJ_Y, z: m.z,
@@ -4909,6 +4937,9 @@ function spawnMonsterProjectile(state, side, m) {
     kind: m.projKind || 'magic',         // styr klient-mesh (arrow/fireball/bossSpear/...)
     isBoss: !!m.isBoss,
     isMiniBoss: !!m.isMiniBoss,
+    // Minion-projektiler dör om hjälten är > 2× minionens range från avfyrningspunkten
+    // (springer du tillräckligt långt missar skottet). 0 = ingen cap (bossar).
+    maxRange: isBossKind ? 0 : (m.attackRange || RANGE_MONSTER_RANGE) * MINION_PROJ_RANGE_MUL,
   });
 }
 
@@ -4921,6 +4952,11 @@ function updateMonsterProjectiles(state, side, dt) {
     const tgt = (p.bossTargetIdx != null) ? state.sides[p.bossTargetIdx] : side;
     // Hjälte död/borta: projektil försvinner utan damage
     if (!tgt || !tgt.hero || tgt.hero.dead) { side.monsterProjectiles.splice(i, 1); continue; }
+    // Minion-projektil: fizzlar om hjälten sprungit > 2× range från avfyrningspunkten.
+    if (p.maxRange > 0) {
+      const ddx = tgt.hero.x - p.srcX, ddz = tgt.hero.z - p.srcZ;
+      if (ddx * ddx + ddz * ddz > p.maxRange * p.maxRange) { side.monsterProjectiles.splice(i, 1); continue; }
+    }
     p.timer = Math.max(0, p.timer - dt);
     // Lerp position från src till hjältens nuvarande pos så missilen ser ut
     // att tracka målet. (Auto-hit — matchar existerande creepProjectile-mönster.)
