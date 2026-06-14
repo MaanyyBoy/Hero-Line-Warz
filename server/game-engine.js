@@ -4004,10 +4004,10 @@ function serializeBossWarsState(state) {
   // Boss skill-projektiler (directional) + DoT-pooler → klient reconciliear + renderar (slice 2c-client).
   snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
-  snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b)
-  snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
+  snap.bm = arrOpt(state.bossWarsMinions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z), hp: ri(m.hp), mh: ri(m.maxHp) })) || _ARENA_EMPTY_ARR;   // boss-1 minions (slice 3b) — hp/mh för klient-HP-bar
+  snap.ba2 = arrOpt(state.boss2Ads, m => ({ id: m.id, x: r2(m.x), z: r2(m.z), hp: ri(m.hp), mh: ri(m.maxHp) })) || _ARENA_EMPTY_ARR;   // boss-2 ads (3b-ii)
   // Boss-4 (decision 132): bärar-minions, väskor (st 0=mark/1=buren, t=timer-sek, ci=bärar-idx), pooler.
-  snap.b4m = arrOpt(state.boss4Minions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z) })) || _ARENA_EMPTY_ARR;
+  snap.b4m = arrOpt(state.boss4Minions, m => ({ id: m.id, x: r2(m.x), z: r2(m.z), hp: ri(m.hp), mh: ri(m.maxHp) })) || _ARENA_EMPTY_ARR;
   // V15: pk = pickup-progress (0..1s stått-på-väskan) — klienten visar PICK-%.
   snap.b4b = arrOpt(state.boss4Bags, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), st: b.st === 'carried' ? 1 : 0, t: r2(b.timer), tm: r2(b.maxTimer != null ? b.maxTimer : BOSS4_BAG_CARRY_TIME), ci: b.ci || 0, pk: nzr2(b.pkT) })) || _ARENA_EMPTY_ARR;
   snap.b4p = arrOpt(state.boss4Pools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z) })) || _ARENA_EMPTY_ARR;
