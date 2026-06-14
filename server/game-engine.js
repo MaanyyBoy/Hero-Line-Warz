@@ -3969,7 +3969,7 @@ const _bwHeroBuf1 = _makeHeroSnapBuf();
 const _bwHeroBuf2 = _makeHeroSnapBuf();
 const _bwHeroBuf3 = _makeHeroSnapBuf();
 const _bwMapMr = (p) => ({ id: p.id, x: r2(p.x), z: r2(p.z), kind: p.kind });
-const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, dr: 0, c: undefined, wl: undefined };
+const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, dr: 0, c: undefined, wl: undefined, dg: undefined };
 // Warlord (boss 3) symbol-mekanik-buffer (persistent → ingen 30 Hz-allokering). sy = mark-symboler.
 const _bwWarlordSy = [];
 const _bwWarlordBuf = { a: 0, r: 1, rv: null, pc: 0, pi: 0, pt: 0, pv: 5, sy: null };
