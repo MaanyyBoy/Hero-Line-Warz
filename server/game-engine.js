@@ -783,7 +783,8 @@ function inSideLanes(idx, x, z) {
   return inLane(x, z, cfg.laneZ[1]) || inLane(x, z, cfg.laneZ[2]);
 }
 function inSideBase(idx, x, z) {
-  const [zMin, zMax] = SIDE_CFG[idx].baseZRange;
+  const cfg = SIDE_CFG[idx] || SIDE_CFG[1]; // fallback för boss wars/team-arena (idx 3/4) — annars kraschar shop-köp
+  const [zMin, zMax] = cfg.baseZRange;
   return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
 }
 function isHeroWalkable(idx, x, z, opts) {
