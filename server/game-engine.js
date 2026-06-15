@@ -752,8 +752,10 @@ const ITEM_TYPES = {
 // Lanes widened (~+25%: laneZ + half-width ×1.25) and lengthened (~+30%: west extent),
 // base scaled to match (user 2026-06-14). Client LineWarsMpMode geometry mirrors these.
 const SIDE_CFG = {
-  1: { laneZ: { 1: 18, 2: 6 },   spawnX: -53, baseZRange: [0.5, 22.5],   tower: { x: 24, z: 12 },  heroSpawn: { x: 15, z: 12 } },
-  2: { laneZ: { 1: -6, 2: -18 }, spawnX: -53, baseZRange: [-22.5, -0.5], tower: { x: 24, z: -12 }, heroSpawn: { x: 15, z: -12 } },
+  // Lane-Z-layout skalad ×1.3 (2026-06-15: 30% bredare/mer utspridda lanes). Lane-centra
+  // ±6/±18 → ±7.8/±23.4, väggar/torn/spawn/bas följer ×1.3. Marginal hjältekropp↔vägg = 0.286.
+  1: { laneZ: { 1: 23.4, 2: 7.8 },   spawnX: -53, baseZRange: [0.65, 29.25],   tower: { x: 24, z: 15.6 },  heroSpawn: { x: 15, z: 15.6 } },
+  2: { laneZ: { 1: -7.8, 2: -23.4 }, spawnX: -53, baseZRange: [-29.25, -0.65], tower: { x: 24, z: -15.6 }, heroSpawn: { x: 15, z: -15.6 } },
 };
 
 // Portal-feature: lvl-30 hero kan teleportera till motståndarens lanes för PvP-raid.
@@ -763,18 +765,18 @@ const PORTAL_ENEMY_DURATION = 30;    // 30s i fiendens territorium
 const PORTAL_REQUIRED_LEVEL = 30;
 const PORTAL_ENTER_RADIUS = 1.3;
 const PORTAL_POS = {
-  // Matchar visuella portal-mesharna (skalat med lane-bredden ×1.25)
-  1: { x: 22, z: 19.5 },
-  2: { x: 22, z: -19.5 },
+  // Matchar visuella portal-mesharna (skalat ×1.3 med lane-layouten 2026-06-15)
+  1: { x: 22, z: 25.35 },
+  2: { x: 22, z: -25.35 },
 };
-// Teleport-destination i motståndarens territorium (skalat ×1.25)
+// Teleport-destination i motståndarens territorium (skalat ×1.3)
 const PORTAL_DEST = {
-  1: { x: 0, z: -12 },
-  2: { x: 0, z: 12 },
+  1: { x: 0, z: -15.6 },
+  2: { x: 0, z: 15.6 },
 };
-// === Walk-checks === (decision 041: lane-X ×1.3, lane-Z ×1.2)
+// === Walk-checks === (lane-Z-layout ×1.3 2026-06-15: halvbredd 4.28→5.564, centra utspridda ×1.3)
 function inLane(x, z, centerZ) {
-  return x >= -54.5 && x <= 11 && z >= centerZ - 4.28 && z <= centerZ + 4.28;
+  return x >= -54.5 && x <= 11 && z >= centerZ - 5.564 && z <= centerZ + 5.564;
 }
 function inSideLanes(idx, x, z) {
   const cfg = SIDE_CFG[idx];
@@ -805,11 +807,11 @@ function isArenaWalkable(x, z) {
 }
 function isCreepPos(x, z) {
   // Scaled with the wider/longer lanes (2026-06-14). Lane x-min covers the spawn clumps
-  // behind spawnX (-53 minus ~3 rows). Base z ±22.5, lane half-width 4.28.
-  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 22.5) return true;
-  if (x >= 10.6 && x <= 27.55 && z >= -22.5 && z <= -0.5) return true;
-  const inLaneWide = (cz) => x >= -58 && x <= 11 && z >= cz - 4.28 && z <= cz + 4.28;
-  return inLaneWide(18) || inLaneWide(6) || inLaneWide(-6) || inLaneWide(-18);
+  // behind spawnX (-53 minus ~3 rows). Base z ±29.25, lane half-width 5.564 (×1.3-layout).
+  if (x >= 10.6 && x <= 27.55 && z >= 0.65 && z <= 29.25) return true;
+  if (x >= 10.6 && x <= 27.55 && z >= -29.25 && z <= -0.65) return true;
+  const inLaneWide = (cz) => x >= -58 && x <= 11 && z >= cz - 5.564 && z <= cz + 5.564;
+  return inLaneWide(23.4) || inLaneWide(7.8) || inLaneWide(-7.8) || inLaneWide(-23.4);
 }
 
 // ===== BOSS WARS — arena-walkability (server-auth Fas 2, decision 122) =====
