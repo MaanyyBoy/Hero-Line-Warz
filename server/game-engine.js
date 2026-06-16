@@ -572,7 +572,7 @@ const DUEL_REWARDS_GOLD = [500, 1500, 5000, 10000];
 const DUEL_ANNOUNCE_TIME = 4;   // sek att visa vinnare efter duel
 // Arena ligger separat från huvudkartan (centrum z=35)
 const ARENA_CX = 0;
-const ARENA_CZ = 35;
+const ARENA_CZ = 48;   // duel-arena flyttad 35->48 ut ur det ×1.3-breddade fältet (krockade med yttre lanen)
 const ARENA_RADIUS = 14.4;   // 12 × 1.2 — 20% större duel-arena
 const ARENA_VISUAL_RADIUS = ARENA_RADIUS;  // för klienten
 // Special-orb i duel-arenan (matchar arena1v1 orb-konceptet)
@@ -754,8 +754,8 @@ const ITEM_TYPES = {
 const SIDE_CFG = {
   // Lane-Z-layout skalad ×1.3 (2026-06-15: 30% bredare/mer utspridda lanes). Lane-centra
   // ±6/±18 → ±7.8/±23.4, väggar/torn/spawn/bas följer ×1.3. Marginal hjältekropp↔vägg = 0.286.
-  1: { laneZ: { 1: 23.4, 2: 7.8 },   spawnX: -53, baseZRange: [0.65, 29.25],   tower: { x: 24, z: 15.6 },  heroSpawn: { x: 15, z: 15.6 } },
-  2: { laneZ: { 1: -7.8, 2: -23.4 }, spawnX: -53, baseZRange: [-29.25, -0.65], tower: { x: 24, z: -15.6 }, heroSpawn: { x: 15, z: -15.6 } },
+  1: { laneZ: { 1: 23.4, 2: 7.8 },   spawnX: -53, baseZRange: [0.65, 29.25],   tower: { x: 30, z: 15.6 },  heroSpawn: { x: 15, z: 15.6 } },
+  2: { laneZ: { 1: -7.8, 2: -23.4 }, spawnX: -53, baseZRange: [-29.25, -0.65], tower: { x: 30, z: -15.6 }, heroSpawn: { x: 15, z: -15.6 } },
 };
 
 // Portal-feature: lvl-30 hero kan teleportera till motståndarens lanes för PvP-raid.
@@ -776,7 +776,10 @@ const PORTAL_DEST = {
 };
 // === Walk-checks === (lane-Z-layout ×1.3 2026-06-15: halvbredd 4.28→5.564, centra utspridda ×1.3)
 function inLane(x, z, centerZ) {
-  return x >= -54.5 && x <= 11 && z >= centerZ - 5.564 && z <= centerZ + 5.564;
+  // Hero walkable half-width 5.0 (was 5.564): the hero stops ~1.3 wu before the divider
+  // walls so its body/marker (radius ~0.8) no longer sinks into the wall mesh. The VISUAL
+  // lane platforms stay full width (11.128) — this just adds a small no-walk shoulder.
+  return x >= -54.5 && x <= 11 && z >= centerZ - 5.0 && z <= centerZ + 5.0;
 }
 function inSideLanes(idx, x, z) {
   const cfg = SIDE_CFG[idx];
@@ -785,7 +788,7 @@ function inSideLanes(idx, x, z) {
 function inSideBase(idx, x, z) {
   const cfg = SIDE_CFG[idx] || SIDE_CFG[1]; // fallback för boss wars/team-arena (idx 3/4) — annars kraschar shop-köp
   const [zMin, zMax] = cfg.baseZRange;
-  return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
+  return x >= 10.6 && x <= 36.5 && z >= zMin && z <= zMax; // base depth 27.55->36.5 (deeper base, user 2026-06-16)
 }
 function isHeroWalkable(idx, x, z, opts) {
   const cfg = SIDE_CFG[idx];
@@ -809,8 +812,8 @@ function isArenaWalkable(x, z) {
 function isCreepPos(x, z) {
   // Scaled with the wider/longer lanes (2026-06-14). Lane x-min covers the spawn clumps
   // behind spawnX (-53 minus ~3 rows). Base z ±29.25, lane half-width 5.564 (×1.3-layout).
-  if (x >= 10.6 && x <= 27.55 && z >= 0.65 && z <= 29.25) return true;
-  if (x >= 10.6 && x <= 27.55 && z >= -29.25 && z <= -0.65) return true;
+  if (x >= 10.6 && x <= 36.5 && z >= 0.65 && z <= 29.25) return true;
+  if (x >= 10.6 && x <= 36.5 && z >= -29.25 && z <= -0.65) return true;
   const inLaneWide = (cz) => x >= -58 && x <= 11 && z >= cz - 5.564 && z <= cz + 5.564;
   return inLaneWide(23.4) || inLaneWide(7.8) || inLaneWide(-7.8) || inLaneWide(-23.4);
 }
