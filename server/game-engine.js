@@ -4702,13 +4702,21 @@ function tickMultiCircleQueue(state, side, m, dt) {
   if (q.idx >= q.positions.length) m.multiCircleQueue = null;
 }
 
+// Anti-one-shot (user 2026-06-16): en boss-SKILL kan aldrig ta mer än 50% av hjältens
+// maxHP i en enda träff. Squishies (Nyro/Zyro/Kostef) överlever då alltid 1 telegraf-nuke
+// men dör på 2 utan heal/dodge → bossar förblir farliga men inte instant-dödande.
+const BOSS_HERO_MAX_HIT_FRAC = 0.5;
+function bossDamageHero(side, dmg) {
+  damageHero(side, Math.min(dmg, side.hero.maxHp * BOSS_HERO_MAX_HIT_FRAC));
+}
+
 function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
   const r2 = radius * radius;
   // Hero (target i line wars: side.hero är den vars torn bossen attackerar)
   if (!side.hero.dead) {
     const dx = side.hero.x - cx, dz = side.hero.z - cz;
     if (dx * dx + dz * dz < r2) {
-      damageHero(side, dmg);
+      bossDamageHero(side, dmg);
       if (skill.slow && !side.hero.dead) {
         side.heroSlowMul = Math.min(side.heroSlowMul || 1, skill.slow.mul);
         side.heroSlowTime = Math.max(side.heroSlowTime || 0, skill.slow.dur);
@@ -4732,7 +4740,7 @@ function bossApplyCone(state, side, cx, cz, dx, dz, length, halfAngle, dmg, skil
       const dot = (ddx * dx + ddz * dz) / d;
       const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
       if (ang < halfAngle) {
-        damageHero(side, dmg);
+        bossDamageHero(side, dmg);
       }
     }
   }
@@ -4747,7 +4755,7 @@ function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill) {
   const t = Math.max(0, Math.min(1, ((side.hero.x - x1) * dx + (side.hero.z - z1) * dz) / lenSq));
   const cx = x1 + t * dx, cz = z1 + t * dz;
   const distSq = (side.hero.x - cx) ** 2 + (side.hero.z - cz) ** 2;
-  if (distSq < halfWidth * halfWidth) damageHero(side, dmg);
+  if (distSq < halfWidth * halfWidth) bossDamageHero(side, dmg);
 }
 
 // Boss-skill-projektil. Kind per skill — så Captain's throwingAxe ser ut som en
@@ -4778,7 +4786,7 @@ function updateBossProjectiles(state, side, dt) {
     if (!side.hero.dead) {
       const ddx = side.hero.x - p.x, ddz = side.hero.z - p.z;
       if (ddx * ddx + ddz * ddz < p.radius * p.radius) {
-        damageHero(side, p.dmg);
+        bossDamageHero(side, p.dmg);   // anti-one-shot cap (boss-skill-projektil)
         side.bossProjectiles.splice(i, 1);
         continue;
       }
