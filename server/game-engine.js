@@ -5326,8 +5326,10 @@ function maintainTargetLock(side, opp, state) {
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   if (side.hero.dead || !side.aaActive) return;
-  // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block).
-  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
+  // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block/fear).
+  // heroFearTime tillagd (QA 2026-06-17): bot-guards immobiliserar redan vid fear; människo-
+  // spelare gjorde det inte → Gimlu Titan's Rage-fear hade ingen effekt på riktiga spelare.
+  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
   const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0) return;
   side.attackCounter++;
@@ -7742,7 +7744,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
-  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0)) return;
+  // heroFearTime tillagd (QA 2026-06-17) — feared människo-spelare kunde annars gå fritt.
+  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   // Full movement-speed så fort en riktning valts (användarbeslut 2026-06-04) —
@@ -8746,6 +8749,10 @@ function tickGame(state, dt) {
       tickKryxTimers(side, dt);
       if ((side.heroFearTime || 0) > 0) side.heroFearTime = Math.max(0, side.heroFearTime - dt);
       if ((side.iceBlockRemaining || 0) > 0) side.iceBlockRemaining = Math.max(0, side.iceBlockRemaining - dt);
+      // Legolas-mark + Zyro/gandulf-buff tickas även i duellen (QA 2026-06-17) — annars
+      // expirerade marken aldrig under duel = permanent +20% dmg, och buffen frös.
+      if ((side.hero.legolasMarked || 0) > 0) side.hero.legolasMarked = Math.max(0, side.hero.legolasMarked - dt);
+      if ((side.gandulfBuffRemaining || 0) > 0) { side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt); if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0; }
       if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
     }
     // Pickup-orbs (heal + speed) + big duel-arena orb
