@@ -1314,9 +1314,9 @@ const towerMeshes = {};         // mappar sida → fontän-rig (kvar i gamla nam
 const portalMeshes = {};        // mappar sida → portal-rig (klassisk line-wars PvP-portal, lvl-30-gated)
 // Portal-konstanter (matchar server)
 const PORTAL_POS = {
-  // Matchar visuella portal-mesharna (makePortal(22, ±15.6))
-  1: { x: 22, z: 15.6 },
-  2: { x: 22, z: -15.6 },
+  // Matchar server PORTAL_POS + visuella portal-mesharna (makePortal(22, ±25.35), ×1.3-layout)
+  1: { x: 22, z: 25.35 },
+  2: { x: 22, z: -25.35 },
 };
 const PORTAL_REQUIRED_LEVEL = 30;
 const PORTAL_ENTER_RADIUS = 1.3;
@@ -2072,20 +2072,20 @@ const TEXTURES = {
   // Decision 041: z-dim 14 → 16.8 (×1.2), bas-cz ±7.5 → ±9 för att matcha bredare lanes.
   function makeBaseFloor(cz, seed) {
     const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(18, 16.8),
+      new THREE.PlaneGeometry(28, 30),
       new THREE.MeshStandardMaterial({
         map: TEXTURES.grassBaseFloor(seed), color: 0xffffff, roughness: 0.95,
         transparent: true, depthWrite: false,
       })
     );
-    mesh.rotation.x = -Math.PI / 2; mesh.position.set(19, 0.02, cz);
+    mesh.rotation.x = -Math.PI / 2; mesh.position.set(24.5, 0.02, cz);
     mesh.receiveShadow = true;
     // renderOrder negativt → ritas före auror/HP-bars (default 0) som ligger nära y=0
     mesh.renderOrder = -1;
     scene.add(mesh);
   }
-  makeBaseFloor(9, 11);
-  makeBaseFloor(-9, 23);
+  makeBaseFloor(15, 11);
+  makeBaseFloor(-15, 23);
 
   // Lane: MLBB-stil gräs med cobblestone-stig. Unik seed per lane så de skiljer sig något.
   // Material är transparent + depthWrite:false så lanens edge-alpha-fade smälter
@@ -2104,12 +2104,12 @@ const TEXTURES = {
     lane.renderOrder = -1;
     scene.add(lane);
   }
-  // Decision 041: cx -9 → -14.7, length 38 → 49.4 (×1.3), width 6 → 7.2 (×1.2),
-  // cz ±12/±4 → ±14.4/±4.8 (×1.2). Lane-mesh slutar fortfarande vid x=10 (bas-kanten).
-  makeLane(-14.7, 14.4,  49.4, 7.2, 1);
-  makeLane(-14.7, 4.8,   49.4, 7.2, 2);
-  makeLane(-14.7, -4.8,  49.4, 7.2, 3);
-  makeLane(-14.7, -14.4, 49.4, 7.2, 4);
+  // ×1.3-layout (server-spegel): centra ±7.8/±23.4, full bredd 11.128 (= server lane
+  // halvbredd 5.564 ×2), längd täcker x -54.5..11 (spawn → bas-kant). cx = -21.75.
+  makeLane(-21.75, 23.4,  66, 11.128, 1);
+  makeLane(-21.75, 7.8,   66, 11.128, 2);
+  makeLane(-21.75, -7.8,  66, 11.128, 3);
+  makeLane(-21.75, -23.4, 66, 11.128, 4);
 
   const wallTex = TEXTURES.stoneWall();
   function makeWall(cx, cz, w, d, h = 1.2) {
@@ -2122,18 +2122,18 @@ const TEXTURES = {
     wall.receiveShadow = true;
     scene.add(wall);
   }
-  // Decision 041: lane-X ×1.3 (lane min -28 → -39.4, base x oförändrad → cx=-6),
-  // lane-Z ×1.2 (yttervägg ±15.15 → ±18.18, mittvägg-d 30.6 → 36.72).
-  makeWall(-6, 18.18, 70, 0.3);      // Norra yttervägg
-  makeWall(-6, -18.18, 70, 0.3);     // Södra yttervägg
-  makeWall(28.15, 0, 0.3, 36.72);    // Östra bakvägg
-  makeWall(-39.55, 0, 0.3, 36.72);   // Västra bakvägg (flyttad med lane-min)
-  makeWall(-6, 0, 68, 0.3);          // MITTVÄGG (separerar arenor)
-  // Skiljeväggar mellan lanes — chunkiga (depth 1.5, höjd 1.6) så de tydligt
-  // separerar lanes visuellt. Path-collision-checken i dash-skills hindrar
-  // teleport över muren. cz ±8 → ±9.6 (×1.2), längd 39 → 50.7 (×1.3), cx -8.5 → -14.7.
-  makeWall(-14.7, 9.6, 50.7, 1.5, 1.6);    // Skiljevägg sida 1 (mellan z=14.4 och z=4.8)
-  makeWall(-14.7, -9.6, 50.7, 1.5, 1.6);   // Skiljevägg sida 2 (mellan z=-4.8 och z=-14.4)
+  // ×1.3-layout (server-spegel): ytterväggar utanför lane1-walkable (±28.4) + bas (±29.25).
+  makeWall(-11, 30.2, 96, 0.3);      // Norra yttervägg
+  makeWall(-11, -30.2, 96, 0.3);     // Södra yttervägg
+  makeWall(37.5, 0, 0.3, 61);        // Östra bakvägg (bakom djupare bas x36.5)
+  makeWall(-59, 0, 0.3, 61);         // Västra bakvägg (bakom spawn x-53/creep x-58)
+  makeWall(-11, 0, 96, 0.3);         // MITTVÄGG (separerar arenor)
+  // Skiljeväggar mellan lanes — sitter i gapet mellan lanes (centra ±7.8 och ±23.4,
+  // gap-center ±15.6). Depth 3.0 så de tydligt separerar lanes och hjältens kropp
+  // (walkable-kant 12.8/18.4) inte sjunker in i muren. Path-collision i dash hindrar
+  // teleport över muren.
+  makeWall(-21.75, 15.6, 66, 3.0, 1.6);    // Skiljevägg sida 1 (mellan z=7.8 och z=23.4)
+  makeWall(-21.75, -15.6, 66, 3.0, 1.6);   // Skiljevägg sida 2 (mellan z=-7.8 och z=-23.4)
 
   // Sten-textur för dekor (lägereld, portaler) — varmare sten-look
   const towerStoneTex = TEXTURES.stoneTower();
@@ -2289,8 +2289,8 @@ const TEXTURES = {
     scene.add(grp);
     return { group: grp, water, topWater, light, auraRing, crystal };
   }
-  towerMeshes[1] = makeFountain(24, 8,  0x4aa0ff);   // sida 1 = blå glöd
-  towerMeshes[2] = makeFountain(24, -8, 0xff5a4a);   // sida 2 = varm glöd
+  towerMeshes[1] = makeFountain(30, 15.6,  0x4aa0ff);   // sida 1 = blå glöd (server tower)
+  towerMeshes[2] = makeFountain(30, -15.6, 0xff5a4a);   // sida 2 = varm glöd
 
   // === PORTAL-VISUAL (lvl 30, lane-wars PvP-portal) ===
   function makePortal(cx, cz, color) {
@@ -2336,9 +2336,9 @@ const TEXTURES = {
     scene.add(grp);
     return { group: grp, ring, disk, halo, light, ground };
   }
-  // Decision 041: z ±13 → ±15.6 (×1.2) för att matcha bredare bas
-  portalMeshes[1] = makePortal(22, 15.6, 0x66ccff);    // sida 1 portal
-  portalMeshes[2] = makePortal(22, -15.6, 0xff6688);   // sida 2 portal
+  // ×1.3-layout: z ±25.35 (server PORTAL_POS) — lvl-30 raid-portal
+  portalMeshes[1] = makePortal(22, 25.35, 0x66ccff);    // sida 1 portal (server PORTAL_POS)
+  portalMeshes[2] = makePortal(22, -25.35, 0xff6688);   // sida 2 portal
 
   // === TRAIL-FADE — stigar som fortsätter in i basen ===
   function makeTrailExtension(cx, cz, len = 5, w = 2.4, seed = 1) {
@@ -2468,13 +2468,12 @@ const TEXTURES = {
   }
 
   // Camp-dekor: lägereld i NE-hörnet, tält i SE-hörnet (mot östra bakväggen + norra/södra ytterväggen).
-  // Bas-bounds: x∈[10,28], z∈[0.5,14.5] (sida 1), spegelvänt för sida 2.
-  // Östra bakväggen x≈28 och ytterväggarna z≈±15.15 bildar riktiga hörn att tucka in props i.
-  // Decision 041: z ±13.5 → ±16.2 (×1.2)
-  campfires[1] = makeCampfire(26.7, 16.2);
-  campfires[2] = makeCampfire(26.7, -16.2);
-  makeBrokenTent(26.7, 2.0, Math.PI);   // tält i SE-hörnet, vänd så standing-sidan pekar in mot campen
-  makeBrokenTent(26.7, -2.0, Math.PI);  // sida 2 mirror
+  // ×1.3-layout: bas-bounds x∈[10.6,36.5], z∈[0.65,29.25] (sida 1). Östra bakväggen x≈37.5
+  // och ytterväggarna z≈±30.2 bildar de riktiga hörnen att tucka in props i.
+  campfires[1] = makeCampfire(34.5, 27.5);
+  campfires[2] = makeCampfire(34.5, -27.5);
+  makeBrokenTent(34.5, 3.0, Math.PI);   // tält i SE-hörnet, vänd så standing-sidan pekar in mot campen
+  makeBrokenTent(34.5, -3.0, Math.PI);  // sida 2 mirror
 
   // Spawn-portaler — stenring med glödande runa-mitt
   function makePortal(x, z) {
@@ -2500,13 +2499,13 @@ const TEXTURES = {
     grp.add(glow);
     scene.add(grp);
   }
-  // Decoration: dekorativa spawn-ringar vid varje lane-spawn (decision 041: ny spawnX=-38, nya laneZ)
-  makePortal(-38, 14.4); makePortal(-38, 4.8);
-  makePortal(-38, -4.8); makePortal(-38, -14.4);
+  // Decoration: dekorativa spawn-ringar vid varje lane-spawn (×1.3-layout: spawnX -53, laneZ ±7.8/±23.4)
+  makePortal(-53, 23.4); makePortal(-53, 7.8);
+  makePortal(-53, -7.8); makePortal(-53, -23.4);
 
   // === DUEL-ARENA (separat zon på z=35, utanför huvudkartan) ===
   (function buildDuelArena() {
-    const ax = 0, az = 35;
+    const ax = 0, az = 48;   // server ARENA_CZ 35→48 (ut ur ×1.3-breddade fältet)
     const radius = 14.4;  // 20% större (12 × 1.2)
     // Stenplattform — låg cylinder
     const platMat = new THREE.MeshStandardMaterial({ map: towerStoneTex, color: 0xc8b890, roughness: 0.85 });
@@ -2682,15 +2681,17 @@ const TEXTURES = {
   }
 
   // Trädring runt spelytan
+  // ×1.3-layout: trädringen flyttad UT utanför fältet (norra/södra muren z=±30.2,
+  // bakväggar x=-59/37.5) så den inte sticker in i topp-lanen (z=23.4).
   const treeSpots = [
-    // norra raden
-    [-38, 22], [-30, 25], [-18, 27], [-6, 26], [8, 25], [20, 24], [32, 22],
+    // norra raden (utanför norra muren)
+    [-50, 34], [-38, 36], [-22, 37], [-4, 37], [14, 36], [30, 35], [42, 34],
     // södra raden
-    [-38, -22], [-30, -25], [-18, -27], [-6, -26], [8, -25], [20, -24], [32, -22],
-    // östra
-    [40, 16], [42, 8], [42, -8], [40, -16],
-    // västra
-    [-38, 16], [-40, 6], [-40, -6], [-38, -16],
+    [-50, -34], [-38, -36], [-22, -37], [-4, -37], [14, -36], [30, -35], [42, -34],
+    // östra (bakom östra muren)
+    [46, 22], [50, 8], [50, -8], [46, -22],
+    // västra (bakom västra muren)
+    [-64, 22], [-66, 8], [-66, -8], [-64, -22],
   ];
   for (const [x, z] of treeSpots) {
     const jx = (pr() - 0.5) * 3;
@@ -2699,13 +2700,13 @@ const TEXTURES = {
     scene.add(makeTree(x + jx, z + jz, sc));
   }
 
-  // Stenar spridda
+  // Stenar spridda — exclusion utvidgad till ×1.3-fältet (x -59..37.5, z ±30.2)
   for (let i = 0; i < 22; i++) {
     let x, z;
     do {
-      x = (pr() - 0.5) * 90;
-      z = (pr() - 0.5) * 60;
-    } while (Math.abs(x) < 32 && Math.abs(z) < 17);  // håll bort från spelytan
+      x = (pr() - 0.5) * 150;
+      z = (pr() - 0.5) * 90;
+    } while (x > -62 && x < 40 && Math.abs(z) < 32);  // håll bort från spelytan
     const sc = 0.6 + pr() * 1.0;
     scene.add(makeRock(x, z, sc));
   }
@@ -2714,9 +2715,9 @@ const TEXTURES = {
   for (let i = 0; i < 18; i++) {
     let x, z;
     do {
-      x = (pr() - 0.5) * 80;
-      z = (pr() - 0.5) * 56;
-    } while (Math.abs(x) < 31 && Math.abs(z) < 16.5);
+      x = (pr() - 0.5) * 150;
+      z = (pr() - 0.5) * 85;
+    } while (x > -62 && x < 40 && Math.abs(z) < 31);
     scene.add(makeBush(x, z, 0.8 + pr() * 0.8));
   }
 })();
@@ -2728,41 +2729,43 @@ const TEXTURES = {
 // Layout skalat med +30% lane-längd (X) och +20% lane-bredd (Z) i decision 041.
 // Original-värden i kommentarer för referens.
 const SIDE_CFG = {
+  // ×1.3-layout: speglar server SIDE_CFG EXAKT (servern skickar råa koordinater,
+  // klienten ritar 1:1). lane ±7.8/±23.4, spawnX -53, tower x30 z±15.6, bas z till ±29.25.
   1: {
     arenaSign: 1,
-    laneZ: { 1: 14.4, 2: 4.8 },          // egna monsters spawnar här (orig 12/4)
-    oppLaneZ: { 1: -4.8, 2: -14.4 },     // egna playerCreeps spawnar i opp's arena (orig -4/-12)
-    spawnX: -38,                          // orig -27
-    baseZRange: [0.5, 17.5],              // orig [0.5, 14.55]
-    tower: { x: 24, z: 9.6 },             // orig z=8
-    heroSpawn: { x: 15, z: 9.6 },         // orig z=8
+    laneZ: { 1: 23.4, 2: 7.8 },          // egna monsters spawnar här (server-spegel)
+    oppLaneZ: { 1: -7.8, 2: -23.4 },     // egna playerCreeps spawnar i opp's arena
+    spawnX: -53,
+    baseZRange: [0.65, 29.25],
+    tower: { x: 30, z: 15.6 },
+    heroSpawn: { x: 15, z: 15.6 },
     heroColor: 0xff5533,
     gruntColor: 0x3388dd,
     gruntEmissive: 0x112244,
   },
   2: {
     arenaSign: -1,
-    laneZ: { 1: -4.8, 2: -14.4 },
-    oppLaneZ: { 1: 14.4, 2: 4.8 },
-    spawnX: -38,
-    baseZRange: [-17.5, -0.5],
-    tower: { x: 24, z: -9.6 },
-    heroSpawn: { x: 15, z: -9.6 },
+    laneZ: { 1: -7.8, 2: -23.4 },
+    oppLaneZ: { 1: 23.4, 2: 7.8 },
+    spawnX: -53,
+    baseZRange: [-29.25, -0.65],
+    tower: { x: 30, z: -15.6 },
+    heroSpawn: { x: 15, z: -15.6 },
     heroColor: 0x33ddaa,
     gruntColor: 0xdd6644,
     gruntEmissive: 0x441a14,
   },
   // 3 & 4: placeholders för 2v2 arena (classic-fält används aldrig för dessa)
   3: {
-    arenaSign: 1, laneZ: { 1: 14.4, 2: 4.8 }, oppLaneZ: { 1: -4.8, 2: -14.4 },
-    spawnX: -38, baseZRange: [0.5, 17.5], tower: { x: 24, z: 9.6 },
-    heroSpawn: { x: 15, z: 9.6 },
+    arenaSign: 1, laneZ: { 1: 23.4, 2: 7.8 }, oppLaneZ: { 1: -7.8, 2: -23.4 },
+    spawnX: -53, baseZRange: [0.65, 29.25], tower: { x: 30, z: 15.6 },
+    heroSpawn: { x: 15, z: 15.6 },
     heroColor: 0xffaa33, gruntColor: 0x66aaff, gruntEmissive: 0x223366,
   },
   4: {
-    arenaSign: -1, laneZ: { 1: -4.8, 2: -14.4 }, oppLaneZ: { 1: 14.4, 2: 4.8 },
-    spawnX: -38, baseZRange: [-17.5, -0.5], tower: { x: 24, z: -9.6 },
-    heroSpawn: { x: 15, z: -9.6 },
+    arenaSign: -1, laneZ: { 1: -7.8, 2: -23.4 }, oppLaneZ: { 1: 23.4, 2: 7.8 },
+    spawnX: -53, baseZRange: [-29.25, -0.65], tower: { x: 30, z: -15.6 },
+    heroSpawn: { x: 15, z: -15.6 },
     heroColor: 0x66ddff, gruntColor: 0xff6644, gruntEmissive: 0x442211,
   },
 };
@@ -3296,22 +3299,24 @@ const TOWER_MAX_HP = 50;
 // ============================================================
 
 function inLane(x, z, centerZ) {
-  // Decision 041: lane-X-min -27.95 → -39.35 (×1.3 lane-längd), half-width 2.85 → 3.42 (×1.2)
-  return x >= -39.35 && x <= 11 && z >= centerZ - 3.42 && z <= centerZ + 3.42;
+  // Server-spegel (×1.3-layout): hjälte-walkable halvbredd 5.0, x -54.5..11.
+  // De visuella lane-plattformarna är fulla bredden (11.128) — detta är bara en
+  // liten no-walk-axel så hjältens kropp/markör inte sjunker in i skiljemuren.
+  return x >= -54.5 && x <= 11 && z >= centerZ - 5.0 && z <= centerZ + 5.0;
 }
 function inSideLanes(idx, x, z) {
   const cfg = SIDE_CFG[idx];
   return inLane(x, z, cfg.laneZ[1]) || inLane(x, z, cfg.laneZ[2]);
 }
 function inSideBase(idx, x, z) {
-  // Bas x-range oförändrat (basen växte bara i Z för att matcha bredare lanes)
+  // Djupare bas (server-spegel 2026-06-16): x-max 27.55 → 36.5.
   const [zMin, zMax] = SIDE_CFG[idx].baseZRange;
-  return x >= 10.6 && x <= 27.55 && z >= zMin && z <= zMax;
+  return x >= 10.6 && x <= 36.5 && z >= zMin && z <= zMax;
 }
 // Duel-arena (classic line wars) — matchar server-konstanter ARENA_CX/CZ/RADIUS.
 // Hjältarna teleporteras till denna cirkulära stenarena under duel-fasen.
 const DUEL_ARENA_CX = 0;
-const DUEL_ARENA_CZ = 35;
+const DUEL_ARENA_CZ = 48;   // server ARENA_CZ (flyttad 35→48 ut ur ×1.3-fältet)
 const DUEL_ARENA_RADIUS = 14.4;
 const DUEL_ARENA_FLOOR_Y = 0.32;   // y-höjd på inre golv (visuell platform)
 
@@ -3327,9 +3332,9 @@ function isHeroWalkable(idx, x, z) {
   if (APP.gameMode === 'bosswars') {
     return isBossWarsPos(x, z);
   }
-  // Classic line wars duel-fas: hjältar är teleporterade till stenarenan på (0, 35).
+  // Classic line wars duel-fas: hjältar är teleporterade till stenarenan på (0, 48).
   // Server clampar mot ARENA_RADIUS — klient-prediction måste matcha annars
-  // bail:ar applyMovement varje frame (lanes/base är inte walkable z=35) → hopp.
+  // bail:ar applyMovement varje frame (lanes/base är inte walkable z=48) → hopp.
   if (duelState && duelState.active) {
     const dx = x - DUEL_ARENA_CX, dz = z - DUEL_ARENA_CZ;
     return (dx * dx + dz * dz) < (DUEL_ARENA_RADIUS - HERO_R) * (DUEL_ARENA_RADIUS - HERO_R);
@@ -3358,12 +3363,12 @@ function isHeroPathClear(idx, x0, z0, x1, z1) {
 // Creeps får röra sig i den arena där de befinner sig (sin egen eller motståndarens).
 // En enkel check: tillåt bas + alla 4 lanes (men inte mittvägg).
 function isCreepPos(x, z) {
-  // Decision 041: bas-z 14.55 → 17.5 (×1.2), spawn-X -27 → -38 (×1.3, plus row-buffer)
-  if (x >= 10.6 && x <= 27.55 && z >= 0.5 && z <= 17.5) return true;
-  if (x >= 10.6 && x <= 27.55 && z >= -17.5 && z <= -0.5) return true;
-  // Utvidgade bakåt så monster-spawn-kolumnerna ryms (orig -45 → -55)
-  const inLaneWide = (cz) => x >= -55 && x <= 11 && z >= cz - 3.42 && z <= cz + 3.42;
-  return inLaneWide(14.4) || inLaneWide(4.8) || inLaneWide(-4.8) || inLaneWide(-14.4);
+  // Server-spegel (×1.3-layout): djupare bas x 10.6..36.5, bas-z till ±29.25,
+  // lane halvbredd 5.564, x bakåt till -58 för spawn-kolumnerna.
+  if (x >= 10.6 && x <= 36.5 && z >= 0.65 && z <= 29.25) return true;
+  if (x >= 10.6 && x <= 36.5 && z >= -29.25 && z <= -0.65) return true;
+  const inLaneWide = (cz) => x >= -58 && x <= 11 && z >= cz - 5.564 && z <= cz + 5.564;
+  return inLaneWide(23.4) || inLaneWide(7.8) || inLaneWide(-7.8) || inLaneWide(-23.4);
 }
 
 // ============================================================
