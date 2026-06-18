@@ -2248,6 +2248,39 @@ const _arenaTalSnap = {
   2: { p: 0, c: [] },
 };
 
+// ── SHARED hero skill-entity serialization ──────────────────────────────────
+// SINGLE source of the wire shape for every hero skill-entity (black holes, fire
+// waves, novas, banners, goose waves, sliders, vine traps, thorn pools, hammers,
+// iron-will explosions). Used by Arena, Boss Wars AND Sandbox so the data — and
+// thus the client's shared MpSkillEntities renderer — is identical in every mode.
+// (Was previously only emitted by Arena; Boss Wars/Sandbox sent nothing → most hero
+//  skills looked empty in those modes.) Named mappers avoid per-tick closure alloc.
+function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
+function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life) }; }
+function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) }; }
+function _mapAb(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
+function _mapKg(w)  { return { id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) }; }
+function _mapKs(sl) { return { id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) }; }
+function _mapVt(v)  { return { id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.maxLife ? v.life / v.maxLife : v.life) }; }
+function _mapTp(p)  { return { id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) }; }
+function _mapHm(h)  { return { id: h.id, x: r2(h.x), z: r2(h.z) }; }
+function _mapIwe(e) { return { id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) }; }
+
+// Writes side s's skill-entities into snap.<type>[i] (entity-type-major, keyed by side),
+// the exact shape the Arena client already consumed. snap must have bh/fw/.../iwe containers.
+function writeSkillEntitiesInto(s, snap, i) {
+  snap.bh[i]  = arrOpt(s.blackHoles, _mapBh) || _ARENA_EMPTY_ARR;
+  snap.fw[i]  = arrOpt(s.fireWaves, _mapFw) || _ARENA_EMPTY_ARR;
+  snap.nv[i]  = arrOpt(s.novaEffects, _mapNv) || _ARENA_EMPTY_ARR;
+  snap.ab[i]  = arrOpt(s.aragurnBanners, _mapAb) || _ARENA_EMPTY_ARR;
+  snap.kg[i]  = arrOpt(s.kostefoGooseWaves, _mapKg) || _ARENA_EMPTY_ARR;
+  snap.ks[i]  = arrOpt(s.kostefoSliders, _mapKs) || _ARENA_EMPTY_ARR;
+  snap.vt[i]  = arrOpt(s.vineTraps, _mapVt) || _ARENA_EMPTY_ARR;
+  snap.tp[i]  = arrOpt(s.thornPools, _mapTp) || _ARENA_EMPTY_ARR;
+  snap.hm[i]  = arrOpt(s.hammers, _mapHm) || _ARENA_EMPTY_ARR;
+  snap.iwe[i] = arrOpt(s.ironWillExplosions, _mapIwe) || _ARENA_EMPTY_ARR;
+}
+
 // Serialisera hela arena-state → a-state-meddelandet (matchar main.js
 // broadcastArenaState så klientens applyArenaState läser det oförändrat).
 // Entity-arrayerna byggs från LOGISKT state (server har ingen mesh) — fw/kg/ks
@@ -2306,16 +2339,7 @@ function serializeArenaState(state) {
       snap.iwe[i] = undefined;
       continue;
     }
-    snap.bh[i] = arrOpt(s.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-    snap.fw[i] = arrOpt(s.fireWaves, w => ({ id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2((w.maxLife ? w.life / w.maxLife : w.life)) })) || _ARENA_EMPTY_ARR;
-    snap.nv[i] = arrOpt(s.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) })) || _ARENA_EMPTY_ARR;
-    snap.ab[i] = arrOpt(s.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z) })) || _ARENA_EMPTY_ARR;
-    snap.kg[i] = arrOpt(s.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) })) || _ARENA_EMPTY_ARR;
-    snap.ks[i] = arrOpt(s.kostefoSliders, sl => ({ id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) })) || _ARENA_EMPTY_ARR;
-    snap.vt[i] = arrOpt(s.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3((v.maxLife ? v.life / v.maxLife : v.life)) })) || _ARENA_EMPTY_ARR;
-    snap.tp[i] = arrOpt(s.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) })) || _ARENA_EMPTY_ARR;
-    snap.hm[i] = arrOpt(s.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z) })) || _ARENA_EMPTY_ARR;
-    snap.iwe[i] = arrOpt(s.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) })) || _ARENA_EMPTY_ARR;
+    writeSkillEntitiesInto(s, snap, i); // SHARED — same shape Boss Wars/Sandbox now emit
   }
   return snap;
 }
@@ -3079,11 +3103,16 @@ function tickSandbox(state, dt) {
   }
 }
 function serializeSandboxState(state) {
-  return {
+  const snap = {
     sb: 1,
     h: serializeArenaHero(state.sides[1], _sandboxHeroBuf),
     dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp, b: d.isBossWarsBoss ? 1 : 0 })),
+    // Hero skill-entities under side "1" (same per-side-keyed shape as Arena/Boss Wars) so the
+    // shared client renderer shows black holes/fire waves/novas/vine traps/etc. in sandbox too.
+    bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {},
   };
+  writeSkillEntitiesInto(state.sides[1], snap, 1);
+  return snap;
 }
 const _sandboxHeroBuf = _makeHeroSnapBuf();
 // ===== BOSS SKILL DAMAGE-PRIMITIVER (slice 2b) =====
@@ -4181,6 +4210,18 @@ const _bwSnap = {
   b: null,
   bp: _ARENA_EMPTY_ARR, bpl: _ARENA_EMPTY_ARR, bm: _ARENA_EMPTY_ARR, ba2: _ARENA_EMPTY_ARR, b2r: false,   // 2c+3b+3b-ii
   b4m: _ARENA_EMPTY_ARR, b4b: _ARENA_EMPTY_ARR, b4p: _ARENA_EMPTY_ARR,   // boss-4 minions/väskor/pooler (decision 132)
+  // Hero skill-entities per side (1..3) — SHARED shape with Arena/Sandbox (writeSkillEntitiesInto).
+  // Boss Wars previously emitted NONE of these → hero skills looked empty online.
+  bh: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  fw: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  nv: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  ab: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  kg: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  ks: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  vt: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  tp: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  hm: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -4198,6 +4239,12 @@ function serializeBossWarsState(state) {
   snap.mr[1] = arrOpt(state.sides[1] && state.sides[1].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
   snap.mr[2] = arrOpt(state.sides[2] && state.sides[2].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
   snap.mr[3] = arrOpt(state.sides[3] && state.sides[3].monsterProjectiles, _bwMapMr) || _ARENA_EMPTY_ARR;
+  // Hero skill-entities per side via the SHARED serializer (same as Arena/Sandbox).
+  for (let i = 1; i <= 3; i++) {
+    const s = state.sides[i];
+    if (s) writeSkillEntitiesInto(s, snap, i);
+    else { snap.bh[i] = _ARENA_EMPTY_ARR; snap.fw[i] = _ARENA_EMPTY_ARR; snap.nv[i] = _ARENA_EMPTY_ARR; snap.ab[i] = _ARENA_EMPTY_ARR; snap.kg[i] = _ARENA_EMPTY_ARR; snap.ks[i] = _ARENA_EMPTY_ARR; snap.vt[i] = _ARENA_EMPTY_ARR; snap.tp[i] = _ARENA_EMPTY_ARR; snap.hm[i] = _ARENA_EMPTY_ARR; snap.iwe[i] = _ARENA_EMPTY_ARR; }
+  }
   // Boss skill-projektiler (directional) + DoT-pooler → klient reconciliear + renderar (slice 2c-client).
   snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
   snap.bpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
