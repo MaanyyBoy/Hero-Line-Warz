@@ -1623,6 +1623,17 @@ function applyLaserBeamTickServer(state, side) {
     boss.hp = Math.max(0, boss.hp - bossWarsDmgMod(boss, boss.maxHp * LASER_TICK_DMG_PCT));   // fas-immunitet+DR; clamp (death=slice 4)
     return;
   }
+  if (state.mode === 'sandbox') {   // sandbox: lasern träffar dummies i strålen (odödliga)
+    for (const d of (state.sandboxDummies || [])) {
+      if (d.hp <= 1) continue;
+      const sdx = d.x - side.hero.x, sdz = d.z - side.hero.z;
+      const along = sdx * lb.dx + sdz * lb.dz;
+      if (along < 0 || along > LASER_RANGE) continue;
+      if (Math.abs(sdx * (-lb.dz) + sdz * lb.dx) >= LASER_WIDTH) continue;
+      d.hp = Math.max(1, d.hp - d.maxHp * LASER_TICK_DMG_PCT);
+    }
+    return;
+  }
   const opp = arenaOpp(state, side.idx);
   if (!opp || opp.hero.dead) return;
   const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
@@ -1671,7 +1682,8 @@ function tickGimluRageServer(state, side, dt) {
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
   const opp = arenaOpp(state, side.idx);
   // Boss wars (co-op): rage-pulserna träffar boss-monstret i st f motståndar-hjälte.
-  const bossTarget = (state.mode === 'bosswars') ? state.boss : null;
+  const bossTarget = (state.mode === 'bosswars') ? state.boss
+                   : (state.mode === 'sandbox') ? sandboxNearestDummy(state, side.hero.x, side.hero.z) : null;
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
     side.rageTickAccum -= RAGE_TICK_INTERVAL;
     if (bossTarget && bossTarget.hp > 0) {
@@ -2910,6 +2922,149 @@ function initBossWarsMatch(heroes, tier, loadouts) {
   }
   return state;
 }
+
+// ───────── SANDBOX — träningsläge (2026-06-18) ─────────────────────────────
+// Server-auktoritativt så det ALLTID speglar live-spelet (samma skill-kod → auto-synkat).
+// Återanvänder boss-wars hjälte-combat EXAKT: 3 odödliga dummy-monster läggs i
+// sides[1].monsters (delad ref) → hjältens AA/skills träffar dem via samma funktioner.
+// EGEN tick (rör ALDRIG tickBossWars) → live-boss-koden är orörd.
+const SANDBOX_DUMMY_HP = 50000;
+const SANDBOX_DUMMY_REGEN_DELAY = 3.0;   // sek utan träff innan dummyn fyller HP igen
+function sandboxMakeDummy(state, x, z) {
+  return {
+    id: state.nextEntityId++, isSandboxDummy: true,
+    x, z, ry: 0, hp: SANDBOX_DUMMY_HP, maxHp: SANDBOX_DUMMY_HP,
+    _lastHp: SANDBOX_DUMMY_HP, _regenTimer: 0,
+    frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
+    slowTime: 0, slowMul: 1, legolasMarked: 0,
+  };
+}
+function sandboxNearestDummy(state, x, z) {
+  let best = null, bestD = Infinity;
+  for (const d of (state.sandboxDummies || [])) {
+    if (d.hp <= 1) continue;
+    const dd = (d.x - x) * (d.x - x) + (d.z - z) * (d.z - z);
+    if (dd < bestD) { bestD = dd; best = d; }
+  }
+  return best;
+}
+// (Re)konfigurera side 1:s hjälte till given hjälte på max (lvl 30 + maxade skills).
+function sandboxSetupHero(state, heroId) {
+  const side = state.sides[1];
+  side.heroId = heroId || 'magiker';
+  side.heroPickConfirmed = true;
+  side.hero.dead = false;
+  side.hero.respawnTimer = 0;
+  side.hero.x = BOSSWARS_CX - 15; side.hero.z = BOSSWARS_CZ;   // inne i boss-rummet
+  side.hero.frozenTime = 0; side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;
+  side.heroFearTime = 0; side.iceBlockRemaining = 0;
+  side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+  recomputeArenaSideStats(state, side);   // bas-stats + ev. loadout (boss-wars = endgame-balans)
+  side.hero.hp = side.hero.maxHp;
+  side.level = 30;                          // HUD: visa max level (boss wars-stats = lvl-30-maxat)
+  side.ultEnergy = side.ultEnergy || 0;
+}
+function createSandboxState(heroId) {
+  const state = createBossWarsState(1);   // ger side-/hjälte-setup (lvl 30, maxade skills)
+  state.mode = 'sandbox';
+  state.sandbox = true;
+  state.bossActivated = true;   // hjälte-combat aktiv direkt (ingen gå-till-boss-rum-fas)
+  state.gateClosed = false;
+  state.boss = null;            // ingen boss
+  // Nolla boss-wars-mekanik-arrayer så inget bossbeteende kör i sandbox-ticken.
+  state.bossWarsMinions = []; state.boss2Ads = []; state.boss4Minions = [];
+  state.boss4Bags = []; state.boss4Pools = []; state.bossProjectiles = []; state.bossPools = [];
+  // Solo: döda side 2 & 3 så ev. loopar hoppar dem (sandboxen tickar bara side 1).
+  for (const idx of [2, 3]) if (state.sides[idx]) state.sides[idx].hero.dead = true;
+  // Dummies i sides[1].monsters (delad ref → hjältens AA/skills riktar mot dem). 2 nära + 1 ensam.
+  const cx = BOSSWARS_CX, cz = BOSSWARS_CZ;
+  state.sides[1].monsters = [];
+  state.sides[2].monsters = state.sides[1].monsters;
+  state.sides[3].monsters = state.sides[1].monsters;
+  state.sandboxDummies = [
+    sandboxMakeDummy(state, cx + 6,  cz + 3),   // par – nära varandra
+    sandboxMakeDummy(state, cx + 6,  cz - 3),   // par
+    sandboxMakeDummy(state, cx + 17, cz + 9),   // ensam
+  ];
+  for (const d of state.sandboxDummies) state.sides[1].monsters.push(d);
+  sandboxSetupHero(state, heroId);
+  return state;
+}
+// Byt hjälte på plats (behåll position) — utan att lämna sandboxen.
+function sandboxSwapHero(state, heroId) {
+  if (!state || !state.sandbox) return;
+  const x = state.sides[1].hero.x, z = state.sides[1].hero.z;
+  sandboxSetupHero(state, heroId);
+  state.sides[1].hero.x = x; state.sides[1].hero.z = z;   // stanna där man stod
+}
+function tickSandbox(state, dt) {
+  const s = state.sides[1];
+  if (!s) return;
+  s._bwGateClosed = false;
+  // 1) Rörelse (joystick som boss wars).
+  if (!s.hero.dead) {
+    const inp = state.lastInputs && state.lastInputs[1];
+    const j = (inp && inp.j) || { x: 0, z: 0 };
+    applyMovement(s, j.x, j.z, dt);
+  }
+  // 2) Hjälte-combat — EXAKT boss-wars hjälte-sekvensen (side 1, opp=null → inga fiender slår
+  // tillbaka). Skill-FUNKTIONERNA är delade med live → auto-synkat; bara anrops-listan dupliceras.
+  // (Boss-side-funktionerna nedanför i tickBossWars körs INTE här — ingen boss i sandbox.)
+  updateSkillCooldowns(s, dt);
+  if (!s.hero.dead) updateHeroAttack(state, s, null, dt);
+  updateProjectiles(state, s, null, dt);
+  updateFireballs(state, s, null, dt);
+  updateBlackHoles(state, s, null, dt);
+  updateVineTraps(state, s, null, dt);
+  updateHammers(state, s, null, dt);
+  updateIronWill(state, s, null, dt);
+  updateAragurnWhirlwind(state, s, null, dt);
+  updateAragurnLeap(state, s, null, dt);
+  updateAragurnShoutHeal(s, dt);
+  updateSoulDrain(state, s, null, dt);
+  tickLegolusInvis(s, dt);
+  tickThornPools(state, s, dt);
+  tickKostefoSkills(state, s, null, dt);
+  tickGimluTauntLvl5(state, s, null, dt);
+  flushIronWillReflectLvl5(state, s, null);
+  tickAragurnBannersLvl5(s, dt);
+  updateNovaEffects(s, dt);
+  updateActiveBuffs(s, dt);
+  if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
+  if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+  if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
+  if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
+  if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
+  if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
+  if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
+  if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
+  tickZheyna(state, s, dt);
+  if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
+  if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
+  if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
+  if ((s.hero.dotRemaining || 0) > 0) { s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt); damageHero(s, (s.hero.dotPerSec || 0) * dt); }
+  if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
+  if ((s.heroSlowTime || 0) > 0) { s.heroSlowTime = Math.max(0, s.heroSlowTime - dt); if (s.heroSlowTime <= 0) { s.heroSlowTime = 0; s.heroSlowMul = 1; } }
+  tickKryxTimers(s, dt);
+  if ((s.iceBlockRemaining || 0) > 0) s.iceBlockRemaining = Math.max(0, s.iceBlockRemaining - dt);
+  updateMonsterProjectiles(state, s, dt);
+  // 3) Dummies: odödliga (dör/despawnar aldrig) + regen till full efter REGEN_DELAY utan träff.
+  for (const d of state.sandboxDummies) {
+    if (d.hp < d._lastHp - 0.01) d._regenTimer = SANDBOX_DUMMY_REGEN_DELAY;  // tog skada → vänta innan regen
+    else if (d._regenTimer > 0) { d._regenTimer -= dt; if (d._regenTimer <= 0) d.hp = d.maxHp; }
+    if (d.hp < 1) d.hp = 1;       // odödlig
+    d._lastHp = d.hp;
+    d.frozenTime = 0; d.dotRemaining = 0; d.poisonRemaining = 0;   // ingen kvarvarande CC/DoT-jank
+  }
+}
+function serializeSandboxState(state) {
+  return {
+    sb: 1,
+    h: serializeArenaHero(state.sides[1], _sandboxHeroBuf),
+    dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp })),
+  };
+}
+const _sandboxHeroBuf = _makeHeroSnapBuf();
 // ===== BOSS SKILL DAMAGE-PRIMITIVER (slice 2b) =====
 // Boss-skills träffar ALLA 3 co-op-hjältar inom AoE. Port av main.js applyBoss*-funktioner;
 // mesh-refs borttagna (boss = state.boss x/z), isHeroWalkable → isBossWarsWalkable.
@@ -4171,6 +4326,7 @@ function spawnCreepProjectile(state, ownerSide, creep, target, targetType) {
 function killMonster(arenaSide, idx, byPlayerSide) {
   const m = arenaSide.monsters[idx];
   if (!m) return;
+  if (m.isSandboxDummy) { m.hp = 1; return; }   // sandbox-dummy är odödlig — despawna aldrig
   arenaSide.monsters.splice(idx, 1);
   // Boss-2-ad hero-kill (decision 118): wipe om kill-cooldown löper, annars starta den. Ingen reward.
   if (m.isBoss2Ad && m._bwState) { onBoss2AdHeroKill(m._bwState, m); return; }
@@ -9146,4 +9302,8 @@ module.exports = {
   serializeState,
   applyEvent,
   recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
+  createSandboxState,      // sandbox-träningsläge (2026-06-18): hjälte + 3 dummies, server-auth
+  tickSandbox,             // sandbox-tick (återanvänder boss-wars hjälte-combat, egen funktion)
+  serializeSandboxState,   // sandbox → sb-state-meddelande
+  sandboxSwapHero,         // byt hjälte på plats utan att lämna sandboxen
 };

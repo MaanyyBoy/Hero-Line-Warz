@@ -172,9 +172,11 @@ function gameLoopTick(room) {
   const _simStart = Date.now();
   const _isArena = !!room.arenaSim;          // decision 120: server-auth arena
   const _isBoss = !!room.bossSim;            // decision 122 Fas 2: server-auth boss wars (3-peer)
+  const _isSandbox = !!room.sandboxSim;      // sandbox-träningsläge (2026-06-18, solo, host-only)
   try {
     if (_isArena) engine.tickArena(room.game, dt);
     else if (_isBoss) engine.tickBossWars(room.game, dt);
+    else if (_isSandbox) engine.tickSandbox(room.game, dt);
     else engine.tickGame(room.game, dt);
   } catch (e) {
     console.error(`[${room.code}] tick error:`, e && e.stack || e);
@@ -185,6 +187,7 @@ function gameLoopTick(room) {
     try {
       const stateMsg = _isArena ? engine.serializeArenaState(room.game)
                      : _isBoss ? engine.serializeBossWarsState(room.game)
+                     : _isSandbox ? engine.serializeSandboxState(room.game)
                      : engine.serializeState(room.game);
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
@@ -413,6 +416,58 @@ function handleBossMessage(room, fromWs, envelope) {
   relayBossWarsMessage(room, fromWs, envelope);
 }
 
+// ── Sandbox — träningsläge (2026-06-18): solo, host-only, server-auth ───────
+// Återanvänder samma input→engine-mönster som arena/boss. createSandboxState ger
+// hjälte + 3 dummies; tickSandbox kör hjälte-combat (boss-wars-återanvändning).
+function startSandboxSim(room, heroId) {
+  if (room.game || room.tickHandle) return;
+  room.sandboxSim = true;
+  room.game = engine.createSandboxState(heroId);
+  room.lastStateMs = 0;
+  room.lastTickMs = Date.now();
+  room.nextTickAt = Date.now();
+  scheduleNextTick(room);
+  console.log(`[${room.code}] sandbox sim started (hero=${heroId})`);
+}
+
+function applySandboxInput(room, ws, payload) {
+  if (!room.game) return;
+  const inp = room.game.lastInputs[1];   // sandbox = solo → alltid side 1
+  if (inp) {
+    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    const mag = Math.hypot(jx, jz);
+    if (mag > 1) { jx /= mag; jz /= mag; }
+    inp.j = { x: jx, z: jz };
+  }
+  if (Array.isArray(payload.events) && payload.events.length) {
+    for (const ev of payload.events) {
+      if (!ev || typeof ev !== 'object') continue;
+      try { engine.applyEvent(room.game, 1, ev); }
+      catch (e) { console.warn('sandbox applyEvent error', e); }
+    }
+  }
+}
+
+function handleSandboxMessage(room, fromWs, envelope) {
+  const payload = envelope.d;
+  const t = payload && payload.t;
+  if (t === 'sb-sim-start') {
+    if (fromWs === room.host) startSandboxSim(room, payload.hero);
+    return;
+  }
+  if (room.sandboxSim) {
+    if (t === 'sb-input') { applySandboxInput(room, fromWs, payload); return; }
+    if (t === 'sb-swap') {
+      if (typeof payload.hero === 'string') {
+        try { engine.sandboxSwapHero(room.game, payload.hero); }
+        catch (e) { console.warn('sandbox swap error', e); }
+      }
+      return;
+    }
+    if (t === 'sb-state') return;
+  }
+}
+
 function handleArenaMessage(room, fromWs, envelope) {
   const payload = envelope.d;
   const t = payload && payload.t;
@@ -519,7 +574,7 @@ wss.on('connection', (ws) => {
         // webbläsaren → servern ska INTE köra den klassiska engine:n för
         // arena-rum (se 'join'-handlern nedan). Saniteras: bara 'arena1v1'
         // eller 'classic'. Gammal klient utan fältet → 'classic' (oförändrat).
-        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : 'classic',
+        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : (msg.mode === 'sandbox') ? 'sandbox' : 'classic',
         game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
       };
       rooms.set(code, room);
@@ -621,6 +676,8 @@ wss.on('connection', (ws) => {
         handleArenaMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
         handleBossMessage(room, ws, msg);
+      } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('sb-')) {
+        handleSandboxMessage(room, ws, msg);
       } else if (payload && payload.t === 'lw-bot-start') {
         startLineWarsBotMatch(room, ws, payload);
       } else {
