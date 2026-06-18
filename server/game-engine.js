@@ -2928,7 +2928,7 @@ function initBossWarsMatch(heroes, tier, loadouts) {
 // Återanvänder boss-wars hjälte-combat EXAKT: 3 odödliga dummy-monster läggs i
 // sides[1].monsters (delad ref) → hjältens AA/skills träffar dem via samma funktioner.
 // EGEN tick (rör ALDRIG tickBossWars) → live-boss-koden är orörd.
-const SANDBOX_DUMMY_HP = 50000;
+const SANDBOX_DUMMY_HP = 5000;   // sänkt 50000→5000 (synlig HP-bar-rörelse per spell-cast; odödliga ändå)
 const SANDBOX_DUMMY_REGEN_DELAY = 3.0;   // sek utan träff innan dummyn fyller HP igen
 function sandboxMakeDummy(state, x, z) {
   return {
