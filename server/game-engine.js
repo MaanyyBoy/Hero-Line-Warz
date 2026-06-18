@@ -2933,7 +2933,8 @@ const SANDBOX_DUMMY_REGEN_DELAY = 3.0;   // sek utan träff innan dummyn fyller 
 function sandboxMakeDummy(state, x, z) {
   return {
     id: state.nextEntityId++, isSandboxDummy: true,
-    x, z, ry: 0, hp: SANDBOX_DUMMY_HP, maxHp: SANDBOX_DUMMY_HP,
+    x, z, ry: 0, _ax: x, _az: z,   // _ax/_az = ankare → snäpps tillbaka varje tick (står STILLA)
+    hp: SANDBOX_DUMMY_HP, maxHp: SANDBOX_DUMMY_HP,
     _lastHp: SANDBOX_DUMMY_HP, _regenTimer: 0,
     frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
     slowTime: 0, slowMul: 1, legolasMarked: 0,
@@ -2958,6 +2959,20 @@ function sandboxSetupHero(state, heroId) {
   side.hero.x = BOSSWARS_CX - 15; side.hero.z = BOSSWARS_CZ;   // inne i boss-rummet
   side.hero.frozenTime = 0; side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;
   side.heroFearTime = 0; side.iceBlockRemaining = 0;
+  // Städa FÖRRA hjältens state vid byte → ren start, "samma inställningar som andra lägen".
+  for (const arr of ['fireballs', 'projectiles', 'blackHoles', 'vineTraps', 'thornPools', 'hammers',
+                     'novaEffects', 'shatters', 'fireWaves', 'kostefoGooseWaves', 'kostefoSliders',
+                     'kostefoUltJoints', 'kostefoClones', 'aragurnBanners', 'ironWillExplosions',
+                     'heroCopies', 'heroCopyFireballs', 'creepProjectiles', 'monsterProjectiles'])
+    if (Array.isArray(side[arr])) side[arr].length = 0;
+  side.laserBeam = null; side.rageRemaining = 0; side.berserkRemaining = 0; side.berserkCharged = false;
+  side.gandulfBuffRemaining = 0; side.gandulfBuffStacks = 0; side.legolusBuffRemaining = 0;
+  side.legolusInvisRemaining = 0; side.legolusUltAaPending = false; side.kostefoCloudRemaining = 0;
+  side.kostefoCompanion = null; side.kostefoUltRemaining = 0; side.kostefoUltJointsState = null;
+  side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
+  side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.gimluHammerMsRem = 0; side.titansTauntRemaining = 0;
+  side.ironWillRemaining = 0; side.ironWillStored = 0; side._ultLockoutTime = 0;
+  side.hero.tauntedTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1; side.attackCounter = 0;
   side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
   recomputeArenaSideStats(state, side);   // bas-stats + ev. loadout (boss-wars = endgame-balans)
   side.hero.hp = side.hero.maxHp;
@@ -2970,23 +2985,28 @@ function createSandboxState(heroId) {
   state.sandbox = true;
   state.bossActivated = true;   // hjälte-combat aktiv direkt (ingen gå-till-boss-rum-fas)
   state.gateClosed = false;
-  state.boss = null;            // ingen boss
-  // Nolla boss-wars-mekanik-arrayer så inget bossbeteende kör i sandbox-ticken.
+  // Nolla boss-wars-mekanik-arrayer så inget bossbeteende kör i sandbox-ticken (men BEHÅLL bossen).
   state.bossWarsMinions = []; state.boss2Ads = []; state.boss4Minions = [];
   state.boss4Bags = []; state.boss4Pools = []; state.bossProjectiles = []; state.bossPools = [];
   // Solo: döda side 2 & 3 så ev. loopar hoppar dem (sandboxen tickar bara side 1).
   for (const idx of [2, 3]) if (state.sides[idx]) state.sides[idx].hero.dead = true;
-  // Dummies i sides[1].monsters (delad ref → hjältens AA/skills riktar mot dem). 2 nära + 1 ensam.
+  // Mål i sides[1].monsters (delad ref → hjältens AA/skills riktar mot dem). Layout per user-bild:
+  // BOSS ensam i mitten (boss-wars-boss-modell) + 2 monster bredvid varandra. Alla STÅR STILLA.
   const cx = BOSSWARS_CX, cz = BOSSWARS_CZ;
   state.sides[1].monsters = [];
   state.sides[2].monsters = state.sides[1].monsters;
   state.sides[3].monsters = state.sides[1].monsters;
-  state.sandboxDummies = [
-    sandboxMakeDummy(state, cx + 6,  cz + 3),   // par – nära varandra
-    sandboxMakeDummy(state, cx + 6,  cz - 3),   // par
-    sandboxMakeDummy(state, cx + 17, cz + 9),   // ensam
-  ];
-  for (const d of state.sandboxDummies) state.sides[1].monsters.push(d);
+  const boss = state.boss;   // skapad av createBossWarsState — återanvänds som center-dummy
+  if (boss) {
+    boss.x = cx; boss.z = cz; boss._ax = cx; boss._az = cz;
+    boss.isSandboxDummy = true;   // odödlig + ankrad i sandbox-ticken (behåller isBossWarsBoss → boss-modell + DR)
+    boss.activeCast = null; boss.bossActivated = true;
+    state.sides[1].monsters.push(boss);
+  }
+  const mon1 = sandboxMakeDummy(state, cx - 3, cz - 13);   // par – bredvid varandra
+  const mon2 = sandboxMakeDummy(state, cx + 3, cz - 13);   // par
+  state.sandboxDummies = [boss, mon1, mon2].filter(Boolean);
+  state.sides[1].monsters.push(mon1, mon2);
   sandboxSetupHero(state, heroId);
   return state;
 }
@@ -3050,6 +3070,7 @@ function tickSandbox(state, dt) {
   updateMonsterProjectiles(state, s, dt);
   // 3) Dummies: odödliga (dör/despawnar aldrig) + regen till full efter REGEN_DELAY utan träff.
   for (const d of state.sandboxDummies) {
+    d.x = d._ax; d.z = d._az;     // ANKRA → står helt stilla (knockback/pull från skills flyttar dem ej)
     if (d.hp < d._lastHp - 0.01) d._regenTimer = SANDBOX_DUMMY_REGEN_DELAY;  // tog skada → vänta innan regen
     else if (d._regenTimer > 0) { d._regenTimer -= dt; if (d._regenTimer <= 0) d.hp = d.maxHp; }
     if (d.hp < 1) d.hp = 1;       // odödlig
@@ -3061,7 +3082,7 @@ function serializeSandboxState(state) {
   return {
     sb: 1,
     h: serializeArenaHero(state.sides[1], _sandboxHeroBuf),
-    dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp })),
+    dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp, b: d.isBossWarsBoss ? 1 : 0 })),
   };
 }
 const _sandboxHeroBuf = _makeHeroSnapBuf();
