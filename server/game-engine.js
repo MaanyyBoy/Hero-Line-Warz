@@ -1695,6 +1695,9 @@ function tickGimluRageServer(state, side, dt) {
                    : (state.mode === 'sandbox') ? sandboxNearestDummy(state, side.hero.x, side.hero.z) : null;
   while (side.rageTickAccum >= RAGE_TICK_INTERVAL && side.rageRemaining > 0) {
     side.rageTickAccum -= RAGE_TICK_INTERVAL;
+    // K5: stor earthquake-puls per damage-instans runt hero (hela ult-AoE:n). Återanvänder novaEffects.
+    side.novaEffects = side.novaEffects || [];
+    side.novaEffects.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 0.9, maxLife: 0.9, r: RAGE_PULSE_RADIUS, kind: 'q' });
     if (bossTarget && bossTarget.hp > 0) {
       const d = Math.hypot(bossTarget.x - side.hero.x, bossTarget.z - side.hero.z);
       if (d < RAGE_PULSE_RADIUS) {
@@ -2273,7 +2276,7 @@ const _arenaTalSnap = {
 //  skills looked empty in those modes.) Named mappers avoid per-tick closure alloc.
 function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z), life: r2(b.maxLife ? b.life / b.maxLife : 0) }; }   // Z4: life 1→0 → klienten växer black hole mot explosionsradien
 function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life) }; }
-function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), r: NOVA_RADIUS, life: r2(n.maxLife ? n.life / n.maxLife : n.life) }; }
+function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r2(n.maxLife ? n.life / n.maxLife : n.life), k: n.kind }; }   // k='q' → Kryx earthquake-puls (K1/K5), annars frost
 function _mapAb(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
 function _mapKg(w)  { return { id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) }; }
 function _mapKs(sl) { return { id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) }; }
@@ -6463,6 +6466,9 @@ function castGimluTaunt(state, sideIdx) {
   const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
   const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
+  // K1: earthquake-puls vid HELA AoE:n + dröjande sprickor (1.5s). Återanvänder novaEffects (kind='q').
+  side.novaEffects = side.novaEffects || [];
+  side.novaEffects.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 1.5, maxLife: 1.5, r: eRad, kind: 'q' });
   let drGain = 0;
   // Monsters (minions + boss)
   for (let i = side.monsters.length - 1; i >= 0; i--) {
@@ -9362,7 +9368,7 @@ function serializeSide(side) {
     C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, aac: c.aac || 0, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
     F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
     P: arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
-    N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), life: r3(n.life / n.maxLife) })),
+    N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r3(n.life / n.maxLife), k: n.kind })),
     CP: arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
     MR: arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
     HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
