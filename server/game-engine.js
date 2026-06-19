@@ -9210,6 +9210,7 @@ function serializeSide(side) {
     h: {
       x: r2(side.hero.x), z: r2(side.hero.z),
       hp: ri(side.hero.hp), mh: ri(side.hero.maxHp),
+      sh: nzr2(side.shield),   // shield → client shield-bar (G1)
       fx: r3(side.hero.facingX), fz: r3(side.hero.facingZ),
       d: side.hero.dead, rt: nzr1(side.hero.respawnTimer),
       // Debuff-timers — skippas helt när 0 (sparas i payload). Klient: `|| 0`.
