@@ -2264,11 +2264,11 @@ const _arenaTalSnap = {
 //  skills looked empty in those modes.) Named mappers avoid per-tick closure alloc.
 function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
 function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life) }; }
-function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), life: r2(n.maxLife ? n.life / n.maxLife : n.life) }; }
+function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), r: NOVA_RADIUS, life: r2(n.maxLife ? n.life / n.maxLife : n.life) }; }
 function _mapAb(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
 function _mapKg(w)  { return { id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) }; }
 function _mapKs(sl) { return { id: sl.id, x: r2(sl.x), z: r2(sl.z), ry: r2(Math.atan2(sl.dx, sl.dz)) }; }
-function _mapVt(v)  { return { id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.maxLife ? v.life / v.maxLife : v.life) }; }
+function _mapVt(v)  { return { id: v.id, x: r2(v.x), z: r2(v.z), r: r2(v.radius || 3), life: r3(v.maxLife ? v.life / v.maxLife : v.life) }; }
 function _mapTp(p)  { return { id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) }; }
 function _mapHm(h)  { return { id: h.id, x: r2(h.x), z: r2(h.z) }; }
 function _mapIwe(e) { return { id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) }; }
