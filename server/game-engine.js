@@ -15,6 +15,12 @@ const HERO_BASE_MOVE_SPEED = 6;
 const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
+// Attack-move feel (all modes, server-auth): the hero must STOP to auto-attack — it can't run
+// and AA at once. While swinging it's movement-locked for this fraction of its attack interval
+// (faster attack speed → shorter stop). Pressing ATK also acquires/chases a target up to
+// AA_ACQUIRE_RANGE_MUL × attack range, so the hero runs toward the nearest enemy to attack it.
+const AA_MOVE_LOCK_FRAC = 0.55;
+const AA_ACQUIRE_RANGE_MUL = 1.5;
 const PROJECTILE_SPEED = 18;
 
 // Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
@@ -1763,7 +1769,7 @@ function tickArenaCombat(state, dt) {
   for (const sideIdx of arenaKeys(state)) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx] && state.lastInputs[sideIdx].j;
-    if (j) applyMovement(side, j.x, j.z, dt);
+    heroAutoMove(side, j, dt);
   }
   for (const sideIdx of arenaKeys(state)) {
     const side = state.sides[sideIdx];
@@ -2192,6 +2198,7 @@ function serializeArenaHero(side, buf) {
   buf.kCl = (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined;
   buf.tx = r2(side.targetX || 0);
   buf.tz = r2(side.targetZ || 0);
+  buf.aml = (side.aaMoveLockTime || 0) > 0 ? 1 : undefined;   // AA swing-lock → client freezes local prediction (anti-jank)
   buf.aus = nz(side.auraStacks);
   buf.art = nzr2(side.auraResetTimer);
   buf.ads = nz(side.adStacks);
@@ -3049,7 +3056,7 @@ function tickSandbox(state, dt) {
   if (!s.hero.dead) {
     const inp = state.lastInputs && state.lastInputs[1];
     const j = (inp && inp.j) || { x: 0, z: 0 };
-    applyMovement(s, j.x, j.z, dt);
+    heroAutoMove(s, j, dt);
   }
   // 2) Hjälte-combat — EXAKT boss-wars hjälte-sekvensen (side 1, opp=null → inga fiender slår
   // tillbaka). Skill-FUNKTIONERNA är delade med live → auto-synkat; bara anrops-listan dupliceras.
@@ -4079,7 +4086,7 @@ function tickBossWars(state, dt) {
     s._bwGateClosed = state.gateClosed;   // sync till heroWalk/applyMovement
     const inp = state.lastInputs[idx];
     const j = (inp && inp.j) || { x: 0, z: 0 };
-    applyMovement(s, j.x, j.z, dt);
+    heroAutoMove(s, j, dt);
   }
   // 2) Hjälte-combat (CO-OP vs boss). opp=null → ingen hero-vs-hero (friendly fire).
   // Bossen ligger i sides[1].monsters (delad ref) → updateHeroAttack/updateProjectiles
@@ -5525,9 +5532,13 @@ function maintainTargetLock(side, opp, state) {
   const ultAaRange = (side.heroId === 'legolas' && side.legolusUltAaPending)
     ? baseRange * LEGOLUS_ULT_AA_RANGE_MUL : baseRange;
   const range = ultAaRange;
+  let inRange = false;
   if (target) {
     const dx = target.x - side.hero.x, dz = target.z - side.hero.z;
-    if (dx * dx + dz * dz > range * range) target = null;
+    const d2 = dx * dx + dz * dz;
+    const acquire = range * AA_ACQUIRE_RANGE_MUL;
+    if (d2 > acquire * acquire) target = null;   // beyond acquire range → drop the lock
+    else inRange = d2 <= range * range;           // within attack range → may fire; else chase toward it
   }
   if (!target) {
     // Manuell AA: ingen auto-pick av nästa target. Target dog eller är out of
@@ -5541,21 +5552,23 @@ function maintainTargetLock(side, opp, state) {
   // Återanvänd ett cachat result-objekt per side (undviker ny allokering 30 Hz).
   // Fälten skrivs varje gång → ingen stale-data-risk. Objektet används bara
   // under samma sync-tick av updateHeroAttack (ej async/multi-tick).
-  if (!side._aaTarget) side._aaTarget = { entity: null, isMonster: false, isHero: false, isDuelOrb: false, isArenaOrb: false };
+  if (!side._aaTarget) side._aaTarget = { entity: null, isMonster: false, isHero: false, isDuelOrb: false, isArenaOrb: false, inRange: false };
   const r = side._aaTarget;
   r.entity = target; r.isMonster = isMonster; r.isHero = isHero; r.isDuelOrb = isDuelOrb; r.isArenaOrb = isArenaOrb;
+  r.inRange = inRange;   // false = locked but out of attack range → chase, don't fire
   return r;
 }
 
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
+  side.aaMoveLockTime = Math.max(0, (side.aaMoveLockTime || 0) - dt);   // swing-commit window ticks down
   if (side.hero.dead || !side.aaActive) return;
   // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block/fear).
   // heroFearTime tillagd (QA 2026-06-17): bot-guards immobiliserar redan vid fear; människo-
   // spelare gjorde det inte → Gimlu Titan's Rage-fear hade ingen effekt på riktiga spelare.
   if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
   const target = maintainTargetLock(side, opp, state);
-  if (!target || side.attackCd > 0) return;
+  if (!target || side.attackCd > 0 || !target.inRange) return;   // out of attack range → chase (movement loop), don't fire
   side.attackCounter++;
   const isAoE = side.attackCounter % PASSIVE_EVERY === 0;
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
@@ -5702,6 +5715,11 @@ function updateHeroAttack(state, side, opp, dt) {
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
   const rageAsMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (arena/bosswars only)
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul);
+  // Face the target and commit to the swing: the hero stops to attack (can't run + AA at once).
+  // Lock scales with the just-computed interval → faster attack speed = shorter stop.
+  { const _fx = target.entity.x - side.hero.x, _fz = target.entity.z - side.hero.z, _fd = Math.hypot(_fx, _fz) || 1;
+    side.hero.facingX = _fx / _fd; side.hero.facingZ = _fz / _fd; }
+  side.aaMoveLockTime = side.attackCd * AA_MOVE_LOCK_FRAC;
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -7963,8 +7981,23 @@ function tickKostefoSkills(state, side, opp, dt) {
   tickKostefoClonesLvl5(side, dt);
 }
 
+// Movement wrapper used by EVERY mode-tick: if an auto-attack target is locked but out of attack
+// range (ATK pressed up to 1.5× range), run toward it to attack; otherwise apply the joystick.
+function heroAutoMove(side, j, dt) {
+  if (side.aaActive && side.targetType && !side.hero.dead && (side.aaMoveLockTime || 0) <= 0) {
+    const dx = (side.targetX || 0) - side.hero.x, dz = (side.targetZ || 0) - side.hero.z;
+    // Match maintainTargetLock's effective range (Zheyna warpath + Legolas ult-AA multipliers).
+    const baseR = (side.attackRange || HERO_ATTACK_RANGE) * ((side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
+    const effR = (side.heroId === 'legolas' && side.legolusUltAaPending) ? baseR * LEGOLUS_ULT_AA_RANGE_MUL : baseR;
+    if (Math.hypot(dx, dz) > effR) { applyMovement(side, dx, dz, dt); return; }
+  }
+  if (j) applyMovement(side, j.x, j.z, dt);
+}
+
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
+  // Attack-move: the hero stops while swinging an auto-attack (can't run + AA at once). All modes.
+  if ((side.aaMoveLockTime || 0) > 0) return;
   // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
@@ -8250,7 +8283,8 @@ function applyEvent(state, sideIdx, ev) {
     // Manuell AA: aktivera bara om någon fiende redan finns inom range.
     // Inget auto-aktiverande "väntar"-läge — hero attackerar bara efter explicit
     // tryck mot ett konkret target.
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, side.attackRange || HERO_ATTACK_RANGE, state);
+    // Acquire within 1.5× range so ATK starts a chase toward a target that's a bit out of range.
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, (side.attackRange || HERO_ATTACK_RANGE) * AA_ACQUIRE_RANGE_MUL, state);
     if (t) {
       side.aaActive = true;
       if (t.isHero) { side.targetId = 0; side.targetType = 'hero'; }
@@ -8911,7 +8945,7 @@ function tickGame(state, dt) {
     for (const sideIdx of [1, 2]) {
       const side = state.sides[sideIdx];
       const j = state.lastInputs[sideIdx].j;
-      if (j) applyMovement(side, j.x, j.z, dt);
+      heroAutoMove(side, j, dt);
     }
     // Hero-attacker (mot opp.hero, hanteras i findClosestHostile när state.duelActive)
     for (const sideIdx of [1, 2]) {
@@ -9030,7 +9064,7 @@ function tickGame(state, dt) {
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     const j = state.lastInputs[sideIdx].j;
-    if (j) applyMovement(side, j.x, j.z, dt);
+    heroAutoMove(side, j, dt);
   }
   // Fontän-aura: räkna ut per sida innan andra updates (så regen + buff appliceras hela ticket)
   for (const sideIdx of [1, 2]) {
@@ -9214,6 +9248,7 @@ function serializeSide(side) {
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     fa: flag(side.heroFountainAura),
     aa: flag(side.aaActive),
+    aml: flag((side.aaMoveLockTime || 0) > 0),
     tg: nz(side.targetId),
     tt: side.targetType || undefined,
     tx: nzr2(side.targetX),
