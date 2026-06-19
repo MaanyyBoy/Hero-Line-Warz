@@ -2275,7 +2275,7 @@ const _arenaTalSnap = {
 // (Was previously only emitted by Arena; Boss Wars/Sandbox sent nothing → most hero
 //  skills looked empty in those modes.) Named mappers avoid per-tick closure alloc.
 function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z), life: r2(b.maxLife ? b.life / b.maxLife : 0) }; }   // Z4: life 1→0 → klienten växer black hole mot explosionsradien
-function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life) }; }
+function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life), k: w.kind }; }   // k='wind' → Z3 lila vind-kon
 function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r2(n.maxLife ? n.life / n.maxLife : n.life), k: n.kind }; }   // k='q' → Kryx earthquake-puls (K1/K5), annars frost
 function _mapAb(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
 function _mapKg(w)  { return { id: w.id, x: r2(w.x), z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)) }; }
@@ -6840,6 +6840,7 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
     x: side.hero.x, z: side.hero.z,
     dx: dirX, dz: dirZ,
     life: 0.6, maxLife: 0.6,
+    kind: 'wind',   // Z3: klienten renderar lila/vit vind-kon i st f orange eld
   });
   const inCone = (ex, ez) => {
     const ddx = ex - side.hero.x, ddz = ez - side.hero.z;
@@ -9373,7 +9374,7 @@ function serializeSide(side) {
     MR: arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
     HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
     HCF: arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
-    FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife) })),
+    FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife), k: f.kind })),
     BH: arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
     SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
     VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
