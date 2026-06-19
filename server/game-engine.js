@@ -2271,7 +2271,7 @@ const _arenaTalSnap = {
 // thus the client's shared MpSkillEntities renderer — is identical in every mode.
 // (Was previously only emitted by Arena; Boss Wars/Sandbox sent nothing → most hero
 //  skills looked empty in those modes.) Named mappers avoid per-tick closure alloc.
-function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
+function _mapBh(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z), life: r2(b.maxLife ? b.life / b.maxLife : 0) }; }   // Z4: life 1→0 → klienten växer black hole mot explosionsradien
 function _mapFw(w)  { return { id: w.id, x: r2(w.x), y: 0, z: r2(w.z), ry: r2(Math.atan2(w.dx, w.dz)), life: r2(w.maxLife ? w.life / w.maxLife : w.life) }; }
 function _mapNv(n)  { return { id: n.id, x: r2(n.x), z: r2(n.z), r: NOVA_RADIUS, life: r2(n.maxLife ? n.life / n.maxLife : n.life) }; }
 function _mapAb(b)  { return { id: b.id, x: r2(b.x), z: r2(b.z) }; }
