@@ -350,7 +350,7 @@ const LEGOLUS_BUFF_DMG_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
 const LEGOLUS_BUFF_AS_PCT = 0.30;        // Hunter's Focus: +30% attack speed under buff
-const LEGOLUS_DASH_DISTANCE = 4.0;
+const LEGOLUS_DASH_DISTANCE = 8.0;   // N2: doubled (user) — was 4.0
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
 // Passive: var 3:e AA → nästa AA är split + poison
 const LEGOLUS_PASSIVE_EVERY = 3;
@@ -442,7 +442,7 @@ const BERSERK_BAR_PCT = 0.10, BERSERK_FULL_PCT = 0.30;
 const BERSERK_STOMP_RADIUS_MUL = 2.0, BERSERK_STOMP_DMG_MUL = 1.5, BERSERK_STOMP_SLOW_MUL = 0.40;   // empowered Stomp (100% AoE, +50% dmg, 60% slow)
 const BERSERK_HAMMER_SIZE_MUL = 3.0, BERSERK_HAMMER_DMG_MUL = 1.5, BERSERK_HAMMER_HEAL_MUL = 1.5, BERSERK_HAMMER_SLOW_MUL = 0.50;
 const HAMMER_SPEED = 12;
-const HAMMER_RANGE = 9;
+const HAMMER_RANGE = 11.7;   // K3: +30% (user) — was 9 (also aligns with the client SkillData preview)
 const HAMMER_RADIUS = 0.8;
 const HAMMER_DAMAGE = 25;
 const HAMMER_LIFESTEAL = 0.15;
@@ -8332,7 +8332,10 @@ function applyEvent(state, sideIdx, ev) {
         if (side.heroId === 'legolas' && !side.hero.dead) {
           side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
           side.legolusUltAaPending = true;
-          side.attackCd = 0;   // avbryt pågående AA → empowered-skottet fyrar direkt
+          side.attackCd = 0;
+          // N5: stop auto-attacking on ult cast — the empowered shot waits until the
+          // player presses ATK again (then aaActive→true fires the pending empowered AA).
+          side.aaActive = false; side.targetId = 0; side.targetType = '';
         }
         // Ganji Ninja's Mastery: 5 s invisibility (+move speed, agnostic effect).
         // Clone + the empowered break-AA are deferred to a later pass.
