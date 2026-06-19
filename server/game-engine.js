@@ -1208,7 +1208,9 @@ function damageHero(side, amount) {
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   // Aragurn banner-aura (Hero Leap lvl5): -20% incoming dmg
   const bannerMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * gimluMul * aragurnMul * bannerMul;
+  // E3 War Shout: -20% incoming dmg medan buffen är aktiv (self + buffade allierade)
+  const shoutDrMul = (side.aragurnShoutBuffTime || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * gimluMul * aragurnMul * bannerMul * shoutDrMul;
   // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar samma instans ×1.5 (egen
   // HP-pool) och dör snabbt → DR slut. Robust i alla lägen (ingen aggro-omdirigering).
   if (side.zheynaClone) {
@@ -1873,6 +1875,8 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   }
   side.whirlwindRemaining = 0;
   side.aragurnLeap = null;
+  side.aragurnShoutBuffTime = 0;    // E3 War Shout-buff (MS/dmg/DR)
+  side.aragurnShoutHealRemaining = 0; side.aragurnShoutHealPct = 0;
   side.laserBeam = null;            // magiker ult (R)
   side.rageRemaining = 0;           // gimlu ult (R)
   side.rageTickAccum = 0;           // gimlu ult ackumulator
@@ -2186,6 +2190,7 @@ function serializeArenaHero(side, buf) {
   buf.wwr = nzr2(side.whirlwindRemaining);
   buf.trg = nzr2(side.titansRageTime);          // K4: Titan's Rage → red glow
   buf.lbf = nzr2(side.legolusBuffRemaining);    // N3: Hunter's Focus → green glow
+  buf.shb = nzr2(side.aragurnShoutBuffTime);    // E3: War Shout → gold glow
   // Ult-visual-state: optional-objekt skapas nytt vid aktivering (men är sällan aktiva).
   buf.lp = leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined;
   buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
@@ -3005,6 +3010,7 @@ function sandboxSetupHero(state, heroId) {
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
   side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.gimluHammerMsRem = 0; side.titansTauntRemaining = 0;
   side.ironWillRemaining = 0; side.ironWillStored = 0; side._ultLockoutTime = 0;
+  side.aragurnShoutBuffTime = 0; side.aragurnShoutHealRemaining = 0; side.aragurnShoutHealPct = 0;
   side.hero.tauntedTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1; side.attackCounter = 0;
   side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
   recomputeArenaSideStats(state, side);   // bas-stats + ev. loadout (boss-wars = endgame-balans)
@@ -5288,7 +5294,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  const finalDmg = bossWarsDmgMod(m, dmg * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR
+  const finalDmg = bossWarsDmgMod(m, dmg * aragurnShoutDmgMul(side) * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR (+E3 shout)
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   aragurnLifestealHeal(side, actualDealt);
@@ -5301,7 +5307,7 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
     triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
     creep.frozenTime = 0;
   }
-  const finalDmg = dmg * dmgTakenDebuffMul(creep);
+  const finalDmg = dmg * aragurnShoutDmgMul(attackerSide) * dmgTakenDebuffMul(creep);
   const actualDealt = Math.min(creep.hp, finalDmg);
   creep.hp -= finalDmg;
   aragurnLifestealHeal(attackerSide, actualDealt);
@@ -5313,7 +5319,7 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
     triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
     opp.hero.frozenTime = 0;
   }
-  const finalDmg = dmg * dmgTakenDebuffMul(opp.hero);
+  const finalDmg = dmg * aragurnShoutDmgMul(side) * dmgTakenDebuffMul(opp.hero);
   const actualDealt = Math.min(opp.hero.hp, finalDmg);
   damageHero(opp, finalDmg);
   aragurnLifestealHeal(side, actualDealt);
@@ -5608,7 +5614,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars) && (side.berserkRemaining || 0) > 0;
   const rageDmgMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/bosswars only)
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1);
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * aragurnShoutDmgMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -6506,6 +6512,8 @@ function tickKryxTimers(side, dt) {
   if ((side.titansStompDrTime || 0) > 0) { side.titansStompDrTime = Math.max(0, side.titansStompDrTime - dt); if (side.titansStompDrTime <= 0) side.titansStompDr = 0; }
   if ((side.heroASlowTime || 0) > 0) { side.heroASlowTime = Math.max(0, side.heroASlowTime - dt); if (side.heroASlowTime <= 0) side.heroASlowMul = 1; }
   if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageBuff = 0; }
+  // E3 War Shout-buff (alla lägen — tickas här i den delade timer-hubben)
+  if ((side.aragurnShoutBuffTime || 0) > 0) side.aragurnShoutBuffTime = Math.max(0, side.aragurnShoutBuffTime - dt);
   // Titan's Rage leech: efter fear-fönstret (rageLeechStart) → 1s där denna (feared)
   // hjältes utdelade skada healar Kryx (rageLeechOwner). Empowered: slow vid leech-start.
   if ((side.rageLeechStart || 0) > 0) {
@@ -7087,6 +7095,19 @@ const SHOUT_SLOW_DURATION = 3.0;
 const SHOUT_SLOW_MUL = 0.80;
 const SHOUT_HEAL_DURATION = 2.0;
 const SHOUT_HEAL_SELF_PCT = 0.10;
+// E3 War Shout buff (utöver cone-skadan): self + allierade i stor cirkel får
+// +20% MS / +20% utgående skada / +20% DR under fönstret. Allierade får även en
+// (lägre) HoT. Buffen tickas i tickKryxTimers (alla loopar) så den gäller alla lägen.
+const SHOUT_BUFF_DURATION = 4.0;
+const SHOUT_BUFF_MS = 0.20;
+const SHOUT_BUFF_DMG = 0.20;
+const SHOUT_BUFF_DR = 0.20;
+const SHOUT_BUFF_RADIUS = 8.0;       // stor buff-cirkel runt Aragurn
+const SHOUT_HEAL_ALLY_PCT = 0.06;    // allierad HoT (lägre än Aragurns egen)
+// +20% utgående skada medan War Shout-buffen är aktiv (self eller buffad allierad).
+function aragurnShoutDmgMul(side) {
+  return (side && (side.aragurnShoutBuffTime || 0) > 0) ? (1 + SHOUT_BUFF_DMG) : 1;
+}
 const LEAP_TRAVEL_TIME = 1.0;
 const LEAP_MAX_DISTANCE = 11.5;
 const LEAP_RADIUS = 4.55;
@@ -7187,6 +7208,22 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   // HoT på Aragurn
   side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
   side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
+  // E3: self-buff (MS/dmg/DR) + ally-buff i stor cirkel (boss wars co-op). Ally får HoT med.
+  side.aragurnShoutBuffTime = SHOUT_BUFF_DURATION;
+  if (side.inBossWars) {
+    const br2 = SHOUT_BUFF_RADIUS * SHOUT_BUFF_RADIUS;
+    for (const idx of [1, 2, 3]) {
+      if (idx === sideIdx) continue;
+      const a = state.sides[idx];
+      if (!a || a.hero.dead) continue;
+      const dx = a.hero.x - side.hero.x, dz = a.hero.z - side.hero.z;
+      if (dx * dx + dz * dz <= br2) {
+        a.aragurnShoutBuffTime = SHOUT_BUFF_DURATION;
+        a.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
+        a.aragurnShoutHealPct = SHOUT_HEAL_ALLY_PCT;
+      }
+    }
+  }
   const opp = arenaOpp(state, sideIdx);
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   // a_shout_radius talent: +30% cone length and half-angle
@@ -8030,8 +8067,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
   const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * slowMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * slowMul * strength * dt;
+  const shoutMs = (side.aragurnShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
@@ -9326,6 +9364,7 @@ function serializeSide(side) {
     SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
     VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
     lbuf: nzr2(side.legolusBuffRemaining),
+    shb: nzr2(side.aragurnShoutBuffTime),   // E3: War Shout buff → gold glow (side-level i classic)
     ldash: flag(side.legolusDashBuffPending),
     lds2: nzr2(side.legolasDashStackCd),
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
