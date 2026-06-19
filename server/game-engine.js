@@ -2184,6 +2184,8 @@ function serializeArenaHero(side, buf) {
   buf.asp = nzr2(side.arenaSpeedBuff);
   buf.adm = nzr2(side.arenaDamageBuff);
   buf.wwr = nzr2(side.whirlwindRemaining);
+  buf.trg = nzr2(side.titansRageTime);          // K4: Titan's Rage → red glow
+  buf.lbf = nzr2(side.legolusBuffRemaining);    // N3: Hunter's Focus → green glow
   // Ult-visual-state: optional-objekt skapas nytt vid aktivering (men är sällan aktiva).
   buf.lp = leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined;
   buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
