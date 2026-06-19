@@ -9393,6 +9393,8 @@ function serializeSide(side) {
     kCloud: nzr2(side.kostefoCloudRemaining),
     kCloudX: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudX) : undefined,
     kCloudZ: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudZ) : undefined,
+    // KO3: uniformt kCl-objekt (spegel av arena buf.kCl) så klienten renderar cloud likadant i alla lägen
+    kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined,
     kUlt: nzr2(side.kostefoUltRemaining),
     kComp: side.kostefoCompanion ? {
       x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0),
