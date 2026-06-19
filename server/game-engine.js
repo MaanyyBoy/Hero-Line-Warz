@@ -351,7 +351,7 @@ const LEGOLUS_BUFF_DMG_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_PCT = 0.10;
 const LEGOLUS_BUFF_CRIT_DMG_PCT = 0.30;  // +30% crit damage (extra ovanpå 2x default)
 const LEGOLUS_BUFF_AS_PCT = 0.30;        // Hunter's Focus: +30% attack speed under buff
-const LEGOLUS_DASH_DISTANCE = 8.0;   // N2: doubled (user) — was 4.0
+const LEGOLUS_DASH_DISTANCE = 5.6;   // R2 N-dash: -30% from 8.0 (user 2026-06-20)
 const LEGOLUS_DASH_LIFESTEAL = 0.20;
 // Passive: var 3:e AA → nästa AA är split + poison
 const LEGOLUS_PASSIVE_EVERY = 3;
