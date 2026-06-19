@@ -21,6 +21,7 @@ const HERO_ATTACK_INTERVAL = 1.0;
 // AA_ACQUIRE_RANGE_MUL × attack range, so the hero runs toward the nearest enemy to attack it.
 const AA_MOVE_LOCK_FRAC = 0.55;
 const AA_ACQUIRE_RANGE_MUL = 1.5;
+const AA_CRIT_FLASH = 0.15;   // G5: sek som crit-AA-flaggan (cri) hålls hög så klienten stylar siffran som crit
 const PROJECTILE_SPEED = 18;
 
 // Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
@@ -2191,6 +2192,7 @@ function serializeArenaHero(side, buf) {
   buf.trg = nzr2(side.titansRageTime);          // K4: Titan's Rage → red glow
   buf.lbf = nzr2(side.legolusBuffRemaining);    // N3: Hunter's Focus → green glow
   buf.shb = nzr2(side.aragurnShoutBuffTime);    // E3: War Shout → gold glow
+  buf.cri = flag(side.aaCritFlash > 0);         // G5: senaste AA var en crit → klienten stylar siffran
   // Ult-visual-state: optional-objekt skapas nytt vid aktivering (men är sällan aktiva).
   buf.lp = leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined;
   buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
@@ -5602,6 +5604,7 @@ function updateHeroAttack(state, side, opp, dt) {
   }
   const isCrit = critChance > 0 && Math.random() < critChance;
   const critMul = isCrit ? critMulBase : 1;
+  if (isCrit) side.aaCritFlash = AA_CRIT_FLASH;   // G5: signalera crit till klienten (cri-flagga)
   // Legolus passive: var 3:e AA ger split-buff till nästa AA
   const isLegolusHero = side.heroId === 'legolas';
   const splitNow = isLegolusHero && !!side.legolusSplitPending;
@@ -6514,6 +6517,8 @@ function tickKryxTimers(side, dt) {
   if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageBuff = 0; }
   // E3 War Shout-buff (alla lägen — tickas här i den delade timer-hubben)
   if ((side.aragurnShoutBuffTime || 0) > 0) side.aragurnShoutBuffTime = Math.max(0, side.aragurnShoutBuffTime - dt);
+  // G5 crit-flash (alla lägen) — kort fönster där cri-flaggan är hög efter en crit-AA
+  if ((side.aaCritFlash || 0) > 0) side.aaCritFlash = Math.max(0, side.aaCritFlash - dt);
   // Titan's Rage leech: efter fear-fönstret (rageLeechStart) → 1s där denna (feared)
   // hjältes utdelade skada healar Kryx (rageLeechOwner). Empowered: slow vid leech-start.
   if ((side.rageLeechStart || 0) > 0) {
