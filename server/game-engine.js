@@ -3116,14 +3116,17 @@ function tickSandbox(state, dt) {
     else if (d._regenTimer > 0) { d._regenTimer -= dt; if (d._regenTimer <= 0) d.hp = d.maxHp; }
     if (d.hp < 1) d.hp = 1;       // odödlig
     d._lastHp = d.hp;
-    d.frozenTime = 0; d.dotRemaining = 0; d.poisonRemaining = 0;   // ingen kvarvarande CC/DoT-jank
+    // Z1: låt Frost Nova-frysen hålla sin tid (1.5s) så indikatorn syns — dummies står stilla
+    // ändå, så ingen rörelse-jank. DoT/poison nollas fortf. (immortal regen ska ej spamma DoT).
+    if ((d.frozenTime || 0) > 0) d.frozenTime = Math.max(0, d.frozenTime - dt);
+    d.dotRemaining = 0; d.poisonRemaining = 0;
   }
 }
 function serializeSandboxState(state) {
   const snap = {
     sb: 1,
     h: serializeArenaHero(state.sides[1], _sandboxHeroBuf),
-    dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp, b: d.isBossWarsBoss ? 1 : 0 })),
+    dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp, b: d.isBossWarsBoss ? 1 : 0, fz: flag((d.frozenTime || 0) > 0) })),   // Z1: fz = frusen (is-indikator)
     // Hero skill-entities under side "1" (same per-side-keyed shape as Arena/Boss Wars) so the
     // shared client renderer shows black holes/fire waves/novas/vine traps/etc. in sandbox too.
     bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {},
