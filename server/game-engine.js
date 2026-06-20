@@ -20,11 +20,13 @@ const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
 // Attack-move feel (all modes, server-auth; tap-to-AA v2, user 2026-06-20): ATK is NOT a hold
-// button — each tap fires exactly ONE auto-attack and briefly STOPS the hero for the swing
-// (movement-locked for this fraction of the attack interval; faster attack speed → shorter stop),
-// then the joystick resumes. No auto-chase/taunt: a tap does nothing if the nearest enemy is out
-// of attack range. AA_ACQUIRE_RANGE_MUL is only the maintainTargetLock drop-lock window now.
-const AA_MOVE_LOCK_FRAC = 0.55;
+// button — each tap fires exactly ONE auto-attack and briefly STOPS the hero only for the SWING,
+// then the joystick resumes. NOT a fixed timer: the lock is the swing's share of each attack cycle
+// (lock = attackCd × this fraction), and attackCd IS the hero's attack speed — so a fast attacker
+// gets a short swing & runs more (more stop-go cycles), a slow attacker a longer one. Tune by feel:
+// lower = hero runs more / shorter slaps, higher = longer commit. No auto-chase/taunt: a tap does
+// nothing out of range. AA_ACQUIRE_RANGE_MUL is only the maintainTargetLock drop-lock window now.
+const AA_MOVE_LOCK_FRAC = 0.40;
 const AA_ACQUIRE_RANGE_MUL = 1.5;
 const AA_CRIT_FLASH = 0.15;   // G5: sek som crit-AA-flaggan (cri) hålls hög så klienten stylar siffran som crit
 const PROJECTILE_SPEED = 18;
