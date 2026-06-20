@@ -19,10 +19,11 @@ const MOVE_SPEED_FEEL_MUL = 1.15;
 const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
-// Attack-move feel (all modes, server-auth): the hero must STOP to auto-attack — it can't run
-// and AA at once. While swinging it's movement-locked for this fraction of its attack interval
-// (faster attack speed → shorter stop). Pressing ATK also acquires/chases a target up to
-// AA_ACQUIRE_RANGE_MUL × attack range, so the hero runs toward the nearest enemy to attack it.
+// Attack-move feel (all modes, server-auth; tap-to-AA v2, user 2026-06-20): ATK is NOT a hold
+// button — each tap fires exactly ONE auto-attack and briefly STOPS the hero for the swing
+// (movement-locked for this fraction of the attack interval; faster attack speed → shorter stop),
+// then the joystick resumes. No auto-chase/taunt: a tap does nothing if the nearest enemy is out
+// of attack range. AA_ACQUIRE_RANGE_MUL is only the maintainTargetLock drop-lock window now.
 const AA_MOVE_LOCK_FRAC = 0.55;
 const AA_ACQUIRE_RANGE_MUL = 1.5;
 const AA_CRIT_FLASH = 0.15;   // G5: sek som crit-AA-flaggan (cri) hålls hög så klienten stylar siffran som crit
@@ -2214,7 +2215,7 @@ function serializeArenaHero(side, buf) {
   buf.kCl = (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined;
   buf.tx = r2(side.targetX || 0);
   buf.tz = r2(side.targetZ || 0);
-  buf.aml = undefined;   // AA no longer freezes movement (attack-move can-run fix 2026-06-20) → client never freezes prediction
+  buf.aml = ((side.aaMoveLockTime || 0) > 0) ? 1 : undefined;   // 1 while committing an AA swing → client freezes joystick prediction (tap-to-AA stop, 2026-06-20 v2)
   buf.aus = nz(side.auraStacks);
   buf.art = nzr2(side.auraResetTimer);
   buf.ads = nz(side.adStacks);
@@ -5741,6 +5742,12 @@ function updateHeroAttack(state, side, opp, dt) {
   { const _fx = target.entity.x - side.hero.x, _fz = target.entity.z - side.hero.z, _fd = Math.hypot(_fx, _fz) || 1;
     side.hero.facingX = _fx / _fd; side.hero.facingZ = _fz / _fd; }
   side.aaMoveLockTime = side.attackCd * AA_MOVE_LOCK_FRAC;
+  // One-shot per tap (user 2026-06-20 v2): a manual ATK press fires exactly ONE AA, then stops —
+  // holding does nothing extra, you tap again to keep attacking. Target fields are left intact so
+  // this fire's snapshot still carries tx/tz for the projectile visual; maintainTargetLock returns
+  // null next tick (aaActive=false) so it won't re-fire. Bots re-arm through their own `!side.aaActive`
+  // gate every tick, so AI auto-attacks stay continuous; only human taps are one-shot.
+  side.aaActive = false;
 }
 
 function updateProjectiles(state, side, opp, dt) {
@@ -8043,22 +8050,18 @@ function tickKostefoSkills(state, side, opp, dt) {
 // range (ATK pressed up to 1.5× range), run toward it to attack; otherwise apply the joystick.
 function heroAutoMove(side, j, dt) {
   const jx = j ? j.x : 0, jz = j ? j.z : 0;
-  // PLAYER INPUT ALWAYS WINS (user 2026-06-20): movement is never blocked by an auto-attack —
-  // you can run while/between attacks; the hero never gets "locked"/taunted to its target.
-  if ((Math.abs(jx) + Math.abs(jz)) > 0.05) { applyMovement(side, jx, jz, dt); return; }
-  // No movement input + attacking a target that's out of range → walk into range (auto-chase).
-  if (side.aaActive && side.targetType && !side.hero.dead) {
-    const dx = (side.targetX || 0) - side.hero.x, dz = (side.targetZ || 0) - side.hero.z;
-    const baseR = (side.attackRange || HERO_ATTACK_RANGE) * ((side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
-    const effR = (side.heroId === 'legolas' && side.legolusUltAaPending) ? baseR * LEGOLUS_ULT_AA_RANGE_MUL : baseR;
-    if (Math.hypot(dx, dz) > effR) applyMovement(side, dx, dz, dt);
-  }
+  // The joystick is the ONLY movement input — there is NO auto-chase/taunt toward an AA target
+  // (user 2026-06-20 v2: a manual tap does nothing if the target is out of range; you walk in
+  // yourself). applyMovement briefly freezes during the AA swing (aaMoveLockTime).
+  if ((Math.abs(jx) + Math.abs(jz)) > 0.05) applyMovement(side, jx, jz, dt);
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
-  // (Attack-move no longer freezes movement — player input always moves the hero so AA never
-  //  "locks" you to the target; user 2026-06-20. CC below still stops movement.)
+  // Attack-move (tap-to-AA, user 2026-06-20 v2): each manual AA briefly commits the hero to the
+  // swing — movement freezes for aaMoveLockTime (a fraction of the attack interval) while the hero
+  // faces the target, then the joystick resumes. No taunt/chase: this is a short per-tap stop only.
+  if ((side.aaMoveLockTime || 0) > 0) return;
   // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
@@ -8345,8 +8348,12 @@ function applyEvent(state, sideIdx, ev) {
     // Manuell AA: aktivera bara om någon fiende redan finns inom range.
     // Inget auto-aktiverande "väntar"-läge — hero attackerar bara efter explicit
     // tryck mot ett konkret target.
-    // Acquire within 1.5× range so ATK starts a chase toward a target that's a bit out of range.
-    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, (side.attackRange || HERO_ATTACK_RANGE) * AA_ACQUIRE_RANGE_MUL, state);
+    // One-shot tap: only acquire a target already inside ATTACK range — a tap does NOTHING if the
+    // nearest enemy is out of range (no chase; user 2026-06-20 v2). You run closer and tap again.
+    // Range mirrors maintainTargetLock (Zheyna Warpath +range, Legolus empowered ult-AA double range).
+    const baseAcqRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
+    const acqRange = (side.heroId === 'legolas' && side.legolusUltAaPending) ? baseAcqRange * LEGOLUS_ULT_AA_RANGE_MUL : baseAcqRange;
+    const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, acqRange, state);
     if (t) {
       side.aaActive = true;
       if (t.isHero) { side.targetId = 0; side.targetType = 'hero'; }
@@ -9314,7 +9321,7 @@ function serializeSide(side) {
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     fa: flag(side.heroFountainAura),
     aa: flag(side.aaActive),
-    aml: undefined,   // AA no longer freezes movement (can-run fix 2026-06-20) → client never freezes prediction
+    aml: ((side.aaMoveLockTime || 0) > 0) ? 1 : undefined,   // 1 while committing an AA swing → client freezes joystick prediction (tap-to-AA stop, 2026-06-20 v2)
     tg: nz(side.targetId),
     tt: side.targetType || undefined,
     tx: nzr2(side.targetX),
