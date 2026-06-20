@@ -12,6 +12,10 @@ const TOWER_R = 1.6;
 // Bas-värden (används som fallback om heroId saknar def). Per-hero stats i HERO_DEFS.
 const HERO_MAX_HP = 100;
 const HERO_BASE_MOVE_SPEED = 6;
+// Game-feel (user 2026-06-20): +15% movement på ALLA hjältar (kändes slowmotion). Appliceras i
+// recomputeSideStats (bas, körs i alla lägen via recomputeArenaSideStats) → carryar genom loadout.
+// Klientens prediktion (_localMoveSpeed) måste matcha ×1.15 (arena/boss/sandbox); Line Wars läser ms.
+const MOVE_SPEED_FEEL_MUL = 1.15;
 const HERO_BASE_ATTACK_DMG = 5;
 const HERO_ATTACK_RANGE = 4.0;
 const HERO_ATTACK_INTERVAL = 1.0;
@@ -965,7 +969,7 @@ function recomputeSideStats(side) {
   const levelHpMul = 1 + LEVEL_HP_PCT * lvl;
   const levelMsMul = 1 + LEVEL_MS_PCT * lvl;
   side.attackDmg = attackDmg * levelDmgMul;
-  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul;
+  side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul * MOVE_SPEED_FEEL_MUL;
   side.attackSpeedMul = 1 + attackSpeedPct;
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
