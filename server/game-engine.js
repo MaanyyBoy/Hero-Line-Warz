@@ -2210,7 +2210,7 @@ function serializeArenaHero(side, buf) {
   buf.kCl = (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined;
   buf.tx = r2(side.targetX || 0);
   buf.tz = r2(side.targetZ || 0);
-  buf.aml = (side.aaMoveLockTime || 0) > 0 ? 1 : undefined;   // AA swing-lock → client freezes local prediction (anti-jank)
+  buf.aml = undefined;   // AA no longer freezes movement (attack-move can-run fix 2026-06-20) → client never freezes prediction
   buf.aus = nz(side.auraStacks);
   buf.art = nzr2(side.auraResetTimer);
   buf.ads = nz(side.adStacks);
@@ -8038,20 +8038,23 @@ function tickKostefoSkills(state, side, opp, dt) {
 // Movement wrapper used by EVERY mode-tick: if an auto-attack target is locked but out of attack
 // range (ATK pressed up to 1.5× range), run toward it to attack; otherwise apply the joystick.
 function heroAutoMove(side, j, dt) {
-  if (side.aaActive && side.targetType && !side.hero.dead && (side.aaMoveLockTime || 0) <= 0) {
+  const jx = j ? j.x : 0, jz = j ? j.z : 0;
+  // PLAYER INPUT ALWAYS WINS (user 2026-06-20): movement is never blocked by an auto-attack —
+  // you can run while/between attacks; the hero never gets "locked"/taunted to its target.
+  if ((Math.abs(jx) + Math.abs(jz)) > 0.05) { applyMovement(side, jx, jz, dt); return; }
+  // No movement input + attacking a target that's out of range → walk into range (auto-chase).
+  if (side.aaActive && side.targetType && !side.hero.dead) {
     const dx = (side.targetX || 0) - side.hero.x, dz = (side.targetZ || 0) - side.hero.z;
-    // Match maintainTargetLock's effective range (Zheyna warpath + Legolas ult-AA multipliers).
     const baseR = (side.attackRange || HERO_ATTACK_RANGE) * ((side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
     const effR = (side.heroId === 'legolas' && side.legolusUltAaPending) ? baseR * LEGOLUS_ULT_AA_RANGE_MUL : baseR;
-    if (Math.hypot(dx, dz) > effR) { applyMovement(side, dx, dz, dt); return; }
+    if (Math.hypot(dx, dz) > effR) applyMovement(side, dx, dz, dt);
   }
-  if (j) applyMovement(side, j.x, j.z, dt);
 }
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
-  // Attack-move: the hero stops while swinging an auto-attack (can't run + AA at once). All modes.
-  if ((side.aaMoveLockTime || 0) > 0) return;
+  // (Attack-move no longer freezes movement — player input always moves the hero so AA never
+  //  "locks" you to the target; user 2026-06-20. CC below still stops movement.)
   // Arena server-auth: hard-CC (freeze/root/stun via frozenTime, ice-block) stoppar
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
@@ -9307,7 +9310,7 @@ function serializeSide(side) {
     tw: { hp: side.tower.hp, mh: side.tower.maxHp },
     fa: flag(side.heroFountainAura),
     aa: flag(side.aaActive),
-    aml: flag((side.aaMoveLockTime || 0) > 0),
+    aml: undefined,   // AA no longer freezes movement (can-run fix 2026-06-20) → client never freezes prediction
     tg: nz(side.targetId),
     tt: side.targetType || undefined,
     tx: nzr2(side.targetX),
