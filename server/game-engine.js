@@ -1680,6 +1680,9 @@ function tickMagikerLaserServer(state, side, dt) {
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.iceBlockRemaining = 0;
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0;   // full CC-immun (som whirlwind)
+  // R3: hero is ROOTED while the laser fires — keep aaMoveLockTime topped up so applyMovement
+  // blocks the move step AND clients freeze joystick prediction via the serialized `aml` flag.
+  side.aaMoveLockTime = Math.max(side.aaMoveLockTime || 0, 0.2);
   while (lb.tickAccum >= LASER_TICK_INTERVAL && lb.remaining > -LASER_TICK_INTERVAL) {
     lb.tickAccum -= LASER_TICK_INTERVAL;
     applyLaserBeamTickServer(state, side);
@@ -6724,6 +6727,10 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
   }
   if (side.skills.e.cd > 0) return;
   side.skills.e.cd = side.skills.e.max;
+  // Tap-cast (no drag) sends undefined/0 direction → coerce so Math.hypot can't be NaN. (NaN < 0.01
+  // is FALSE, which used to skip the facing-fallback and throw a NaN-direction hammer = invisible,
+  // never travels, but cooldown still consumed — user R3 bug.) Now a tap throws along hero facing.
+  dirX = +dirX || 0; dirZ = +dirZ || 0;
   const len = Math.hypot(dirX, dirZ);
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
@@ -8060,6 +8067,14 @@ function heroAutoMove(side, j, dt) {
 
 function applyMovement(side, joyX, joyZ, dt) {
   if (side.hero.dead) return;
+  // Magiker laser ult (R3, user): ROOTED while the beam fires — can't run, but can still TURN to
+  // aim it (the beam swings toward facing). Returns before the move step so position is locked; the
+  // laser tick tops up aaMoveLockTime so clients freeze prediction via `aml` (no rubber-band).
+  if (side.laserBeam && side.laserBeam.remaining > 0) {
+    const lmag = Math.hypot(joyX, joyZ);
+    if (lmag >= 0.05) { side.hero.facingX = joyX / lmag; side.hero.facingZ = joyZ / lmag; }
+    return;
+  }
   // Attack-move (tap-to-AA, user 2026-06-20 v2): each manual AA briefly commits the hero to the
   // swing — movement freezes for aaMoveLockTime (a fraction of the attack interval) while the hero
   // faces the target, then the joystick resumes. No taunt/chase: this is a short per-tap stop only.
