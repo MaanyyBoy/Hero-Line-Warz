@@ -5370,6 +5370,11 @@ function triggerShatter(state, arenaSide, attackerSide, x, z, sourceSide) {
   }
 }
 
+// Acquisition range for quick-cast (tap) aim of DIRECTED skills (projectiles/dashes). Generous so
+// it always snaps toward the enemy hero across the whole arena (ArenaHalfX*2 ≈ 70); only sets the
+// cast DIRECTION (the skill then travels its own distance). 2026-06-22.
+const TAP_AIM_RANGE = 80;
+
 // Lös ut cast-mark (x,z) för target-baserade skills (Nova, Black Hole)
 function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
   let tx, tz;
@@ -8475,14 +8480,21 @@ function applyEvent(state, sideIdx, ev) {
     side._ultCapThisCast = ULT_GAIN_SKILL_CAST_CAP;
     // Spara aktuell skill-key så onGandulfSkillHit kan tracka 3-olika-skills-mark
     side._currentSkillKey = ev.key;
-    // Om tap (ingen dx/dz), använd target som aim. Annars använd givet drag-riktning.
+    // Quick-cast aim (tap, no drag): aim at the auto-attack target (priority 1), else at the
+    // nearest valid enemy in range (priority 2 — in arena/duel/pvp that IS the enemy hero, since
+    // findClosestHostile returns opp.hero there). Drag (tap=false) keeps the manual direction.
+    // Matches resolveSkillGroundTarget so EVERY directed skill tap-aims the same way (user 2026-06-22).
     let dx = ev.dx, dz = ev.dz;
-    const useTargetAim = (ev.tap === true) && side.targetId;
-    if (useTargetAim) {
+    if (ev.tap === true) {
       const opp = arenaOpp(state, sideIdx);
-      const t = resolveTargetEntity(side, opp, state);
-      if (t) {
-        const ddx = t.x - side.hero.x, ddz = t.z - side.hero.z;
+      let aim = null;
+      if (side.targetId) aim = resolveTargetEntity(side, opp, state);   // priority 1: AA target
+      if (!aim) {                                                       // priority 2: nearest enemy hero/hostile
+        const near = findClosestHostile(side, opp, side.hero.x, side.hero.z, TAP_AIM_RANGE, state);
+        if (near && near.entity) aim = near.entity;
+      }
+      if (aim) {
+        const ddx = aim.x - side.hero.x, ddz = aim.z - side.hero.z;
         const m = Math.hypot(ddx, ddz);
         if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
       }
