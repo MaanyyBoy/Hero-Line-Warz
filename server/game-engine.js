@@ -85,6 +85,14 @@ const HERO_DEFS = {
     attackInterval: 0.9,
     baseMoveSpeed: 6.4,
   },
+  xina: {                 // 8:e hjälten (2026-06-23) — melee female assassin, crit-passive + shurikens
+    name: 'Xina',
+    baseHp: 90,
+    baseDmg: 7,
+    attackRange: 2.6,     // melee
+    attackInterval: 0.85, // snabba slag
+    baseMoveSpeed: 6.6,
+  },
 };
 function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
 // ===== ZHEYNA (spjut-carry) konstanter (decision 134) =====
@@ -5625,6 +5633,8 @@ function updateHeroAttack(state, side, opp, dt) {
   const buffDmgMul = buffActive ? (1 + LEGOLUS_BUFF_DMG_PCT) : 1;
   let critChance = (side.critChancePct || 0) + (buffActive ? LEGOLUS_BUFF_CRIT_PCT : 0);
   let critMulBase = (side.critDmgMul || 2.0) + (buffActive ? LEGOLUS_BUFF_CRIT_DMG_PCT : 0);
+  // Xina passive: +15% crit chance, +15% crit damage, +15% lifesteal on crits (lifesteal below).
+  if (side.heroId === 'xina') { critChance += 0.15; critMulBase += 0.15; }
   // Legolus dash-buff aktiv? Nästa AA = 100% crit + 20% lifesteal
   const dashBuffed = !!side.legolusDashBuffPending;
   if (dashBuffed) {
@@ -5684,7 +5694,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs),
+    lifestealRatio: (dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs)) + (side.heroId === 'xina' && isCrit ? 0.15 : 0),   // Xina passive: 15% crit-lifesteal
     knockback: zheynaKnock,
     legolusBuffed: dashBuffed,
     appliesPoison: splitNow,
