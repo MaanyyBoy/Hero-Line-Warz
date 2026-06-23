@@ -8184,8 +8184,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
   const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
   const shoutMs = (side.aragurnShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMoveSpeedMul(side) * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMoveSpeedMul(side) * strength * dt;
+  const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
@@ -8482,7 +8483,7 @@ function updateXinaHook(state, side, dt) {
     for (const e of zheynaEnemies(state, side)) {
       const ex = (e.ent.x || 0) - hk.x, ez = (e.ent.z || 0) - hk.z;
       if (ex * ex + ez * ez <= XINA_E_HIT_RADIUS * XINA_E_HIT_RADIUS) {
-        hk.attached = true; hk.ent = e.ent; hk.isHero = !!e.isHero; hk.isMonster = !!e.isMonster; hk.isCreep = !!e.isCreep; hk.sideIdx = e.sideIdx || 0; hk.stickRem = XINA_E_STICK_DUR;
+        hk.attached = true; hk.ent = e.ent; hk.isHero = !!e.isHero; hk.isMonster = !!e.isMonster; hk.isCreep = !!e.isCreep; hk.sideIdx = e.sideIdx != null ? e.sideIdx : 0; hk.stickRem = XINA_E_STICK_DUR;
         break;
       }
     }
