@@ -3119,8 +3119,10 @@ function createSandboxState(heroId) {
     boss.activeCast = null; boss.bossActivated = true;
     state.sides[1].monsters.push(boss);
   }
-  const mon1 = sandboxMakeDummy(state, cx - 3, cz - 13);   // par – bredvid varandra
-  const mon2 = sandboxMakeDummy(state, cx + 3, cz - 13);   // par
+  // Utspridda, ej staplade under boss-dummyn (user 2026-06-23): boss i mitten, två monster
+  // tydligt separerade till höger (framför hjälten som spawnar till vänster). Alla står stilla.
+  const mon1 = sandboxMakeDummy(state, cx + 10, cz - 8);
+  const mon2 = sandboxMakeDummy(state, cx + 10, cz + 8);
   state.sandboxDummies = [boss, mon1, mon2].filter(Boolean);
   state.sides[1].monsters.push(mon1, mon2);
   sandboxSetupHero(state, heroId);
