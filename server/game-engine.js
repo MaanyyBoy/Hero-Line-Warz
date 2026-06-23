@@ -1471,8 +1471,14 @@ function createSide(idx) {
 }
 
 function createGameState() {
+  const s1 = createSide(1), s2 = createSide(2);
+  // inLineWars: classic-mode flag. createGameState is ONLY ever the line-wars room (server.js:82),
+  // so this never touches arena/boss. Enables the server-auth ults (laser/rage/berserk) in line
+  // wars too (2026-06-23); their HERO damage is duel-gated (isHeroPvpActive) so it can't break the
+  // creep-pushing phase.
+  s1.inLineWars = true; s2.inLineWars = true;
   return {
-    sides: { 1: createSide(1), 2: createSide(2) },
+    sides: { 1: s1, 2: s2 },
     nextEntityId: 1,
     matchState: { gameOver: false, winner: 0 },
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } } },
@@ -1652,6 +1658,9 @@ function applyLaserBeamTickServer(state, side) {
   }
   const opp = arenaOpp(state, side.idx);
   if (!opp || opp.hero.dead) return;
+  // Line wars: only deal hero damage during a duel / enemy-territory PvP window — never during the
+  // creep-pushing phase (2026-06-23). Arena is always PvP so inArena1v1 short-circuits.
+  if (!side.inArena1v1 && !isHeroPvpActive(state)) return;
   const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
   const along = ddx * lb.dx + ddz * lb.dz;
   if (along < 0 || along > LASER_RANGE) return;
@@ -1718,7 +1727,7 @@ function tickGimluRageServer(state, side, dt) {
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
         }
       }
-    } else if (opp && !opp.hero.dead) {
+    } else if (opp && !opp.hero.dead && (side.inArena1v1 || isHeroPvpActive(state))) {   // line wars: hero dmg only during duel/PvP (2026-06-23)
       const d = Math.hypot(opp.hero.x - side.hero.x, opp.hero.z - side.hero.z);
       if (d < RAGE_PULSE_RADIUS) {
         const dmg = opp.hero.maxHp * RAGE_PULSE_DMG_PCT;
@@ -5643,8 +5652,8 @@ function updateHeroAttack(state, side, opp, dt) {
   // Aragurn Berserk (R): +150% AA-dmg + 25% lifesteal under 5s. (AS oförändrad.)
   // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
   // skulle ett oavsiktligt satt fält ge permanent buff.
-  const berserkActive = (side.inArena1v1 || side.inBossWars) && (side.berserkRemaining || 0) > 0;
-  const rageDmgMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/bosswars only)
+  const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.berserkRemaining || 0) > 0;
+  const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars)
   let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * aragurnShoutDmgMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
@@ -8458,13 +8467,12 @@ function applyEvent(state, sideIdx, ev) {
             });
           }
         }
-        // Server-auth ults gäller ENBART arena 1v1 (side.inArena1v1). I classic
-        // tickas dessa state-fält aldrig ner (egen tick-loop) → skulle ge permanent
-        // berserk-AA m.m. Magiker/gimlu/aragurn ults i classic är pre-existerande
-        // no-ops och rörs inte här.
+        // Server-auth ults: arena 1v1 + boss wars + sandbox (inBossWars) + line wars (inLineWars).
+        // Line wars added 2026-06-23 — tickGame now ticks these fields down (annars permanent
+        // berserk-AA m.m.) och hero-skadan är duel-gatead (isHeroPvpActive) i tick-funktionerna.
         // Magiker Master Beam: 3s svängande laser (AoE-tick mot opp hero). Riktning
         // från ev.dx/dz (cast-aim) med facing-fallback. Klient renderar via lz-snap.
-        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'magiker' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'magiker' && !side.hero.dead) {
           let ldx = ev.dx, ldz = ev.dz;
           const lm = Math.hypot(ldx || 0, ldz || 0);
           if (lm < 0.01) { ldx = side.hero.facingX || 0; ldz = side.hero.facingZ || 1; }
@@ -8473,12 +8481,12 @@ function applyEvent(state, sideIdx, ev) {
           applyLaserBeamTickServer(state, side);   // initial tick direkt (matchar klientens host-fn)
         }
         // Gimlu Rage: 5s AoE-pulser + 20% lifesteal + CC-immun
-        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'gimlu' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'gimlu' && !side.hero.dead) {
           side.rageRemaining = RAGE_DURATION;
           side.rageTickAccum = 0;
         }
         // Aragurn Berserk: 5s +150% AA-dmg + 25% lifesteal (AA-modifier i updateHeroAttack)
-        if ((side.inArena1v1 || side.inBossWars) && side.heroId === 'aragurn' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'aragurn' && !side.hero.dead) {
           side.berserkRemaining = BERSERK_DURATION;
         }
       }
@@ -9051,6 +9059,17 @@ function tickGame(state, dt) {
   }
   // Tick announce timer (vinnar-banner efter duel)
   if (state.duelAnnounceTimer > 0) state.duelAnnounceTimer = Math.max(0, state.duelAnnounceTimer - dt);
+  // Server-auth ults (Zyro laser / Kryx rage / Elar berserk) in line wars (2026-06-23). Ticked here
+  // ONCE per game frame — before the duel/push split — so they expire in BOTH phases (no double-tick,
+  // no stuck buff). Hero damage inside these fns is duel-gated (isHeroPvpActive) so the push phase is
+  // untouched; the ult still fires + shows its visual.
+  for (const sideIdx of [1, 2]) {
+    const us = state.sides[sideIdx];
+    if (!us) continue;
+    if (us.laserBeam) tickMagikerLaserServer(state, us, dt);
+    if ((us.rageRemaining || 0) > 0) tickGimluRageServer(state, us, dt);
+    if ((us.berserkRemaining || 0) > 0) { if (us.hero.dead) us.berserkRemaining = 0; else us.berserkRemaining = Math.max(0, us.berserkRemaining - dt); }
+  }
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
   if (state.duelActive) {
     // Bot-AI: duellen är hjälte-vs-hjälte (som arena) → återanvänd arena-bot:en så
@@ -9340,6 +9359,11 @@ function serializeSide(side) {
       zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
       zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
       zwr: nzr2(side.zheynaWarpathRem),
+      // Server-auth ults in line wars (2026-06-23): klient renderar laser/rage-ring + berserk-storlek/tint.
+      trg: nzr2(side.titansRageTime),
+      lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
+      rg: nzr2(side.rageRemaining),
+      bz: nzr2(side.berserkRemaining),
     },
     g: side.gold,
     inc: side.income,
