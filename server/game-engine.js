@@ -2214,6 +2214,9 @@ function serializeArenaHero(side, buf) {
   buf.fzt = nzr2(side.hero.frozenTime);
   buf.fer = nzr2(side.heroFearTime);
   buf.ibr = nzr2(side.iceBlockRemaining);
+  // Movement-locked (CC): mirrors the applyMovement freeze (root/stun/freeze/fear) so the CLIENT
+  // can freeze joystick prediction → no more "walk a few steps then snap back" while CC'd (2026-06-23).
+  buf.mlk = flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0);
   buf.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined;
   buf.slt = nzr2(side.heroSlowTime);
   buf.asp = nzr2(side.arenaSpeedBuff);
@@ -9361,6 +9364,7 @@ function serializeSide(side) {
       frz: nzr2(side.hero.frozenTime),
       dot: nzr2(side.hero.dotRemaining),
       tnt: nzr2(side.hero.tauntedTime),
+      mlk: flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0),   // movement-locked (CC) → klient fryser prediktion 2026-06-23
       poi: nzr2(side.hero.poisonRemaining),
       lMk: nzr2(side.hero.legolasMarked),
       // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
