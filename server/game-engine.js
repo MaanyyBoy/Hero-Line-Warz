@@ -122,6 +122,25 @@ function zheynaTurnToward(side, ndx, ndz, dt) {
   const na = Math.abs(d) <= step ? tgt : cur + Math.sign(d) * step;
   side.hero.facingX = Math.sin(na); side.hero.facingZ = Math.cos(na);
 }
+// ===== XINA (melee assassin) konstanter (decision 139, 2026-06-23) =====
+// Passive (i updateHeroAttack): +15% crit chance, +15% crit-dmg, +15% crit-lifesteal.
+// Q Shuriken Toss — 5 shurikens i kon, flyger ut + tillbaka (bumerang).
+const XINA_Q_COUNT = 5, XINA_Q_RANGE = 8, XINA_Q_SPEED = 16, XINA_Q_CONE = 70 * Math.PI / 180;
+const XINA_Q_DMG_PCT = 0.05, XINA_Q_LIFESTEAL = 0.50, XINA_Q_HIT_RADIUS = 0.8;
+const XINA_Q_BUFF_PER_HIT = 0.05, XINA_Q_BUFF_DUR = 3.0;   // +5% MS & AS per träffande shuriken (max 5), 3s refresh
+// F Ninja's Cloak — buff
+const XINA_CLOAK_DUR = 3.0, XINA_CLOAK_AS = 0.50, XINA_CLOAK_MS = 0.50;
+const XINA_CLOAK_EVASION = 0.50, XINA_CLOAK_SKILL_DR = 0.50;   // 50% dodge vs AA, 50% DR mot skill-skada; 2 charges vid skill-lvl 5
+// E Xina's Slice — krok
+const XINA_E_RANGE = 11, XINA_E_SPEED = 22, XINA_E_STICK_DUR = 5.0, XINA_E_HIT_RADIUS = 0.9;
+const XINA_E_BREAK_DIST = 9.0, XINA_E_BREAK_STUN = 1.0, XINA_E_PULL_STUN = 1.5;
+const XINA_E_AA_COUNT = 2, XINA_E_AA_LIFESTEAL = 0.50;   // 2 snabba AA: 100% crit + 100% extra crit-dmg + 50% lifesteal
+// R Shuriken Storm — orbit 5s → skjuts ut
+const XINA_R_COUNT = 5, XINA_R_DUR = 5.0, XINA_R_ORBIT_RADIUS = 2.4, XINA_R_ORBIT_SPEED = 3.2;
+const XINA_R_TICK_DMG_PCT = 0.10, XINA_R_HEAL = 0.50, XINA_R_HIT_CD = 0.5, XINA_R_HIT_RADIUS = 0.9;
+const XINA_R_MS = 0.25, XINA_R_AS = 0.25, XINA_R_OUT_DMG = 0.25;
+const XINA_R_LAUNCH_RANGE = 10, XINA_R_LAUNCH_SPEED = 18, XINA_R_LAUNCH_DMG_PCT = 0.20;
+const XINA_R_LAUNCH_SLOW_MUL = 0.50, XINA_R_LAUNCH_SLOW_DUR = 2.0;
 
 // Konstanta side-index-arrayer — undviker `[1,2]` literal-allokering i hot-paths
 // (30 Hz × N anrop = märkbar GC-tryck i Render free-tier Node). Frysta = immutable.
@@ -1205,7 +1224,7 @@ function tickGandulfMark(state, target, dt) {
   }
 }
 
-function damageHero(side, amount) {
+function damageHero(side, amount, isAaDamage) {
   if (side.hero.dead) return;
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
   // Kryx-DR (rework 2026-06-07): Titan's Stomp-stack + Titan's Rage, cap 70%. Passiven
@@ -1227,6 +1246,8 @@ function damageHero(side, amount) {
   // E3 War Shout: -20% incoming dmg medan buffen är aktiv (self + buffade allierade)
   const shoutDrMul = (side.aragurnShoutBuffTime || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
   let final = amount * (side.dmgReductionMul ?? 1) * auraMul * gimluMul * aragurnMul * bannerMul * shoutDrMul;
+  // Xina Ninja's Cloak: 50% DR mot skill-skada (AA hanteras separat av evasion vid projektil-träff).
+  if (side.heroId === 'xina' && (side.xinaCloakRem || 0) > 0 && !isAaDamage) final *= (1 - XINA_CLOAK_SKILL_DR);
   // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar samma instans ×1.5 (egen
   // HP-pool) och dör snabbt → DR slut. Robust i alla lägen (ingen aggro-omdirigering).
   if (side.zheynaClone) {
@@ -1311,6 +1332,7 @@ function killHero(side) {
     side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
     side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
   }
+  if (side.heroId === 'xina') resetXinaState(side);   // avbryt shurikens/krok/storm + buffar vid död
 }
 function respawnHero(side) {
   const cfg = SIDE_CFG[side.idx];
@@ -1436,6 +1458,10 @@ function createSide(idx) {
     kostefoSliderTpMarker: null, // Kostefo F lvl5 — { x, z, remaining } för re-cast-tp
     kostefoClones: [],         // Kostefo E lvl5 — decoy-kloner som springer ut
     kostefoCloudRadiusMul: 1,  // Kostefo E lvl5 — 1.20 vid lvl5, 1.0 default
+    // Xina (decision 139) — assassin shurikens/krok/storm + buff-timers
+    xinaShurikens: [], xinaHook: null, xinaStorm: [], xinaLaunch: [],
+    xinaUltRem: 0, xinaCloakRem: 0, xinaCloakStackCd: 0,
+    xinaQBuffRem: 0, xinaQBuffStacks: 0, xinaStormHits: null,
     shield: 0,
     // Portal-state: 3 användningar, 1 min cooldown, 30s i fiendens lanes
     portalUsesLeft: PORTAL_MAX_USES,
@@ -1846,7 +1872,7 @@ function tickArenaCombat(state, dt) {
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
-    tickZheyna(state, side, dt);
+    tickZheyna(state, side, dt); tickXina(state, side, dt);
     // CC-timers på hero: tickas ner här (tickGame gör detta i sin loop, men
     // tickArenaCombat är en separat path). Utan detta fastnar frozenTime/
     // tauntedTime/heroSlowTime permanent på det satta värdet i arena.
@@ -1942,6 +1968,7 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null;
   side.zheynaUltCharging = false; side.zheynaUltCharge = 0; side.zheynaUltAim = 0;
   side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
+  resetXinaState(side);   // Xina (decision 139)
   // CC-fält på hero-objektet (frozenTime etc. kan kvarstå från sista dead-tick)
   side.hero.frozenTime = 0; side.hero.tauntedTime = 0;
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
@@ -2181,6 +2208,7 @@ function _makeHeroSnapBuf() {
     kComp: undefined, kCl: undefined,
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
+    xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,   // Xina (decision 139)
     gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
     taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
     tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
@@ -2256,6 +2284,13 @@ function serializeArenaHero(side, buf) {
   buf.zus = side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined;
   buf.zch = side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined;
   buf.zwr = nzr2(side.zheynaWarpathRem);
+  // Xina (decision 139): shurikens/krok/storm/launch + cloak/ult-timers → klient-render (MpHeroVisuals).
+  buf.xsh = (side.xinaShurikens && side.xinaShurikens.length) ? side.xinaShurikens.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined;
+  buf.xhk = side.xinaHook ? { x: r2(side.xinaHook.x), z: r2(side.xinaHook.z), a: side.xinaHook.attached ? 1 : 0 } : undefined;
+  buf.xstm = (side.xinaStorm && side.xinaStorm.length) ? side.xinaStorm.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined;
+  buf.xlnch = (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined;
+  buf.xcl = nzr2(side.xinaCloakRem);
+  buf.xul = nzr2(side.xinaUltRem);
   return buf;
 }
 
@@ -3050,6 +3085,7 @@ function sandboxSetupHero(state, heroId) {
   side.kostefoCompanion = null; side.kostefoUltRemaining = 0; side.kostefoUltJointsState = null;
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
   side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.gimluHammerMsRem = 0; side.titansTauntRemaining = 0;
+  resetXinaState(side);   // Xina (decision 139)
   side.ironWillRemaining = 0; side.ironWillStored = 0; side._ultLockoutTime = 0;
   side.aragurnShoutBuffTime = 0; side.aragurnShoutHealRemaining = 0; side.aragurnShoutHealPct = 0;
   side.hero.tauntedTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1; side.attackCounter = 0;
@@ -3138,7 +3174,7 @@ function tickSandbox(state, dt) {
   if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
   if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
   if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
-  tickZheyna(state, s, dt);
+  tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
   if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
@@ -4196,7 +4232,7 @@ function tickBossWars(state, dt) {
     if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
     if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
     if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
-    tickZheyna(state, s, dt);
+    tickZheyna(state, s, dt); tickXina(state, s, dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
     if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
@@ -5667,7 +5703,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.berserkRemaining || 0) > 0;
   const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars)
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * aragurnShoutDmgMul(side);
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * aragurnShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -5775,7 +5811,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Kryx-rework: Titan's Stomp AS-slow på hjälte (<1 → långsammare). Rage-AS-buff folds in i batch 2.
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
   const rageAsMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (arena/bosswars only)
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul);
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * xinaAttackSpeedMul(side));
   // Face the target and commit to the swing: the hero stops to attack (can't run + AA at once).
   // Lock scales with the just-computed interval → faster attack speed = shorter stop.
   { const _fx = target.entity.x - side.hero.x, _fz = target.entity.z - side.hero.z, _fd = Math.hypot(_fx, _fz) || 1;
@@ -5853,9 +5889,13 @@ function updateProjectiles(state, side, opp, dt) {
       const _primaryDmg = p.damage * legolasMarkMul(side, _primaryTarget);
       if (p.targetIsHero) {
         const ts = state.sides[p.targetSideIdx];
-        if (ts) aaDmgDealt = Math.min(ts.hero.hp, _primaryDmg);
-        damageHero(state.sides[p.targetSideIdx], _primaryDmg);
-        if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
+        // Xina Ninja's Cloak: 50% evasion mot auto-attacks → dodge (ingen skada/lifesteal).
+        const dodged = ts && !ts.hero.dead && (ts.xinaCloakRem || 0) > 0 && Math.random() < XINA_CLOAK_EVASION;
+        if (!dodged) {
+          if (ts) aaDmgDealt = Math.min(ts.hero.hp, _primaryDmg);
+          damageHero(state.sides[p.targetSideIdx], _primaryDmg, true);   // isAaDamage=true → kringgår Xina skill-DR
+          if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
+        }
       } else if (p.targetIsDuelOrb) {
         const orb = state.duelBigOrb;
         if (orb && orb.alive) {
@@ -8144,8 +8184,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
   const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
   const shoutMs = (side.aragurnShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * strength * dt;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMoveSpeedMul(side) * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMoveSpeedMul(side) * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
@@ -8334,6 +8374,233 @@ function tickZheyna(state, side, dt) {
   updateZheynaUltSpear(side, dt);
 }
 
+// ===== XINA SKILLS (server-auth, decision 139) =====
+// Återanvänder Zheynas mode-agnostiska helpers zheynaWalk/zheynaEnemies (generiska, ej heroId-bundna).
+function resetXinaState(side) {
+  side.xinaShurikens = []; side.xinaHook = null; side.xinaStorm = []; side.xinaLaunch = [];
+  side.xinaUltRem = 0; side.xinaCloakRem = 0; side.xinaCloakStackCd = 0;
+  side.xinaQBuffRem = 0; side.xinaQBuffStacks = 0; side.xinaStormHits = null;
+}
+function xinaHeal(side, amount) { if (amount > 0 && !side.hero.dead) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + amount); }
+function xinaMaxHpOf(e) { return (e.ent.maxHp || e.ent.hp || 0); }
+// Q/F/E-buff-multiplikatorer (returnerar 1 för icke-Xina → säkra att kalla i delade hot-paths).
+function xinaQBuffMul(side) { return (side.xinaQBuffRem || 0) > 0 ? (Math.min(XINA_Q_COUNT, side.xinaQBuffStacks || 0) * XINA_Q_BUFF_PER_HIT) : 0; }
+function xinaOutMul(side) { return side.heroId === 'xina' && (side.xinaUltRem || 0) > 0 ? (1 + XINA_R_OUT_DMG) : 1; }
+function xinaAttackSpeedMul(side) {
+  if (side.heroId !== 'xina') return 1;
+  return (1 + xinaQBuffMul(side)) * ((side.xinaCloakRem || 0) > 0 ? (1 + XINA_CLOAK_AS) : 1) * ((side.xinaUltRem || 0) > 0 ? (1 + XINA_R_AS) : 1);
+}
+function xinaMoveSpeedMul(side) {
+  if (side.heroId !== 'xina') return 1;
+  return (1 + xinaQBuffMul(side)) * ((side.xinaCloakRem || 0) > 0 ? (1 + XINA_CLOAK_MS) : 1) * ((side.xinaUltRem || 0) > 0 ? (1 + XINA_R_MS) : 1);
+}
+// Skada + returnerar faktiskt utdelad skada (lifesteal-gate mot immun boss).
+function xinaApplyHitDamage(state, side, e, dmg) {
+  let dealt = 0;
+  if (e.isHero) { const ts = state.sides[e.sideIdx]; if (ts && !ts.hero.dead) { dealt = Math.min(ts.hero.hp, dmg); damageHero(ts, dmg); } }
+  else if (e.isMonster) { const eff = bossWarsDmgMod(e.ent, dmg); dealt = Math.max(0, Math.min(e.ent.hp, eff)); e.ent.hp -= eff; if (e.ent.hp <= 0) { const k = side.monsters.indexOf(e.ent); if (k >= 0) killMonster(side, k, side); } }
+  else if (e.isCreep) { const opp = arenaOpp(state, side.idx); dealt = Math.min(e.ent.hp, dmg); e.ent.hp -= dmg; if (e.ent.hp <= 0 && opp) { const k = opp.playerCreeps.indexOf(e.ent); if (k >= 0) { opp.playerCreeps.splice(k, 1); side.gold += minionBounty(e.ent); gainXp(side, minionXp(e.ent)); } } }
+  return dealt;
+}
+function xinaGrantQBuff(side) { side.xinaQBuffStacks = Math.min(XINA_Q_COUNT, (side.xinaQBuffStacks || 0) + 1); side.xinaQBuffRem = XINA_Q_BUFF_DUR; }
+// Q Shuriken Toss — 5 shurikens i kon, flyger ut + tillbaka. 5% maxHP/träff, heal 50%, +5% MS/AS per träff.
+function castXinaQ(state, sideIdx, dx, dz) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead || side.skills.q.cd > 0) return;
+  side.skills.q.cd = side.skills.q.max;
+  let bx = dx, bz = dz; const m = Math.hypot(bx || 0, bz || 0);
+  if (m < 0.01) { bx = side.hero.facingX || 0; bz = side.hero.facingZ || 1; } else { bx /= m; bz /= m; }
+  const base = Math.atan2(bx, bz), mul = side.skillDmgMul || 1;
+  side.xinaShurikens = side.xinaShurikens || [];
+  for (let i = 0; i < XINA_Q_COUNT; i++) {
+    const off = (XINA_Q_COUNT > 1 ? (i / (XINA_Q_COUNT - 1) - 0.5) : 0) * XINA_Q_CONE;
+    const a = base + off;
+    side.xinaShurikens.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, dx: Math.sin(a), dz: Math.cos(a), traveled: 0, returning: false, dmgMul: mul, hit: false });
+  }
+}
+function updateXinaShurikens(state, side, dt) {
+  const arr = side.xinaShurikens; if (!arr || !arr.length) return;
+  const enemies = zheynaEnemies(state, side);
+  const step = XINA_Q_SPEED * dt, r2hit = XINA_Q_HIT_RADIUS * XINA_Q_HIT_RADIUS;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const s = arr[i];
+    if (!s.returning) {
+      s.x += s.dx * step; s.z += s.dz * step; s.traveled += step;
+      if (s.traveled >= XINA_Q_RANGE) s.returning = true;
+    } else {
+      const tx = side.hero.x - s.x, tz = side.hero.z - s.z, d = Math.hypot(tx, tz);
+      if (d <= step + 0.4) { arr.splice(i, 1); continue; }   // tillbaka hos Xina → klar
+      s.x += (tx / d) * step; s.z += (tz / d) * step;
+    }
+    if (!s.hit) {
+      for (const e of enemies) {
+        const ex = (e.ent.x || 0) - s.x, ez = (e.ent.z || 0) - s.z;
+        if (ex * ex + ez * ez <= r2hit) {
+          s.hit = true;
+          const dmg = xinaMaxHpOf(e) * XINA_Q_DMG_PCT * s.dmgMul * xinaOutMul(side);
+          const dealt = xinaApplyHitDamage(state, side, e, dmg);
+          if (dealt > 0) { xinaHeal(side, dmg * XINA_Q_LIFESTEAL); xinaGrantQBuff(side); }
+          break;
+        }
+      }
+    }
+  }
+}
+// F Ninja's Cloak — 3s buff (AS/MS/evasion/skill-DR). 2 charges vid skill-lvl 5.
+function castXinaCloak(state, sideIdx) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead) return;
+  const twoCharges = !!(side.skillLvl && (side.skillLvl.f || 0) >= SKILL_LEVEL_MAX);
+  const s1 = (side.skills.f.cd || 0) <= 0;
+  const s2 = twoCharges && (side.xinaCloakStackCd || 0) <= 0;
+  if (!s1 && !s2) return;
+  if (s1) side.skills.f.cd = side.skills.f.max; else side.xinaCloakStackCd = side.skills.f.max;
+  side.xinaCloakRem = XINA_CLOAK_DUR;
+}
+// E Xina's Slice — krok. Kast → fäster på fiende; re-press → dra till mål + stun + 2 empowrade AA.
+function castXinaSlice(state, sideIdx, dx, dz) {
+  const side = state.sides[sideIdx];
+  if (!side || side.hero.dead) return;
+  if (side.xinaHook && side.xinaHook.attached) { xinaPullToHook(state, side); return; }
+  if (side.xinaHook) return;            // kedjan är på väg ut → vänta
+  if (side.skills.e.cd > 0) return;
+  side.skills.e.cd = side.skills.e.max;
+  let bx = dx, bz = dz; const m = Math.hypot(bx || 0, bz || 0);
+  if (m < 0.01) { bx = side.hero.facingX || 0; bz = side.hero.facingZ || 1; } else { bx /= m; bz /= m; }
+  side.xinaHook = { id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, dx: bx, dz: bz, traveled: 0, attached: false, ent: null, isHero: false, isMonster: false, isCreep: false, sideIdx: 0, stickRem: 0 };
+}
+function xinaHookTarget(state, hk) { return hk.isHero ? (state.sides[hk.sideIdx] ? state.sides[hk.sideIdx].hero : null) : hk.ent; }
+function xinaHookDead(state, hk) { return hk.isHero ? (!state.sides[hk.sideIdx] || state.sides[hk.sideIdx].hero.dead) : (!hk.ent || hk.ent.hp <= 0); }
+function xinaStun(state, hk, dur) {
+  if (hk.isHero) { const ts = state.sides[hk.sideIdx]; if (ts && !ts.hero.dead) ts.hero.frozenTime = Math.max(ts.hero.frozenTime || 0, dur); }
+  else if (hk.ent && hk.ent.hp > 0) hk.ent.frozenTime = Math.max(hk.ent.frozenTime || 0, dur);
+}
+function updateXinaHook(state, side, dt) {
+  const hk = side.xinaHook; if (!hk) return;
+  if (!hk.attached) {
+    const step = XINA_E_SPEED * dt;
+    for (const e of zheynaEnemies(state, side)) {
+      const ex = (e.ent.x || 0) - hk.x, ez = (e.ent.z || 0) - hk.z;
+      if (ex * ex + ez * ez <= XINA_E_HIT_RADIUS * XINA_E_HIT_RADIUS) {
+        hk.attached = true; hk.ent = e.ent; hk.isHero = !!e.isHero; hk.isMonster = !!e.isMonster; hk.isCreep = !!e.isCreep; hk.sideIdx = e.sideIdx || 0; hk.stickRem = XINA_E_STICK_DUR;
+        break;
+      }
+    }
+    if (!hk.attached) {
+      hk.x += hk.dx * step; hk.z += hk.dz * step; hk.traveled += step;
+      if (hk.traveled >= XINA_E_RANGE) side.xinaHook = null;
+    }
+  } else {
+    if (xinaHookDead(state, hk)) { side.xinaHook = null; return; }
+    const tgt = xinaHookTarget(state, hk);
+    hk.x = tgt.x; hk.z = tgt.z; hk.stickRem -= dt;
+    const d = Math.hypot(tgt.x - side.hero.x, tgt.z - side.hero.z);
+    if (d > XINA_E_BREAK_DIST) { xinaStun(state, hk, XINA_E_BREAK_STUN); side.xinaHook = null; return; }   // kedjan brister → stun 1s
+    if (hk.stickRem <= 0) side.xinaHook = null;
+  }
+}
+function xinaPullToHook(state, side) {
+  const hk = side.xinaHook; if (!hk || !hk.attached) return;
+  if (xinaHookDead(state, hk)) { side.xinaHook = null; return; }
+  const tgt = xinaHookTarget(state, hk);
+  const dx = tgt.x - side.hero.x, dz = tgt.z - side.hero.z, d = Math.hypot(dx, dz) || 1;
+  const stop = Math.max(0, d - (side.attackRange || 2.6) * 0.6);
+  const nx = side.hero.x + (dx / d) * stop, nz = side.hero.z + (dz / d) * stop;
+  const w = zheynaWalk(side);
+  if (w(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
+  side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
+  xinaStun(state, hk, XINA_E_PULL_STUN);   // stun 1.5s
+  // 2 snabba AA: 100% crit + 100% extra crit-dmg (passive +15%) + 50% lifesteal
+  const eWrap = { ent: tgt, isHero: hk.isHero, isMonster: hk.isMonster, isCreep: hk.isCreep, sideIdx: hk.sideIdx };
+  const critMul = (side.critDmgMul || 2.0) + 0.15 + 1.0;
+  for (let i = 0; i < XINA_E_AA_COUNT; i++) {
+    if (xinaHookDead(state, hk)) break;
+    const dmg = (side.attackDmg || 0) * critMul * xinaOutMul(side);
+    const dealt = xinaApplyHitDamage(state, side, eWrap, dmg);
+    if (dealt > 0) xinaHeal(side, dmg * XINA_E_AA_LIFESTEAL);
+  }
+  side.xinaHook = null;
+}
+// R Shuriken Storm — 5 orbiterande shurikens 5s (kontakt 10% maxHP + heal 50%), skjuts sedan ut 10m.
+function castXinaUlt(state, side) {
+  if (!side || side.hero.dead) return;
+  side.xinaUltRem = XINA_R_DUR; side.xinaStorm = []; side.xinaStormHits = {};
+  for (let i = 0; i < XINA_R_COUNT; i++) {
+    const a = (i / XINA_R_COUNT) * Math.PI * 2;
+    side.xinaStorm.push({ angle: a, x: side.hero.x + Math.cos(a) * XINA_R_ORBIT_RADIUS, z: side.hero.z + Math.sin(a) * XINA_R_ORBIT_RADIUS });
+  }
+}
+function xinaEntKey(e) { return e.isHero ? ('h' + e.sideIdx) : ('e' + (e.ent.id || 0)); }
+function updateXinaStorm(state, side, dt) {
+  const arr = side.xinaStorm; if (!arr || !arr.length) return;
+  const hits = side.xinaStormHits || (side.xinaStormHits = {});
+  for (const k in hits) { hits[k] -= dt; if (hits[k] <= 0) delete hits[k]; }
+  const enemies = zheynaEnemies(state, side), r2hit = XINA_R_HIT_RADIUS * XINA_R_HIT_RADIUS;
+  for (const s of arr) {
+    s.angle += XINA_R_ORBIT_SPEED * dt;
+    s.x = side.hero.x + Math.cos(s.angle) * XINA_R_ORBIT_RADIUS;
+    s.z = side.hero.z + Math.sin(s.angle) * XINA_R_ORBIT_RADIUS;
+    for (const e of enemies) {
+      const key = xinaEntKey(e);
+      if (hits[key] != null) continue;
+      const ex = (e.ent.x || 0) - s.x, ez = (e.ent.z || 0) - s.z;
+      if (ex * ex + ez * ez <= r2hit) {
+        const dmg = xinaMaxHpOf(e) * XINA_R_TICK_DMG_PCT * xinaOutMul(side);
+        const dealt = xinaApplyHitDamage(state, side, e, dmg);
+        if (dealt > 0) xinaHeal(side, dmg * XINA_R_HEAL);
+        hits[key] = XINA_R_HIT_CD;
+      }
+    }
+  }
+}
+function xinaApplySlow(state, e) {
+  if (e.isHero) { const ts = state.sides[e.sideIdx]; if (ts && !ts.hero.dead) { ts.heroSlowMul = Math.min(ts.heroSlowMul == null ? 1 : ts.heroSlowMul, XINA_R_LAUNCH_SLOW_MUL); ts.heroSlowTime = Math.max(ts.heroSlowTime || 0, XINA_R_LAUNCH_SLOW_DUR); } }
+  else if (e.ent && e.ent.hp > 0) { e.ent.slowMul = Math.min(e.ent.slowMul == null ? 1 : e.ent.slowMul, XINA_R_LAUNCH_SLOW_MUL); e.ent.slowTime = Math.max(e.ent.slowTime || 0, XINA_R_LAUNCH_SLOW_DUR); }
+}
+function xinaLaunchStorm(state, side) {
+  const arr = side.xinaStorm;
+  if (arr && arr.length) {
+    side.xinaLaunch = side.xinaLaunch || [];
+    for (const s of arr) side.xinaLaunch.push({ id: state.nextEntityId++, x: s.x, z: s.z, dx: Math.cos(s.angle), dz: Math.sin(s.angle), traveled: 0, hit: false });
+  }
+  side.xinaStorm = []; side.xinaStormHits = null;
+}
+function updateXinaLaunch(state, side, dt) {
+  const arr = side.xinaLaunch; if (!arr || !arr.length) return;
+  const enemies = zheynaEnemies(state, side);
+  const step = XINA_R_LAUNCH_SPEED * dt, r2hit = XINA_R_HIT_RADIUS * XINA_R_HIT_RADIUS;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const s = arr[i];
+    s.x += s.dx * step; s.z += s.dz * step; s.traveled += step;
+    if (!s.hit) for (const e of enemies) {
+      const ex = (e.ent.x || 0) - s.x, ez = (e.ent.z || 0) - s.z;
+      if (ex * ex + ez * ez <= r2hit) {
+        s.hit = true;
+        const dmg = xinaMaxHpOf(e) * XINA_R_LAUNCH_DMG_PCT * xinaOutMul(side);
+        xinaApplyHitDamage(state, side, e, dmg);
+        xinaApplySlow(state, e);
+        break;
+      }
+    }
+    if (s.traveled >= XINA_R_LAUNCH_RANGE) arr.splice(i, 1);
+  }
+}
+// Per-side Xina-tick — anropas i alla modes per frame (bredvid tickZheyna).
+function tickXina(state, side, dt) {
+  if (!side || side.heroId !== 'xina') return;
+  if ((side.xinaCloakRem || 0) > 0) side.xinaCloakRem = Math.max(0, side.xinaCloakRem - dt);
+  if ((side.xinaCloakStackCd || 0) > 0) side.xinaCloakStackCd = Math.max(0, side.xinaCloakStackCd - dt);
+  if ((side.xinaQBuffRem || 0) > 0) { side.xinaQBuffRem = Math.max(0, side.xinaQBuffRem - dt); if (side.xinaQBuffRem <= 0) side.xinaQBuffStacks = 0; }
+  updateXinaShurikens(state, side, dt);
+  updateXinaHook(state, side, dt);
+  if ((side.xinaUltRem || 0) > 0) {
+    side.xinaUltRem = Math.max(0, side.xinaUltRem - dt);
+    updateXinaStorm(state, side, dt);
+    if (side.xinaUltRem <= 0) xinaLaunchStorm(state, side);
+  }
+  updateXinaLaunch(state, side, dt);
+}
+
 function tickIncome(side, dt) {
   side.incomeTimer += dt;
   while (side.incomeTimer >= INCOME_INTERVAL) {
@@ -8502,6 +8769,10 @@ function applyEvent(state, sideIdx, ev) {
         if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'aragurn' && !side.hero.dead) {
           side.berserkRemaining = BERSERK_DURATION;
         }
+        // Xina Shuriken Storm: 5 orbiterande shurikens 5s + buffs, skjuts sedan ut (tickXina).
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'xina' && !side.hero.dead) {
+          castXinaUlt(state, side);
+        }
       }
       return;
     }
@@ -8540,6 +8811,7 @@ function applyEvent(state, sideIdx, ev) {
     const isKostefo = side.heroId === 'kostefo';
     const isZheyna = side.heroId === 'zheyna';
     const isGanji = side.heroId === 'ganji';
+    const isXina = side.heroId === 'xina';
     // Wrap-around-cast: bumpa side.skillDmgMul med per-skill-level-mult under
     // cast-tid. Bake-at-cast skills (projektiler, fireballs, dotPerSec etc) får
     // automatiskt rätt skalning. Tick-skills som läser side.skillDmgMul live ska
@@ -8556,6 +8828,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
         else if (isZheyna) castZheynaQ(state, sideIdx, ev);
         else if (isGanji) castAragurnWhirlwind(state, sideIdx); // Ganji Q = Thousand Slashes (spinning AoE)
+        else if (isXina) castXinaQ(state, sideIdx, dx, dz);   // Xina Q = Shuriken Toss (bumerang-fläkt)
         else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
       } else if (ev.key === 'f') {
         if (isLegolus) castLegolusBuff(state, sideIdx);
@@ -8564,6 +8837,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isKostefo) castKostefoJointSlider(state, sideIdx, dx, dz);
         else if (isZheyna) castZheynaClone(state, sideIdx);
         else if (isGanji) castGanjiStep(state, sideIdx, ev); // Ganji F = Shadow Step (blink)
+        else if (isXina) castXinaCloak(state, sideIdx);   // Xina F = Ninja's Cloak (buff, 2 charges @lvl5)
         else castFrostnova(state, sideIdx, ev);
       } else if (ev.key === 'e') {
         if (isLegolus) castLegolusDash(state, sideIdx, ev);
@@ -8572,6 +8846,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isKostefo) castKostefoCannabisCloud(state, sideIdx);
         else if (isZheyna) castZheynaWarpath(state, sideIdx);
         else if (isGanji) castGanjiSpeed(state, sideIdx); // Ganji E = Ninja's Speed (self buff)
+        else if (isXina) castXinaSlice(state, sideIdx, dx, dz);   // Xina E = Xina's Slice (krok; re-press = pull)
         else castBlink(state, sideIdx, ev);
       }
     } finally {
@@ -9135,7 +9410,7 @@ function tickGame(state, dt) {
       tickGimluTauntLvl5(state, side, opp, dt);
       if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
       if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
-      tickZheyna(state, side, dt);
+      tickZheyna(state, side, dt); tickXina(state, side, dt);
       flushIronWillReflectLvl5(state, side, opp);
       tickAragurnBannersLvl5(side, dt);
       if (side.ironWillExplosions) for (let k = side.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -9308,7 +9583,7 @@ function tickGame(state, dt) {
     // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
-    tickZheyna(state, side, dt);
+    tickZheyna(state, side, dt); tickXina(state, side, dt);
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
@@ -9373,6 +9648,13 @@ function serializeSide(side) {
       zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
       zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
       zwr: nzr2(side.zheynaWarpathRem),
+      // Xina (decision 139): shurikens/krok/storm/launch + cloak/ult-timers → klient-render (classic MP).
+      xsh: (side.xinaShurikens && side.xinaShurikens.length) ? side.xinaShurikens.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined,
+      xhk: side.xinaHook ? { x: r2(side.xinaHook.x), z: r2(side.xinaHook.z), a: side.xinaHook.attached ? 1 : 0 } : undefined,
+      xstm: (side.xinaStorm && side.xinaStorm.length) ? side.xinaStorm.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined,
+      xlnch: (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined,
+      xcl: nzr2(side.xinaCloakRem),
+      xul: nzr2(side.xinaUltRem),
       // Server-auth ults in line wars (2026-06-23): klient renderar laser/rage-ring + berserk-storlek/tint.
       trg: nzr2(side.titansRageTime),
       lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
