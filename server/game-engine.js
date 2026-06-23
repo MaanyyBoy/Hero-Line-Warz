@@ -2268,6 +2268,7 @@ const _arenaSSnap = {
   tp: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
   hm: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
   iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
+  kCln: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR },
 };
 // Persistent talent-sub-objekt — allokeras bara under prep/roundEnd/matchEnd (ej 30 Hz i fight).
 // Dessa behöver fortfarande ny allokering (chosen.slice()) — acceptabelt (ej fight-hot-path).
@@ -2294,6 +2295,7 @@ function _mapVt(v)  { return { id: v.id, x: r2(v.x), z: r2(v.z), r: r2(v.radius 
 function _mapTp(p)  { return { id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / (p.duration || 1)) }; }
 function _mapHm(h)  { return { id: h.id, x: r2(h.x), z: r2(h.z) }; }
 function _mapIwe(e) { return { id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / (e.maxLife || 1)) }; }
+function _mapKCln(c){ return { id: c.id, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: c.hp }; }   // Kostefo E lvl5 decoy-kloner (samma form som serializeSide)
 
 // Writes side s's skill-entities into snap.<type>[i] (entity-type-major, keyed by side),
 // the exact shape the Arena client already consumed. snap must have bh/fw/.../iwe containers.
@@ -2308,6 +2310,7 @@ function writeSkillEntitiesInto(s, snap, i) {
   snap.tp[i]  = arrOpt(s.thornPools, _mapTp) || _ARENA_EMPTY_ARR;
   snap.hm[i]  = arrOpt(s.hammers, _mapHm) || _ARENA_EMPTY_ARR;
   snap.iwe[i] = arrOpt(s.ironWillExplosions, _mapIwe) || _ARENA_EMPTY_ARR;
+  snap.kCln[i] = arrOpt(s.kostefoClones, _mapKCln) || _ARENA_EMPTY_ARR;   // Kostefo E lvl5 decoy-kloner — nu synliga i arena/boss/sandbox (var bara line wars)
 }
 
 // Serialisera hela arena-state → a-state-meddelandet (matchar main.js
@@ -2365,7 +2368,7 @@ function serializeArenaState(state) {
       snap.bh[i] = undefined; snap.fw[i] = undefined; snap.nv[i] = undefined;
       snap.ab[i] = undefined; snap.kg[i] = undefined; snap.ks[i] = undefined;
       snap.vt[i] = undefined; snap.tp[i] = undefined; snap.hm[i] = undefined;
-      snap.iwe[i] = undefined;
+      snap.iwe[i] = undefined; snap.kCln[i] = undefined;
       continue;
     }
     writeSkillEntitiesInto(s, snap, i); // SHARED — same shape Boss Wars/Sandbox now emit
@@ -3145,7 +3148,7 @@ function serializeSandboxState(state) {
     dm: state.sandboxDummies.map(d => ({ id: d.id, x: r2(d.x), z: r2(d.z), hp: ri(d.hp), mh: d.maxHp, b: d.isBossWarsBoss ? 1 : 0, fz: flag((d.frozenTime || 0) > 0) })),   // Z1: fz = frusen (is-indikator)
     // Hero skill-entities under side "1" (same per-side-keyed shape as Arena/Boss Wars) so the
     // shared client renderer shows black holes/fire waves/novas/vine traps/etc. in sandbox too.
-    bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {},
+    bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {}, kCln: {},
   };
   writeSkillEntitiesInto(state.sides[1], snap, 1);
   return snap;
@@ -4258,6 +4261,7 @@ const _bwSnap = {
   tp: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   hm: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
   iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
+  kCln: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR },
 };
 // Serialisera boss-wars-state → b-state-meddelandet. Matchar main.js buildBossWarsSnap
 // FÄLT-FÖR-FÄLT (serializer-paritet #1) så klientens applyBossWarsState läser det
@@ -4279,7 +4283,7 @@ function serializeBossWarsState(state) {
   for (let i = 1; i <= 3; i++) {
     const s = state.sides[i];
     if (s) writeSkillEntitiesInto(s, snap, i);
-    else { snap.bh[i] = _ARENA_EMPTY_ARR; snap.fw[i] = _ARENA_EMPTY_ARR; snap.nv[i] = _ARENA_EMPTY_ARR; snap.ab[i] = _ARENA_EMPTY_ARR; snap.kg[i] = _ARENA_EMPTY_ARR; snap.ks[i] = _ARENA_EMPTY_ARR; snap.vt[i] = _ARENA_EMPTY_ARR; snap.tp[i] = _ARENA_EMPTY_ARR; snap.hm[i] = _ARENA_EMPTY_ARR; snap.iwe[i] = _ARENA_EMPTY_ARR; }
+    else { snap.bh[i] = _ARENA_EMPTY_ARR; snap.fw[i] = _ARENA_EMPTY_ARR; snap.nv[i] = _ARENA_EMPTY_ARR; snap.ab[i] = _ARENA_EMPTY_ARR; snap.kg[i] = _ARENA_EMPTY_ARR; snap.ks[i] = _ARENA_EMPTY_ARR; snap.vt[i] = _ARENA_EMPTY_ARR; snap.tp[i] = _ARENA_EMPTY_ARR; snap.hm[i] = _ARENA_EMPTY_ARR; snap.iwe[i] = _ARENA_EMPTY_ARR; snap.kCln[i] = _ARENA_EMPTY_ARR; }
   }
   // Boss skill-projektiler (directional) + DoT-pooler → klient reconciliear + renderar (slice 2c-client).
   snap.bp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
