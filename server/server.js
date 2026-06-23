@@ -492,7 +492,9 @@ function handleArenaMessage(room, fromWs, envelope) {
       if (tal) {
         const id = payload.talentId;
         if (payload.remove) { const i = tal.chosen.indexOf(id); if (i >= 0) { tal.chosen.splice(i, 1); tal.points++; } }
-        else if (tal.points > 0 && id && tal.chosen.indexOf(id) < 0) { tal.chosen.push(id); tal.points--; }
+        // Validate against the catalog so a spoofed/unknown talentId can't consume a point or pollute
+        // tal.chosen (anti-cheat audit 2026-06-23).
+        else if (tal.points > 0 && id && engine.isArenaTalent(id) && tal.chosen.indexOf(id) < 0) { tal.chosen.push(id); tal.points--; }
         // Recompute stats so talent stat-bonuses (HP/dmg/AS/MS/CDR/DR) take effect immediately
         const side = room.game.sides && room.game.sides[sideIdx];
         if (side) engine.recomputeArenaSideStats(room.game, side);

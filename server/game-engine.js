@@ -2967,8 +2967,11 @@ function initBossWarsMatch(heroes, tier, loadouts) {
     // Boss-wars-loadout per peer (talents + items). Cappas server-side (3 talents / 4 items)
     // som spoof-skydd mot manipulerade payloads. recomputeSideStats applicerar stat-bonusarna.
     const lo = loadouts && loadouts[idx];
-    side.bossWarsTalents = (lo && Array.isArray(lo.tals)) ? lo.tals.slice(0, 3) : [];
-    side.bossWarsItems = (lo && Array.isArray(lo.items)) ? lo.items.slice(0, 4) : [];
+    // Dedup + validate against the catalog before capping — a count-only cap let a spoofed payload
+    // stack the SAME talent/item 3-4× (e.g. 4× Tome = +140% SD) and break boss-wars balance
+    // (anti-cheat audit 2026-06-23). Set() removes dupes; filter drops unknown ids.
+    side.bossWarsTalents = [...new Set(((lo && Array.isArray(lo.tals)) ? lo.tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id]))].slice(0, 3);
+    side.bossWarsItems = [...new Set(((lo && Array.isArray(lo.items)) ? lo.items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id]))].slice(0, 4);
     // recomputeArenaSideStats no-op:ar arena-talent-delen (state.talents saknas i boss wars)
     // men kör recomputeSideStats → bas-stats + boss-wars-loadout (foldas i recomputeSideStats).
     recomputeArenaSideStats(state, side);
@@ -8318,6 +8321,7 @@ function applyEvent(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (!side) return;
   if (ev.type === 'cheat') {
+    if (!process.env.ALLOW_CHEATS) return;   // dev-only — the authoritative server must NEVER trust the cheat path in production (anti-cheat audit 2026-06-23). Set ALLOW_CHEATS=1 locally to use it.
     if (ev.cmd === 'gold' && typeof ev.amount === 'number') {
       const amt = Math.max(0, Math.min(10_000_000, Math.floor(ev.amount)));
       side.gold += amt;
@@ -8400,6 +8404,12 @@ function applyEvent(state, sideIdx, ev) {
   }
   if (ev.type === 'skill') {
     if (side.boss4Carrying) return;   // bär giftväska (boss 4) → kan inte casta skills (decision 132)
+    // Hard-CC blocks ALL casts (mirror the movement/AA guard at applyMovement) — without this,
+    // freeze/root/fear/ice-block were cosmetic for SKILLS against a custom client: a stunned player
+    // could still Blink/Leap/ult out (anti-cheat audit 2026-06-23). Gimlu Rage zeroes these timers
+    // (CC-immune) so it is unaffected. Arena/boss only — classic CC model is unchanged.
+    if ((side.inArena1v1 || side.inBossWars) &&
+        ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
     // R-cast (ult): server-side consume + lockout. Per-hero ult-effekter
     // implementeras separat (klient-side endast just nu). Här säkerställs
     // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,
@@ -9510,6 +9520,7 @@ module.exports = {
   serializeState,
   applyEvent,
   recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
+  isArenaTalent: (id) => !!ENGINE_ARENA_TALENTS[id], // validera klient-skickad talentId (anti-cheat 2026-06-23)
   createSandboxState,      // sandbox-träningsläge (2026-06-18): hjälte + 3 dummies, server-auth
   tickSandbox,             // sandbox-tick (återanvänder boss-wars hjälte-combat, egen funktion)
   serializeSandboxState,   // sandbox → sb-state-meddelande
