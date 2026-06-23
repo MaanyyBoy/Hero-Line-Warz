@@ -4790,7 +4790,7 @@ function updateMonsters(state, side, opp, dt) {
       if (m.attackType === 'range') {
         spawnMonsterProjectile(state, side, m);
       } else if (m.isBoss || m.isMiniBoss) {
-        damageHero(side, m.damage || MONSTER_MELEE_DAMAGE);   // bossar/mini-bossar: direkt
+        bossAaDamageHero(side, m.damage || MONSTER_MELEE_DAMAGE);   // bossar/mini-bossar: direkt (AA-cap mot one-shot)
       } else {
         m.meleeWindup = MINION_MELEE_WINDUP;                  // minion: wind-up + range-recheck
         m.meleeDmg = m.damage || MONSTER_MELEE_DAMAGE;
@@ -5031,6 +5031,15 @@ function tickMultiCircleQueue(state, side, m, dt) {
 const BOSS_HERO_MAX_HIT_FRAC = 0.5;
 function bossDamageHero(side, dmg) {
   damageHero(side, Math.min(dmg, side.hero.maxHp * BOSS_HERO_MAX_HIT_FRAC));
+}
+// Anti-one-shot för boss AUTO-ATTACKS (user 2026-06-23: bossar 1-shottade heroes). En boss-AA
+// (melee + range-projektil) får aldrig ta mer än 20% maxHP per träff → AA är chip-skada, döden
+// kommer från mekanik/för många skills, inte ett enda slag. Bara reducerande (Math.min) → minions
+// (som slår < 20%) är opåverkade.
+const BOSS_HERO_AA_MAX_HIT_FRAC = 0.20;
+function bossAaDamageHero(heroSide, dmg) {
+  if (!heroSide || !heroSide.hero) return;
+  damageHero(heroSide, Math.min(dmg, heroSide.hero.maxHp * BOSS_HERO_AA_MAX_HIT_FRAC));
 }
 
 function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
@@ -5309,7 +5318,7 @@ function updateMonsterProjectiles(state, side, dt) {
     p.z = p.srcZ + (tgt.hero.z - p.srcZ) * t;
     if (p.timer <= 0) {
       if (p.isBoss2AdProj) applyBoss2AdStackHitEngine(state, tgt);   // boss-2-ad: stacking-slow i st f flat dmg
-      else damageHero(tgt, p.damage);
+      else bossAaDamageHero(tgt, p.damage);   // range-AA-cap mot one-shot (no-op för minions, < 20% maxHP)
       side.monsterProjectiles.splice(i, 1);
     }
   }
