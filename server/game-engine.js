@@ -6556,9 +6556,10 @@ function castGimluTaunt(state, sideIdx) {
   const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
   const eDotPct = STOMP_DOT_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eSlow = emp ? BERSERK_STOMP_SLOW_MUL : STOMP_SLOW_MUL;
-  // K1: earthquake-puls vid HELA AoE:n + dröjande sprickor (1.5s). Återanvänder novaEffects (kind='q').
+  // K1: earthquake-puls vid HELA AoE:n + sprickor. Visuell livslängd 0.75s (user 2026-06-23 —
+  // effekten ska bara synas 0.75s; skadan/DoT nedan är oberoende av nova-entitetens liv).
   side.novaEffects = side.novaEffects || [];
-  side.novaEffects.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 1.5, maxLife: 1.5, r: eRad, kind: 'q' });
+  side.novaEffects.push({ id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, life: 0.75, maxLife: 0.75, r: eRad, kind: 'q' });
   let drGain = 0;
   // Monsters (minions + boss)
   for (let i = side.monsters.length - 1; i >= 0; i--) {
