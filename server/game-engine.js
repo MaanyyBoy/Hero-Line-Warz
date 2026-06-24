@@ -378,7 +378,7 @@ const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8
 const SHATTER_RADIUS = 2.5;
 const SHATTER_DAMAGE = 15;
 // Legolus-skills
-const VINE_TRAP_RADIUS = 3.0;
+const VINE_TRAP_RADIUS = 3.9;   // +30% (user 2026-06-24); was 3.0
 const VINE_TRAP_DURATION = 2.0;   // nerf från 3.0 (~75% root-uptime i arena var för hög)
 const VINE_TRAP_DOT_DPS = 8;
 const VINE_TRAP_CAST_DISTANCE = 7;
@@ -6958,8 +6958,8 @@ function updateHammers(state, side, opp, dt) {
 // GANDULF Q — WIND PUFF (cone framåt, 20% maxHP dmg + push 3m + debuff +20% dmg taken)
 // Tidigare versioner: Eldklot (fire cone), Soul Drain (target-locked channel).
 // ============================================================
-const WIND_PUFF_LENGTH = 5.5;
-const WIND_PUFF_HALF_ANGLE = Math.PI / 4;       // 90° total cone
+const WIND_PUFF_LENGTH = 3;                      // 3 m radius (user 2026-06-24; was 5.5)
+const WIND_PUFF_HALF_ANGLE = Math.PI / 2;       // 180° half-circle in front (user 2026-06-24; was 90° cone)
 const WIND_PUFF_DMG_PCT = 0.10;                  // 10% maxHP (0.20→0.07 var övernerf; 0.10 = ~20% maxHP/cast @ lvl30, stark utility-Q med push+debuff utan 2-cast-kill)
 const WIND_PUFF_PUSH_DIST = 3;                   // 3m pushback i cast-riktning
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
