@@ -2758,14 +2758,18 @@ function dragonMemActivate(state, sideIdx) {
   if (Math.hypot(actor.hero.x - d.actPillar.x, actor.hero.z - d.actPillar.z) > DRAGON_ACT_PILLAR_RADIUS) return;
   d.memActLock = 0.5;
   const wp = d.memPillars.find(p => p.sym === d.memSymbols[d.memStep]);
-  let count = 0;
+  // Require ALL alive teammates on the correct symbol. Was hard-coded `count >= 2`, which is
+  // impossible once a player dies and <3 remain → every activation = mistake → guaranteed wipe
+  // loop. Now scales: 3 alive→2 others, 2 alive→1 other, lone survivor→advances. (user 2026-06-25)
+  let aliveOthers = 0, onSymbol = 0;
   for (const idx of [1, 2, 3]) {
     if (idx === sideIdx) continue;
     const s = state.sides[idx];
-    if (!s || s.hero.dead || !wp) continue;
-    if (Math.hypot(s.hero.x - wp.x, s.hero.z - wp.z) <= DRAGON_MEM_STAND_RADIUS) count++;
+    if (!s || s.hero.dead) continue;
+    aliveOthers++;
+    if (wp && Math.hypot(s.hero.x - wp.x, s.hero.z - wp.z) <= DRAGON_MEM_STAND_RADIUS) onSymbol++;
   }
-  if (count >= 2) { d.memStep++; if (d.memStep >= 3) dragonMemSuccess(state, boss); }
+  if (wp && onSymbol >= aliveOthers) { d.memStep++; if (d.memStep >= 3) dragonMemSuccess(state, boss); }
   else dragonMemMistake(state, boss);
 }
 function dragonMemMistake(state, boss) {
@@ -2846,9 +2850,11 @@ function tickDragonSoulLink(state, dt, boss) {
   d.slTimer -= dt;
   if (d.slTimer <= 0) { d.active = false; dragonWipe(state); return; }
   dragonTickOrbs(state, dt, d);
-  if (!d.slPair) { dragonNewSoulPair(state, d); if (!d.slPair) { d.active = false; dragonWipe(state); return; } }
+  if (!d.slPair) { dragonNewSoulPair(state, d); if (!d.slPair) { d.active = false; d.mech = 0; d.slOrbs = []; d.msg = ''; return; } }   // can't form a pair (<3 alive) → END trial, don't wipe (user 2026-06-25)
   const a = state.sides[d.slPair[0]], b = state.sides[d.slPair[1]];
-  if (!a || !b || a.hero.dead || b.hero.dead) { d.active = false; dragonWipe(state); return; }   // länkad spelare dog (orb) → wipe
+  // A linked hero died (e.g. to an orb) → re-pair if 3 are still alive, else END the trial WITHOUT a
+  // raid wipe. Instant-wiping the whole raid on one orb death was too punishing. (user 2026-06-25)
+  if (!a || !b || a.hero.dead || b.hero.dead) { dragonNewSoulPair(state, d); if (!d.slPair) { d.active = false; d.mech = 0; d.slOrbs = []; d.msg = ''; } return; }
   const dist = Math.hypot(a.hero.x - b.hero.x, a.hero.z - b.hero.z);
   if (d.slState === 'linking') {
     if (dist >= DRAGON_SL_CHAIN_MAX) { d.slState = 'breaking'; d.slWindow = DRAGON_SL_BREAK_WINDOW; }
@@ -4540,6 +4546,7 @@ function updateWaves(state, side, dt) {
     if (w.betweenTimer <= 0 && w.current < MAX_WAVES) {
       w.current += 1;
       const def = getWaveDef(w.current);
+      if (!def) { w.active = false; return; }   // defensive: never deref a missing wave def (user 2026-06-25)
       w.name = def.name;
       w.isBoss = def.isBoss;
       w.active = true;
