@@ -370,6 +370,9 @@ const FIREWAVE_EFFECT_LIFE = 0.6;          // hur länge cone-mesh visas på kli
 // Frost Nova (F): target-AoE freeze + shatter
 const NOVA_RADIUS = 3.8;
 const NOVA_DAMAGE = 10;
+const ICE_RAIN_DOT_INTERVAL = 0.5;   // Ice Rain (user 2026-06-24, was Frost Nova): DoT tick cadence
+const ICE_RAIN_DOT_PCT = 0.05;       // 5% maxHP per tick over the 2s zone = 4 ticks (~20% maxHP)
+const ICE_RAIN_DURATION = 2.0;       // zone persists 2s (DoT period + visual)
 const NOVA_FREEZE_TIME = 1.5;   // nerf från 2.0: 2s hard-freeze/8s CD var för pressande i 1v1 (matchar klient)
 const NOVA_CAST_DISTANCE = 7.8;            // F drag-räckvidd +30% (6.0 → 7.8)
 const SHATTER_RADIUS = 2.5;
@@ -1901,7 +1904,7 @@ function tickArenaCombat(state, dt) {
       side.ironWillExplosions[k].life -= dt;
       if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
     }
-    updateNovaEffects(side, dt);
+    updateNovaEffects(state, side, opp, dt);
     updateActiveBuffs(side, dt);
   }
 }
@@ -3166,7 +3169,7 @@ function tickSandbox(state, dt) {
   tickGimluTauntLvl5(state, s, null, dt);
   flushIronWillReflectLvl5(state, s, null);
   tickAragurnBannersLvl5(s, dt);
-  updateNovaEffects(s, dt);
+  updateNovaEffects(state, s, null, dt);
   updateActiveBuffs(s, dt);
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
   if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
@@ -4217,7 +4220,7 @@ function tickBossWars(state, dt) {
       s.ironWillExplosions[k].life -= dt;
       if (s.ironWillExplosions[k].life <= 0) s.ironWillExplosions.splice(k, 1);
     }
-    updateNovaEffects(s, dt);
+    updateNovaEffects(state, s, null, dt);
     updateActiveBuffs(s, dt);
     // Ults (slice 1d): laser/rage träffar boss-monstret; berserk = AA-modifier (decrement här).
     if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
@@ -6204,7 +6207,8 @@ function castFrostnova(state, sideIdx, ev) {
   side.novaEffects.push({
     id: state.nextEntityId++,
     x: center.x, z: center.z,
-    life: 0.6, maxLife: 0.6,
+    life: ICE_RAIN_DURATION, maxLife: ICE_RAIN_DURATION,   // Ice Rain: zone persists 2s for the DoT
+    dotAccum: 0,                                            // ticks 5% maxHP/0.5s to enemies inside
   });
   const novaDmg = NOVA_DAMAGE * (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1) * gandulfSkillDmgMul(side);
   // m_frost_heal talent: heala 15% av skill-skada per träff
@@ -6265,10 +6269,46 @@ function castFrostnova(state, sideIdx, ev) {
   }
 }
 
-function updateNovaEffects(side, dt) {
+// Ice Rain DoT tick (user 2026-06-24): 5% maxHP to every enemy inside the zone. No freeze (the
+// cast already applied that) and no skill-hit procs — just damage, every 0.5s for 2s.
+function iceRainTick(state, side, opp, n) {
+  const cx = n.x, cz = n.z;
+  for (let j = side.monsters.length - 1; j >= 0; j--) {
+    const m = side.monsters[j];
+    if (Math.hypot(m.x - cx, m.z - cz) < NOVA_RADIUS) {
+      applySkillDamageToMonster(state, side, opp, j, (m.maxHp || m.hp) * ICE_RAIN_DOT_PCT);
+    }
+  }
+  if (opp) for (let j = opp.playerCreeps.length - 1; j >= 0; j--) {
+    const c = opp.playerCreeps[j];
+    if (Math.hypot(c.x - cx, c.z - cz) < NOVA_RADIUS) {
+      applySkillDamageToCreep(state, side, opp, c, (c.maxHp || c.hp) * ICE_RAIN_DOT_PCT);
+      if (c.hp <= 0) {
+        const idx = opp.playerCreeps.indexOf(c);
+        if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
+      }
+    }
+  }
+  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
+    if (Math.hypot(opp.hero.x - cx, opp.hero.z - cz) < NOVA_RADIUS) {
+      applySkillDamageToOppHero(state, side, opp, opp.hero.maxHp * ICE_RAIN_DOT_PCT);
+    }
+  }
+}
+
+function updateNovaEffects(state, side, opp, dt) {
   for (let i = side.novaEffects.length - 1; i >= 0; i--) {
     const n = side.novaEffects[i];
     n.life -= dt;
+    // Ice Rain (user 2026-06-24): frost novas (no kind) are a 2s DoT zone — 5% maxHP per 0.5s to
+    // enemies inside NOVA_RADIUS. (kind 'q' = Kryx earthquake pulse: visual only, damage at cast.)
+    if (!n.kind && state) {
+      n.dotAccum = (n.dotAccum || 0) + dt;
+      while (n.dotAccum >= ICE_RAIN_DOT_INTERVAL && n.life > -ICE_RAIN_DOT_INTERVAL) {
+        n.dotAccum -= ICE_RAIN_DOT_INTERVAL;
+        iceRainTick(state, side, opp, n);
+      }
+    }
     if (n.life <= 0) side.novaEffects.splice(i, 1);
   }
   // Fire Wave-cone-effekter (livstid)
@@ -9430,7 +9470,7 @@ function tickGame(state, dt) {
         side.ironWillExplosions[k].life -= dt;
         if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
       }
-      updateNovaEffects(side, dt);
+      updateNovaEffects(state, side, opp, dt);
       updateActiveBuffs(side, dt);
       // CC/DoT/regen-timers (duel-blocket tickade dem EJ → frusen/tauntad/feared/slowad
       // hjälte fastnade hela duellen; gällde även människor — pre-existerande, fixat här).
@@ -9591,7 +9631,7 @@ function tickGame(state, dt) {
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
     updateFireballs(state, side, opp, dt);
-    updateNovaEffects(side, dt);
+    updateNovaEffects(state, side, opp, dt);
     updateActiveBuffs(side, dt);
     // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
