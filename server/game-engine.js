@@ -430,7 +430,7 @@ const KOSTEFO_CLOUD_CD = 12.0;
 // R (ult): Joint Avengers — 8 joints copy AA, 10% dmg, 50% lifesteal, 5s
 const KOSTEFO_ULT_DURATION = 5.0;
 const KOSTEFO_ULT_JOINT_COUNT = 8;
-const KOSTEFO_ULT_DMG_RATIO = 0.25;      // buff från 0.10: ulten gjorde ~0.5 dmg/joint = död ult i 1v1 (matchar klient)
+const KOSTEFO_ULT_DMG_RATIO = 0.50;      // user 2026-06-25: 2× damage (var 0.25). Håll i synk med OrbitJoints.DamageRatio (solo)
 const KOSTEFO_ULT_LIFESTEAL = 0.50;
 const KOSTEFO_ULT_ORBIT_RADIUS = 1.8;
 const KOSTEFO_ULT_ORBIT_SPEED = 1.8;     // rad/sec
