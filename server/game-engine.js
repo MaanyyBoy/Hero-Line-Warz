@@ -2787,7 +2787,7 @@ function dragonEnterPhase2(state, boss) {
   const d = boss.dragon;
   if (boss.bossPhase !== 2) {
     boss.bossPhase = 2;
-    boss.damage = Math.round(boss.damage * DRAGON_P2_DMG_MUL);   // +30% skada
+    boss.damage = Math.round(boss.damage * DRAGON_P2_DMG_MUL);   // +15% skada (DRAGON_P2_DMG_MUL)
     boss.phase2DrBonus = DRAGON_P2_DR_BONUS;                      // +20% DR
     if (boss.phase2Skills) { boss.bossSkills = boss.phase2Skills; boss.skillCds = boss.phase2Skills.map(s => s.cd * 0.4); }
   }
@@ -5400,7 +5400,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   elarLifestealHeal(side, actualDealt);
-  gainUltOnSkillHit(side);
+  if (finalDmg > 0) gainUltOnSkillHit(side);   // anti-farm: ingen ult-energi på fas-immun boss (finalDmg=0), matchar AA-vägen (boss-mechanics audit 2026-06-26)
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
 function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
@@ -9723,7 +9723,7 @@ function serializeSide(side) {
     },
     g: side.gold,
     inc: side.income,
-    incT: +side.incomeTimer.toFixed(2),
+    incT: r2(side.incomeTimer),
     incC: side.incomeTickCount || 0,
     // Portal-state — skippas helt om portal-features inte aktiva.
     ptu: nz(side.portalUsesLeft),
@@ -9735,8 +9735,8 @@ function serializeSide(side) {
       id: it.itemId,
       vt: it.variantId || null,
       lv: it.level,
-      ar: +(it.activeRemaining || 0).toFixed(2),
-      ac: +(it.activeCd || 0).toFixed(2),
+      ar: r2(it.activeRemaining || 0),
+      ac: r2(it.activeCd || 0),
     })),
     ms: r2(side.moveSpeed),
     ad: r1(side.attackDmg),
@@ -9759,7 +9759,7 @@ function serializeSide(side) {
     skLv: { q: (side.skillLvl && side.skillLvl.q) || 0, f: (side.skillLvl && side.skillLvl.f) || 0, e: (side.skillLvl && side.skillLvl.e) || 0 },
     stp: { as: (side.statPts && side.statPts.as) || 0, ms: (side.statPts && side.statPts.ms) || 0, hp: (side.statPts && side.statPts.hp) || 0, sd: (side.statPts && side.statPts.sd) || 0, dr: (side.statPts && side.statPts.dr) || 0 },
     up: side.unspentPoints || 0,
-    ue: +(side.ultEnergy || 0).toFixed(1),   // ult-energy 0-100 för klientens R-knapp + meter
+    ue: r1(side.ultEnergy || 0),   // ult-energy 0-100 för klientens R-knapp + meter
     // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc.
     // Skippas helt när inaktivt (undefined → JSON-skip).
     wwR: nzr2(side.whirlwindRemaining),
@@ -9770,7 +9770,7 @@ function serializeSide(side) {
     w: {
       c: side.wave.current,
       a: side.wave.active,
-      bt: +(side.wave.betweenTimer || 0).toFixed(1),
+      bt: r1(side.wave.betweenTimer || 0),
       n: side.wave.name || '',
       b: side.wave.isBoss ? 1 : 0,
       p: side.wave.bannerPulse || 0,
@@ -9874,19 +9874,19 @@ function serializeState(state) {
     m: { o: state.matchState.gameOver, win: state.matchState.winner },
     s: { 1: serializeSide(state.sides[1]), 2: serializeSide(state.sides[2]) },
     ph: state.phase || 'game',
-    pT: +(state.pickTimer || 0).toFixed(1),
+    pT: r1(state.pickTimer || 0),
     dA: state.duelActive ? 1 : 0,
-    dT: +(state.duelTimer === Infinity ? 0 : (state.duelTimer || 0)).toFixed(1),
-    dM: +(state.duelMatchTimer || 0).toFixed(1),
+    dT: r1(state.duelTimer === Infinity ? 0 : (state.duelTimer || 0)),
+    dM: r1(state.duelMatchTimer || 0),
     dC: state.duelCount || 0,
     dW: state.duelLastWinner || 0,
-    dAn: +(state.duelAnnounceTimer || 0).toFixed(2),
-    dO: (state.duelOrbs || []).map(o => ({ i: o.id, k: o.type === 'heal' ? 'h' : 's', x: +o.x.toFixed(2), z: +o.z.toFixed(2) })),
+    dAn: r2(state.duelAnnounceTimer || 0),
+    dO: (state.duelOrbs || []).map(o => ({ i: o.id, k: o.type === 'heal' ? 'h' : 's', x: r2(o.x), z: r2(o.z) })),
     dBO: state.duelBigOrb ? {
-      x: +state.duelBigOrb.x.toFixed(2), z: +state.duelBigOrb.z.toFixed(2),
-      hp: +state.duelBigOrb.hp.toFixed(1), mh: state.duelBigOrb.maxHp,
+      x: r2(state.duelBigOrb.x), z: r2(state.duelBigOrb.z),
+      hp: r1(state.duelBigOrb.hp), mh: state.duelBigOrb.maxHp,
       a: state.duelBigOrb.alive ? 1 : 0,
-      rt: +(state.duelBigOrb.respawnTimer || 0).toFixed(1),
+      rt: r1(state.duelBigOrb.respawnTimer || 0),
     } : null,
   };
 }

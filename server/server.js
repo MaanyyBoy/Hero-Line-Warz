@@ -49,7 +49,7 @@ const wss = new WebSocketServer({
     zlibInflateOptions: { chunkSize: 10 * 1024 },
     clientNoContextTakeover: true,
     serverNoContextTakeover: true,
-    serverMaxWindowBits: 10,
+    serverMaxWindowBits: 13,
     concurrencyLimit: 10,
     threshold: 256,
   },
@@ -118,6 +118,7 @@ function stopGame(room) {
   room.bossEndSent = false;
   room.bossSim = false;
   room.arenaSim = false;
+  room.sandboxSim = false;   // R4: defensiv — förhindra latent state-läcka vid ev. framtida sandbox-rum-reuse
 }
 
 // Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
@@ -200,17 +201,22 @@ function gameLoopTick(room) {
       // 30 Hz) är redan färskare. Att skicka mer på en stockad socket ger bara
       // exponentiell latens-spiral.
       const BACKPRESSURE_LIMIT = 40 * 1024;
-      if (room.host && room.host.readyState === 1 && room.host.bufferedAmount < BACKPRESSURE_LIMIT) {
-        try { room.host.send(payload); } catch (_) {}
+      // R3-telemetri: räkna en "drop" när en ansluten peer skippas pga djup buffert
+      // (nätverksstockning) — viktigaste indikatorn på lagg under live-test.
+      if (room.host && room.host.readyState === 1) {
+        if (room.host.bufferedAmount < BACKPRESSURE_LIMIT) { try { room.host.send(payload); } catch (_) {} }
+        else room._drops = (room._drops || 0) + 1;
       }
-      if (room.client && room.client.readyState === 1 && room.client.bufferedAmount < BACKPRESSURE_LIMIT) {
-        try { room.client.send(payload); } catch (_) {}
+      if (room.client && room.client.readyState === 1) {
+        if (room.client.bufferedAmount < BACKPRESSURE_LIMIT) { try { room.client.send(payload); } catch (_) {} }
+        else room._drops = (room._drops || 0) + 1;
       }
       // Multi-peer (boss wars 3p / team-arena 4-6p): broadcasta till room.clients[].
       if ((_isBoss || _isArena) && room.clients) {
         for (const c of room.clients) {
-          if (c && c.readyState === 1 && c.bufferedAmount < BACKPRESSURE_LIMIT) {
-            try { c.send(payload); } catch (_) {}
+          if (c && c.readyState === 1) {
+            if (c.bufferedAmount < BACKPRESSURE_LIMIT) { try { c.send(payload); } catch (_) {} }
+            else room._drops = (room._drops || 0) + 1;
           }
         }
       }
@@ -230,8 +236,8 @@ function gameLoopTick(room) {
   if (now - _tel.lastLog >= TELEMETRY_LOG_INTERVAL_MS) {
     _tel.lastLog = now;
     const mode = _isArena ? 'arena' : (_isBoss ? 'boss' : 'lw');
-    console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B ents:${_telEntityCount(room.game)}`);
-    _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0;
+    console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B drops:${room._drops || 0} ents:${_telEntityCount(room.game)}`);
+    _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0; room._drops = 0;
   }
   // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
   // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
