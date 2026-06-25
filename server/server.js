@@ -48,7 +48,10 @@ const wss = new WebSocketServer({
     zlibDeflateOptions: { level: 1, memLevel: 7 },
     zlibInflateOptions: { chunkSize: 10 * 1024 },
     clientNoContextTakeover: true,
-    serverNoContextTakeover: true,
+    serverNoContextTakeover: false,   // R5-experiment 2026-06-26: behåll deflate-kontext mellan frames →
+                                      // delta-lik kompression av positionsändringar (~-50% payload). .NET
+                                      // ClientWebSocket (Unity + LiveTest) stödjer server context takeover.
+                                      // Verifieras via nettest payload[]-jämförelse; revert om deflate bryts.
     serverMaxWindowBits: 13,
     concurrencyLimit: 10,
     threshold: 256,
