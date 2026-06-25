@@ -65,7 +65,7 @@ const HERO_DEFS = {
     name: 'Kostef',
     baseHp: 95,           // medium HP
     baseDmg: 5,           // medium dmg
-    attackRange: 6.3,     // mage AA = 70% av archer (Legolas 9.0). Var 5.4 (användarbeslut 2026-06-04)
+    attackRange: 7.56,    // +20% (6.3->7.56) user 2026-06-26. Var 5.4 (användarbeslut 2026-06-04)
     attackInterval: 0.9,  // något snabbare
     baseMoveSpeed: 6.2,
   },
@@ -405,7 +405,7 @@ const KOSTEFO_GOOSEWAVE_DMG_PCT = 0.05;
 const KOSTEFO_GOOSEWAVE_WIDTH = 9.1;     // fyrkant (matchar length)
 const KOSTEFO_GOOSEWAVE_LENGTH = 9.1;    // räckvidd framåt
 const KOSTEFO_GOOSEWAVE_OFFSET = 4.0;    // offset från hero (bibehållen)
-const KOSTEFO_GOOSEWAVE_CD = 8.0;
+const KOSTEFO_GOOSEWAVE_CD = 6.0;   // user 2026-06-26: +2s (eff. CD sätts via HERO_SKILL_CD.kostefo.q nedan; denna är fallback)
 // F: Joint Slider — piercing projectile, 6m, explosion DoT + slow vid slutet
 const KOSTEFO_SLIDER_RANGE = 6.0;
 const KOSTEFO_SLIDER_SPEED = 7.0;        // ~0.86s flight på 6m (halverad från 14)
@@ -1019,7 +1019,7 @@ function recomputeSideStats(side) {
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
   // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
   // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
-  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1174,7 +1174,7 @@ function recomputeArenaSideStats(state, side) {
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
   // Uppdatera CD-max för skills efter ev. cdrPct-förändring
   if (cdrPct !== 0) {
-    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
     const heroCd = HERO_SKILL_CD[side.heroId] || {};
     side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
