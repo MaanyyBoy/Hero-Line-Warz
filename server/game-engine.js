@@ -407,7 +407,7 @@ const KOSTEFO_GOOSEWAVE_LENGTH = 9.1;    // räckvidd framåt
 const KOSTEFO_GOOSEWAVE_OFFSET = 4.0;    // offset från hero (bibehållen)
 const KOSTEFO_GOOSEWAVE_CD = 6.0;   // user 2026-06-26: +2s (eff. CD sätts via HERO_SKILL_CD.kostefo.q nedan; denna är fallback)
 // F: Joint Slider — piercing projectile, 6m, explosion DoT + slow vid slutet
-const KOSTEFO_SLIDER_RANGE = 6.0;
+const KOSTEFO_SLIDER_RANGE = 12.0;       // user 2026-06-26: 2× range (var 6.0)
 const KOSTEFO_SLIDER_SPEED = 7.0;        // ~0.86s flight på 6m (halverad från 14)
 const KOSTEFO_SLIDER_RADIUS = 0.55;      // hit-radie för pierce
 const KOSTEFO_SLIDER_DIRECT_PCT = 0.15;  // 15% maxHP direct
@@ -430,7 +430,7 @@ const KOSTEFO_CLOUD_CD = 12.0;
 // R (ult): Joint Avengers — 8 joints copy AA, 10% dmg, 50% lifesteal, 5s
 const KOSTEFO_ULT_DURATION = 5.0;
 const KOSTEFO_ULT_JOINT_COUNT = 8;
-const KOSTEFO_ULT_DMG_RATIO = 0.50;      // user 2026-06-25: 2× damage (var 0.25). Håll i synk med OrbitJoints.DamageRatio (solo)
+const KOSTEFO_ULT_DMG_RATIO = 1.00;      // user 2026-06-26: 2× igen (var 0.50). Håll i synk med OrbitJoints.DamageRatio (solo)
 const KOSTEFO_ULT_LIFESTEAL = 0.50;
 const KOSTEFO_ULT_ORBIT_RADIUS = 1.8;
 const KOSTEFO_ULT_ORBIT_SPEED = 1.8;     // rad/sec
