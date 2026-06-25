@@ -33,7 +33,7 @@ const PROJECTILE_SPEED = 18;
 
 // Hero-definitioner (per-hero baseline stats). Skill-mekanik delas tills user byter.
 const HERO_DEFS = {
-  magiker: {
+  zyro: {
     name: 'Zyro',
     baseHp: 100,
     baseDmg: 5,
@@ -41,7 +41,7 @@ const HERO_DEFS = {
     attackInterval: 1.0,
     baseMoveSpeed: 6.0,
   },
-  legolas: {
+  nyro: {
     name: 'Nyro',
     baseHp: 85,           // glass-cannon
     baseDmg: 6,           // mer per AA
@@ -49,7 +49,7 @@ const HERO_DEFS = {
     attackInterval: 0.7,  // snabbare AA än Gandulf (1.0)
     baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
   },
-  gimlu: {
+  kryx: {
     name: 'Kryx',
     baseHp: 140,          // tank
     baseDmg: 7,           // hård träff
@@ -57,7 +57,7 @@ const HERO_DEFS = {
     attackInterval: 1.2,  // tung yxa, långsam
     baseMoveSpeed: 5.0,   // långsam
   },
-  aragurn: {
+  elar: {
     name: 'Elar',
     baseHp: 130, baseDmg: 8, attackRange: 2.8, attackInterval: 1.1, baseMoveSpeed: 5.5,
   },
@@ -94,7 +94,7 @@ const HERO_DEFS = {
     baseMoveSpeed: 6.6,
   },
 };
-function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.magiker; }
+function heroDef(heroId) { return HERO_DEFS[heroId] || HERO_DEFS.zyro; }
 // ===== ZHEYNA (spjut-carry) konstanter (decision 134) =====
 const ZHEYNA_PASSIVE_DMG_MAX = 0.40;   // +40% AA-skada på max AA-range (linjärt från 0 nära)
 const ZHEYNA_PASSIVE_LS_MAX = 0.25;    // +25% lifesteal på max AA-range
@@ -568,7 +568,7 @@ const GANDULF_LVL5_BH_STUN_DURATION = 1.0; // Black Hole lvl5: stun varaktighet 
 const LEGOLAS_LVL5_VT_MARK_DURATION = 3.0; // Vine Trap lvl5: mark-varaktighet på rootade enemies
 const LEGOLAS_LVL5_VT_MARK_DMG_MUL = 1.20; // +20% dmg från Legolas på marked targets
 const LEGOLAS_LVL5_HF_AA_CDR = 0.3;        // Hunter's Focus lvl5: -0.3s dash-CD per AA under buff
-// Dash lvl5: 2 stacks (separate CDs) — implementerat via side.legolasDashStackCd vid sidan av side.skills.e.cd
+// Dash lvl5: 2 stacks (separate CDs) — implementerat via side.nyroDashStackCd vid sidan av side.skills.e.cd
 // Gimlu
 const GIMLU_LVL5_TT_HEAL_PCT = 0.50;           // Taunt lvl5: 50% av healing-during-taunt → AoE-skada
 const GIMLU_LVL5_TT_EXPLOSION_RADIUS = 3.5;    // Taunt-explosion radie
@@ -1019,7 +1019,7 @@ function recomputeSideStats(side) {
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
   // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
   // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
-  const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1037,7 +1037,7 @@ function recomputeSideStats(side) {
 // Stat-talents: appliceras i recomputeArenaSideStats efter recomputeSideStats.
 // Skill-modifier-talents: läses via engineHasTalent(state, side, id) i cast/tick-funktioner.
 const ENGINE_ARENA_TALENTS = {
-  magiker: [
+  zyro: [
     { id: 'm_skill',        stats: { skillDmgPct: 0.10 } },
     { id: 'm_cdr',          stats: { cdrPct: 0.10 } },
     { id: 'm_hp',           stats: { maxHpPct: 0.15 } },
@@ -1047,7 +1047,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'm_drain_extend' }, // Soul Drain +2s (5s → 7s)
     { id: 'm_bh_radius' },  // Black Hole radius + explosion +30%
   ],
-  legolas: [
+  nyro: [
     { id: 'l_dmg',          stats: { attackDmg: 5 } },
     { id: 'l_as',           stats: { attackSpeedPct: 0.15 } },
     { id: 'l_crit',         stats: { critChancePct: 0.10 } },
@@ -1057,7 +1057,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'l_focus_dur' },  // Hunter's Focus +2s duration
     { id: 'l_dash_buff' },  // Shadow Dash lifesteal 20% → 50%
   ],
-  gimlu: [
+  kryx: [
     { id: 'g_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'g_dr',           stats: { dmgReductionPct: 0.10 } },
     { id: 'g_dmg',          stats: { attackDmg: 5 } },
@@ -1067,7 +1067,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'g_iron_radius' }, // Iron Will explosion +30%
     { id: 'g_hammer_full' }, // Hammer return 100% damage
   ],
-  aragurn: [
+  elar: [
     { id: 'a_dmg',          stats: { attackDmg: 6 } },
     { id: 'a_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'a_as',           stats: { attackSpeedPct: 0.12 } },
@@ -1140,7 +1140,7 @@ function engineHasTalent(state, side, talentId) {
 function recomputeArenaSideStats(state, side) {
   recomputeSideStats(side);
   if (!state || !state.talents) return;
-  const heroId = side.heroId || 'magiker';
+  const heroId = side.heroId || 'zyro';
   const talentList = ENGINE_ARENA_TALENTS[heroId] || [];
   const chosen = (state.talents[side.idx] && state.talents[side.idx].chosen) || [];
   let attackDmgFlat = 0;
@@ -1174,7 +1174,7 @@ function recomputeArenaSideStats(state, side) {
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
   // Uppdatera CD-max för skills efter ev. cdrPct-förändring
   if (cdrPct !== 0) {
-    const HERO_SKILL_CD = { legolas: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
     const heroCd = HERO_SKILL_CD[side.heroId] || {};
     side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1184,7 +1184,7 @@ function recomputeArenaSideStats(state, side) {
 
 // Gandulf passive-helpers — buff/shield på skill-hit
 function gandulfSkillDmgMul(side) {
-  if (side.heroId !== 'magiker' || !(side.gandulfBuffRemaining > 0)) return 1;
+  if (side.heroId !== 'zyro' || !(side.gandulfBuffRemaining > 0)) return 1;
   return 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_SKILL_DMG_PER_STACK;
 }
 function gandulfCdrMul(side) {
@@ -1199,7 +1199,7 @@ const GANDULF_MARK_DOT_PCT = 0;
 const GANDULF_MARK_HEAL_PCT = 0;
 
 function onGandulfSkillHit(side, target) {
-  if (side.heroId !== 'magiker') return;
+  if (side.heroId !== 'zyro') return;
   // Stack-cap till 3. Varje hit refreshar timer + adderar shield (persistent).
   const prevStacks = side.gandulfBuffStacks || 0;
   side.gandulfBuffStacks = Math.min(GANDULF_MAX_STACKS, prevStacks + 1);
@@ -1232,23 +1232,23 @@ function damageHero(side, amount, isAaDamage) {
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
   // Kryx-DR (rework 2026-06-07): Titan's Stomp-stack + Titan's Rage, cap 70%. Passiven
   // är nu berserk-mätaren (offensiv empower, INGEN DR) → gamla Stalwart Resolve borttagen.
-  let gimluMul = 1;
-  if (side.heroId === 'gimlu') {
+  let kryxMul = 1;
+  if (side.heroId === 'kryx') {
     let kryxDr = 0;
     if ((side.titansStompDrTime || 0) > 0) kryxDr += (side.titansStompDr || 0);
     if ((side.titansRageTime || 0) > 0) kryxDr += (side.titansRageBuff || 0);
-    if (kryxDr > 0) gimluMul = 1 - Math.min(KRYX_DR_CAP, kryxDr);
+    if (kryxDr > 0) kryxMul = 1 - Math.min(KRYX_DR_CAP, kryxDr);
   } else if ((side.titansRageTime || 0) > 0) {
-    gimluMul = 1 - Math.min(KRYX_DR_CAP, side.titansRageBuff || 0);   // ally rage-DR (cap-skydd mot negativ final)
+    kryxMul = 1 - Math.min(KRYX_DR_CAP, side.titansRageBuff || 0);   // ally rage-DR (cap-skydd mot negativ final)
   }
   // Aragurn passive — DR baserat på nearby enemies (cached varje frame i tick-loop)
-  const aragurnMul = side.heroId === 'aragurn' ? (1 - aragurnPassiveDR(side)) : 1;
+  const elarMul = side.heroId === 'elar' ? (1 - elarPassiveDR(side)) : 1;
   const auraMul = side.heroFountainAura ? FOUNTAIN_DMG_REDUCTION_MUL : 1;
   // Aragurn banner-aura (Hero Leap lvl5): -20% incoming dmg
   const bannerMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
   // E3 War Shout: -20% incoming dmg medan buffen är aktiv (self + buffade allierade)
-  const shoutDrMul = (side.aragurnShoutBuffTime || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * gimluMul * aragurnMul * bannerMul * shoutDrMul;
+  const shoutDrMul = (side.elarShoutBuffTime || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * kryxMul * elarMul * bannerMul * shoutDrMul;
   // Xina Ninja's Cloak: 50% DR mot skill-skada (AA hanteras separat av evasion vid projektil-träff).
   if (side.heroId === 'xina' && (side.xinaCloakRem || 0) > 0 && !isAaDamage) final *= (1 - XINA_CLOAK_SKILL_DR);
   // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar samma instans ×1.5 (egen
@@ -1276,7 +1276,7 @@ function damageHero(side, amount, isAaDamage) {
   }
   // Gimlu tank-mekanik: bygger ult genom att tanka skada (kompenserar låg AA-frekvens
   // + single-target skills). 5% av damage taken som ult-gain, cap 2% per hit.
-  if (side.heroId === 'gimlu' && final > 0 && side.hero.hp > 0) {
+  if (side.heroId === 'kryx' && final > 0 && side.hero.hp > 0) {
     gainUltEnergy(side, Math.min(GIMLU_ULT_GAIN_PER_HIT_CAP, final * GIMLU_ULT_GAIN_ON_DMG_PCT));
     // Passive: berserk-mätare fylls av tagen skada (3 bars = 30% maxHP → empowrar nästa Q/F/E).
     if (!side.berserkCharged) {
@@ -1366,12 +1366,12 @@ function respawnHero(side) {
   side.ironWillRemaining = 0;
   side.ironWillStored = 0;
   // Aragurn lvl5 — rensa banner-state vid respawn så aura inte hänger kvar
-  if (side.aragurnBanners) side.aragurnBanners.length = 0;
+  if (side.elarBanners) side.elarBanners.length = 0;
   side.inAragurnBanner = false;
   // Rensa Shadow Volley-state om Legolus dog medan invis (annars stannar
   // invis-flagga med "0" rem men cleared aaPending — säkert att nolla allt).
-  side.legolusInvisRemaining = 0;
-  side.legolusUltAaPending = false;
+  side.nyroInvisRemaining = 0;
+  side.nyroUltAaPending = false;
   // Rensa Kostefo-state vid respawn så cloud/ult inte hänger kvar från död-tick
   side.kostefoCloudRemaining = 0;
   side.kostefoCloudTickAccum = 0;
@@ -1415,23 +1415,23 @@ function createSide(idx) {
     level: 1,
     xp: 0,
     xpToNext: xpForLevel(1),
-    heroId: 'magiker',
+    heroId: 'zyro',
     heroPickConfirmed: false,
     vineTraps: [],
-    legolusBuffRemaining: 0,
-    legolusDashBuffPending: false,
+    nyroBuffRemaining: 0,
+    nyroDashBuffPending: false,
     ultEnergy: 0,           // 0-100, klient renderar mätare + tillåter R-cast vid 100
-    aragurnNearbyCount: 0,  // cachas varje frame för Aragurn passive DR
+    elarNearbyCount: 0,  // cachas varje frame för Aragurn passive DR
     critDmgMul: 2.0,         // base crit-multiplikator (kan justeras av buff)
     titansTauntRemaining: 0,
     ironWillRemaining: 0,
     ironWillStored: 0,
     hammers: [],
     ironWillExplosions: [],
-    legolusAaCounter: 0,
-    legolusSplitPending: false,
-    legolusInvisRemaining: 0,         // sek kvar i Shadow Volley-invis
-    legolusUltAaPending: false,       // nästa AA är empowered (revealar)
+    nyroAaCounter: 0,
+    nyroSplitPending: false,
+    nyroInvisRemaining: 0,         // sek kvar i Shadow Volley-invis
+    nyroUltAaPending: false,       // nästa AA är empowered (revealar)
     thornPools: [],                   // {id,x,z,radius,remaining,tickAccum,dmgPct}
     // Kostefo state
     kostefoGooseWaves: [],            // Q: {id,x,z,dx,dz,remaining,tickAccum}
@@ -1445,18 +1445,18 @@ function createSide(idx) {
     kostefoUltJoints: [],             // R: [{angle, attackCd}] orbit-state
     kostefoCompanion: null,           // Passive: {x,z,ry,attackCd}
     // Slider-DoT trackas via target-egna fält: m.kostefoDotRemaining/PerSec
-    gimluDmgInstanceCount: 0,
+    kryxDmgInstanceCount: 0,
     gandulfBuffStacks: 0,
     gandulfBuffRemaining: 0,
     // Lvl-5 max-skill bonus-buffar (per skill)
     windPuffMsRem: 0,          // Gandulf Q lvl5 — +30% MS
-    legolasDashStackCd: 0,     // Legolas E lvl5 — andra stackens CD (oanvänd vid lvl<5)
+    nyroDashStackCd: 0,     // Legolas E lvl5 — andra stackens CD (oanvänd vid lvl<5)
     tauntHealAccum: 0,         // Gimlu Q lvl5 — heal-tracker under taunt
     _tauntHpPrev: 0,           // Gimlu Q lvl5 — internal: hp vid förra ticken
     tauntLvl5: false,          // Gimlu Q lvl5 — flagga: är denna taunt en lvl5-cast
-    gimluHammerMsRem: 0,       // Gimlu E lvl5 — caster MS-buff timer
+    kryxHammerMsRem: 0,       // Gimlu E lvl5 — caster MS-buff timer
     ironWillReflectQueue: [],  // Gimlu F lvl5 — reflect-damage queue
-    aragurnBanners: [],        // Aragurn E lvl5 — banner-entiteter på marken
+    elarBanners: [],        // Aragurn E lvl5 — banner-entiteter på marken
     inAragurnBanner: false,    // Aragurn E lvl5 — flagga: hero inom banner-aura
     kostefoSliderTpMarker: null, // Kostefo F lvl5 — { x, z, remaining } för re-cast-tp
     kostefoClones: [],         // Kostefo E lvl5 — decoy-kloner som springer ut
@@ -1583,7 +1583,7 @@ const A_SHRINK_DURATION = 60;
 const A_SHRINK_DMG_PCT = 0.05;
 const A_SHRINK_TICK_INTERVAL = 0.25;
 // Ult-konstanter (speglar main.js — håll i sync). Server-auth arena: dessa 3 ults
-// (magiker laser, gimlu rage, aragurn berserk) körs auktoritativt här; klienten
+// (zyro laser, kryx rage, elar berserk) körs auktoritativt här; klienten
 // renderar bara visualen från synkat tillstånd (lz/rg/bz i serializeArenaHero).
 const LASER_DURATION = 3.0;
 const LASER_TURN_RATE = 4.5;
@@ -1853,7 +1853,7 @@ function tickArenaCombat(state, dt) {
     tickLegolusInvis(side, dt);
     tickThornPools(state, side, dt);
     tickKostefoSkills(state, side, opp, dt);
-    // Server-auth ults: magiker laser + gimlu rage (aragurn berserk = AA-modifier nedan)
+    // Server-auth ults: zyro laser + kryx rage (elar berserk = AA-modifier nedan)
     if (side.laserBeam) tickMagikerLaserServer(state, side, dt);
     if ((side.rageRemaining || 0) > 0) tickGimluRageServer(state, side, dt);
     if ((side.berserkRemaining || 0) > 0) {
@@ -1862,19 +1862,19 @@ function tickArenaCombat(state, dt) {
       if (side.hero.dead) side.berserkRemaining = 0;
       else side.berserkRemaining = Math.max(0, side.berserkRemaining - dt);
     }
-    if (side.heroId === 'aragurn') {
-      side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
-      if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
-        side._aragurnCountTickAccum = 0;
-        side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+    if (side.heroId === 'elar') {
+      side._elarCountTickAccum = (side._elarCountTickAccum || 0) + dt;
+      if (side._elarCountTickAccum >= 0.2 || side.elarNearbyCount == null) {
+        side._elarCountTickAccum = 0;
+        side.elarNearbyCount = elarNearbyCount(state, side);
       }
     }
     if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
     if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
-    if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    if ((side.nyroBuffRemaining || 0) > 0) side.nyroBuffRemaining = Math.max(0, side.nyroBuffRemaining - dt);
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
-    if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    if ((side.kryxHammerMsRem || 0) > 0) side.kryxHammerMsRem = Math.max(0, side.kryxHammerMsRem - dt);
     tickZheyna(state, side, dt); tickXina(state, side, dt);
     // CC-timers på hero: tickas ner här (tickGame gör detta i sin loop, men
     // tickArenaCombat är en separat path). Utan detta fastnar frozenTime/
@@ -1929,25 +1929,25 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   // fireWaves + shatters är kort-livade FX men kan bridga till nästa runda vid round-end mitt i cast.
   for (const arr of ['projectiles', 'fireballs', 'blackHoles', 'vineTraps', 'hammers', 'novaEffects',
                      'bossProjectiles', 'bossPools', 'thornPools', 'ironWillExplosions',
-                     'kostefoGooseWaves', 'kostefoSliders', 'aragurnBanners', 'kostefoUltJoints',
+                     'kostefoGooseWaves', 'kostefoSliders', 'elarBanners', 'kostefoUltJoints',
                      'fireWaves', 'shatters']) {
     if (Array.isArray(side[arr])) side[arr].length = 0;
   }
   side.whirlwindRemaining = 0;
-  side.aragurnLeap = null;
-  side.aragurnShoutBuffTime = 0;    // E3 War Shout-buff (MS/dmg/DR)
-  side.aragurnShoutHealRemaining = 0; side.aragurnShoutHealPct = 0;
-  side.laserBeam = null;            // magiker ult (R)
-  side.rageRemaining = 0;           // gimlu ult (R)
-  side.rageTickAccum = 0;           // gimlu ult ackumulator
-  side.berserkRemaining = 0;        // aragurn ult (R)
-  side.legolusBuffRemaining = 0;
-  side.legolusInvisRemaining = 0;
-  side.legolusUltAaPending = false; // shadow volley empowered-AA pending
-  side.legolusAaCounter = 0;        // legolas passive split-counter
-  side.legolusSplitPending = false;
-  side.legolusDashBuffPending = false;
-  side.legolasDashStackCd = 0;
+  side.elarLeap = null;
+  side.elarShoutBuffTime = 0;    // E3 War Shout-buff (MS/dmg/DR)
+  side.elarShoutHealRemaining = 0; side.elarShoutHealPct = 0;
+  side.laserBeam = null;            // zyro ult (R)
+  side.rageRemaining = 0;           // kryx ult (R)
+  side.rageTickAccum = 0;           // kryx ult ackumulator
+  side.berserkRemaining = 0;        // elar ult (R)
+  side.nyroBuffRemaining = 0;
+  side.nyroInvisRemaining = 0;
+  side.nyroUltAaPending = false; // shadow volley empowered-AA pending
+  side.nyroAaCounter = 0;        // nyro passive split-counter
+  side.nyroSplitPending = false;
+  side.nyroDashBuffPending = false;
+  side.nyroDashStackCd = 0;
   side.titansTauntRemaining = 0;
   side.tauntLvl5 = false; side.tauntHealAccum = 0; side._tauntHpPrev = side.hero.hp;
   side.ironWillRemaining = 0;
@@ -1963,10 +1963,10 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   if (side.kostefoClones) side.kostefoClones.length = 0;
   side.kostefoUltRemaining = 0; side.kostefoCompanion = null;
   if (side.soulDrain) side.soulDrain = null;   // Gandulf Q drain-beam
-  side.gimluDmgInstanceCount = 0;
+  side.kryxDmgInstanceCount = 0;
   side.attackCd = 0; side.attackCounter = 0;
   side.aaActive = false; side.targetId = 0; side.targetType = ''; side.targetX = 0; side.targetZ = 0;
-  side.windPuffMsRem = 0; side.gimluHammerMsRem = 0;
+  side.windPuffMsRem = 0; side.kryxHammerMsRem = 0;
   // Zheyna-state (decision 134)
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null;
   side.zheynaUltCharging = false; side.zheynaUltCharge = 0; side.zheynaUltAim = 0;
@@ -2202,7 +2202,7 @@ function tickArena(state, dt) {
 function _makeHeroSnapBuf() {
   return {
     x: 0, z: 0, fx: 0, fz: 0, hp: 0, mh: 0, d: false,
-    sh: undefined, lv: 0, sk: { q: 0, f: 0, e: 0 }, hid: 'magiker',
+    sh: undefined, lv: 0, sk: { q: 0, f: 0, e: 0 }, hid: 'zyro',
     ac: 0, g: undefined, ue: undefined, tnt: undefined, fzt: undefined,
     fer: undefined, ibr: undefined, slm: undefined, slt: undefined,
     asp: undefined, adm: undefined, wwr: undefined,
@@ -2229,7 +2229,7 @@ const _heroSnapBufs = { 1: _heroSnapBuf1, 2: _heroSnapBuf2,
 // Perf: muterar _heroSnapBuf1/_heroSnapBuf2 på plats (undviker 2×30=60 obj-allok/sek).
 function serializeArenaHero(side, buf) {
   if (!side) return null;
-  const leap = side.aragurnLeap;
+  const leap = side.elarLeap;
   buf.x = r2(side.hero.x); buf.z = r2(side.hero.z);
   buf.fx = r3(side.hero.facingX); buf.fz = r3(side.hero.facingZ);
   buf.hp = ri(side.hero.hp); buf.mh = ri(side.hero.maxHp);
@@ -2237,7 +2237,7 @@ function serializeArenaHero(side, buf) {
   buf.sh = nzr2(side.shield);
   buf.lv = side.level;
   buf.sk.q = r2(side.skills.q.cd); buf.sk.f = r2(side.skills.f.cd); buf.sk.e = r2(side.skills.e.cd);
-  buf.hid = side.heroId || 'magiker';
+  buf.hid = side.heroId || 'zyro';
   buf.ac = side.attackCounter || 0;
   buf.g = nz(side.gold);
   buf.ue = nzr2(side.ultEnergy);
@@ -2254,8 +2254,8 @@ function serializeArenaHero(side, buf) {
   buf.adm = nzr2(side.arenaDamageBuff);
   buf.wwr = nzr2(side.whirlwindRemaining);
   buf.trg = nzr2(side.titansRageTime);          // K4: Titan's Rage → red glow
-  buf.lbf = nzr2(side.legolusBuffRemaining);    // N3: Hunter's Focus → green glow
-  buf.shb = nzr2(side.aragurnShoutBuffTime);    // E3: War Shout → gold glow
+  buf.lbf = nzr2(side.nyroBuffRemaining);    // N3: Hunter's Focus → green glow
+  buf.shb = nzr2(side.elarShoutBuffTime);    // E3: War Shout → gold glow
   buf.cri = flag(side.aaCritFlash > 0);         // G5: senaste AA var en crit → klienten stylar siffran
   // Ult-visual-state: optional-objekt skapas nytt vid aktivering (men är sällan aktiva).
   buf.lp = leap ? { u: r2(1 - (leap.remaining || 0) / (leap.total || 1)), tx: r2(leap.targetX), tz: r2(leap.targetZ) } : undefined;
@@ -2264,7 +2264,7 @@ function serializeArenaHero(side, buf) {
   buf.bz = nzr2(side.berserkRemaining);
   buf.gmBk = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : 0);   // Gimlu berserk-mätare: 1 = charged, 0..1 = andel
   buf.gjMk = side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : 0);   // Ganji Katana's Slice-mätare
-  buf.lInv = nzr2(side.legolusInvisRemaining);
+  buf.lInv = nzr2(side.nyroInvisRemaining);
   buf.kUlt = nzr2(side.kostefoUltRemaining);
   buf.kJoints = arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) }));
   buf.kComp = side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined;
@@ -2361,7 +2361,7 @@ function writeSkillEntitiesInto(s, snap, i) {
   snap.bh[i]  = arrOpt(s.blackHoles, _mapBh) || _ARENA_EMPTY_ARR;
   snap.fw[i]  = arrOpt(s.fireWaves, _mapFw) || _ARENA_EMPTY_ARR;
   snap.nv[i]  = arrOpt(s.novaEffects, _mapNv) || _ARENA_EMPTY_ARR;
-  snap.ab[i]  = arrOpt(s.aragurnBanners, _mapAb) || _ARENA_EMPTY_ARR;
+  snap.ab[i]  = arrOpt(s.elarBanners, _mapAb) || _ARENA_EMPTY_ARR;
   snap.kg[i]  = arrOpt(s.kostefoGooseWaves, _mapKg) || _ARENA_EMPTY_ARR;
   snap.ks[i]  = arrOpt(s.kostefoSliders, _mapKs) || _ARENA_EMPTY_ARR;
   snap.vt[i]  = arrOpt(s.vineTraps, _mapVt) || _ARENA_EMPTY_ARR;
@@ -3029,8 +3029,8 @@ function initBossWarsMatch(heroes, tier, loadouts) {
       side.heroId = heroes[idx];
       side.heroPickConfirmed = true;
     }
-    // C3-försvar: aldrig köra simmen med undefined heroId (peer hann ej bekräfta hjälte) → magiker-fallback.
-    if (!side.heroId) side.heroId = 'magiker';
+    // C3-försvar: aldrig köra simmen med undefined heroId (peer hann ej bekräfta hjälte) → zyro-fallback.
+    if (!side.heroId) side.heroId = 'zyro';
     // Boss-wars-loadout per peer (talents + items). Cappas server-side (3 talents / 4 items)
     // som spoof-skydd mot manipulerade payloads. recomputeSideStats applicerar stat-bonusarna.
     const lo = loadouts && loadouts[idx];
@@ -3060,7 +3060,7 @@ function sandboxMakeDummy(state, x, z) {
     hp: SANDBOX_DUMMY_HP, maxHp: SANDBOX_DUMMY_HP,
     _lastHp: SANDBOX_DUMMY_HP, _regenTimer: 0,
     frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
-    slowTime: 0, slowMul: 1, legolasMarked: 0,
+    slowTime: 0, slowMul: 1, nyroMarked: 0,
   };
 }
 function sandboxNearestDummy(state, x, z) {
@@ -3075,7 +3075,7 @@ function sandboxNearestDummy(state, x, z) {
 // (Re)konfigurera side 1:s hjälte till given hjälte på max (lvl 30 + maxade skills).
 function sandboxSetupHero(state, heroId) {
   const side = state.sides[1];
-  side.heroId = heroId || 'magiker';
+  side.heroId = heroId || 'zyro';
   side.heroPickConfirmed = true;
   side.hero.dead = false;
   side.hero.respawnTimer = 0;
@@ -3085,18 +3085,18 @@ function sandboxSetupHero(state, heroId) {
   // Städa FÖRRA hjältens state vid byte → ren start, "samma inställningar som andra lägen".
   for (const arr of ['fireballs', 'projectiles', 'blackHoles', 'vineTraps', 'thornPools', 'hammers',
                      'novaEffects', 'shatters', 'fireWaves', 'kostefoGooseWaves', 'kostefoSliders',
-                     'kostefoUltJoints', 'kostefoClones', 'aragurnBanners', 'ironWillExplosions',
+                     'kostefoUltJoints', 'kostefoClones', 'elarBanners', 'ironWillExplosions',
                      'heroCopies', 'heroCopyFireballs', 'creepProjectiles', 'monsterProjectiles'])
     if (Array.isArray(side[arr])) side[arr].length = 0;
   side.laserBeam = null; side.rageRemaining = 0; side.berserkRemaining = 0; side.berserkCharged = false;
-  side.gandulfBuffRemaining = 0; side.gandulfBuffStacks = 0; side.legolusBuffRemaining = 0;
-  side.legolusInvisRemaining = 0; side.legolusUltAaPending = false; side.kostefoCloudRemaining = 0;
+  side.gandulfBuffRemaining = 0; side.gandulfBuffStacks = 0; side.nyroBuffRemaining = 0;
+  side.nyroInvisRemaining = 0; side.nyroUltAaPending = false; side.kostefoCloudRemaining = 0;
   side.kostefoCompanion = null; side.kostefoUltRemaining = 0; side.kostefoUltJointsState = null;
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
-  side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.gimluHammerMsRem = 0; side.titansTauntRemaining = 0;
+  side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.kryxHammerMsRem = 0; side.titansTauntRemaining = 0;
   resetXinaState(side);   // Xina (decision 139)
   side.ironWillRemaining = 0; side.ironWillStored = 0; side._ultLockoutTime = 0;
-  side.aragurnShoutBuffTime = 0; side.aragurnShoutHealRemaining = 0; side.aragurnShoutHealPct = 0;
+  side.elarShoutBuffTime = 0; side.elarShoutHealRemaining = 0; side.elarShoutHealPct = 0;
   side.hero.tauntedTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1; side.attackCounter = 0;
   side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
   recomputeArenaSideStats(state, side);   // bas-stats + ev. loadout (boss-wars = endgame-balans)
@@ -3182,9 +3182,9 @@ function tickSandbox(state, dt) {
   if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
   if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
   if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
-  if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
+  if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
   if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
-  if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
+  if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
   tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
@@ -3605,7 +3605,7 @@ function triggerBossWarsPhaseTransition(state, boss) {
   // CLEANSE negativa debuffs (positiv damageBuffMul lämnas orörd).
   boss.dotRemaining = 0; boss.dotPerSec = 0;
   boss.poisonRemaining = 0; boss.poisonStacks = 0;
-  boss.frozenTime = 0; boss.slowTime = 0; boss.slowMul = 1.0; boss.legolasMarked = 0;
+  boss.frozenTime = 0; boss.slowTime = 0; boss.slowMul = 1.0; boss.nyroMarked = 0;
   boss._pendingPhase2 = true;
   // Decision 118 "Val B": rensa kvarvarande P1-minions/ads + nollställ spawn-schemat
   // så heroes får fresh grace (10s) efter P2 startar. Speglar klientens transition.
@@ -4215,11 +4215,11 @@ function tickBossWars(state, dt) {
     tickGimluTauntLvl5(state, s, null, dt);
     flushIronWillReflectLvl5(state, s, null);
     tickAragurnBannersLvl5(s, dt);
-    if (s.heroId === 'aragurn') {
-      s._aragurnCountTickAccum = (s._aragurnCountTickAccum || 0) + dt;
-      if (s._aragurnCountTickAccum >= 0.2 || s.aragurnNearbyCount == null) {
-        s._aragurnCountTickAccum = 0;
-        s.aragurnNearbyCount = aragurnNearbyCount(state, s);
+    if (s.heroId === 'elar') {
+      s._elarCountTickAccum = (s._elarCountTickAccum || 0) + dt;
+      if (s._elarCountTickAccum >= 0.2 || s.elarNearbyCount == null) {
+        s._elarCountTickAccum = 0;
+        s.elarNearbyCount = elarNearbyCount(state, s);
       }
     }
     if (s.ironWillExplosions) for (let k = s.ironWillExplosions.length - 1; k >= 0; k--) {
@@ -4240,9 +4240,9 @@ function tickBossWars(state, dt) {
     // regen (healPerSecPct-talent/item). Allt opp-oberoende → säkert i co-op.
     if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
     if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
-    if ((s.legolusBuffRemaining || 0) > 0) s.legolusBuffRemaining = Math.max(0, s.legolusBuffRemaining - dt);
+    if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
     if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
-    if ((s.gimluHammerMsRem || 0) > 0) s.gimluHammerMsRem = Math.max(0, s.gimluHammerMsRem - dt);
+    if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
     tickZheyna(state, s, dt); tickXina(state, s, dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
@@ -4524,8 +4524,8 @@ function updateSkillCooldowns(side, dt) {
   side.skills.f.cd = Math.max(0, side.skills.f.cd - eff);
   side.skills.e.cd = Math.max(0, side.skills.e.cd - eff);
   // Legolas Dash lvl5 — andra stackens CD
-  if ((side.legolasDashStackCd || 0) > 0) {
-    side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - eff);
+  if ((side.nyroDashStackCd || 0) > 0) {
+    side.nyroDashStackCd = Math.max(0, side.nyroDashStackCd - eff);
   }
 }
 
@@ -4770,7 +4770,7 @@ function updateMonsters(state, side, opp, dt) {
     // osynlig för fiender. Invis trumfar taunt (assassin-mekanik). Kostefo förlorar
     // invis så fort han kliver ut ur molnet (kostefoInCloud återställs i tick).
     const heroVisible = heroAlive
-      && !((side.legolusInvisRemaining || 0) > 0)
+      && !((side.nyroInvisRemaining || 0) > 0)
       && !side.kostefoInCloud;
     if (!heroVisible) m.chasing = false;
     else if (!m.chasing && distHero < MONSTER_AGGRO_RANGE) m.chasing = true;
@@ -4782,7 +4782,7 @@ function updateMonsters(state, side, opp, dt) {
       if (m.aSlowTime <= 0) m.aSlowMul = 1;
     }
     // Lvl-5 Legolas mark tick
-    if ((m.legolasMarked || 0) > 0) m.legolasMarked = Math.max(0, m.legolasMarked - dt);
+    if ((m.nyroMarked || 0) > 0) m.nyroMarked = Math.max(0, m.nyroMarked - dt);
     const atkRange = m.attackRange || 1.2;
     const atkInterval = m.attackInterval || MONSTER_MELEE_INTERVAL;
     // Minion melee wind-up resolve: skadan landar MINION_MELEE_WINDUP sek efter slaget,
@@ -4911,7 +4911,7 @@ function startBossCastServer(state, side, m, skill) {
   let targetX, targetZ, dirX, dirZ;
   // Legolus i Shadow Volley-invis + Kostefo INOM Cannabis Cloud: boss kan inte se
   // honom → casta i statisk standardriktning (lätt att undvika, men kan träffa).
-  const heroHidden = ((side.legolusInvisRemaining || 0) > 0) || !!side.kostefoInCloud;
+  const heroHidden = ((side.nyroInvisRemaining || 0) > 0) || !!side.kostefoInCloud;
   if (skill.originSelf) {
     targetX = m.x; targetZ = m.z;
   } else if (skill.targetHero && hero && !hero.dead && !heroHidden) {
@@ -5225,7 +5225,7 @@ function updatePlayerCreeps(state, side, opp, dt) {
       if (c.slowTime <= 0) c.slowMul = 1;
     }
     // Lvl-5 Legolas mark tick
-    if ((c.legolasMarked || 0) > 0) c.legolasMarked = Math.max(0, c.legolasMarked - dt);
+    if ((c.nyroMarked || 0) > 0) c.nyroMarked = Math.max(0, c.nyroMarked - dt);
     // Find-nearest med sqr-dist (sparar sqrt per creep × targets per tick)
     let target = null, targetType = null, bestDistSq = c.range * c.range;
     if (tauntActive && opp && !opp.hero.dead) {
@@ -5396,10 +5396,10 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  const finalDmg = bossWarsDmgMod(m, dmg * aragurnShoutDmgMul(side) * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR (+E3 shout)
+  const finalDmg = bossWarsDmgMod(m, dmg * elarShoutDmgMul(side) * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR (+E3 shout)
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
-  aragurnLifestealHeal(side, actualDealt);
+  elarLifestealHeal(side, actualDealt);
   gainUltOnSkillHit(side);
   if (m.hp <= 0) killMonster(side, mIdx, side);
 }
@@ -5409,10 +5409,10 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
     triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
     creep.frozenTime = 0;
   }
-  const finalDmg = dmg * aragurnShoutDmgMul(attackerSide) * dmgTakenDebuffMul(creep);
+  const finalDmg = dmg * elarShoutDmgMul(attackerSide) * dmgTakenDebuffMul(creep);
   const actualDealt = Math.min(creep.hp, finalDmg);
   creep.hp -= finalDmg;
-  aragurnLifestealHeal(attackerSide, actualDealt);
+  elarLifestealHeal(attackerSide, actualDealt);
   gainUltOnSkillHit(attackerSide);
 }
 function applySkillDamageToOppHero(state, side, opp, dmg) {
@@ -5421,10 +5421,10 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
     triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
     opp.hero.frozenTime = 0;
   }
-  const finalDmg = dmg * aragurnShoutDmgMul(side) * dmgTakenDebuffMul(opp.hero);
+  const finalDmg = dmg * elarShoutDmgMul(side) * dmgTakenDebuffMul(opp.hero);
   const actualDealt = Math.min(opp.hero.hp, finalDmg);
   damageHero(opp, finalDmg);
-  aragurnLifestealHeal(side, actualDealt);
+  elarLifestealHeal(side, actualDealt);
   gainUltOnSkillHit(side);
 }
 // Shatter spawnar mini-AoE som skadar närliggande monster + creeps + opp.hero
@@ -5644,7 +5644,7 @@ function maintainTargetLock(side, opp, state) {
   let isArenaOrb = side.targetType === 'arenaOrb';
   const baseRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
   // Legolus Shadow Volley empowered AA: dubbel range medan invis-ult-pending.
-  const ultAaRange = (side.heroId === 'legolas' && side.legolusUltAaPending)
+  const ultAaRange = (side.heroId === 'nyro' && side.nyroUltAaPending)
     ? baseRange * LEGOLUS_ULT_AA_RANGE_MUL : baseRange;
   const range = ultAaRange;
   let inRange = false;
@@ -5689,17 +5689,17 @@ function updateHeroAttack(state, side, opp, dt) {
   const auraDmg = side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1;
   const auraAs = side.heroFountainAura ? FOUNTAIN_AS_MUL : 1;
   // Legolus self-buff aktiv? +10% dmg, +10% crit, +30% crit-dmg
-  const buffActive = (side.legolusBuffRemaining || 0) > 0;
+  const buffActive = (side.nyroBuffRemaining || 0) > 0;
   const buffDmgMul = buffActive ? (1 + LEGOLUS_BUFF_DMG_PCT) : 1;
   let critChance = (side.critChancePct || 0) + (buffActive ? LEGOLUS_BUFF_CRIT_PCT : 0);
   let critMulBase = (side.critDmgMul || 2.0) + (buffActive ? LEGOLUS_BUFF_CRIT_DMG_PCT : 0);
   // Xina passive: +15% crit chance, +15% crit damage, +15% lifesteal on crits (lifesteal below).
   if (side.heroId === 'xina') { critChance += 0.15; critMulBase += 0.15; }
   // Legolus dash-buff aktiv? Nästa AA = 100% crit + 20% lifesteal
-  const dashBuffed = !!side.legolusDashBuffPending;
+  const dashBuffed = !!side.nyroDashBuffPending;
   if (dashBuffed) {
     critChance = 1.0;
-    side.legolusDashBuffPending = false;
+    side.nyroDashBuffPending = false;
   }
   // Ganji passive "Katana's Slice": full meter → this AA is a guaranteed crit + 50% bonus
   // dmg, then the meter resets. Mirrors the Legolus dash-buff pattern (one empowered AA).
@@ -5713,23 +5713,23 @@ function updateHeroAttack(state, side, opp, dt) {
   const critMul = isCrit ? critMulBase : 1;
   if (isCrit) side.aaCritFlash = AA_CRIT_FLASH;   // G5: signalera crit till klienten (cri-flagga)
   // Legolus passive: var 3:e AA ger split-buff till nästa AA
-  const isLegolusHero = side.heroId === 'legolas';
-  const splitNow = isLegolusHero && !!side.legolusSplitPending;
-  if (splitNow) side.legolusSplitPending = false;
+  const isLegolusHero = side.heroId === 'nyro';
+  const splitNow = isLegolusHero && !!side.nyroSplitPending;
+  if (splitNow) side.nyroSplitPending = false;
   // Shadow Volley empowered AA: target.maxHp*25% direct dmg + stun nearby + thorn pool.
   // Pilen revealar Legolus när den skjuts. Override:ar normal dmg-formel.
-  const ultAaNow = isLegolusHero && !!side.legolusUltAaPending;
+  const ultAaNow = isLegolusHero && !!side.nyroUltAaPending;
   // Aragurn Berserk (R): +150% AA-dmg + 25% lifesteal under 5s. (AS oförändrad.)
   // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.berserkRemaining || 0) > 0;
   const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars)
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * aragurnShoutDmgMul(side) * xinaOutMul(side);
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * elarShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
-    side.legolusUltAaPending = false;
-    side.legolusInvisRemaining = 0;   // reveal direkt vid pil-spawn
+    side.nyroUltAaPending = false;
+    side.nyroInvisRemaining = 0;   // reveal direkt vid pil-spawn
   }
   // Zheyna passive Hunter's Reach: distans-skalad AA-dmg + lifesteal (alla lägen).
   // Warpath (E): +1m knockback per AA medan aktiv.
@@ -5756,9 +5756,9 @@ function updateHeroAttack(state, side, opp, dt) {
     damage: aaDmg, isAoE, isCrit,
     lifestealRatio: (dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs)) + (side.heroId === 'xina' && isCrit ? 0.15 : 0),   // Xina passive: 15% crit-lifesteal
     knockback: zheynaKnock,
-    legolusBuffed: dashBuffed,
+    nyroBuffed: dashBuffed,
     appliesPoison: splitNow,
-    legolusUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
+    nyroUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
     ganjiMark: ganjiEmpowered,          // → vid hit: 5% maxHP/s DoT (ej boss) + 20% slow
   });
   // Zheyna Clone: kopierar AA (50% dmg) från klon-position mot samma target.
@@ -5769,7 +5769,7 @@ function updateHeroAttack(state, side, opp, dt) {
       targetIsDuelOrb: !!target.isDuelOrb, targetIsArenaOrb: !!target.isArenaOrb,
       targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0, ownerSideIdx: side.idx,
       damage: aaDmg * ZHEYNA_CLONE_DMG_MUL, isAoE: false, isCrit,
-      lifestealRatio: 0, knockback: 0, legolusBuffed: false, appliesPoison: false,
+      lifestealRatio: 0, knockback: 0, nyroBuffed: false, appliesPoison: false,
     });
   }
   // Split: skjut 2 extra projektiler mot närmaste andra fiender
@@ -5802,27 +5802,27 @@ function updateHeroAttack(state, side, opp, dt) {
         targetSideIdx: 0,
         damage: side.attackDmg * auraDmg * buffDmgMul, isAoE: false, isCrit: false,
         lifestealRatio: 0,
-        legolusBuffed: false,
+        nyroBuffed: false,
         appliesPoison: true,
       });
     }
   }
   // Stega passive-räknaren efter att split konsumerats. Var 3:e AA → split-buff till nästa.
   if (isLegolusHero) {
-    side.legolusAaCounter = (side.legolusAaCounter || 0) + 1;
-    if (side.legolusAaCounter % LEGOLUS_PASSIVE_EVERY === 0) {
-      side.legolusSplitPending = true;
+    side.nyroAaCounter = (side.nyroAaCounter || 0) + 1;
+    if (side.nyroAaCounter % LEGOLUS_PASSIVE_EVERY === 0) {
+      side.nyroSplitPending = true;
     }
     // Hunter's Focus lvl5: -0.3s dash-CD per successful AA medan F-buff aktiv
-    if ((side.legolusBuffRemaining || 0) > 0 && (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX)) {
+    if ((side.nyroBuffRemaining || 0) > 0 && (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX)) {
       side.skills.e.cd = Math.max(0, side.skills.e.cd - LEGOLAS_LVL5_HF_AA_CDR);
-      if ((side.legolasDashStackCd || 0) > 0) {
-        side.legolasDashStackCd = Math.max(0, side.legolasDashStackCd - LEGOLAS_LVL5_HF_AA_CDR);
+      if ((side.nyroDashStackCd || 0) > 0) {
+        side.nyroDashStackCd = Math.max(0, side.nyroDashStackCd - LEGOLAS_LVL5_HF_AA_CDR);
       }
     }
   }
   // Legolas Hunter's Focus (F-buff): +30% attack speed under buff-duration
-  const focusAsMul = (side.legolusBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
+  const focusAsMul = (side.nyroBuffRemaining || 0) > 0 ? (1 + LEGOLUS_BUFF_AS_PCT) : 1;
   // Kostefo Cannabis Cloud: +20% AS medan hero ÄR inom molnet
   const cloudAsMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_AS_BONUS) : 1;
   // Aragurn banner-aura (Hero Leap lvl5): +10% AS
@@ -5907,7 +5907,7 @@ function updateProjectiles(state, side, opp, dt) {
       let aaDmgDealt = 0;   // För Aragurn-passive lifesteal — räkna utdelad AA-skada
       // Lvl-5 Legolas Vine Trap mark: +20% dmg på marked targets (bara primär hit)
       const _primaryTarget = p.targetIsHero ? (state.sides[p.targetSideIdx] ? state.sides[p.targetSideIdx].hero : null) : ((p.targetIsDuelOrb || p.targetIsArenaOrb) ? null : p.target);
-      const _primaryDmg = p.damage * legolasMarkMul(side, _primaryTarget);
+      const _primaryDmg = p.damage * nyroMarkMul(side, _primaryTarget);
       if (p.targetIsHero) {
         const ts = state.sides[p.targetSideIdx];
         // Xina Ninja's Cloak: 50% evasion mot auto-attacks → dodge (ingen skada/lifesteal).
@@ -5961,7 +5961,7 @@ function updateProjectiles(state, side, opp, dt) {
         }
       }
       // Aragurn passive lifesteal: 0.5% per 1% HP loss på AA-damage också
-      aragurnLifestealHeal(side, aaDmgDealt);
+      elarLifestealHeal(side, aaDmgDealt);
       // Boss Wars AA-lifesteal (Phase B): talent Bloodthirst / item Berserker Gauntlet.
       // aaLifestealPct sätts bara för boss-wars-sides → no-op i arena/classic.
       if ((side.aaLifestealPct || 0) > 0 && aaDmgDealt > 0 && !side.hero.dead) {
@@ -5979,7 +5979,7 @@ function updateProjectiles(state, side, opp, dt) {
       if (p.lifestealRatio > 0 && aaDmgDealt > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
       }
-      if (p.legolusBuffed && killedTarget) {
+      if (p.nyroBuffed && killedTarget) {
         side.skills.e.cd = 0;
       }
       if (p.isAoE) {
@@ -6003,7 +6003,7 @@ function updateProjectiles(state, side, opp, dt) {
       // Shadow Volley empowered AA hit: stun target + nearby (1.5s) + thorn pool 3s.
       // Använder hero.frozenTime (samma fält som Vine Trap/Leap/Frostnova) som
       // hero-stun. monster/creep frozenTime dekrementeras i deras egna ticks.
-      if (p.legolusUltAa) {
+      if (p.nyroUltAa) {
         // Stun primärt target
         if (p.targetIsHero) {
           const ts = state.sides[p.targetSideIdx];
@@ -6054,10 +6054,10 @@ function updateProjectiles(state, side, opp, dt) {
 // Shadow Volley: dekrementera invis-timer. Vid 0 cancellas även aaPending
 // (annars stannar empowered AA kvar i evighet om Legolus aldrig skjuter).
 function tickLegolusInvis(side, dt) {
-  if ((side.legolusInvisRemaining || 0) <= 0) return;
-  side.legolusInvisRemaining = Math.max(0, side.legolusInvisRemaining - dt);
-  if (side.legolusInvisRemaining <= 0) {
-    side.legolusUltAaPending = false;
+  if ((side.nyroInvisRemaining || 0) <= 0) return;
+  side.nyroInvisRemaining = Math.max(0, side.nyroInvisRemaining - dt);
+  if (side.nyroInvisRemaining <= 0) {
+    side.nyroUltAaPending = false;
   }
 }
 
@@ -6489,13 +6489,13 @@ function updateVineTraps(state, side, opp, dt) {
       // Lvl 5: applicera mark på alla entiteter som rootats under trap-livet
       if (vt.lvl5Mark) {
         for (const m of side.monsters) {
-          if (vt.hitMonsterIds.has(m.id)) m.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+          if (vt.hitMonsterIds.has(m.id)) m.nyroMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
         }
         if (opp) for (const c of opp.playerCreeps) {
-          if (vt.hitCreepIds.has(c.id)) c.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+          if (vt.hitCreepIds.has(c.id)) c.nyroMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
         }
         if (vt.hitOppHero && opp && !opp.hero.dead) {
-          opp.hero.legolasMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
+          opp.hero.nyroMarked = LEGOLAS_LVL5_VT_MARK_DURATION;
         }
       }
       side.vineTraps.splice(i, 1);
@@ -6504,9 +6504,9 @@ function updateVineTraps(state, side, opp, dt) {
 }
 
 // Helper: returnera dmg-mult för Legolas-hits mot marked targets
-function legolasMarkMul(side, target) {
-  if (side.heroId !== 'legolas' || !target) return 1;
-  return (target.legolasMarked || 0) > 0 ? LEGOLAS_LVL5_VT_MARK_DMG_MUL : 1;
+function nyroMarkMul(side, target) {
+  if (side.heroId !== 'nyro' || !target) return 1;
+  return (target.nyroMarked || 0) > 0 ? LEGOLAS_LVL5_VT_MARK_DMG_MUL : 1;
 }
 
 // F: Self-buff i 5s — +10% dmg, +10% crit, +30% crit-dmg
@@ -6514,18 +6514,18 @@ function castLegolusBuff(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION + (engineHasTalent(state, side, 'l_focus_dur') ? 2 : 0);
+  side.nyroBuffRemaining = LEGOLUS_BUFF_DURATION + (engineHasTalent(state, side, 'l_focus_dur') ? 2 : 0);
 }
 
 // E: Kort dash + flagga: nästa AA = 100% crit + 20% lifesteal. Reset cd om buffed AA dödar.
-// Lvl 5: 2 stacks med separata CDs (side.skills.e.cd + side.legolasDashStackCd).
+// Lvl 5: 2 stacks med separata CDs (side.skills.e.cd + side.nyroDashStackCd).
 function castLegolusDash(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead) return;
   const isLvl5 = (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX);
   // CD-gate: vid lvl5 krävs att MINST en stack är klar
   const stack1Ready = (side.skills.e.cd || 0) <= 0;
-  const stack2Ready = isLvl5 && (side.legolasDashStackCd || 0) <= 0;
+  const stack2Ready = isLvl5 && (side.nyroDashStackCd || 0) <= 0;
   if (!stack1Ready && !stack2Ready) return;
   let dx = (ev && ev.dx) || 0, dz = (ev && ev.dz) || 0;
   const len = Math.hypot(dx, dz);
@@ -6541,9 +6541,9 @@ function castLegolusDash(state, sideIdx, ev) {
   if (dist < 0.5) return;
   // Konsumera prioriterat stack 1 (huvud-CD), sen stack 2
   if (stack1Ready) side.skills.e.cd = side.skills.e.max;
-  else side.legolasDashStackCd = side.skills.e.max;
+  else side.nyroDashStackCd = side.skills.e.max;
   side.hero.x = nx; side.hero.z = nz;
-  side.legolusDashBuffPending = true;
+  side.nyroDashBuffPending = true;
 }
 
 // === Ganji (melee sword ninja) — v1 server kit reusing proven, hero-agnostic effects.
@@ -6593,7 +6593,7 @@ function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
   side.skills.e.cd = side.skills.e.max;
-  side.legolusBuffRemaining = LEGOLUS_BUFF_DURATION; // +AA dmg/crit/attack-speed (agnostic effect)
+  side.nyroBuffRemaining = LEGOLUS_BUFF_DURATION; // +AA dmg/crit/attack-speed (agnostic effect)
   side.zheynaWarpathRem = ZHEYNA_E_DUR;              // +move/attack speed (agnostic effect)
 }
 
@@ -6674,7 +6674,7 @@ function tickKryxTimers(side, dt) {
   if ((side.heroASlowTime || 0) > 0) { side.heroASlowTime = Math.max(0, side.heroASlowTime - dt); if (side.heroASlowTime <= 0) side.heroASlowMul = 1; }
   if ((side.titansRageTime || 0) > 0) { side.titansRageTime = Math.max(0, side.titansRageTime - dt); if (side.titansRageTime <= 0) side.titansRageBuff = 0; }
   // E3 War Shout-buff (alla lägen — tickas här i den delade timer-hubben)
-  if ((side.aragurnShoutBuffTime || 0) > 0) side.aragurnShoutBuffTime = Math.max(0, side.aragurnShoutBuffTime - dt);
+  if ((side.elarShoutBuffTime || 0) > 0) side.elarShoutBuffTime = Math.max(0, side.elarShoutBuffTime - dt);
   // G5 crit-flash (alla lägen) — kort fönster där cri-flaggan är hög efter en crit-AA
   if ((side.aaCritFlash || 0) > 0) side.aaCritFlash = Math.max(0, side.aaCritFlash - dt);
   // Titan's Rage leech: efter fear-fönstret (rageLeechStart) → 1s där denna (feared)
@@ -6691,7 +6691,7 @@ function tickKryxTimers(side, dt) {
 
 // Passive: konsumera full berserk-mätare (empowrar nästa Q/F/E). Returnerar true + nollar.
 function consumeBerserk(side) {
-  if (side.heroId !== 'gimlu' || !side.berserkCharged) return false;
+  if (side.heroId !== 'kryx' || !side.berserkCharged) return false;
   side.berserkCharged = false; side.berserkDmgAccum = 0;
   return true;
 }
@@ -6855,7 +6855,7 @@ function castGimluHammer(state, sideIdx, dirX, dirZ) {
     }
     side.hammers.splice(0, 1);
     // Lvl 5: +50% MS i 1s efter tp
-    if (isLvl5) side.gimluHammerMsRem = GIMLU_LVL5_HAMMER_MS_DURATION;
+    if (isLvl5) side.kryxHammerMsRem = GIMLU_LVL5_HAMMER_MS_DURATION;
     return;
   }
   if (side.skills.e.cd > 0) return;
@@ -6903,7 +6903,7 @@ function updateHammers(state, side, opp, dt) {
       const d = Math.hypot(ddx, ddz);
       if (d < 0.6) {
         // Lvl 5: +50% MS i 1s när hammer återvänder till Gimlu
-        if (h.lvl5Slow) side.gimluHammerMsRem = Math.max(side.gimluHammerMsRem || 0, GIMLU_LVL5_HAMMER_MS_DURATION);
+        if (h.lvl5Slow) side.kryxHammerMsRem = Math.max(side.kryxHammerMsRem || 0, GIMLU_LVL5_HAMMER_MS_DURATION);
         side.hammers.splice(i, 1); continue;
       }
       h.x += (ddx / d) * step;
@@ -7211,8 +7211,8 @@ const ARAGURN_DR_EXTRA_PER_ENEMY = 0.05;        // +5% per extra enemy utöver f
 const ARAGURN_DR_MAX = 0.40;                    // cap 40%
 
 // Helper: räkna fiender (monster + opp creeps + opp hero) inom radius runt hero
-function aragurnNearbyCount(state, side) {
-  if (!side || side.heroId !== 'aragurn' || side.hero.dead) return 0;
+function elarNearbyCount(state, side) {
+  if (!side || side.heroId !== 'elar' || side.hero.dead) return 0;
   const r2 = ARAGURN_DR_RADIUS * ARAGURN_DR_RADIUS;
   const hx = side.hero.x, hz = side.hero.z;
   let count = 0;
@@ -7236,9 +7236,9 @@ function aragurnNearbyCount(state, side) {
 }
 
 // Helper: DR från Aragurn-passive baserat på cached nearby-count (uppdateras 1Hz i tick-loop).
-function aragurnPassiveDR(side) {
-  if (!side || side.heroId !== 'aragurn') return 0;
-  const n = side.aragurnNearbyCount || 0;
+function elarPassiveDR(side) {
+  if (!side || side.heroId !== 'elar') return 0;
+  const n = side.elarNearbyCount || 0;
   if (n <= 0) return 0;
   if (n === 1) return ARAGURN_DR_BASE_1;
   // 2+ enemies: 20% baseline + 5% per extra (cap 40%)
@@ -7247,8 +7247,8 @@ function aragurnPassiveDR(side) {
 
 // Helper: lifesteal heal baserat på HP loss-pct. Anropas efter varje damage-app
 // där `side` är attacker. Heal 0.5% av dealt damage per 1% HP loss (max 50% av dmg).
-function aragurnLifestealHeal(side, dmgDealt) {
-  if (!side || side.heroId !== 'aragurn' || side.hero.dead || dmgDealt <= 0) return;
+function elarLifestealHeal(side, dmgDealt) {
+  if (!side || side.heroId !== 'elar' || side.hero.dead || dmgDealt <= 0) return;
   const hpLossPct = Math.max(0, 1 - (side.hero.hp / Math.max(1, side.hero.maxHp)));
   const lifestealPct = hpLossPct * 100 * ARAGURN_LIFESTEAL_PER_HP_LOSS;   // 0.5% × loss%
   if (lifestealPct <= 0) return;
@@ -7273,8 +7273,8 @@ const SHOUT_BUFF_DR = 0.20;
 const SHOUT_BUFF_RADIUS = 8.0;       // stor buff-cirkel runt Aragurn
 const SHOUT_HEAL_ALLY_PCT = 0.06;    // allierad HoT (lägre än Aragurns egen)
 // +20% utgående skada medan War Shout-buffen är aktiv (self eller buffad allierad).
-function aragurnShoutDmgMul(side) {
-  return (side && (side.aragurnShoutBuffTime || 0) > 0) ? (1 + SHOUT_BUFF_DMG) : 1;
+function elarShoutDmgMul(side) {
+  return (side && (side.elarShoutBuffTime || 0) > 0) ? (1 + SHOUT_BUFF_DMG) : 1;
 }
 const LEAP_TRAVEL_TIME = 1.0;
 const LEAP_MAX_DISTANCE = 11.5;
@@ -7374,10 +7374,10 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   if (len < 0.01) { dirX = side.hero.facingX; dirZ = side.hero.facingZ; }
   else { dirX /= len; dirZ /= len; }
   // HoT på Aragurn
-  side.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
-  side.aragurnShoutHealPct = SHOUT_HEAL_SELF_PCT;
+  side.elarShoutHealRemaining = SHOUT_HEAL_DURATION;
+  side.elarShoutHealPct = SHOUT_HEAL_SELF_PCT;
   // E3: self-buff (MS/dmg/DR) + ally-buff i stor cirkel (boss wars co-op). Ally får HoT med.
-  side.aragurnShoutBuffTime = SHOUT_BUFF_DURATION;
+  side.elarShoutBuffTime = SHOUT_BUFF_DURATION;
   if (side.inBossWars) {
     const br2 = SHOUT_BUFF_RADIUS * SHOUT_BUFF_RADIUS;
     for (const idx of [1, 2, 3]) {
@@ -7386,9 +7386,9 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
       if (!a || a.hero.dead) continue;
       const dx = a.hero.x - side.hero.x, dz = a.hero.z - side.hero.z;
       if (dx * dx + dz * dz <= br2) {
-        a.aragurnShoutBuffTime = SHOUT_BUFF_DURATION;
-        a.aragurnShoutHealRemaining = SHOUT_HEAL_DURATION;
-        a.aragurnShoutHealPct = SHOUT_HEAL_ALLY_PCT;
+        a.elarShoutBuffTime = SHOUT_BUFF_DURATION;
+        a.elarShoutHealRemaining = SHOUT_HEAL_DURATION;
+        a.elarShoutHealPct = SHOUT_HEAL_ALLY_PCT;
       }
     }
   }
@@ -7459,15 +7459,15 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
 
 // Lvl 5 Hero Leap banner — tick livstid, applicera heal + buff-flagga om hero inom radie
 function tickAragurnBannersLvl5(side, dt) {
-  if (!side.aragurnBanners || side.aragurnBanners.length === 0) {
+  if (!side.elarBanners || side.elarBanners.length === 0) {
     side.inAragurnBanner = false;
     return;
   }
   let inAura = false;
-  for (let i = side.aragurnBanners.length - 1; i >= 0; i--) {
-    const b = side.aragurnBanners[i];
+  for (let i = side.elarBanners.length - 1; i >= 0; i--) {
+    const b = side.elarBanners[i];
     b.life -= dt;
-    if (b.life <= 0) { side.aragurnBanners.splice(i, 1); continue; }
+    if (b.life <= 0) { side.elarBanners.splice(i, 1); continue; }
     if (!side.hero.dead) {
       const ddx = side.hero.x - b.x, ddz = side.hero.z - b.z;
       if (ddx * ddx + ddz * ddz < ARAGURN_LVL5_BANNER_RADIUS * ARAGURN_LVL5_BANNER_RADIUS) {
@@ -7481,14 +7481,14 @@ function tickAragurnBannersLvl5(side, dt) {
 }
 
 function updateAragurnShoutHeal(side, dt) {
-  if (!side.aragurnShoutHealRemaining || side.aragurnShoutHealRemaining <= 0) return;
-  if (side.hero.dead) { side.aragurnShoutHealRemaining = 0; return; }
-  const healAmt = side.hero.maxHp * (side.aragurnShoutHealPct || 0) * dt;
+  if (!side.elarShoutHealRemaining || side.elarShoutHealRemaining <= 0) return;
+  if (side.hero.dead) { side.elarShoutHealRemaining = 0; return; }
+  const healAmt = side.hero.maxHp * (side.elarShoutHealPct || 0) * dt;
   if (healAmt > 0 && side.hero.hp < side.hero.maxHp) {
     side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + healAmt);
   }
-  side.aragurnShoutHealRemaining -= dt;
-  if (side.aragurnShoutHealRemaining <= 0) side.aragurnShoutHealPct = 0;
+  side.elarShoutHealRemaining -= dt;
+  if (side.elarShoutHealRemaining <= 0) side.elarShoutHealPct = 0;
 }
 
 // E: Heroic Leap — hoppa till target-position, AoE damage + stun vid landning.
@@ -7498,7 +7498,7 @@ function updateAragurnShoutHeal(side, dt) {
 function castAragurnLeap(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
-  if (side.aragurnLeap) return;   // redan i luften
+  if (side.elarLeap) return;   // redan i luften
   const opp = arenaOpp(state, sideIdx);
   const target = resolveSkillGroundTarget(state, side, opp, ev || {}, LEAP_MAX_DISTANCE);
   let tx = target.x, tz = target.z;
@@ -7525,7 +7525,7 @@ function castAragurnLeap(state, sideIdx, ev) {
     if (!foundWalkable) return;   // ingen walkable pos längs leap-vägen
   }
   side.skills.e.cd = side.skills.e.max;
-  side.aragurnLeap = {
+  side.elarLeap = {
     remaining: LEAP_TRAVEL_TIME,
     total: LEAP_TRAVEL_TIME,
     startX: side.hero.x, startZ: side.hero.z,
@@ -7538,8 +7538,8 @@ function castAragurnLeap(state, sideIdx, ev) {
 }
 
 function updateAragurnLeap(state, side, opp, dt) {
-  if (!side.aragurnLeap) return;
-  const lp = side.aragurnLeap;
+  if (!side.elarLeap) return;
+  const lp = side.elarLeap;
   lp.remaining -= dt;
   // CC-immun under leap
   side.heroSlowTime = 0; side.heroSlowMul = 1;
@@ -7554,7 +7554,7 @@ function updateAragurnLeap(state, side, opp, dt) {
     side.hero.x = lp.targetX;
     side.hero.z = lp.targetZ;
     applyAragurnLeapImpact(state, side, opp, lp.targetX, lp.targetZ);
-    side.aragurnLeap = null;
+    side.elarLeap = null;
   }
 }
 
@@ -7565,8 +7565,8 @@ function applyAragurnLeapImpact(state, side, opp, x, z) {
   const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
   // Lvl 5: spawna banner på landings-pos
   if (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
-    side.aragurnBanners = side.aragurnBanners || [];
-    side.aragurnBanners.push({
+    side.elarBanners = side.elarBanners || [];
+    side.elarBanners.push({
       id: state.nextEntityId++,
       x, z,
       life: ARAGURN_LVL5_BANNER_DURATION,
@@ -8229,20 +8229,20 @@ function applyMovement(side, joyX, joyZ, dt) {
   // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
   const slowMul = ((side.inArena1v1 || side.inBossWars) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
-  const invisMul = (side.legolusInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
+  const invisMul = (side.nyroInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
   // Lvl-5 MS-buffs (Gandulf Wind Puff, Gimlu Hammer, Aragurn banner m.fl.)
   const wpMul = (side.windPuffMsRem || 0) > 0 ? GANDULF_LVL5_WP_MS_MUL : 1;
-  const hammerMul = (side.gimluHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
+  const hammerMul = (side.kryxHammerMsRem || 0) > 0 ? GIMLU_LVL5_HAMMER_MS_MUL : 1;
   const bannerMul = side.inAragurnBanner ? (1 + ARAGURN_LVL5_BANNER_MS_BONUS) : 1;
   // Zyro passive: +10% MS per stack (max 30%) under buff-duration.
-  const zyroPassiveMs = (side.heroId === 'magiker' && (side.gandulfBuffRemaining || 0) > 0)
+  const zyroPassiveMs = (side.heroId === 'zyro' && (side.gandulfBuffRemaining || 0) > 0)
     ? 1 + (side.gandulfBuffStacks || 0) * GANDULF_BUFF_MS_PER_STACK : 1;
   // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
   const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
-  const shoutMs = (side.aragurnShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
+  const shoutMs = (side.elarShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
   const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
@@ -8731,7 +8731,7 @@ function applyEvent(state, sideIdx, ev) {
     // nearest enemy is out of range (no chase; user 2026-06-20 v2). You run closer and tap again.
     // Range mirrors maintainTargetLock (Zheyna Warpath +range, Legolus empowered ult-AA double range).
     const baseAcqRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
-    const acqRange = (side.heroId === 'legolas' && side.legolusUltAaPending) ? baseAcqRange * LEGOLUS_ULT_AA_RANGE_MUL : baseAcqRange;
+    const acqRange = (side.heroId === 'nyro' && side.nyroUltAaPending) ? baseAcqRange * LEGOLUS_ULT_AA_RANGE_MUL : baseAcqRange;
     const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, acqRange, state);
     if (t) {
       side.aaActive = true;
@@ -8783,9 +8783,9 @@ function applyEvent(state, sideIdx, ev) {
         side.ultEnergy = 0;
         side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
         // Legolus Shadow Volley: invis 5s + empowered next-AA. Revealar vid AA-fire eller timeout.
-        if (side.heroId === 'legolas' && !side.hero.dead) {
-          side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
-          side.legolusUltAaPending = true;
+        if (side.heroId === 'nyro' && !side.hero.dead) {
+          side.nyroInvisRemaining = LEGOLUS_INVIS_DURATION;
+          side.nyroUltAaPending = true;
           side.attackCd = 0;
           // N5: stop auto-attacking on ult cast — the empowered shot waits until the
           // player presses ATK again (then aaActive→true fires the pending empowered AA).
@@ -8794,7 +8794,7 @@ function applyEvent(state, sideIdx, ev) {
         // Ganji Ninja's Mastery: 5 s invisibility (+move speed, agnostic effect).
         // Clone + the empowered break-AA are deferred to a later pass.
         if (side.heroId === 'ganji' && !side.hero.dead) {
-          side.legolusInvisRemaining = LEGOLUS_INVIS_DURATION;
+          side.nyroInvisRemaining = LEGOLUS_INVIS_DURATION;
         }
         // Kostefo Joint Avengers: summona 8 joints som orbiterar + kopierar AA
         if (side.heroId === 'kostefo' && !side.hero.dead) {
@@ -8812,7 +8812,7 @@ function applyEvent(state, sideIdx, ev) {
         // berserk-AA m.m.) och hero-skadan är duel-gatead (isHeroPvpActive) i tick-funktionerna.
         // Magiker Master Beam: 3s svängande laser (AoE-tick mot opp hero). Riktning
         // från ev.dx/dz (cast-aim) med facing-fallback. Klient renderar via lz-snap.
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'magiker' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'zyro' && !side.hero.dead) {
           let ldx = ev.dx, ldz = ev.dz;
           const lm = Math.hypot(ldx || 0, ldz || 0);
           if (lm < 0.01) { ldx = side.hero.facingX || 0; ldz = side.hero.facingZ || 1; }
@@ -8821,12 +8821,12 @@ function applyEvent(state, sideIdx, ev) {
           applyLaserBeamTickServer(state, side);   // initial tick direkt (matchar klientens host-fn)
         }
         // Gimlu Rage: 5s AoE-pulser + 20% lifesteal + CC-immun
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'gimlu' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'kryx' && !side.hero.dead) {
           side.rageRemaining = RAGE_DURATION;
           side.rageTickAccum = 0;
         }
         // Aragurn Berserk: 5s +150% AA-dmg + 25% lifesteal (AA-modifier i updateHeroAttack)
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'aragurn' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'elar' && !side.hero.dead) {
           side.berserkRemaining = BERSERK_DURATION;
         }
         // Xina Shuriken Storm: 5 orbiterande shurikens 5s + buffs, skjuts sedan ut (tickXina).
@@ -8865,9 +8865,9 @@ function applyEvent(state, sideIdx, ev) {
         if (m > 0.01) { dx = ddx / m; dz = ddz / m; }
       }
     }
-    const isLegolus = side.heroId === 'legolas';
-    const isGimlu = side.heroId === 'gimlu';
-    const isAragurn = side.heroId === 'aragurn';
+    const isLegolus = side.heroId === 'nyro';
+    const isGimlu = side.heroId === 'kryx';
+    const isAragurn = side.heroId === 'elar';
     const isKostefo = side.heroId === 'kostefo';
     const isZheyna = side.heroId === 'zheyna';
     const isGanji = side.heroId === 'ganji';
@@ -9028,7 +9028,7 @@ function spawnHeroCopy(state, winnerSide, statRatio) {
   oppSide.heroCopies.push({
     id: state.nextEntityId++,
     ownerSideIdx: winnerIdx,
-    heroId: winnerSide.heroId || 'magiker',
+    heroId: winnerSide.heroId || 'zyro',
     x: oppCfg.spawnX, z, ry: 0,
     lane,
     hp: maxHp, maxHp,
@@ -9192,7 +9192,7 @@ function startDuel(state) {
     // duel-start kvar i duel-arenan (de tickas i duel-branchen) och skadar hjältar.
     for (const arr of ['blackHoles', 'vineTraps', 'hammers', 'fireWaves', 'shatters', 'thornPools',
       'kostefoGooseWaves', 'kostefoSliders', 'bossProjectiles', 'bossPools',
-      'ironWillExplosions', 'aragurnBanners', 'heroCopyFireballs']) {
+      'ironWillExplosions', 'elarBanners', 'heroCopyFireballs']) {
       if (Array.isArray(s[arr])) s[arr].length = 0;
     }
     s.inDuel = true;
@@ -9305,7 +9305,7 @@ function endDuel(state) {
     // Spegla startDuel: rensa alla skill-entiteter så inget följer med ut ur duel-arenan.
     for (const arr of ['blackHoles', 'vineTraps', 'hammers', 'fireWaves', 'shatters', 'thornPools',
       'kostefoGooseWaves', 'kostefoSliders', 'bossProjectiles', 'bossPools',
-      'ironWillExplosions', 'aragurnBanners', 'heroCopyFireballs']) {
+      'ironWillExplosions', 'elarBanners', 'heroCopyFireballs']) {
       if (Array.isArray(s[arr])) s[arr].length = 0;
     }
     s.inDuel = false;
@@ -9455,21 +9455,21 @@ function tickGame(state, dt) {
       // istället för 30 Hz. Iterar alla monsters + creeps O(N+M), helt onödigt
       // varje tick eftersom DR-värdet bara läses vid damageHero som inte triggar
       // ofta nog för 30 Hz precision att vara märkbar. 6× CPU-spar för Aragurn-sidor.
-      if (side.heroId === 'aragurn') {
-        side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
-        if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
-          side._aragurnCountTickAccum = 0;
-          side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+      if (side.heroId === 'elar') {
+        side._elarCountTickAccum = (side._elarCountTickAccum || 0) + dt;
+        if (side._elarCountTickAccum >= 0.2 || side.elarNearbyCount == null) {
+          side._elarCountTickAccum = 0;
+          side.elarNearbyCount = elarNearbyCount(state, side);
         }
       }
       // Ult-energy passive gain (0.5%/sek) — gainUltEnergy bail:ar om lockout aktiv
       if (!side.hero.dead) gainUltEnergy(side, ULT_GAIN_PASSIVE * dt);
       // Tick ner lockout-timer (5s efter ult-cast)
       if ((side._ultLockoutTime || 0) > 0) side._ultLockoutTime = Math.max(0, side._ultLockoutTime - dt);
-      if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+      if ((side.nyroBuffRemaining || 0) > 0) side.nyroBuffRemaining = Math.max(0, side.nyroBuffRemaining - dt);
       tickGimluTauntLvl5(state, side, opp, dt);
       if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
-      if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+      if ((side.kryxHammerMsRem || 0) > 0) side.kryxHammerMsRem = Math.max(0, side.kryxHammerMsRem - dt);
       tickZheyna(state, side, dt); tickXina(state, side, dt);
       flushIronWillReflectLvl5(state, side, opp);
       tickAragurnBannersLvl5(side, dt);
@@ -9491,7 +9491,7 @@ function tickGame(state, dt) {
       if ((side.iceBlockRemaining || 0) > 0) side.iceBlockRemaining = Math.max(0, side.iceBlockRemaining - dt);
       // Legolas-mark + Zyro/gandulf-buff tickas även i duellen (QA 2026-06-17) — annars
       // expirerade marken aldrig under duel = permanent +20% dmg, och buffen frös.
-      if ((side.hero.legolasMarked || 0) > 0) side.hero.legolasMarked = Math.max(0, side.hero.legolasMarked - dt);
+      if ((side.hero.nyroMarked || 0) > 0) side.hero.nyroMarked = Math.max(0, side.hero.nyroMarked - dt);
       if ((side.gandulfBuffRemaining || 0) > 0) { side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt); if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0; }
       if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
     }
@@ -9579,7 +9579,7 @@ function tickGame(state, dt) {
       }
       tickKryxTimers(side, dt);   // Titan's Stomp-DR + hjälte-AS-slow (rework)
       // Lvl-5 Legolas mark tick på hero (för duel/arena PvP)
-      if ((side.hero.legolasMarked || 0) > 0) side.hero.legolasMarked = Math.max(0, side.hero.legolasMarked - dt);
+      if ((side.hero.nyroMarked || 0) > 0) side.hero.nyroMarked = Math.max(0, side.hero.nyroMarked - dt);
       // Wind Puff debuff på hero
       if (side.hero.dmgTakenDebuffTime > 0) {
         side.hero.dmgTakenDebuffTime -= dt;
@@ -9615,14 +9615,14 @@ function tickGame(state, dt) {
     tickKostefoSkills(state, side, opp, dt);
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning.
     // Throttlad till 5 Hz (recompute var 0.2s) — O(N+M) iter onödig varje tick.
-    if (side.heroId === 'aragurn') {
-      side._aragurnCountTickAccum = (side._aragurnCountTickAccum || 0) + dt;
-      if (side._aragurnCountTickAccum >= 0.2 || side.aragurnNearbyCount == null) {
-        side._aragurnCountTickAccum = 0;
-        side.aragurnNearbyCount = aragurnNearbyCount(state, side);
+    if (side.heroId === 'elar') {
+      side._elarCountTickAccum = (side._elarCountTickAccum || 0) + dt;
+      if (side._elarCountTickAccum >= 0.2 || side.elarNearbyCount == null) {
+        side._elarCountTickAccum = 0;
+        side.elarNearbyCount = elarNearbyCount(state, side);
       }
     }
-    if ((side.legolusBuffRemaining || 0) > 0) side.legolusBuffRemaining = Math.max(0, side.legolusBuffRemaining - dt);
+    if ((side.nyroBuffRemaining || 0) > 0) side.nyroBuffRemaining = Math.max(0, side.nyroBuffRemaining - dt);
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.gandulfBuffRemaining || 0) > 0) {
       side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
@@ -9642,7 +9642,7 @@ function tickGame(state, dt) {
     updateActiveBuffs(side, dt);
     // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
-    if ((side.gimluHammerMsRem || 0) > 0) side.gimluHammerMsRem = Math.max(0, side.gimluHammerMsRem - dt);
+    if ((side.kryxHammerMsRem || 0) > 0) side.kryxHammerMsRem = Math.max(0, side.kryxHammerMsRem - dt);
     tickZheyna(state, side, dt); tickXina(state, side, dt);
     flushIronWillReflectLvl5(state, side, opp);
     tickAragurnBannersLvl5(side, dt);
@@ -9701,7 +9701,7 @@ function serializeSide(side) {
       tnt: nzr2(side.hero.tauntedTime),
       mlk: flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0),   // movement-locked (CC) → klient fryser prediktion 2026-06-23
       poi: nzr2(side.hero.poisonRemaining),
-      lMk: nzr2(side.hero.legolasMarked),
+      lMk: nzr2(side.hero.nyroMarked),
       // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
       zc: side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined,
       zsp: side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined,
@@ -9752,7 +9752,7 @@ function serializeSide(side) {
     lv: side.level || 1,
     xp: side.xp || 0,
     xpN: side.xpToNext || 0,
-    hid: side.heroId || 'magiker',
+    hid: side.heroId || 'zyro',
     hpc: side.heroPickConfirmed ? 1 : 0,
     sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
     // Skill-point-system: skill-levels + stat-points + unspent
@@ -9763,10 +9763,10 @@ function serializeSide(side) {
     // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc.
     // Skippas helt när inaktivt (undefined → JSON-skip).
     wwR: nzr2(side.whirlwindRemaining),
-    leapA: flag(side.aragurnLeap),
-    leapU: side.aragurnLeap ? r3(1 - (side.aragurnLeap.remaining / side.aragurnLeap.total)) : undefined,
-    leapTx: side.aragurnLeap ? r2(side.aragurnLeap.targetX) : undefined,
-    leapTz: side.aragurnLeap ? r2(side.aragurnLeap.targetZ) : undefined,
+    leapA: flag(side.elarLeap),
+    leapU: side.elarLeap ? r3(1 - (side.elarLeap.remaining / side.elarLeap.total)) : undefined,
+    leapTx: side.elarLeap ? r2(side.elarLeap.targetX) : undefined,
+    leapTz: side.elarLeap ? r2(side.elarLeap.targetZ) : undefined,
     w: {
       c: side.wave.current,
       a: side.wave.active,
@@ -9809,19 +9809,19 @@ function serializeSide(side) {
     N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r3(n.life / n.maxLife), k: n.kind })),
     CP: arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
     MR: arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
-    HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'magiker', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
+    HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'zyro', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
     HCF: arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
     FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife), k: f.kind })),
     BH: arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
     SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
     VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
-    lbuf: nzr2(side.legolusBuffRemaining),
-    shb: nzr2(side.aragurnShoutBuffTime),   // E3: War Shout buff → gold glow (side-level i classic)
-    ldash: flag(side.legolusDashBuffPending),
-    lds2: nzr2(side.legolasDashStackCd),
+    lbuf: nzr2(side.nyroBuffRemaining),
+    shb: nzr2(side.elarShoutBuffTime),   // E3: War Shout buff → gold glow (side-level i classic)
+    ldash: flag(side.nyroDashBuffPending),
+    lds2: nzr2(side.nyroDashStackCd),
     // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
-    lInv: nzr2(side.legolusInvisRemaining),
-    lAa: flag(side.legolusUltAaPending),
+    lInv: nzr2(side.nyroInvisRemaining),
+    lAa: flag(side.nyroUltAaPending),
     TP: arrOpt(side.thornPools, p => ({
       id: p.id, x: r2(p.x), z: r2(p.z),
       r: p.radius, life: r3(p.remaining / p.duration),
@@ -9851,9 +9851,9 @@ function serializeSide(side) {
     gbuf: nzr2(side.gandulfBuffRemaining),
     gbStk: nz(side.gandulfBuffStacks),
     wpMs: nzr2(side.windPuffMsRem),
-    ghMs: nzr2(side.gimluHammerMsRem),
+    ghMs: nzr2(side.kryxHammerMsRem),
     inAbn: flag(side.inAragurnBanner),
-    ABN: arrOpt(side.aragurnBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
+    ABN: arrOpt(side.elarBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
     kSTp: side.kostefoSliderTpMarker ? { x: r2(side.kostefoSliderTpMarker.x), z: r2(side.kostefoSliderTpMarker.z), rem: r2(side.kostefoSliderTpMarker.remaining) } : undefined,
     kCln: arrOpt(side.kostefoClones, c => ({ id: c.id, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: c.hp })),
     kCrM: side.kostefoCloudRadiusMul && side.kostefoCloudRadiusMul !== 1 ? r3(side.kostefoCloudRadiusMul) : undefined,

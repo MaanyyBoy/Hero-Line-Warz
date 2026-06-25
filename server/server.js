@@ -100,7 +100,7 @@ function startLineWarsBotMatch(room, fromWs, payload) {
   s2.isBot = true;
   s2.botDifficulty = ['easy', 'medium', 'hard'].includes(payload.bot) ? payload.bot : 'medium';
   // F4: kostefo/zheyna saknades — bot-AI:n är generisk (applyEvent q/f/e) så alla 6 funkar.
-  const heroes = ['magiker', 'legolas', 'gimlu', 'aragurn', 'kostefo', 'zheyna'];
+  const heroes = ['zyro', 'nyro', 'kryx', 'elar', 'kostefo', 'zheyna'];
   s2.heroId = heroes[(Math.random() * heroes.length) | 0];
   s2.heroPickConfirmed = true;   // bot auto-confirmar → pick-fasen väntar bara på host
   send(room.host, { t: 'peer-joined', peersTotal: 2, maxPeers: room.maxPeers });
