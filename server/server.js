@@ -197,7 +197,12 @@ function gameLoopTick(room) {
   }
   const _simMs = Date.now() - _simStart;
   if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
-    room.lastStateMs = now;
+    // 30 Hz-fix (2026-06-27): anchor the send schedule to the INTENDED tick time (nextTickAt, not yet
+    // advanced here — that happens further down), NOT the actual late arrival `now`. With `= now`, any
+    // setTimeout jitter on a shared VM made catch-up ticks fail this guard (now-lastStateMs < interval)
+    // → ~1 snapshot per 2 ticks = the ~18 Hz clients saw on BOTH Render and Fly. Anchoring to nextTickAt
+    // lets every tick send → true 30 Hz delivery. (server-debug analysis 2026-06-27.)
+    room.lastStateMs = room.nextTickAt;
     try {
       const stateMsg = _isArena ? engine.serializeArenaState(room.game)
                      : _isBoss ? engine.serializeBossWarsState(room.game)
