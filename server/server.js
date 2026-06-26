@@ -106,6 +106,16 @@ function startLineWarsBotMatch(room, fromWs, payload) {
   const heroes = ['zyro', 'nyro', 'kryx', 'elar', 'kostefo', 'zheyna'];
   s2.heroId = heroes[(Math.random() * heroes.length) | 0];
   s2.heroPickConfirmed = true;   // bot auto-confirmar → pick-fasen väntar bara på host
+  // bothBots (test/telemetri 2026-06-26): driv ÄVEN host-sidan med bot-AI → fullt auto-match som
+  // avancerar vågorna utan en mänsklig spelare (idle host-hjälte rensar aldrig sina creeps →
+  // wave-sync (decision 105) fastnar). Gör endurance/late-game-payload-körningar möjliga.
+  if (payload.bothBots) {
+    const s1 = g.sides[1];
+    s1.isBot = true;
+    s1.botDifficulty = s2.botDifficulty;
+    s1.heroId = (typeof payload.hero === 'string' && payload.hero) ? payload.hero : heroes[(Math.random() * heroes.length) | 0];
+    s1.heroPickConfirmed = true;
+  }
   send(room.host, { t: 'peer-joined', peersTotal: 2, maxPeers: room.maxPeers });
   console.log(`[${room.code}] line wars vs bot (${s2.botDifficulty}) started`);
 }
