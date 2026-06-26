@@ -3741,7 +3741,7 @@ function applyMinionAbsorptionEngine(state, boss) {
   const aoePct = (boss.bossPhase === 2) ? BOSSWARS_MINION_ABSORB_AOE_PCT_P2 : BOSSWARS_MINION_ABSORB_AOE_PCT_P1;
   for (const tgt of bossWarsTargets(state)) {
     if (!tgt || !tgt.hero || tgt.hero.dead) continue;
-    damageHero(tgt, tgt.hero.maxHp * aoePct);
+    bossSkillDamageHero(tgt, tgt.hero.maxHp * aoePct);   // 35%-tak (P2-absorption var 50% = one-shot på skadad hjälte, user 2026-06-26)
   }
 }
 function updateBossWarsMinionsEngine(state, dt) {
