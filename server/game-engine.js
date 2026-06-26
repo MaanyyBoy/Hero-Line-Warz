@@ -8373,13 +8373,20 @@ function castZheynaClone(state, sideIdx) {
   const side = state.sides[sideIdx];
   if (!side || side.hero.dead || side.skills.f.cd > 0) return;
   side.skills.f.cd = side.skills.f.max;
-  side.zheynaClone = { id: state.nextEntityId++, x: side.hero.x + 1.4, z: side.hero.z, hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR };
+  side.zheynaClone = { id: state.nextEntityId++, x: side.hero.x + 1.5, z: side.hero.z, hp: side.hero.maxHp, maxHp: side.hero.maxHp, remaining: ZHEYNA_CLONE_DUR };
 }
+const ZHEYNA_CLONE_FOLLOW_DIST = 1.5;   // user 2026-06-26: klonen står aldrig på Zheyna, håller 1.5 m
 function tickZheynaClone(state, side, dt) {
   const cl = side.zheynaClone; if (!cl) return;
   cl.remaining -= dt;
   if (cl.remaining <= 0 || cl.hp <= 0) { side.zheynaClone = null; return; }
-  const ox = side.hero.x + 1.4, oz = side.hero.z;
+  // Följ Zheyna men håll ALLTID 1.5 m avstånd: sikta på en punkt 1.5 m från henne i klonens nuvarande
+  // riktning (så den stannar på sin sida och aldrig glider in ovanpå henne).
+  let dx = cl.x - side.hero.x, dz = cl.z - side.hero.z;
+  let d = Math.hypot(dx, dz);
+  if (d < 0.001) { dx = 1; dz = 0; d = 1; }   // sammanfallande → defaulta åt sidan
+  const ox = side.hero.x + (dx / d) * ZHEYNA_CLONE_FOLLOW_DIST;
+  const oz = side.hero.z + (dz / d) * ZHEYNA_CLONE_FOLLOW_DIST;
   cl.x += (ox - cl.x) * Math.min(1, dt * 6); cl.z += (oz - cl.z) * Math.min(1, dt * 6);
 }
 // E Warpath
