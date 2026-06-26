@@ -3238,7 +3238,7 @@ function applyBossCircleDmg(state, m, cast) {
   for (const tgt of bossWarsTargets(state)) {
     if (tgt.hero.dead) continue;
     if (Math.hypot(tgt.hero.x - cast.targetX, tgt.hero.z - cast.targetZ) < s.radius) {
-      damageHero(tgt, dmg);
+      bossSkillDamageHero(tgt, dmg);
       if (s.slow) {
         tgt.heroSlowMul = Math.min(tgt.heroSlowMul != null ? tgt.heroSlowMul : 1, s.slow.mul);
         tgt.heroSlowTime = Math.max(tgt.heroSlowTime || 0, s.slow.dur);
@@ -3255,7 +3255,7 @@ function applyBossConeDmgRaw(state, m, cast, length, halfAngle, dmgMul) {
     if (d > 0.001 && d < length) {
       const dot = (dx * cast.dirX + dz * cast.dirZ) / d;
       const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-      if (ang < halfAngle) damageHero(tgt, dmg);
+      if (ang < halfAngle) bossSkillDamageHero(tgt, dmg);
     }
   }
 }
@@ -3271,7 +3271,7 @@ function applyBossLineDmg(state, m, cast, cx, cz) {
     const key = 'hero' + tgt.idx;
     if (e.damaged.has(key)) continue;
     const d = Math.hypot(tgt.hero.x - cx, tgt.hero.z - cz);
-    if (d < (s.width || 2) * 0.6) { damageHero(tgt, dmg); e.damaged.add(key); }
+    if (d < (s.width || 2) * 0.6) { bossSkillDamageHero(tgt, dmg); e.damaged.add(key); }
   }
 }
 function applyBossBeamDmg(state, m, cast, length, width, dmg) {
@@ -3282,7 +3282,7 @@ function applyBossBeamDmg(state, m, cast, length, width, dmg) {
     const along = dx * cast.dirX + dz * cast.dirZ;
     if (along > 0 && along < length) {
       const perp = Math.abs(dx * (-cast.dirZ) + dz * cast.dirX);
-      if (perp < width) damageHero(tgt, realDmg);
+      if (perp < width) bossSkillDamageHero(tgt, realDmg);
     }
   }
 }
@@ -3366,7 +3366,7 @@ function tickBossWarsProjectiles(state, dt) {
     let hit = false;
     for (const tgt of bossWarsTargets(state)) {
       if (tgt.hero.dead) continue;
-      if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius + 0.45) { damageHero(tgt, p.damage); hit = true; break; }
+      if (Math.hypot(tgt.hero.x - p.x, tgt.hero.z - p.z) < p.radius + 0.45) { bossSkillDamageHero(tgt, p.damage); hit = true; break; }
     }
     if (hit || p.traveled > p.range) arr.splice(i, 1);
   }
@@ -5052,6 +5052,16 @@ const BOSS_HERO_AA_MAX_HIT_FRAC = 0.20;
 function bossAaDamageHero(heroSide, dmg) {
   if (!heroSide || !heroSide.hero) return;
   damageHero(heroSide, Math.min(dmg, heroSide.hero.maxHp * BOSS_HERO_AA_MAX_HIT_FRAC));
+}
+// Anti-one-shot för boss SKILLS (user 2026-06-26: feel-audit — circle/cone/line/beam/projektil gick
+// rakt genom damageHero utan tak → tier 4-5-nukes one-shottade squishies). En boss-SKILL får aldrig ta
+// mer än 35% maxHP per träff → en enda skill kan inte döda; två rena träffar = död (läsbart/rättvist).
+// Bara reducerande (Math.min) → balanserad låg-tier-skada är oförändrad. DoT-pooltick + avsiktliga
+// mekanik-straff (Warlord fel-symbol m.m.) är medvetet UNDANTAGNA (ska vara dödliga).
+const BOSS_HERO_SKILL_MAX_HIT_FRAC = 0.35;
+function bossSkillDamageHero(heroSide, dmg) {
+  if (!heroSide || !heroSide.hero) return;
+  damageHero(heroSide, Math.min(dmg, heroSide.hero.maxHp * BOSS_HERO_SKILL_MAX_HIT_FRAC));
 }
 
 function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
