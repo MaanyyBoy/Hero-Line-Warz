@@ -132,6 +132,7 @@ function stopGame(room) {
   room.bossSim = false;
   room.arenaSim = false;
   room.sandboxSim = false;   // R4: defensiv — förhindra latent state-läcka vid ev. framtida sandbox-rum-reuse
+  room.survivalSim = false;  // Survival Wars (2026-06-27)
 }
 
 // Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
@@ -187,10 +188,12 @@ function gameLoopTick(room) {
   const _isArena = !!room.arenaSim;          // decision 120: server-auth arena
   const _isBoss = !!room.bossSim;            // decision 122 Fas 2: server-auth boss wars (3-peer)
   const _isSandbox = !!room.sandboxSim;      // sandbox-träningsläge (2026-06-18, solo, host-only)
+  const _isSurvival = !!room.survivalSim;    // Survival Wars (2026-06-27, 4-player co-op defend)
   try {
     if (_isArena) engine.tickArena(room.game, dt);
     else if (_isBoss) engine.tickBossWars(room.game, dt);
     else if (_isSandbox) engine.tickSandbox(room.game, dt);
+    else if (_isSurvival) engine.tickSurvival(room.game, dt);
     else engine.tickGame(room.game, dt);
   } catch (e) {
     console.error(`[${room.code}] tick error:`, e && e.stack || e);
@@ -209,6 +212,7 @@ function gameLoopTick(room) {
       const stateMsg = _isArena ? engine.serializeArenaState(room.game)
                      : _isBoss ? engine.serializeBossWarsState(room.game)
                      : _isSandbox ? engine.serializeSandboxState(room.game)
+                     : _isSurvival ? engine.serializeSurvivalState(room.game)
                      : engine.serializeState(room.game);
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
@@ -570,6 +574,73 @@ function relayBossWarsMessage(room, fromWs, envelope) {
   for (const c of (room.clients || [])) if (c !== fromWs) relayPeerSend(c, envelope, isState);
 }
 
+// ── Survival Wars (2026-06-27): server-auth 4-player co-op defend-the-building ──
+function startSurvivalSim(room, heroes, bots) {
+  if (room.game || room.tickHandle) return;
+  room.survivalSim = true;
+  room.game = engine.initSurvivalMatch(heroes);
+  // Host fyller tomma co-op-slots (2/3/4) med bots. bots = { "2": "medium", "3": "hard", "4": "medium" }.
+  if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
+    for (const k of Object.keys(bots)) {
+      const idx = Number(k);
+      const side = room.game.sides[idx];
+      if (side && idx >= 2 && idx <= 4) {
+        side.isBot = true;
+        side.botDifficulty = ['easy', 'medium', 'hard'].includes(bots[k]) ? bots[k] : 'medium';
+      }
+    }
+  }
+  room.lastStateMs = 0;
+  room.lastTickMs = Date.now();
+  room.nextTickAt = Date.now();
+  scheduleNextTick(room);
+  console.log(`[${room.code}] survival sim started (server-auth, 4-player)`);
+}
+
+function applySurvivalInput(room, ws, payload) {
+  if (!room.game) return;
+  const sideIdx = ws.peerIdx;                       // 1=host, 2/3/4=klienter (satt vid join, spoof-skydd)
+  if (!(sideIdx >= 1 && sideIdx <= 4)) return;
+  const inp = room.game.lastInputs[sideIdx];
+  if (inp) {
+    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    const mag = Math.hypot(jx, jz);
+    if (mag > 1) { jx /= mag; jz /= mag; }
+    inp.j = { x: jx, z: jz };
+  }
+  if (Array.isArray(payload.ev) && payload.ev.length) {
+    for (const ev of payload.ev) {
+      if (!ev || typeof ev !== 'object') continue;
+      try { engine.applyEvent(room.game, sideIdx, ev); }
+      catch (e) { console.warn('survival applyEvent error', e); }
+    }
+  }
+}
+
+function relaySurvivalMessage(room, fromWs, envelope) {
+  if (envelope.d && envelope.d.t === 'sv-state' && fromWs !== room.host) return;   // spoof-skydd: bara host
+  const onlyToHost = envelope.d && envelope.d.t && (envelope.d.t === 'sv-input' || envelope.d.t === 'sv-pick' || envelope.d.t === 'sv-hero-confirm' || envelope.d.t === 'sv-ready');
+  if (onlyToHost) { if (room.host && fromWs !== room.host) send(room.host, envelope); return; }
+  const isState = isStateMsgType(envelope.d && envelope.d.t);
+  if (room.host && fromWs !== room.host) relayPeerSend(room.host, envelope, isState);
+  if (room.client && fromWs !== room.client) relayPeerSend(room.client, envelope, isState);
+  for (const c of (room.clients || [])) if (c !== fromWs) relayPeerSend(c, envelope, isState);
+}
+
+function handleSurvivalMessage(room, fromWs, envelope) {
+  const payload = envelope.d;
+  const t = payload && payload.t;
+  if (t === 'sv-sim-start') {                       // host begär server-auth survival-sim
+    if (fromWs === room.host) startSurvivalSim(room, payload.heroes, payload.bots);
+    return;
+  }
+  if (room.survivalSim) {
+    if (t === 'sv-input') { applySurvivalInput(room, fromWs, payload); return; }
+    if (t === 'sv-state') return;                   // servern äger state
+  }
+  relaySurvivalMessage(room, fromWs, envelope);
+}
+
 wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
@@ -602,7 +673,7 @@ wss.on('connection', (ws) => {
         // webbläsaren → servern ska INTE köra den klassiska engine:n för
         // arena-rum (se 'join'-handlern nedan). Saniteras: bara 'arena1v1'
         // eller 'classic'. Gammal klient utan fältet → 'classic' (oförändrat).
-        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : (msg.mode === 'sandbox') ? 'sandbox' : 'classic',
+        mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : (msg.mode === 'sandbox') ? 'sandbox' : (msg.mode === 'survival') ? 'survival' : 'classic',
         game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
       };
       rooms.set(code, room);
@@ -706,6 +777,8 @@ wss.on('connection', (ws) => {
         handleBossMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('sb-')) {
         handleSandboxMessage(room, ws, msg);
+      } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('sv-')) {
+        handleSurvivalMessage(room, ws, msg);
       } else if (payload && payload.t === 'lw-bot-start') {
         startLineWarsBotMatch(room, ws, payload);
       } else {
