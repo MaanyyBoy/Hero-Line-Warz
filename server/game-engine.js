@@ -8541,7 +8541,8 @@ function applyMovement(side, joyX, joyZ, dt) {
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  const check = side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
+  const check = side.inSurvival ? isSurvivalWalkable
+              : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
               : (x, z) => isHeroWalkable(side.idx, x, z, opts);
