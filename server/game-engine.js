@@ -3058,12 +3058,19 @@ const SURVIVAL_PREP_TIME = 12;               // sek innan första vågen
 const SURVIVAL_HERO_SPAWNS = {               // 4 kvadrant-spawns inne i cirkeln (runt byggnaden)
   1: { x: -10, z: -10 }, 2: { x: 10, z: -10 }, 3: { x: 10, z: 10 }, 4: { x: -10, z: 10 },
 };
-// 4 lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden.
+// 4 raka lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden (per kartbild).
 const SURVIVAL_LANES = [
   { id: 1, name: 'N', sx: 0, sz: -42 },
   { id: 2, name: 'S', sx: 0, sz: 42 },
   { id: 3, name: 'E', sx: 42, sz: 0 },
   { id: 4, name: 'W', sx: -42, sz: 0 },
+];
+// 2 diagonala BOSS-lanes (uppe-vänster + uppe-höger) → varsitt boss-rum (kartbild 2026-06-27). En GATE
+// vid lane-starten (just utanför cirkeln) är STÄNGD tills laget köper en dyr Nyckel i shoppen → öppnar
+// båda gates för ALLA spelare. Bossen i rummet droppar bra gear + stat-buffar. (Logik = fas 4.)
+const SURVIVAL_BOSS_ROOMS = [
+  { id: 1, name: 'NW', x: -40, z: -40, gateX: -21, gateZ: -21 },
+  { id: 2, name: 'NE', x: 40, z: -40, gateX: 21, gateZ: -21 },
 ];
 
 function createSurvivalState() {
@@ -3075,6 +3082,8 @@ function createSurvivalState() {
     duelActive: false,                        // co-op, ingen PvP
     bossProjectiles: [], bossPools: [],       // boss-skill-entiteter (fas 3)
     survivalWave: { number: 0, countdown: SURVIVAL_PREP_TIME, active: false, queue: [], spawnAccum: 0 },
+    bossGatesOpen: false,                     // Nyckeln (köps i shoppen) öppnar båda boss-gates för alla (fas 4)
+    bossRoomBosses: [],                       // de 2 starka valfria bossarna (fas 4)
     centerBuilding: null,                     // sätts nedan (behöver nextEntityId)
     lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } }, 4: { j: { x: 0, z: 0 } } },
     matchState: { gameOver: false, winner: 0 },
