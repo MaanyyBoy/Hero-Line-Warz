@@ -10043,208 +10043,330 @@ function nzr2(v) { return v > 0 ? r2(v) : undefined; }      // numeric > 0, avru
 function nzr1(v) { return v > 0 ? r1(v) : undefined; }
 function flag(v) { return v ? 1 : undefined; }               // boolean flag
 
-function serializeSide(side) {
+// ── Line Wars serializeState: in-place mutation (GC-opt Fas D) ────────────────────────────────
+// Eliminerar ~200+ allokeringar/tick i late-game (2 sidobj + 2 hjälteobj + N monster/creep-element
+// + inv × 30 Hz). Samma mönster som _arenaSSnap/_bwSnap/_svSnap.
+// Fältnamnen matchar EXAKT den ursprungliga serializeSide-output — ingen wireformat-ändring.
+// JSON.stringify bryr sig inte om objektidentitet; muterade buffrars data serialiseras identiskt.
+
+// Hero-snapshotbuffer med klassiska Line Wars-fältnamn.
+// Skiljer sig avsiktligt från serializeArenaHero (fzt/ibr/fer/slm m.fl.) — ej återanvändbar.
+function _makeLwHeroBuf() {
   return {
-    h: {
-      x: r2(side.hero.x), z: r2(side.hero.z),
-      hp: ri(side.hero.hp), mh: ri(side.hero.maxHp),
-      sh: nzr2(side.shield),   // shield → client shield-bar (G1)
-      fx: r3(side.hero.facingX), fz: r3(side.hero.facingZ),
-      d: side.hero.dead, rt: nzr1(side.hero.respawnTimer),
-      // Debuff-timers — skippas helt när 0 (sparas i payload). Klient: `|| 0`.
-      frz: nzr2(side.hero.frozenTime),
-      dot: nzr2(side.hero.dotRemaining),
-      tnt: nzr2(side.hero.tauntedTime),
-      mlk: flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0),   // movement-locked (CC) → klient fryser prediktion 2026-06-23
-      poi: nzr2(side.hero.poisonRemaining),
-      lMk: nzr2(side.hero.nyroMarked),
-      // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
-      zc: side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined,
-      zsp: side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined,
-      zus: side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined,
-      zch: side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined,
-      zwr: nzr2(side.zheynaWarpathRem),
-      // Xina (decision 139): shurikens/krok/storm/launch + cloak/ult-timers → klient-render (classic MP).
-      xsh: (side.xinaShurikens && side.xinaShurikens.length) ? side.xinaShurikens.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined,
-      xhk: side.xinaHook ? { x: r2(side.xinaHook.x), z: r2(side.xinaHook.z), a: side.xinaHook.attached ? 1 : 0 } : undefined,
-      xstm: (side.xinaStorm && side.xinaStorm.length) ? side.xinaStorm.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined,
-      xlnch: (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined,
-      xcl: nzr2(side.xinaCloakRem),
-      xul: nzr2(side.xinaUltRem),
-      // Server-auth ults in line wars (2026-06-23): klient renderar laser/rage-ring + berserk-storlek/tint.
-      trg: nzr2(side.titansRageTime),
-      lz: (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined,
-      rg: nzr2(side.rageRemaining),
-      bz: nzr2(side.berserkRemaining),
-    },
-    g: side.gold,
-    inc: side.income,
-    incT: r2(side.incomeTimer),
-    incC: side.incomeTickCount || 0,
-    // Portal-state — skippas helt om portal-features inte aktiva.
-    ptu: nz(side.portalUsesLeft),
-    ptc: nzr1(side.portalCooldown),
-    pet: flag(side.inEnemyTerritory),
-    petT: nzr1(side.enemyTerritoryTimer),
-    tu: side.tierUnlocks,
-    inv: side.inventory.map(it => ({
-      id: it.itemId,
-      vt: it.variantId || null,
-      lv: it.level,
-      ar: r2(it.activeRemaining || 0),
-      ac: r2(it.activeCd || 0),
-    })),
-    ms: r2(side.moveSpeed),
-    ad: r1(side.attackDmg),
-    ac: side.attackCounter,
-    tw: { hp: side.tower.hp, mh: side.tower.maxHp },
-    fa: flag(side.heroFountainAura),
-    aa: flag(side.aaActive),
-    aml: ((side.aaMoveLockTime || 0) > 0) ? 1 : undefined,   // 1 while committing an AA swing → client freezes joystick prediction (tap-to-AA stop, 2026-06-20 v2)
-    tg: nz(side.targetId),
-    tt: side.targetType || undefined,
-    tx: nzr2(side.targetX),
-    tz: nzr2(side.targetZ),
-    lv: side.level || 1,
-    xp: side.xp || 0,
-    xpN: side.xpToNext || 0,
-    hid: side.heroId || 'zyro',
-    hpc: side.heroPickConfirmed ? 1 : 0,
-    sk: { q: r2(side.skills.q.cd), f: r2(side.skills.f.cd), e: r2(side.skills.e.cd) },
-    // Skill-point-system: skill-levels + stat-points + unspent
-    skLv: { q: (side.skillLvl && side.skillLvl.q) || 0, f: (side.skillLvl && side.skillLvl.f) || 0, e: (side.skillLvl && side.skillLvl.e) || 0 },
-    stp: { as: (side.statPts && side.statPts.as) || 0, ms: (side.statPts && side.statPts.ms) || 0, hp: (side.statPts && side.statPts.hp) || 0, sd: (side.statPts && side.statPts.sd) || 0, dr: (side.statPts && side.statPts.dr) || 0 },
-    up: side.unspentPoints || 0,
-    ue: r1(side.ultEnergy || 0),   // ult-energy 0-100 för klientens R-knapp + meter
-    // Aragurn-state — klienten roterar hero-mesh under whirlwind + visar leap-y-arc.
-    // Skippas helt när inaktivt (undefined → JSON-skip).
-    wwR: nzr2(side.whirlwindRemaining),
-    leapA: flag(side.elarLeap),
-    leapU: side.elarLeap ? r3(1 - (side.elarLeap.remaining / side.elarLeap.total)) : undefined,
-    leapTx: side.elarLeap ? r2(side.elarLeap.targetX) : undefined,
-    leapTz: side.elarLeap ? r2(side.elarLeap.targetZ) : undefined,
-    w: {
-      c: side.wave.current,
-      a: side.wave.active,
-      bt: r1(side.wave.betweenTimer || 0),
-      n: side.wave.name || '',
-      b: side.wave.isBoss ? 1 : 0,
-      p: side.wave.bannerPulse || 0,
-      wr: side.wave.waveReady ? 1 : 0,   // decision 105
-    },
-    M: arrOpt(side.monsters, m => ({
-      id: m.id, x: r2(m.x), z: r2(m.z), ry: r3(m.ry), hp: ri(m.hp), mh: m.maxHp || 10,
-      boss: flag(m.isBoss), mb: flag(m.isMiniBoss), r: flag(m.attackType === 'range'),
-      tier: m.bossTier || undefined,
-      aac: m.aac || 0,    // AA-counter — klient detekterar delta → attack-animation
-      fz: flag((m.frozenTime || 0) > 0), dot: flag((m.dotRemaining || 0) > 0),
-      // Boss-skill activeCast broadcastas så klient kan rendera telegraph + execute
-      c: m.activeCast && m.activeCast.skill ? {
-        n: m.activeCast.skill.id || '',
-        k: m.activeCast.skill.kind || 'groundCircle',
-        rad: m.activeCast.skill.radius || 0,
-        len: m.activeCast.skill.length || 0,
-        ha: m.activeCast.skill.halfAngle || 0,
-        w: m.activeCast.skill.width || 0,
-        ph: m.activeCast.phase || 'telegraph',
-        t: r2(m.activeCast.timer || 0),
-        tg: r2(m.activeCast.skill.telegraph || 0),
-        tx: m.activeCast.targetX != null ? r2(m.activeCast.targetX) : null,
-        tz: m.activeCast.targetZ != null ? r2(m.activeCast.targetZ) : null,
-        ox: m.activeCast.originX != null ? r2(m.activeCast.originX) : null,
-        oz: m.activeCast.originZ != null ? r2(m.activeCast.originZ) : null,
-        dx: m.activeCast.dirX != null ? r3(m.activeCast.dirX) : null,
-        dz: m.activeCast.dirZ != null ? r3(m.activeCast.dirZ) : null,
-      } : undefined,
-    })),
-    BP: arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz), kind: p.kind })),
-    BPL: arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) })),
-    C: arrOpt(side.playerCreeps, c => ({ id: c.id, typeId: c.typeId, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp, aac: c.aac || 0, fz: flag((c.frozenTime || 0) > 0), dot: flag((c.dotRemaining || 0) > 0) })),
-    F: arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
-    P: arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE })),
-    N: arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r3(n.life / n.maxLife), k: n.kind })),
-    CP: arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
-    MR: arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind })),
-    HC: arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'zyro', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp })),
-    HCF: arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) })),
-    FW: arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife), k: f.kind })),
-    BH: arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
-    SH: arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) })),
-    VT: arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) })),
-    lbuf: nzr2(side.nyroBuffRemaining),
-    shb: nzr2(side.elarShoutBuffTime),   // E3: War Shout buff → gold glow (side-level i classic)
-    ldash: flag(side.nyroDashBuffPending),
-    lds2: nzr2(side.nyroDashStackCd),
-    // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools
-    lInv: nzr2(side.nyroInvisRemaining),
-    lAa: flag(side.nyroUltAaPending),
-    TP: arrOpt(side.thornPools, p => ({
-      id: p.id, x: r2(p.x), z: r2(p.z),
-      r: p.radius, life: r3(p.remaining / p.duration),
-    })),
-    // Kostefo state — alla fält skippas när 0 / null. kCloudX/Z bara om cloud aktiv.
-    kCloud: nzr2(side.kostefoCloudRemaining),
-    kCloudX: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudX) : undefined,
-    kCloudZ: (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudZ) : undefined,
-    // KO3: uniformt kCl-objekt (spegel av arena buf.kCl) så klienten renderar cloud likadant i alla lägen
-    kCl: (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined,
-    kUlt: nzr2(side.kostefoUltRemaining),
-    kComp: side.kostefoCompanion ? {
-      x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0),
-    } : undefined,
-    kJoints: arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) })),
-    kGW: arrOpt(side.kostefoGooseWaves, w => ({
-      id: w.id, x: r2(w.x), z: r2(w.z), dx: r3(w.dx), dz: r3(w.dz),
-      w: w.width, l: w.length, life: r3(w.remaining / w.duration),
-    })),
-    kSL: arrOpt(side.kostefoSliders, s => ({
-      id: s.id, x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz),
-    })),
-    HM: arrOpt(side.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 })),
-    taunt: nzr2(side.titansTauntRemaining),
-    iw: nzr2(side.ironWillRemaining),
-    iwS: nzr1(side.ironWillStored),
-    gbuf: nzr2(side.gandulfBuffRemaining),
-    gbStk: nz(side.gandulfBuffStacks),
-    wpMs: nzr2(side.windPuffMsRem),
-    ghMs: nzr2(side.kryxHammerMsRem),
-    inAbn: flag(side.inAragurnBanner),
-    ABN: arrOpt(side.elarBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) })),
-    kSTp: side.kostefoSliderTpMarker ? { x: r2(side.kostefoSliderTpMarker.x), z: r2(side.kostefoSliderTpMarker.z), rem: r2(side.kostefoSliderTpMarker.remaining) } : undefined,
-    kCln: arrOpt(side.kostefoClones, c => ({ id: c.id, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: c.hp })),
-    kCrM: side.kostefoCloudRadiusMul && side.kostefoCloudRadiusMul !== 1 ? r3(side.kostefoCloudRadiusMul) : undefined,
-    shld: nzr1(side.shield),
-    dSp: nzr2(side.duelSpeedBuffRemaining),
-    IWE: arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) })),
-    // Kryx berserk-mätare i classic MP (duel): 1 = charged, 0..1 = andel.
-    // Skippar fältet helt när 0 (nz → undefined → JSON.stringify utelämnar det).
-    gmBk: side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : undefined),
-    // Ganji passive-mätare (Katana's Slice) i classic MP: 1 = full/armed, 0..1 = bygger.
-    gjMk: side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : undefined),
+    x: 0, z: 0, hp: 0, mh: 0, sh: undefined, fx: 0, fz: 0, d: false, rt: undefined,
+    frz: undefined, dot: undefined, tnt: undefined, mlk: undefined, poi: undefined, lMk: undefined,
+    zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,
+    xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,
+    trg: undefined, lz: undefined, rg: undefined, bz: undefined,
   };
+}
+const _lwHeroBuf1 = _makeLwHeroBuf();
+const _lwHeroBuf2 = _makeLwHeroBuf();
+
+// Pool-helper: fyller pool in-place, returnerar pool (icke-tom) eller undefined (tom).
+// Tom → undefined → JSON.stringify skippar fältet, matchar arrOpt-beteendet.
+// Element-objekt återanvänds; pool växer vid behov (max observed-storlek behålls i kapacitet).
+function _lwFillPool(pool, src, writeFn, newFn) {
+  if (!src || src.length === 0) { pool.length = 0; return undefined; }
+  const n = src.length;
+  while (pool.length < n) pool.push(newFn());
+  for (let i = 0; i < n; i++) writeFn(src[i], pool[i]);
+  pool.length = n;
+  return pool;
+}
+
+// Monster-element (M-arrayen): poolat, element muteras in-place varje tick.
+function _newLwMon() {
+  return { id: 0, x: 0, z: 0, ry: 0, hp: 0, mh: 10, boss: undefined, mb: undefined,
+           r: undefined, tier: undefined, aac: 0, fz: undefined, dot: undefined, c: undefined };
+}
+function _writeLwMon(m, e) {
+  e.id = m.id; e.x = r2(m.x); e.z = r2(m.z); e.ry = r3(m.ry);
+  e.hp = ri(m.hp); e.mh = m.maxHp || 10;
+  e.boss = flag(m.isBoss); e.mb = flag(m.isMiniBoss); e.r = flag(m.attackType === 'range');
+  e.tier = m.bossTier || undefined; e.aac = m.aac || 0;
+  e.fz = flag((m.frozenTime || 0) > 0); e.dot = flag((m.dotRemaining || 0) > 0);
+  // Boss-skill activeCast — ny allokering bara när boss telegraferar (sällsynt i Line Wars).
+  e.c = (m.activeCast && m.activeCast.skill) ? {
+    n: m.activeCast.skill.id || '', k: m.activeCast.skill.kind || 'groundCircle',
+    rad: m.activeCast.skill.radius || 0, len: m.activeCast.skill.length || 0,
+    ha: m.activeCast.skill.halfAngle || 0, w: m.activeCast.skill.width || 0,
+    ph: m.activeCast.phase || 'telegraph', t: r2(m.activeCast.timer || 0),
+    tg: r2(m.activeCast.skill.telegraph || 0),
+    tx: m.activeCast.targetX != null ? r2(m.activeCast.targetX) : null,
+    tz: m.activeCast.targetZ != null ? r2(m.activeCast.targetZ) : null,
+    ox: m.activeCast.originX != null ? r2(m.activeCast.originX) : null,
+    oz: m.activeCast.originZ != null ? r2(m.activeCast.originZ) : null,
+    dx: m.activeCast.dirX != null ? r3(m.activeCast.dirX) : null,
+    dz: m.activeCast.dirZ != null ? r3(m.activeCast.dirZ) : null,
+  } : undefined;
+}
+
+// Spelar-creep-element (C-arrayen): poolat.
+function _newLwCrp() {
+  return { id: 0, typeId: '', x: 0, z: 0, ry: 0, hp: 0, mh: 0, aac: 0, fz: undefined, dot: undefined };
+}
+function _writeLwCrp(c, e) {
+  e.id = c.id; e.typeId = c.typeId; e.x = r2(c.x); e.z = r2(c.z); e.ry = r3(c.ry);
+  e.hp = ri(c.hp); e.mh = c.maxHp; e.aac = c.aac || 0;
+  e.fz = flag((c.frozenTime || 0) > 0); e.dot = flag((c.dotRemaining || 0) > 0);
+}
+
+// Inventory-element (inv-arrayen): poolat. inv är alltid array (tom = [], ej undefined).
+function _newLwInv() { return { id: '', vt: null, lv: 0, ar: 0, ac: 0 }; }
+function _writeLwInv(it, e) {
+  e.id = it.itemId; e.vt = it.variantId || null;
+  e.lv = it.level; e.ar = r2(it.activeRemaining || 0); e.ac = r2(it.activeCd || 0);
+}
+
+// Duel-orb-element: poolat (dO alltid present, ej undefined).
+function _newLwDuelOrb() { return { i: 0, k: 'h', x: 0, z: 0 }; }
+function _writeLwDuelOrb(o, e) {
+  e.i = o.id; e.k = o.type === 'heal' ? 'h' : 's'; e.x = r2(o.x); e.z = r2(o.z);
+}
+
+// Persistenta pool-arrayer (element + output i samma array).
+const _lwMPool1 = [], _lwMPool2 = [];       // monster-pools per sida
+const _lwCPool1 = [], _lwCPool2 = [];       // creep-pools per sida
+const _lwInvPool1 = [], _lwInvPool2 = [];   // inventory-pools per sida
+const _lwDuelOrbPool = [];                  // duel-orb-pool + output-array för dO-fältet
+
+// Persistent duelBigOrb-buffer (dBO: null eller denna buffert).
+const _lwDuelBigOrbBuf = { x: 0, z: 0, hp: 0, mh: 0, a: 0, rt: 0 };
+
+// Per-sida persistent sidebuffer. Sub-objekten (tw/sk/skLv/stp/w) är egna pre-allokerade objekt
+// som muteras in-place → undviker ~10 extra objekt-allokeringar/tick per sida.
+function _makeLwSideBuf(heroBuf) {
+  return {
+    h: heroBuf,
+    g: 0, inc: 0, incT: 0, incC: 0,
+    ptu: undefined, ptc: undefined, pet: undefined, petT: undefined,
+    tu: null, inv: [],
+    ms: 0, ad: 0, ac: 0,
+    tw: { hp: 0, mh: 0 },
+    fa: undefined, aa: undefined, aml: undefined,
+    tg: undefined, tt: undefined, tx: undefined, tz: undefined,
+    lv: 1, xp: 0, xpN: 0, hid: 'zyro', hpc: 0,
+    sk: { q: 0, f: 0, e: 0 },
+    skLv: { q: 0, f: 0, e: 0 },
+    stp: { as: 0, ms: 0, hp: 0, sd: 0, dr: 0 },
+    up: 0, ue: 0,
+    wwR: undefined, leapA: undefined, leapU: undefined, leapTx: undefined, leapTz: undefined,
+    w: { c: 0, a: 0, bt: 0, n: '', b: 0, p: 0, wr: 0 },
+    M: undefined, BP: undefined, BPL: undefined, C: undefined,
+    F: undefined, P: undefined, N: undefined, CP: undefined, MR: undefined,
+    HC: undefined, HCF: undefined, FW: undefined, BH: undefined, SH: undefined, VT: undefined,
+    lbuf: undefined, shb: undefined, ldash: undefined, lds2: undefined,
+    lInv: undefined, lAa: undefined, TP: undefined,
+    kCloud: undefined, kCloudX: undefined, kCloudZ: undefined, kCl: undefined,
+    kUlt: undefined, kComp: undefined, kJoints: undefined, kGW: undefined, kSL: undefined,
+    HM: undefined, taunt: undefined, iw: undefined, iwS: undefined,
+    gbuf: undefined, gbStk: undefined, wpMs: undefined, ghMs: undefined,
+    inAbn: undefined, ABN: undefined, kSTp: undefined, kCln: undefined, kCrM: undefined,
+    shld: undefined, dSp: undefined, IWE: undefined, gmBk: undefined, gjMk: undefined,
+  };
+}
+const _lwSideBuf1 = _makeLwSideBuf(_lwHeroBuf1);
+const _lwSideBuf2 = _makeLwSideBuf(_lwHeroBuf2);
+
+// Persistent yttre snap. s.1/s.2 är pre-bundna till sidebuffrarna → ingen re-tilldelning per tick.
+const _lwSnap = {
+  t: 'st',
+  m: { o: false, win: 0 },
+  s: { 1: _lwSideBuf1, 2: _lwSideBuf2 },
+  ph: 'game', pT: 0,
+  dA: 0, dT: 0, dM: 0, dC: 0, dW: 0, dAn: 0,
+  dO: _lwDuelOrbPool,   // alltid samma referens; length + innehåll uppdateras varje tick
+  dBO: null,
+};
+
+// Muterar hero-buffern in-place med klassiska fältnamn (frz/dot/poi/lMk/rt).
+function _serializeLwHero(side, buf) {
+  buf.x = r2(side.hero.x); buf.z = r2(side.hero.z);
+  buf.hp = ri(side.hero.hp); buf.mh = ri(side.hero.maxHp);
+  buf.sh = nzr2(side.shield);
+  buf.fx = r3(side.hero.facingX); buf.fz = r3(side.hero.facingZ);
+  buf.d = side.hero.dead; buf.rt = nzr1(side.hero.respawnTimer);
+  buf.frz = nzr2(side.hero.frozenTime);
+  buf.dot = nzr2(side.hero.dotRemaining);
+  buf.tnt = nzr2(side.hero.tauntedTime);
+  buf.mlk = flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0);
+  buf.poi = nzr2(side.hero.poisonRemaining);
+  buf.lMk = nzr2(side.hero.nyroMarked);
+  // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
+  buf.zc  = side.zheynaClone ? { x: r2(side.zheynaClone.x), z: r2(side.zheynaClone.z) } : undefined;
+  buf.zsp = side.zheynaSpear ? { x: r2(side.zheynaSpear.x), z: r2(side.zheynaSpear.z), dx: r3(side.zheynaSpear.dx), dz: r3(side.zheynaSpear.dz) } : undefined;
+  buf.zus = side.zheynaUltSpear ? { x: r2(side.zheynaUltSpear.x), z: r2(side.zheynaUltSpear.z), dx: r3(side.zheynaUltSpear.dx), dz: r3(side.zheynaUltSpear.dz), w: r2(side.zheynaUltSpear.width || 3) } : undefined;
+  buf.zch = side.zheynaUltCharging ? { c: r2(side.zheynaUltCharge || 0) } : undefined;
+  buf.zwr = nzr2(side.zheynaWarpathRem);
+  // Xina (decision 139): shurikens/krok/storm/launch + cloak/ult-timers → klient-render (classic MP).
+  buf.xsh  = (side.xinaShurikens && side.xinaShurikens.length) ? side.xinaShurikens.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined;
+  buf.xhk  = side.xinaHook ? { x: r2(side.xinaHook.x), z: r2(side.xinaHook.z), a: side.xinaHook.attached ? 1 : 0 } : undefined;
+  buf.xstm = (side.xinaStorm && side.xinaStorm.length) ? side.xinaStorm.map(s => ({ x: r2(s.x), z: r2(s.z) })) : undefined;
+  buf.xlnch = (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined;
+  buf.xcl = nzr2(side.xinaCloakRem);
+  buf.xul = nzr2(side.xinaUltRem);
+  // Server-auth ults i line wars (2026-06-23): laser/rage-ring/berserk-storlek.
+  buf.trg = nzr2(side.titansRageTime);
+  buf.lz  = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
+  buf.rg  = nzr2(side.rageRemaining);
+  buf.bz  = nzr2(side.berserkRemaining);
+}
+
+// Muterar sidebuffern in-place. Alla fältnamn matchar original serializeSide-output exakt.
+function _serializeLwSide(side, buf, mPool, cPool, invPool) {
+  _serializeLwHero(side, buf.h);
+  buf.g    = side.gold;
+  buf.inc  = side.income;
+  buf.incT = r2(side.incomeTimer);
+  buf.incC = side.incomeTickCount || 0;
+  // Portal-state — skippas helt om portal-features inte aktiva.
+  buf.ptu  = nz(side.portalUsesLeft);
+  buf.ptc  = nzr1(side.portalCooldown);
+  buf.pet  = flag(side.inEnemyTerritory);
+  buf.petT = nzr1(side.enemyTerritoryTimer);
+  buf.tu   = side.tierUnlocks;
+  // Inventory: poolat, alltid array (ej undefined). _lwFillPool sätter invPool.length.
+  _lwFillPool(invPool, side.inventory, _writeLwInv, _newLwInv);
+  buf.inv  = invPool;
+  buf.ms   = r2(side.moveSpeed);
+  buf.ad   = r1(side.attackDmg);
+  buf.ac   = side.attackCounter;
+  buf.tw.hp = side.tower.hp;
+  buf.tw.mh = side.tower.maxHp;
+  buf.fa   = flag(side.heroFountainAura);
+  buf.aa   = flag(side.aaActive);
+  buf.aml  = ((side.aaMoveLockTime || 0) > 0) ? 1 : undefined;
+  buf.tg   = nz(side.targetId);
+  buf.tt   = side.targetType || undefined;
+  buf.tx   = nzr2(side.targetX);
+  buf.tz   = nzr2(side.targetZ);
+  buf.lv   = side.level || 1;
+  buf.xp   = side.xp || 0;
+  buf.xpN  = side.xpToNext || 0;
+  buf.hid  = side.heroId || 'zyro';
+  buf.hpc  = side.heroPickConfirmed ? 1 : 0;
+  // Skill-CDs och skill-point-system: sub-objekten muteras in-place.
+  buf.sk.q = r2(side.skills.q.cd); buf.sk.f = r2(side.skills.f.cd); buf.sk.e = r2(side.skills.e.cd);
+  buf.skLv.q = (side.skillLvl && side.skillLvl.q) || 0;
+  buf.skLv.f = (side.skillLvl && side.skillLvl.f) || 0;
+  buf.skLv.e = (side.skillLvl && side.skillLvl.e) || 0;
+  buf.stp.as = (side.statPts && side.statPts.as) || 0;
+  buf.stp.ms = (side.statPts && side.statPts.ms) || 0;
+  buf.stp.hp = (side.statPts && side.statPts.hp) || 0;
+  buf.stp.sd = (side.statPts && side.statPts.sd) || 0;
+  buf.stp.dr = (side.statPts && side.statPts.dr) || 0;
+  buf.up   = side.unspentPoints || 0;
+  buf.ue   = r1(side.ultEnergy || 0);
+  // Aragurn-state: whirlwind + leap.
+  buf.wwR    = nzr2(side.whirlwindRemaining);
+  buf.leapA  = flag(side.elarLeap);
+  buf.leapU  = side.elarLeap ? r3(1 - (side.elarLeap.remaining / side.elarLeap.total)) : undefined;
+  buf.leapTx = side.elarLeap ? r2(side.elarLeap.targetX) : undefined;
+  buf.leapTz = side.elarLeap ? r2(side.elarLeap.targetZ) : undefined;
+  // Wave sub-objekt muteras in-place.
+  buf.w.c  = side.wave.current;
+  buf.w.a  = side.wave.active;
+  buf.w.bt = r1(side.wave.betweenTimer || 0);
+  buf.w.n  = side.wave.name || '';
+  buf.w.b  = side.wave.isBoss ? 1 : 0;
+  buf.w.p  = side.wave.bannerPulse || 0;
+  buf.w.wr = side.wave.waveReady ? 1 : 0;
+  // Entity-arrayer: M/C poolade (eliminerar ~60 element-allokeringar/tick i late-game).
+  // Övriga via arrOpt (oftast tomma i Line Wars → undefined → JSON-skip).
+  buf.M   = _lwFillPool(mPool, side.monsters, _writeLwMon, _newLwMon);
+  buf.BP  = arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz), kind: p.kind }));
+  buf.BPL = arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) }));
+  buf.C   = _lwFillPool(cPool, side.playerCreeps, _writeLwCrp, _newLwCrp);
+  buf.F   = arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) }));
+  buf.P   = arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE }));
+  buf.N   = arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r3(n.life / n.maxLife), k: n.kind }));
+  buf.CP  = arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind }));
+  buf.MR  = arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind }));
+  buf.HC  = arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'zyro', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp }));
+  buf.HCF = arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) }));
+  buf.FW  = arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife), k: f.kind }));
+  buf.BH  = arrOpt(side.blackHoles, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) }));
+  buf.SH  = arrOpt(side.shatters, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), life: r3(s.life / s.maxLife) }));
+  buf.VT  = arrOpt(side.vineTraps, v => ({ id: v.id, x: r2(v.x), z: r2(v.z), life: r3(v.life / v.maxLife) }));
+  buf.lbuf  = nzr2(side.nyroBuffRemaining);
+  buf.shb   = nzr2(side.elarShoutBuffTime);
+  buf.ldash = flag(side.nyroDashBuffPending);
+  buf.lds2  = nzr2(side.nyroDashStackCd);
+  // Shadow Volley ult-state (Legolus): invis-timer + empowered-AA-flagga + thorn pools.
+  buf.lInv  = nzr2(side.nyroInvisRemaining);
+  buf.lAa   = flag(side.nyroUltAaPending);
+  buf.TP    = arrOpt(side.thornPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r3(p.remaining / p.duration) }));
+  // Kostefo state — alla fält skippas när 0 / null. kCloudX/Z bara om cloud aktiv.
+  buf.kCloud  = nzr2(side.kostefoCloudRemaining);
+  buf.kCloudX = (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudX) : undefined;
+  buf.kCloudZ = (side.kostefoCloudRemaining || 0) > 0 ? r2(side.kostefoCloudZ) : undefined;
+  // KO3: uniformt kCl-objekt (spegel av arena buf.kCl) så klienten renderar cloud likadant i alla lägen.
+  buf.kCl     = (side.kostefoCloudRemaining || 0) > 0 ? { r: r2(side.kostefoCloudRemaining), x: r2(side.kostefoCloudX), z: r2(side.kostefoCloudZ), rm: r2(side.kostefoCloudRadiusMul || 1) } : undefined;
+  buf.kUlt    = nzr2(side.kostefoUltRemaining);
+  buf.kComp   = side.kostefoCompanion ? { x: r2(side.kostefoCompanion.x), z: r2(side.kostefoCompanion.z), ry: r3(side.kostefoCompanion.ry || 0) } : undefined;
+  buf.kJoints = arrOpt(side.kostefoUltJoints, j => ({ a: r3(j.angle) }));
+  buf.kGW     = arrOpt(side.kostefoGooseWaves, w => ({ id: w.id, x: r2(w.x), z: r2(w.z), dx: r3(w.dx), dz: r3(w.dz), w: w.width, l: w.length, life: r3(w.remaining / w.duration) }));
+  buf.kSL     = arrOpt(side.kostefoSliders, s => ({ id: s.id, x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) }));
+  buf.HM      = arrOpt(side.hammers, h => ({ id: h.id, x: r2(h.x), z: r2(h.z), ret: h.returning ? 1 : 0 }));
+  buf.taunt   = nzr2(side.titansTauntRemaining);
+  buf.iw      = nzr2(side.ironWillRemaining);
+  buf.iwS     = nzr1(side.ironWillStored);
+  buf.gbuf    = nzr2(side.gandulfBuffRemaining);
+  buf.gbStk   = nz(side.gandulfBuffStacks);
+  buf.wpMs    = nzr2(side.windPuffMsRem);
+  buf.ghMs    = nzr2(side.kryxHammerMsRem);
+  buf.inAbn   = flag(side.inAragurnBanner);
+  buf.ABN     = arrOpt(side.elarBanners, b => ({ id: b.id, x: r2(b.x), z: r2(b.z), life: r3(b.life / b.maxLife) }));
+  buf.kSTp    = side.kostefoSliderTpMarker ? { x: r2(side.kostefoSliderTpMarker.x), z: r2(side.kostefoSliderTpMarker.z), rem: r2(side.kostefoSliderTpMarker.remaining) } : undefined;
+  buf.kCln    = arrOpt(side.kostefoClones, c => ({ id: c.id, x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: c.hp }));
+  buf.kCrM    = side.kostefoCloudRadiusMul && side.kostefoCloudRadiusMul !== 1 ? r3(side.kostefoCloudRadiusMul) : undefined;
+  buf.shld    = nzr1(side.shield);
+  buf.dSp     = nzr2(side.duelSpeedBuffRemaining);
+  buf.IWE     = arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) }));
+  // Kryx berserk-mätare i classic MP (duel): 1 = charged, 0..1 = andel. Undefined → JSON-skip.
+  buf.gmBk    = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : undefined);
+  // Ganji passive-mätare (Katana's Slice) i classic MP: 1 = full/armed, 0..1 = bygger.
+  buf.gjMk    = side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : undefined);
 }
 
 function serializeState(state) {
-  return {
-    t: 'st',
-    m: { o: state.matchState.gameOver, win: state.matchState.winner },
-    s: { 1: serializeSide(state.sides[1]), 2: serializeSide(state.sides[2]) },
-    ph: state.phase || 'game',
-    pT: r1(state.pickTimer || 0),
-    dA: state.duelActive ? 1 : 0,
-    dT: r1(state.duelTimer === Infinity ? 0 : (state.duelTimer || 0)),
-    dM: r1(state.duelMatchTimer || 0),
-    dC: state.duelCount || 0,
-    dW: state.duelLastWinner || 0,
-    dAn: r2(state.duelAnnounceTimer || 0),
-    dO: (state.duelOrbs || []).map(o => ({ i: o.id, k: o.type === 'heal' ? 'h' : 's', x: r2(o.x), z: r2(o.z) })),
-    dBO: state.duelBigOrb ? {
-      x: r2(state.duelBigOrb.x), z: r2(state.duelBigOrb.z),
-      hp: r1(state.duelBigOrb.hp), mh: state.duelBigOrb.maxHp,
-      a: state.duelBigOrb.alive ? 1 : 0,
-      rt: r1(state.duelBigOrb.respawnTimer || 0),
-    } : null,
-  };
+  const snap = _lwSnap;
+  snap.ph  = state.phase || 'game';
+  snap.pT  = r1(state.pickTimer || 0);
+  snap.m.o   = state.matchState.gameOver;
+  snap.m.win = state.matchState.winner;
+  snap.dA  = state.duelActive ? 1 : 0;
+  snap.dT  = r1(state.duelTimer === Infinity ? 0 : (state.duelTimer || 0));
+  snap.dM  = r1(state.duelMatchTimer || 0);
+  snap.dC  = state.duelCount || 0;
+  snap.dW  = state.duelLastWinner || 0;
+  snap.dAn = r2(state.duelAnnounceTimer || 0);
+  // duelOrbs: poolade element i _lwDuelOrbPool (alltid present; tom = length 0 = "[]" i JSON).
+  const duelOrbs = state.duelOrbs;
+  if (duelOrbs && duelOrbs.length > 0) {
+    const n = duelOrbs.length;
+    while (_lwDuelOrbPool.length < n) _lwDuelOrbPool.push(_newLwDuelOrb());
+    for (let i = 0; i < n; i++) _writeLwDuelOrb(duelOrbs[i], _lwDuelOrbPool[i]);
+    _lwDuelOrbPool.length = n;
+  } else {
+    _lwDuelOrbPool.length = 0;
+  }
+  // dBO: muterar persistent buffer eller null.
+  if (state.duelBigOrb) {
+    _lwDuelBigOrbBuf.x  = r2(state.duelBigOrb.x);
+    _lwDuelBigOrbBuf.z  = r2(state.duelBigOrb.z);
+    _lwDuelBigOrbBuf.hp = r1(state.duelBigOrb.hp);
+    _lwDuelBigOrbBuf.mh = state.duelBigOrb.maxHp;
+    _lwDuelBigOrbBuf.a  = state.duelBigOrb.alive ? 1 : 0;
+    _lwDuelBigOrbBuf.rt = r1(state.duelBigOrb.respawnTimer || 0);
+    snap.dBO = _lwDuelBigOrbBuf;
+  } else {
+    snap.dBO = null;
+  }
+  _serializeLwSide(state.sides[1], _lwSideBuf1, _lwMPool1, _lwCPool1, _lwInvPool1);
+  _serializeLwSide(state.sides[2], _lwSideBuf2, _lwMPool2, _lwCPool2, _lwInvPool2);
+  return snap;
 }
 
 module.exports = {
