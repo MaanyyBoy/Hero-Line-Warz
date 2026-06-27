@@ -4670,7 +4670,8 @@ function spawnMonsterFromDef(state, side, lane, def, pos, attackType) {
   const z = pos ? pos.z : cfg.laneZ[lane];
   const isRange = attackType === 'range';
   const hp = isRange ? Math.round(def.monsterHp * RANGE_MONSTER_HP_RATIO) : def.monsterHp;
-  const speed = isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed;
+  // Wave minions move 20% faster (user 2026-06-27); wave bosses keep their own pace (not "minions").
+  const speed = (isRange ? def.monsterSpeed * RANGE_MONSTER_SPEED_RATIO : def.monsterSpeed) * (def.isBoss ? 1 : 1.2);
   // Variera projektil-travel-time per range-monster så hjälten ser olika hot.
   const projTime = isRange
     ? MONSTER_PROJ_TIME_BUCKETS[state.nextEntityId % MONSTER_PROJ_TIME_BUCKETS.length]
@@ -4957,11 +4958,17 @@ function bossExecuteSkill(state, side, m, cast) {
   } else if (kind === 'cone') {
     bossApplyCone(state, side, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, dmg, skill);
   } else if (kind === 'lineDash') {
-    // Dasha boss + skada längs linjen
+    // Skada hela dash-linjen direkt (bossen sveper längs den), men FLYTTA bossen GRADVIS över execTime
+    // i tickBossExecutePhase istället för att snäppa till slutet (user 2026-06-27: charge hackade — klienten
+    // fick ett teleport-hopp i en snapshot som NetEntityMotion inte kan jämna ut → gradvis = mjukt).
     const newX = cast.originX + cast.dirX * skill.length;
     const newZ = cast.originZ + cast.dirZ * skill.length;
     bossApplyLine(state, side, cast.originX, cast.originZ, newX, newZ, skill.width / 2, dmg, skill);
-    m.x = newX; m.z = newZ;
+    cast.phase = 'execute';
+    cast.timer = skill.execTime || 0.3;
+    cast.dashDur = cast.timer;
+    cast.dashFromX = cast.originX; cast.dashFromZ = cast.originZ;
+    cast.dashToX = newX; cast.dashToZ = newZ;
   } else if (kind === 'projectile') {
     spawnBossProjectile(state, side, m, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.speed, skill.range, skill.radius, dmg, skill);
   } else if (kind === 'projectileMulti') {
@@ -5008,6 +5015,13 @@ function bossExecuteSkill(state, side, m, cast) {
 
 function tickBossExecutePhase(state, side, m, cast, dt) {
   const skill = cast.skill;
+  if (skill.kind === 'lineDash' && cast.dashDur) {
+    // Smooth charge (user 2026-06-27): glid bossen start→slut över execTime (skadan är redan applicerad).
+    const u = cast.dashDur > 0 ? Math.min(1, 1 - cast.timer / cast.dashDur) : 1;
+    m.x = cast.dashFromX + (cast.dashToX - cast.dashFromX) * u;
+    m.z = cast.dashFromZ + (cast.dashToZ - cast.dashFromZ) * u;
+    return;
+  }
   cast.tickAccum = (cast.tickAccum || 0) + dt;
   // Tick damage var 0.25s under sustained execute
   if (cast.tickAccum < 0.25) return;
