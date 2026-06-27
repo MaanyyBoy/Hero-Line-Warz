@@ -1557,6 +1557,7 @@ function isArena1v1Walkable(x, z) {
 // teleport/leap-skills (dash/leap/hammer-tp/slider-tp) — annars använder de classic
 // isHeroWalkable som avvisar arena1v1-positioner (z≈80) → teleport-skills misslyckas.
 function heroWalk(side, x, z, opts) {
+  if (side.inSurvival) return isSurvivalWalkable(x, z);
   if (side.inBossWars) return isBossWarsWalkable(x, z, side._bwGateClosed);
   if (side.inArena1v1) return isArena1v1Walkable(x, z);
   if (side.inDuel) return isArenaWalkable(x, z);
@@ -3072,6 +3073,14 @@ const SURVIVAL_BOSS_ROOMS = [
   { id: 1, name: 'NW', x: -40, z: -40, gateX: -21, gateZ: -21 },
   { id: 2, name: 'NE', x: 40, z: -40, gateX: 21, gateZ: -21 },
 ];
+// Hjälte-walkability: inne i arena-cirkeln, men inte genom center-byggnaden. (Boss-lanes/rum = fas 4.)
+function isSurvivalWalkable(x, z) {
+  const r2v = x * x + z * z;
+  if (r2v > SURVIVAL_ARENA_RADIUS * SURVIVAL_ARENA_RADIUS) return false;              // utanför arenan
+  const br = SURVIVAL_BUILDING_RADIUS + 0.6;
+  if (r2v < br * br) return false;                                                    // genom byggnaden
+  return true;
+}
 
 function createSurvivalState() {
   const sides = { 1: createSide(1), 2: createSide(2), 3: createSide(3), 4: createSide(4) };
@@ -3117,6 +3126,194 @@ function initSurvivalMatch(heroes) {
     recomputeArenaSideStats(state, side);     // bas-stats (loadout/shop = fas 2)
   }
   return state;
+}
+
+// ───────── SURVIVAL — sim (tick + serialize), Fas 1 ─────────────────────────
+const SURVIVAL_SPAWN_INTERVAL = 0.4;   // stagger mellan minion-spawns i en våg
+const SURVIVAL_WAVE_GAP = 16;          // sek mellan vågor
+const SURVIVAL_BASE_MINIONS = 4;       // minions per lane i våg 1 (skalar med våg)
+const SURVIVAL_BUILDING_RADIUS = 3;    // byggnadens radie (minion attackerar inom radius+1.5)
+const SURVIVAL_TOTAL_WAVES = 20;       // klara alla = vinst
+const SURVIVAL_RESPAWN_TIME = 8;       // sek innan död hjälte respawnar (co-op)
+
+// Delad co-op hjälte-combat-frame — EXAKT samma skill-pipeline som boss wars + sandbox (bara anrops-
+// listan återanvänds; skill-FUNKTIONERNA är delade → hjältar funkar auto i survival). opp=null (co-op).
+function tickSurvivalHeroFrame(state, s, dt) {
+  updateSkillCooldowns(s, dt);
+  if (!s.hero.dead) updateHeroAttack(state, s, null, dt);
+  updateProjectiles(state, s, null, dt);
+  updateFireballs(state, s, null, dt);
+  updateBlackHoles(state, s, null, dt);
+  updateVineTraps(state, s, null, dt);
+  updateHammers(state, s, null, dt);
+  updateIronWill(state, s, null, dt);
+  updateAragurnWhirlwind(state, s, null, dt);
+  updateAragurnLeap(state, s, null, dt);
+  updateAragurnShoutHeal(s, dt);
+  updateSoulDrain(state, s, null, dt);
+  tickLegolusInvis(s, dt);
+  tickThornPools(state, s, dt);
+  tickKostefoSkills(state, s, null, dt);
+  tickGimluTauntLvl5(state, s, null, dt);
+  flushIronWillReflectLvl5(state, s, null);
+  tickAragurnBannersLvl5(s, dt);
+  updateNovaEffects(state, s, null, dt);
+  updateActiveBuffs(s, dt);
+  if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
+  if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+  if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
+  if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
+  if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
+  if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
+  if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
+  if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
+  tickZheyna(state, s, dt); tickXina(state, s, dt);
+  if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
+  if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
+  if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
+  if ((s.hero.dotRemaining || 0) > 0) { s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt); damageHero(s, (s.hero.dotPerSec || 0) * dt); }
+  if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
+  if ((s.heroSlowTime || 0) > 0) { s.heroSlowTime = Math.max(0, s.heroSlowTime - dt); if (s.heroSlowTime <= 0) { s.heroSlowTime = 0; s.heroSlowMul = 1; } }
+  tickKryxTimers(s, dt);
+  if ((s.iceBlockRemaining || 0) > 0) s.iceBlockRemaining = Math.max(0, s.iceBlockRemaining - dt);
+  if (!s.hero.dead && (s.healPerSecPct || 0) > 0 && s.hero.hp < s.hero.maxHp) s.hero.hp = Math.min(s.hero.maxHp, s.hero.hp + s.hero.maxHp * (s.healPerSecPct || 0) * dt);
+}
+
+function spawnSurvivalMinion(state, lane, waveNum) {
+  const tier = Math.min(5, 1 + Math.floor((waveNum - 1) / 5));
+  const hp = Math.round(55 * (1 + waveNum * 0.16));
+  state.sides[1].monsters.push({
+    id: state.nextEntityId++,
+    x: lane.sx, z: lane.sz, ry: 0,
+    hp, maxHp: hp,
+    speed: 2.4 * 1.2,   // +20% (matchar wave-minion-speed-beslutet)
+    damage: Math.round(7 * (1 + waveNum * 0.12)),
+    attackType: 'melee', attackRange: 2.0, attackInterval: 1.0, atkCd: 0,
+    tier, lane: lane.id, pathIndex: 0,
+    slowTime: 0, slowMul: 1, frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
+    aac: 0, isSurvivalMinion: true,
+  });
+}
+
+function tickSurvivalWaves(state, dt) {
+  const w = state.survivalWave;
+  if (w.queue.length > 0) {   // staggrad spawn ur kön
+    w.spawnAccum += dt;
+    while (w.spawnAccum >= SURVIVAL_SPAWN_INTERVAL && w.queue.length > 0) {
+      w.spawnAccum -= SURVIVAL_SPAWN_INTERVAL;
+      spawnSurvivalMinion(state, w.queue.shift().lane, w.number);
+    }
+  }
+  w.countdown -= dt;
+  if (w.countdown <= 0 && w.number < SURVIVAL_TOTAL_WAVES) {   // starta nästa våg
+    w.number++;
+    const perLane = SURVIVAL_BASE_MINIONS + Math.floor(w.number / 2);
+    for (const lane of SURVIVAL_LANES) for (let i = 0; i < perLane; i++) w.queue.push({ lane });
+    w.countdown = SURVIVAL_WAVE_GAP;
+    w.active = true;
+  }
+}
+
+function updateSurvivalMinions(state, dt) {
+  const monsters = state.sides[1].monsters;
+  const b = state.centerBuilding;
+  const reach = SURVIVAL_BUILDING_RADIUS + 1.5;
+  for (let i = monsters.length - 1; i >= 0; i--) {
+    const m = monsters[i];
+    if (m.hp <= 0) { monsters.splice(i, 1); continue; }
+    if (!m.isSurvivalMinion) continue;
+    if ((m.slowTime || 0) > 0) { m.slowTime -= dt; if (m.slowTime <= 0) m.slowMul = 1; }
+    if ((m.dotRemaining || 0) > 0) { m.dotRemaining -= dt; m.hp -= (m.dotPerSec || 0) * dt; }
+    if ((m.frozenTime || 0) > 0) { m.frozenTime -= dt; continue; }   // frusen = står still
+    const dx = b.x - m.x, dz = b.z - m.z;
+    const d = Math.hypot(dx, dz) || 1;
+    if (d > reach) {   // marschera mot byggnaden
+      const sp = m.speed * (m.slowMul || 1) * dt;
+      m.x += (dx / d) * sp; m.z += (dz / d) * sp;
+      m.ry = Math.atan2(dx, dz);
+    } else {           // attackera byggnaden
+      m.atkCd = (m.atkCd || 0) - dt;
+      if (m.atkCd <= 0) { m.atkCd = m.attackInterval; b.hp = Math.max(0, b.hp - m.damage); m.aac = (m.aac || 0) + 1; }
+    }
+  }
+}
+
+function tickSurvivalBot(state, idx, dt) {
+  const s = state.sides[idx];
+  if (!s || s.hero.dead) return;
+  const monsters = state.sides[1].monsters;
+  let best = null, bestD = Infinity;
+  for (const m of monsters) {
+    if (m.hp <= 0 || !m.isSurvivalMinion) continue;
+    const d = Math.hypot(m.x - s.hero.x, m.z - s.hero.z);
+    if (d < bestD) { bestD = d; best = m; }
+  }
+  const inp = state.lastInputs[idx];
+  if (best && bestD > 2.2) { const dx = best.x - s.hero.x, dz = best.z - s.hero.z, dd = Math.hypot(dx, dz) || 1; inp.j = { x: dx / dd, z: dz / dd }; }
+  else inp.j = { x: 0, z: 0 };
+}
+
+function checkSurvivalEnd(state) {
+  if (state.matchState.gameOver) return;
+  if (state.centerBuilding.hp <= 0) { state.matchState.gameOver = true; state.matchState.winner = 2; return; }   // byggnad förstörd = förlust
+  if (state.survivalWave.number >= SURVIVAL_TOTAL_WAVES && state.sides[1].monsters.length === 0 && state.survivalWave.queue.length === 0) {
+    state.matchState.gameOver = true; state.matchState.winner = 1;   // alla vågor klarade = vinst
+  }
+}
+
+function tickSurvival(state, dt) {
+  if (state.matchState && state.matchState.gameOver) return;
+  for (const idx of [1, 2, 3, 4]) if (state.sides[idx] && state.sides[idx].isBot) tickSurvivalBot(state, idx, dt);
+  // 1) Rörelse (4 hjältar)
+  for (const idx of [1, 2, 3, 4]) {
+    const s = state.sides[idx];
+    if (!s || s.hero.dead) continue;
+    s._bwGateClosed = false;
+    const inp = state.lastInputs[idx];
+    heroAutoMove(s, (inp && inp.j) || { x: 0, z: 0 }, dt);
+  }
+  // 2) Hjälte-combat (delad pipeline, co-op)
+  for (const idx of [1, 2, 3, 4]) { const s = state.sides[idx]; if (s) tickSurvivalHeroFrame(state, s, dt); }
+  // 3) Respawn (co-op: död hjälte återföds efter delay så försvaret fortsätter)
+  for (const idx of [1, 2, 3, 4]) {
+    const s = state.sides[idx]; if (!s) continue;
+    if (s.hero.dead) {
+      if (s._svRespawn == null) s._svRespawn = SURVIVAL_RESPAWN_TIME;
+      else { s._svRespawn -= dt; if (s._svRespawn <= 0) { s.hero.dead = false; s.hero.hp = s.hero.maxHp; const sp = SURVIVAL_HERO_SPAWNS[idx]; s.hero.x = sp.x; s.hero.z = sp.z; s._svRespawn = null; } }
+    } else s._svRespawn = null;
+  }
+  // 4) Vågor + minions mot byggnaden
+  tickSurvivalWaves(state, dt);
+  updateSurvivalMinions(state, dt);
+  updateMonsterProjectiles(state, state.sides[1], dt);
+  // 5) Win/lose
+  checkSurvivalEnd(state);
+}
+
+const _svHeroBuf1 = _makeHeroSnapBuf(), _svHeroBuf2 = _makeHeroSnapBuf(), _svHeroBuf3 = _makeHeroSnapBuf(), _svHeroBuf4 = _makeHeroSnapBuf();
+function serializeSurvivalState(state) {
+  const monsters = state.sides[1].monsters;
+  const m = [];
+  for (let i = 0; i < monsters.length; i++) {
+    const mn = monsters[i];
+    if (!mn.isSurvivalMinion) continue;
+    m.push({ id: mn.id, x: r2(mn.x), z: r2(mn.z), ry: r3(mn.ry || 0), hp: ri(mn.hp), mh: ri(mn.maxHp), tier: mn.tier || 1, lane: mn.lane || 0, aac: mn.aac || 0, fz: flag((mn.frozenTime || 0) > 0) });
+  }
+  return {
+    t: 'sv-state',
+    h: {
+      1: serializeArenaHero(state.sides[1], _svHeroBuf1),
+      2: serializeArenaHero(state.sides[2], _svHeroBuf2),
+      3: serializeArenaHero(state.sides[3], _svHeroBuf3),
+      4: serializeArenaHero(state.sides[4], _svHeroBuf4),
+    },
+    m,
+    cb: { x: r2(state.centerBuilding.x), z: r2(state.centerBuilding.z), hp: ri(state.centerBuilding.hp), mh: state.centerBuilding.maxHp },
+    w: state.survivalWave.number,
+    wt: r2(Math.max(0, state.survivalWave.countdown)),
+    g: state.bossGatesOpen ? 1 : 0,
+    over: state.matchState.gameOver ? state.matchState.winner : 0,
+  };
 }
 
 // ───────── SANDBOX — träningsläge (2026-06-18) ─────────────────────────────
@@ -10004,6 +10201,9 @@ module.exports = {
   initBossWarsMatch,       // decision 122 Fas 2 (boss wars server-auth): skapa 3-co-op-match
   tickBossWars,            // boss wars top-tick (slice 0: hjälte-rörelse; AI/ads slice 1-4)
   serializeBossWarsState,  // boss wars → b-state-meddelande
+  initSurvivalMatch,       // Survival Wars (4-player co-op, fas 1): skapa match
+  tickSurvival,            // Survival top-tick (hjälte-combat + vågor + minions mot byggnad)
+  serializeSurvivalState,  // Survival → sv-state-meddelande
   tickGame,
   serializeState,
   applyEvent,
