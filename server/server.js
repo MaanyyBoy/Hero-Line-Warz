@@ -142,7 +142,11 @@ function stopGame(room) {
 function scheduleNextTick(room) {
   if (!room.game) return;
   const now = Date.now();
-  const delay = Math.max(0, room.nextTickAt - now);
+  // Floor 2 ms: prevents zero-delay back-to-back sends after a catch-up tick
+  // (spike → catch-up fires instantly → two frames 1 ms apart → client interp burst).
+  // 2 ms is enough for the event loop to drain queued input messages before the
+  // next tick reads lastInputs. Has no effect on normal 30-ms-delay scheduling.
+  const delay = Math.max(2, room.nextTickAt - now);
   room.tickHandle = setTimeout(() => gameLoopTick(room), delay);
 }
 
@@ -224,7 +228,12 @@ function gameLoopTick(room) {
       // när socket flushas. State är redundant — nästa snap (33ms senare vid
       // 30 Hz) är redan färskare. Att skicka mer på en stockad socket ger bara
       // exponentiell latens-spiral.
-      const BACKPRESSURE_LIMIT = 40 * 1024;
+      // Sänkt 40 KB → 8 KB (2026-06-27): vid nätverksstopp fyller 40 KB buffert
+      // med ~57 LW-frames (1,9s stale state) innan drops börjar, vilket ger en burst
+      // av gammal data vid återhämtning. 8 KB ≈ 11 LW-frames (0,37s) / 26 arena-frames
+      // (0,87s) — drops börjar snabbare, buffertdjupet minskar, recovery är jämnare.
+      // På en frisk anslutning är bufferedAmount ≈ 0 mellan ticks → inga false drops.
+      const BACKPRESSURE_LIMIT = 8 * 1024;
       // R3-telemetri: räkna en "drop" när en ansluten peer skippas pga djup buffert
       // (nätverksstockning) — viktigaste indikatorn på lagg under live-test.
       if (room.host && room.host.readyState === 1) {
@@ -312,7 +321,9 @@ function handleGameInput(room, ws, payload) {
 // Input/pick/ready är kritiska och skickas alltid. State är redundant —
 // nästa snap kommer 33ms senare (30 Hz) och är färskare. Sänkt från 96 KB →
 // 48 KB för aggressivare drop = snabbare återhämtning under spikar.
-const RELAY_STATE_BACKPRESSURE_LIMIT = 48 * 1024;
+// Sänkt 48 KB → 10 KB (2026-06-27): se BACKPRESSURE_LIMIT-kommentar ovan. Relä-vägens
+// a-state/b-state är lika redundanta — aggressivare drop = snabbare recovery.
+const RELAY_STATE_BACKPRESSURE_LIMIT = 10 * 1024;
 
 function isStateMsgType(t) {
   // Frames som är säkra att skippa under backpressure (redundant snapshot-data).

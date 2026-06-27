@@ -3293,7 +3293,30 @@ function tickSurvival(state, dt) {
 }
 
 const _svHeroBuf1 = _makeHeroSnapBuf(), _svHeroBuf2 = _makeHeroSnapBuf(), _svHeroBuf3 = _makeHeroSnapBuf(), _svHeroBuf4 = _makeHeroSnapBuf();
+// Persistent survival snap — samma GC-opt-mönster som _arenaSSnap/_bwSnap.
+// Sparar 12 objekt-allokeringar/tick (1 yttre snap + 11 entity-container-objekt × 30 Hz = 360/sek).
+// Monster-arrayen (m) allokeras fortfarande nytt per tick (variabel längd) — oundvikligt.
+const _svCbBuf = { x: 0, z: 0, hp: 0, mh: 0 };
+const _svSnap = {
+  t: 'sv-state',
+  h: { 1: null, 2: null, 3: null, 4: null },
+  m: null,
+  cb: _svCbBuf,
+  w: 0, wt: 0, g: 0, over: 0,
+  bh:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  fw:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  nv:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  ab:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  kg:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  ks:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  vt:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  tp:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  hm:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  kCln:{ 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+};
 function serializeSurvivalState(state) {
+  const snap = _svSnap;
   const monsters = state.sides[1].monsters;
   const m = [];
   for (let i = 0; i < monsters.length; i++) {
@@ -3301,24 +3324,18 @@ function serializeSurvivalState(state) {
     if (!mn.isSurvivalMinion) continue;
     m.push({ id: mn.id, x: r2(mn.x), z: r2(mn.z), ry: r3(mn.ry || 0), hp: ri(mn.hp), mh: ri(mn.maxHp), tier: mn.tier || 1, lane: mn.lane || 0, aac: mn.aac || 0, fz: flag((mn.frozenTime || 0) > 0), boss: mn.survivalBoss ? 1 : 0 });
   }
-  const snap = {
-    t: 'sv-state',
-    h: {
-      1: serializeArenaHero(state.sides[1], _svHeroBuf1),
-      2: serializeArenaHero(state.sides[2], _svHeroBuf2),
-      3: serializeArenaHero(state.sides[3], _svHeroBuf3),
-      4: serializeArenaHero(state.sides[4], _svHeroBuf4),
-    },
-    m,
-    cb: { x: r2(state.centerBuilding.x), z: r2(state.centerBuilding.z), hp: ri(state.centerBuilding.hp), mh: state.centerBuilding.maxHp },
-    w: state.survivalWave.number,
-    wt: r2(Math.max(0, state.survivalWave.countdown)),
-    g: state.bossGatesOpen ? 1 : 0,
-    over: state.matchState.gameOver ? state.matchState.winner : 0,
-    // Hero skill-entities per side (1..4) — SHARED shape with Arena/Boss Wars so the client's
-    // MpSkillEntities renderer shows black holes/fire waves/novas/vine traps/etc. in survival too.
-    bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {}, kCln: {},
-  };
+  snap.m = m;
+  snap.h[1] = serializeArenaHero(state.sides[1], _svHeroBuf1);
+  snap.h[2] = serializeArenaHero(state.sides[2], _svHeroBuf2);
+  snap.h[3] = serializeArenaHero(state.sides[3], _svHeroBuf3);
+  snap.h[4] = serializeArenaHero(state.sides[4], _svHeroBuf4);
+  const cb = state.centerBuilding;
+  _svCbBuf.x = r2(cb.x); _svCbBuf.z = r2(cb.z); _svCbBuf.hp = ri(cb.hp); _svCbBuf.mh = cb.maxHp;
+  snap.w = state.survivalWave.number;
+  snap.wt = r2(Math.max(0, state.survivalWave.countdown));
+  snap.g = state.bossGatesOpen ? 1 : 0;
+  snap.over = state.matchState.gameOver ? state.matchState.winner : 0;
+  // Hero skill-entities per side (1..4) — SHARED shape med Arena/Boss Wars.
   for (let i = 1; i <= 4; i++) writeSkillEntitiesInto(state.sides[i], snap, i);
   return snap;
 }
