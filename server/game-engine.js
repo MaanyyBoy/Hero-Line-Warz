@@ -3046,6 +3046,70 @@ function initBossWarsMatch(heroes, tier, loadouts) {
   return state;
 }
 
+// ───────── SURVIVAL WARS — 4-player co-op defend-the-building (2026-06-27) ──────────
+// Nytt läge: 4 hjältar försvarar en center-byggnad (HP) mot minions/bossar som spawnar i
+// 4 lanes (N/S/E/W utanför arena-cirkeln) och marscherar mot mitten. Server-auktoritativt,
+// EGEN tick (rör ALDRIG tickBossWars). Bas = boss-wars co-op hero-combat + line-wars
+// monster-march + torn-HP. FAS 1 = foundation (state nu; tick + serialize nästa).
+const SURVIVAL_CX = 0, SURVIVAL_CZ = 0;
+const SURVIVAL_ARENA_RADIUS = 28;            // walkable circle (≈ boss wars ×1.25); klient-geometrin matchar
+const SURVIVAL_BUILDING_MAX_HP = 300;        // center-struktur heroes försvarar
+const SURVIVAL_PREP_TIME = 12;               // sek innan första vågen
+const SURVIVAL_HERO_SPAWNS = {               // 4 kvadrant-spawns inne i cirkeln (runt byggnaden)
+  1: { x: -10, z: -10 }, 2: { x: 10, z: -10 }, 3: { x: 10, z: 10 }, 4: { x: -10, z: 10 },
+};
+// 4 lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden.
+const SURVIVAL_LANES = [
+  { id: 1, name: 'N', sx: 0, sz: -42 },
+  { id: 2, name: 'S', sx: 0, sz: 42 },
+  { id: 3, name: 'E', sx: 42, sz: 0 },
+  { id: 4, name: 'W', sx: -42, sz: 0 },
+];
+
+function createSurvivalState() {
+  const sides = { 1: createSide(1), 2: createSide(2), 3: createSide(3), 4: createSide(4) };
+  const state = {
+    mode: 'survival',
+    sides,
+    nextEntityId: 1,
+    duelActive: false,                        // co-op, ingen PvP
+    bossProjectiles: [], bossPools: [],       // boss-skill-entiteter (fas 3)
+    survivalWave: { number: 0, countdown: SURVIVAL_PREP_TIME, active: false, queue: [], spawnAccum: 0 },
+    centerBuilding: null,                     // sätts nedan (behöver nextEntityId)
+    lastInputs: { 1: { j: { x: 0, z: 0 } }, 2: { j: { x: 0, z: 0 } }, 3: { j: { x: 0, z: 0 } }, 4: { j: { x: 0, z: 0 } } },
+    matchState: { gameOver: false, winner: 0 },
+  };
+  state.centerBuilding = {
+    id: state.nextEntityId++, x: SURVIVAL_CX, z: SURVIVAL_CZ,
+    hp: SURVIVAL_BUILDING_MAX_HP, maxHp: SURVIVAL_BUILDING_MAX_HP,
+  };
+  for (const idx of [1, 2, 3, 4]) {
+    const s = sides[idx];
+    s.inSurvival = true;
+    const sp = SURVIVAL_HERO_SPAWNS[idx];
+    s.hero.x = sp.x; s.hero.z = sp.z;
+    s.hero.facingX = -Math.sign(sp.x) || 0; s.hero.facingZ = -Math.sign(sp.z) || 0;   // face the centre
+    s.level = 30; s.xp = 0; s.xpToNext = xpForLevel(30);
+    s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+  }
+  // Co-op: dela ETT monster-array → alla 4 hjältars targeting/combat ser varje minion.
+  sides[2].monsters = sides[1].monsters;
+  sides[3].monsters = sides[1].monsters;
+  sides[4].monsters = sides[1].monsters;
+  return state;
+}
+
+function initSurvivalMatch(heroes) {
+  const state = createSurvivalState();
+  for (const idx of [1, 2, 3, 4]) {
+    const side = state.sides[idx];
+    if (heroes && typeof heroes[idx] === 'string') { side.heroId = heroes[idx]; side.heroPickConfirmed = true; }
+    if (!side.heroId) side.heroId = 'zyro';
+    recomputeArenaSideStats(state, side);     // bas-stats (loadout/shop = fas 2)
+  }
+  return state;
+}
+
 // ───────── SANDBOX — träningsläge (2026-06-18) ─────────────────────────────
 // Server-auktoritativt så det ALLTID speglar live-spelet (samma skill-kod → auto-synkat).
 // Återanvänder boss-wars hjälte-combat EXAKT: 3 odödliga dummy-monster läggs i
