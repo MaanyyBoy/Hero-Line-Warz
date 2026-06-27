@@ -611,6 +611,7 @@ function applySurvivalInput(room, ws, payload) {
   if (Array.isArray(payload.ev) && payload.ev.length) {
     for (const ev of payload.ev) {
       if (!ev || typeof ev !== 'object') continue;
+      if (ev.type === 'sv-buy') { engine.applySurvivalBuy(room.game, room.game.sides[sideIdx], ev.id); continue; }   // shop-köp
       try { engine.applyEvent(room.game, sideIdx, ev); }
       catch (e) { console.warn('survival applyEvent error', e); }
     }

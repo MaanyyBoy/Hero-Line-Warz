@@ -3323,6 +3323,36 @@ function serializeSurvivalState(state) {
   return snap;
 }
 
+// ───────── SURVIVAL — shop (köp items/talents/Nyckel för guld) ──────────────
+// Fas 2: hjälten tjänar guld från kills (killMonster) och köper boss-wars-items/talents (samma katalog,
+// foldas i recomputeSideStats) + en dyr Nyckel som öppnar boss-gates för ALLA (fas-4-hook).
+const SURVIVAL_SHOP = [
+  { id: 'bwi_blade',   name: 'Blade (+Damage)',      cost: 120, kind: 'item' },
+  { id: 'bwi_helm',    name: 'Helm (+HP)',           cost: 120, kind: 'item' },
+  { id: 'bwi_boots',   name: 'Boots (+Move Speed)',  cost: 100, kind: 'item' },
+  { id: 'bwi_tome',    name: 'Tome (+Skill Power)',  cost: 140, kind: 'item' },
+  { id: 'bwt_dmg',     name: 'Talent: Power',        cost: 150, kind: 'talent' },
+  { id: 'bwt_hp',      name: 'Talent: Vitality',     cost: 150, kind: 'talent' },
+  { id: 'key',         name: 'BOSS KEY (opens gates)', cost: 600, kind: 'key' },
+];
+function applySurvivalBuy(state, side, id) {
+  if (!state || !side) return;
+  const item = SURVIVAL_SHOP.find(s => s.id === id);
+  if (!item || (side.gold || 0) < item.cost) return;   // okänt id / inte råd
+  if (item.kind === 'item') {
+    if (!side.bossWarsItems) side.bossWarsItems = [];
+    if (side.bossWarsItems.length >= 4 || side.bossWarsItems.includes(id)) return;   // cap / inga dubletter
+    side.gold -= item.cost; side.bossWarsItems.push(id); recomputeArenaSideStats(state, side);
+  } else if (item.kind === 'talent') {
+    if (!side.bossWarsTalents) side.bossWarsTalents = [];
+    if (side.bossWarsTalents.length >= 3 || side.bossWarsTalents.includes(id)) return;
+    side.gold -= item.cost; side.bossWarsTalents.push(id); recomputeArenaSideStats(state, side);
+  } else if (item.kind === 'key') {
+    if (state.bossGatesOpen) return;
+    side.gold -= item.cost; state.bossGatesOpen = true;   // öppnar boss-gates för alla (fas 4)
+  }
+}
+
 // ───────── SANDBOX — träningsläge (2026-06-18) ─────────────────────────────
 // Server-auktoritativt så det ALLTID speglar live-spelet (samma skill-kod → auto-synkat).
 // Återanvänder boss-wars hjälte-combat EXAKT: 3 odödliga dummy-monster läggs i
@@ -10212,6 +10242,7 @@ module.exports = {
   initSurvivalMatch,       // Survival Wars (4-player co-op, fas 1): skapa match
   tickSurvival,            // Survival top-tick (hjälte-combat + vågor + minions mot byggnad)
   serializeSurvivalState,  // Survival → sv-state-meddelande
+  applySurvivalBuy,        // Survival shop-köp (item/talent/Nyckel)
   tickGame,
   serializeState,
   applyEvent,
