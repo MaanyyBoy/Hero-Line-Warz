@@ -3179,19 +3179,19 @@ function tickSurvivalHeroFrame(state, s, dt) {
   if (!s.hero.dead && (s.healPerSecPct || 0) > 0 && s.hero.hp < s.hero.maxHp) s.hero.hp = Math.min(s.hero.maxHp, s.hero.hp + s.hero.maxHp * (s.healPerSecPct || 0) * dt);
 }
 
-function spawnSurvivalMinion(state, lane, waveNum) {
+function spawnSurvivalMinion(state, lane, waveNum, isBoss) {
   const tier = Math.min(5, 1 + Math.floor((waveNum - 1) / 5));
-  const hp = Math.round(55 * (1 + waveNum * 0.16));
+  const hp = Math.round((isBoss ? 650 : 55) * (1 + waveNum * (isBoss ? 0.25 : 0.16)));
   state.sides[1].monsters.push({
     id: state.nextEntityId++,
     x: lane.sx, z: lane.sz, ry: 0,
     hp, maxHp: hp,
-    speed: 2.4 * 1.2,   // +20% (matchar wave-minion-speed-beslutet)
-    damage: Math.round(7 * (1 + waveNum * 0.12)),
-    attackType: 'melee', attackRange: 2.0, attackInterval: 1.0, atkCd: 0,
+    speed: isBoss ? 1.8 : 2.4 * 1.2,   // +20% (wave-minion-speed); bossen är långsammare men tål mer
+    damage: Math.round((isBoss ? 24 : 7) * (1 + waveNum * 0.12)),
+    attackType: 'melee', attackRange: isBoss ? 2.6 : 2.0, attackInterval: 1.0, atkCd: 0,
     tier, lane: lane.id, pathIndex: 0,
     slowTime: 0, slowMul: 1, frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
-    aac: 0, isSurvivalMinion: true,
+    aac: 0, isSurvivalMinion: true, survivalBoss: !!isBoss,
   });
 }
 
@@ -3201,7 +3201,8 @@ function tickSurvivalWaves(state, dt) {
     w.spawnAccum += dt;
     while (w.spawnAccum >= SURVIVAL_SPAWN_INTERVAL && w.queue.length > 0) {
       w.spawnAccum -= SURVIVAL_SPAWN_INTERVAL;
-      spawnSurvivalMinion(state, w.queue.shift().lane, w.number);
+      const q = w.queue.shift();
+      spawnSurvivalMinion(state, q.lane, w.number, q.boss);
     }
   }
   w.countdown -= dt;
@@ -3209,6 +3210,7 @@ function tickSurvivalWaves(state, dt) {
     w.number++;
     const perLane = SURVIVAL_BASE_MINIONS + Math.floor(w.number / 2);
     for (const lane of SURVIVAL_LANES) for (let i = 0; i < perLane; i++) w.queue.push({ lane });
+    if (w.number % 5 === 0) w.queue.push({ lane: SURVIVAL_LANES[w.number % SURVIVAL_LANES.length], boss: true });   // lane-mini-boss var 5:e våg
     w.countdown = SURVIVAL_WAVE_GAP;
     w.active = true;
   }
@@ -3297,7 +3299,7 @@ function serializeSurvivalState(state) {
   for (let i = 0; i < monsters.length; i++) {
     const mn = monsters[i];
     if (!mn.isSurvivalMinion) continue;
-    m.push({ id: mn.id, x: r2(mn.x), z: r2(mn.z), ry: r3(mn.ry || 0), hp: ri(mn.hp), mh: ri(mn.maxHp), tier: mn.tier || 1, lane: mn.lane || 0, aac: mn.aac || 0, fz: flag((mn.frozenTime || 0) > 0) });
+    m.push({ id: mn.id, x: r2(mn.x), z: r2(mn.z), ry: r3(mn.ry || 0), hp: ri(mn.hp), mh: ri(mn.maxHp), tier: mn.tier || 1, lane: mn.lane || 0, aac: mn.aac || 0, fz: flag((mn.frozenTime || 0) > 0), boss: mn.survivalBoss ? 1 : 0 });
   }
   const snap = {
     t: 'sv-state',
