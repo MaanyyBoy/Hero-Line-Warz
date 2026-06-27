@@ -3299,7 +3299,7 @@ function serializeSurvivalState(state) {
     if (!mn.isSurvivalMinion) continue;
     m.push({ id: mn.id, x: r2(mn.x), z: r2(mn.z), ry: r3(mn.ry || 0), hp: ri(mn.hp), mh: ri(mn.maxHp), tier: mn.tier || 1, lane: mn.lane || 0, aac: mn.aac || 0, fz: flag((mn.frozenTime || 0) > 0) });
   }
-  return {
+  const snap = {
     t: 'sv-state',
     h: {
       1: serializeArenaHero(state.sides[1], _svHeroBuf1),
@@ -3313,7 +3313,12 @@ function serializeSurvivalState(state) {
     wt: r2(Math.max(0, state.survivalWave.countdown)),
     g: state.bossGatesOpen ? 1 : 0,
     over: state.matchState.gameOver ? state.matchState.winner : 0,
+    // Hero skill-entities per side (1..4) — SHARED shape with Arena/Boss Wars so the client's
+    // MpSkillEntities renderer shows black holes/fire waves/novas/vine traps/etc. in survival too.
+    bh: {}, fw: {}, nv: {}, ab: {}, kg: {}, ks: {}, vt: {}, tp: {}, hm: {}, iwe: {}, kCln: {},
   };
+  for (let i = 1; i <= 4; i++) writeSkillEntitiesInto(state.sides[i], snap, i);
+  return snap;
 }
 
 // ───────── SANDBOX — träningsläge (2026-06-18) ─────────────────────────────
