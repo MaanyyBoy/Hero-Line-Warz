@@ -196,13 +196,15 @@ function gameLoopTick(room) {
     console.error(`[${room.code}] tick error:`, e && e.stack || e);
   }
   const _simMs = Date.now() - _simStart;
-  if (room.game && now - room.lastStateMs >= STATE_INTERVAL_MS) {
-    // 30 Hz-fix (2026-06-27): anchor the send schedule to the INTENDED tick time (nextTickAt, not yet
-    // advanced here — that happens further down), NOT the actual late arrival `now`. With `= now`, any
-    // setTimeout jitter on a shared VM made catch-up ticks fail this guard (now-lastStateMs < interval)
-    // → ~1 snapshot per 2 ticks = the ~18 Hz clients saw on BOTH Render and Fly. Anchoring to nextTickAt
-    // lets every tick send → true 30 Hz delivery. (server-debug analysis 2026-06-27.)
-    room.lastStateMs = room.nextTickAt;
+  if (room.game) {
+    // 30 Hz-fix v2 (2026-06-27): send a snapshot on EVERY tick, no interval guard. The old guard
+    // (now - lastStateMs >= STATE_INTERVAL_MS) skipped catch-up ticks — on a jittery shared VM a late
+    // tick is followed by an EARLY catch-up tick (now < its intended time), so now-lastStateMs < interval
+    // and it was dropped → ~1 send per 2 ticks = the ~18 Hz clients saw. The tick loop already
+    // self-corrects to ~30 Hz (absolute-deadline scheduling below), so unconditional send = ~30 Hz
+    // delivery; a rare catch-up burst is absorbed by the client interp buffer. _sends = telemetry.
+    room.lastStateMs = now;
+    room._sends = (room._sends || 0) + 1;
     try {
       const stateMsg = _isArena ? engine.serializeArenaState(room.game)
                      : _isBoss ? engine.serializeBossWarsState(room.game)
@@ -254,8 +256,8 @@ function gameLoopTick(room) {
   if (now - _tel.lastLog >= TELEMETRY_LOG_INTERVAL_MS) {
     _tel.lastLog = now;
     const mode = _isArena ? 'arena' : (_isBoss ? 'boss' : 'lw');
-    console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B drops:${room._drops || 0} ents:${_telEntityCount(room.game)}`);
-    _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0; room._drops = 0;
+    console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sends:${room._sends || 0} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B drops:${room._drops || 0} ents:${_telEntityCount(room.game)}`);
+    _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0; room._drops = 0; room._sends = 0;
   }
   // Schemalägg nästa tick mot absolut deadline (eliminerar drift). Om vi
   // halkar efter mer än 2 ticks, hoppa till nu — undviker tick-storm.
