@@ -298,7 +298,7 @@ function getWaveDef(waveNum) {
       isBoss: true,
       waveType: 'boss',
       count: 1,
-      monsterHp: 200 + tierIdx * 250,
+      monsterHp: 400 + tierIdx * 650,    // höjt: T0=400, T1=1050, T2=1700, T3=2350, T4=3000 (var 200+tier×250=max 1200 → för snabb kill)
       monsterDmg: 18 + tierIdx * 6,
       monsterSpeed: 1.8,
       bossDef: BOSS_DEFS[waveNum] || null,
@@ -3219,6 +3219,9 @@ function tickSurvivalWaves(state, dt) {
 function updateSurvivalMinions(state, dt) {
   const monsters = state.sides[1].monsters;
   const b = state.centerBuilding;
+  // Byggnad-regen: 1%/s av maxHp (3 HP/s vid maxHp 300) — återhämtar korta luckor i försvaret
+  // men sustained tryck (flera lanes) vinner ändå. Clampas mot maxHp.
+  b.hp = Math.min(b.maxHp, b.hp + b.maxHp * 0.01 * dt);
   const reach = SURVIVAL_BUILDING_RADIUS + 1.5;
   for (let i = monsters.length - 1; i >= 0; i--) {
     const m = monsters[i];
@@ -5278,16 +5281,16 @@ function bossExecuteSkill(state, side, m, cast) {
   const dpsDmg = (m.damage || 10) * (skill.dpsMul || 0);
   const kind = skill.kind;
   if (kind === 'groundCircle') {
-    bossApplyAoE(state, side, cast.targetX, cast.targetZ, skill.radius, dmg, skill);
+    bossApplyAoE(state, side, cast.targetX, cast.targetZ, skill.radius, dmg, skill, m.bossTier);
   } else if (kind === 'cone') {
-    bossApplyCone(state, side, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, dmg, skill);
+    bossApplyCone(state, side, cast.originX, cast.originZ, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, dmg, skill, m.bossTier);
   } else if (kind === 'lineDash') {
     // Skada hela dash-linjen direkt (bossen sveper längs den), men FLYTTA bossen GRADVIS över execTime
     // i tickBossExecutePhase istället för att snäppa till slutet (user 2026-06-27: charge hackade — klienten
     // fick ett teleport-hopp i en snapshot som NetEntityMotion inte kan jämna ut → gradvis = mjukt).
     const newX = cast.originX + cast.dirX * skill.length;
     const newZ = cast.originZ + cast.dirZ * skill.length;
-    bossApplyLine(state, side, cast.originX, cast.originZ, newX, newZ, skill.width / 2, dmg, skill);
+    bossApplyLine(state, side, cast.originX, cast.originZ, newX, newZ, skill.width / 2, dmg, skill, m.bossTier);
     cast.phase = 'execute';
     cast.timer = skill.execTime || 0.3;
     cast.dashDur = cast.timer;
@@ -5357,9 +5360,9 @@ function tickBossExecutePhase(state, side, m, cast, dt) {
     const elapsed = total - cast.timer;
     const sweepAng = cast.sweepStartAngle + (elapsed / total - 0.5) * Math.PI;
     const dx = Math.sin(sweepAng), dz = Math.cos(sweepAng);
-    bossApplyCone(state, side, m.x, m.z, dx, dz, skill.length, skill.halfAngle, tickDmg, skill);
+    bossApplyCone(state, side, m.x, m.z, dx, dz, skill.length, skill.halfAngle, tickDmg, skill, m.bossTier);
   } else if (skill.kind === 'sustainedCone') {
-    bossApplyCone(state, side, m.x, m.z, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, tickDmg, skill);
+    bossApplyCone(state, side, m.x, m.z, cast.dirX, cast.dirZ, skill.length, skill.halfAngle, tickDmg, skill, m.bossTier);
   }
 }
 
@@ -5369,7 +5372,7 @@ function tickMultiCircleQueue(state, side, m, dt) {
   q.nextSpawnIn -= dt;
   while (q.nextSpawnIn <= 0 && q.idx < q.positions.length) {
     const p = q.positions[q.idx++];
-    bossApplyAoE(state, side, p.x, p.z, q.radius, q.dmg, q.skill);
+    bossApplyAoE(state, side, p.x, p.z, q.radius, q.dmg, q.skill, m.bossTier);
     q.nextSpawnIn += q.spawnInterval;
   }
   if (q.idx >= q.positions.length) m.multiCircleQueue = null;
@@ -5378,9 +5381,14 @@ function tickMultiCircleQueue(state, side, m, dt) {
 // Anti-one-shot (user 2026-06-16): en boss-SKILL kan aldrig ta mer än 50% av hjältens
 // maxHP i en enda träff. Squishies (Nyro/Zyro/Kostef) överlever då alltid 1 telegraf-nuke
 // men dör på 2 utan heal/dodge → bossar förblir farliga men inte instant-dödande.
-const BOSS_HERO_MAX_HIT_FRAC = 0.5;
-function bossDamageHero(side, dmg) {
-  damageHero(side, Math.min(dmg, side.hero.maxHp * BOSS_HERO_MAX_HIT_FRAC));
+// Tier-skalat (balans-pass 2026-06-28): högre tier kräver fler träffar = tydligare skill-floor.
+// T1 50% (2 träffar), T2 45% (~3 träffar), T3 40%, T4 35%, T5 30% (~4 träffar).
+// Linje Wars och andra kontexter utan tier → fallback 50% (oförändrat).
+const BOSS_HERO_MAX_HIT_FRAC = 0.50;   // fallback (Line Wars / tier okänt)
+const BOSS_HERO_MAX_HIT_FRAC_BY_TIER = { 1: 0.50, 2: 0.45, 3: 0.40, 4: 0.35, 5: 0.30 };
+function bossDamageHero(side, dmg, tier) {
+  const frac = BOSS_HERO_MAX_HIT_FRAC_BY_TIER[tier] || BOSS_HERO_MAX_HIT_FRAC;
+  damageHero(side, Math.min(dmg, side.hero.maxHp * frac));
 }
 // Anti-one-shot för boss AUTO-ATTACKS (user 2026-06-23: bossar 1-shottade heroes). En boss-AA
 // (melee + range-projektil) får aldrig ta mer än 20% maxHP per träff → AA är chip-skada, döden
@@ -5402,13 +5410,13 @@ function bossSkillDamageHero(heroSide, dmg) {
   damageHero(heroSide, Math.min(dmg, heroSide.hero.maxHp * BOSS_HERO_SKILL_MAX_HIT_FRAC));
 }
 
-function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
+function bossApplyAoE(state, side, cx, cz, radius, dmg, skill, tier) {
   const r2 = radius * radius;
   // Hero (target i line wars: side.hero är den vars torn bossen attackerar)
   if (!side.hero.dead) {
     const dx = side.hero.x - cx, dz = side.hero.z - cz;
     if (dx * dx + dz * dz < r2) {
-      bossDamageHero(side, dmg);
+      bossDamageHero(side, dmg, tier);
       if (skill.slow && !side.hero.dead) {
         side.heroSlowMul = Math.min(side.heroSlowMul || 1, skill.slow.mul);
         side.heroSlowTime = Math.max(side.heroSlowTime || 0, skill.slow.dur);
@@ -5424,7 +5432,7 @@ function bossApplyAoE(state, side, cx, cz, radius, dmg, skill) {
   // hanteras separat av reguljär monster-AA i updateMonsters.
 }
 
-function bossApplyCone(state, side, cx, cz, dx, dz, length, halfAngle, dmg, skill) {
+function bossApplyCone(state, side, cx, cz, dx, dz, length, halfAngle, dmg, skill, tier) {
   if (!side.hero.dead) {
     const ddx = side.hero.x - cx, ddz = side.hero.z - cz;
     const d = Math.hypot(ddx, ddz);
@@ -5432,13 +5440,13 @@ function bossApplyCone(state, side, cx, cz, dx, dz, length, halfAngle, dmg, skil
       const dot = (ddx * dx + ddz * dz) / d;
       const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
       if (ang < halfAngle) {
-        bossDamageHero(side, dmg);
+        bossDamageHero(side, dmg, tier);
       }
     }
   }
 }
 
-function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill) {
+function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill, tier) {
   if (side.hero.dead) return;
   // Punkt-till-segment-avstånd
   const dx = x2 - x1, dz = z2 - z1;
@@ -5447,7 +5455,7 @@ function bossApplyLine(state, side, x1, z1, x2, z2, halfWidth, dmg, skill) {
   const t = Math.max(0, Math.min(1, ((side.hero.x - x1) * dx + (side.hero.z - z1) * dz) / lenSq));
   const cx = x1 + t * dx, cz = z1 + t * dz;
   const distSq = (side.hero.x - cx) ** 2 + (side.hero.z - cz) ** 2;
-  if (distSq < halfWidth * halfWidth) bossDamageHero(side, dmg);
+  if (distSq < halfWidth * halfWidth) bossDamageHero(side, dmg, tier);
 }
 
 // Boss-skill-projektil. Kind per skill — så Captain's throwingAxe ser ut som en
@@ -5464,6 +5472,7 @@ function spawnBossProjectile(state, side, m, x, z, dx, dz, speed, range, radius,
     x, z, dx, dz,
     speed, range, traveled: 0,
     radius, dmg, skill,
+    bossTier: m.bossTier,   // tier för tier-skalat anti-one-shot i updateBossProjectiles
     kind: (skill && BOSS_SKILL_PROJ_KIND[skill.id]) || 'bossDefault',
   });
 }
@@ -5478,7 +5487,7 @@ function updateBossProjectiles(state, side, dt) {
     if (!side.hero.dead) {
       const ddx = side.hero.x - p.x, ddz = side.hero.z - p.z;
       if (ddx * ddx + ddz * ddz < p.radius * p.radius) {
-        bossDamageHero(side, p.dmg);   // anti-one-shot cap (boss-skill-projektil)
+        bossDamageHero(side, p.dmg, p.bossTier);   // tier-skalat anti-one-shot cap (boss-skill-projektil)
         side.bossProjectiles.splice(i, 1);
         continue;
       }
