@@ -978,7 +978,7 @@ function recomputeSideStats(side) {
   // Boss Wars-loadout: talents + items stat-bonusar (mirror main.js recomputeSideStats
   // 15834-15842). Foldas in i samma accumulator → läggs på FÖRE level-mult, exakt som klienten.
   let _bwAaLifesteal = 0, _bwCritDmgBonus = 0, _bwPhoenix = false;
-  if (side.inBossWars) {
+  if (side.inBossWars || side.inSurvival) {   // survival delar item/talent-katalogen (shop + boss-drops)
     const _applyBw = (def) => {
       if (!def) return;
       if (def.stats) addStats(def.stats);
@@ -1126,6 +1126,9 @@ const ENGINE_BOSS_WARS_ITEMS = {
   bwi_gauntlet: { stats: { attackDmg: 18 }, lifestealOnAa: 0.15 },
   bwi_crit:     { stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
   bwi_phoenix:  { stats: { maxHpPct: 0.10 }, phoenixRevive: true },
+  // Survival boss-rum-exklusiva drops (kan ej köpas i shoppen — fås bara från valfria rum-bossar)
+  bwi_sv_warlord: { stats: { attackDmg: 22, critChancePct: 0.20 }, critDmgBonus: 0.30 },   // NW boss drop
+  bwi_sv_dragon:  { stats: { maxHpPct: 0.45, dmgReductionPct: 0.18 } },                    // NE boss drop
 };
 
 // Kolla om en side valt en specifik talent (för arena server-auth skill-modifier-logic).
@@ -1557,7 +1560,7 @@ function isArena1v1Walkable(x, z) {
 // teleport/leap-skills (dash/leap/hammer-tp/slider-tp) — annars använder de classic
 // isHeroWalkable som avvisar arena1v1-positioner (z≈80) → teleport-skills misslyckas.
 function heroWalk(side, x, z, opts) {
-  if (side.inSurvival) return isSurvivalWalkable(x, z);
+  if (side.inSurvival) return isSurvivalWalkable(x, z, side._svBossGatesOpen);
   if (side.inBossWars) return isBossWarsWalkable(x, z, side._bwGateClosed);
   if (side.inArena1v1) return isArena1v1Walkable(x, z);
   if (side.inDuel) return isArenaWalkable(x, z);
@@ -3083,13 +3086,34 @@ const SURVIVAL_BOSS_ROOMS = [
   { id: 1, name: 'NW', x: -40, z: -40, gateX: -21, gateZ: -21 },
   { id: 2, name: 'NE', x: 40, z: -40, gateX: 21, gateZ: -21 },
 ];
-// Hjälte-walkability: inne i arena-cirkeln, men inte genom center-byggnaden. (Boss-lanes/rum = fas 4.)
-function isSurvivalWalkable(x, z) {
+// Hjälte-walkability: inne i arena-cirkeln, men inte genom center-byggnaden.
+// Fas 4: när boss-gates öppnas (gatesOpen=true) är de diagonala korridorerna + rummen walkable.
+const SURVIVAL_BOSS_ROOM_RADIUS = 11;         // walkable circle-radie runt varje rum-center
+const SURVIVAL_BOSS_ROOM_CORRIDOR_HW = 4.5;  // halv-bredd av diagonal korridor mot rummet
+function isSurvivalWalkable(x, z, gatesOpen) {
   const r2v = x * x + z * z;
-  if (r2v > SURVIVAL_ARENA_RADIUS * SURVIVAL_ARENA_RADIUS) return false;              // utanför arenan
   const br = SURVIVAL_BUILDING_RADIUS + 0.6;
-  if (r2v < br * br) return false;                                                    // genom byggnaden
-  return true;
+  if (r2v <= SURVIVAL_ARENA_RADIUS * SURVIVAL_ARENA_RADIUS) {
+    if (r2v < br * br) return false;                                                  // blockad av byggnaden
+    return true;
+  }
+  // Utanför huvud-arenan: walkable ENBART om gates öppna + punkt ligger i korridor/rum
+  if (!gatesOpen) return false;
+  const hw2 = SURVIVAL_BOSS_ROOM_CORRIDOR_HW * SURVIVAL_BOSS_ROOM_CORRIDOR_HW;
+  const rr2 = SURVIVAL_BOSS_ROOM_RADIUS * SURVIVAL_BOSS_ROOM_RADIUS;
+  for (const room of SURVIVAL_BOSS_ROOMS) {
+    // Rum-cirkel
+    const rdx = x - room.x, rdz = z - room.z;
+    if (rdx * rdx + rdz * rdz <= rr2) return true;
+    // Korridor: capsule (closest-point-on-segment) från gate till rum-center
+    const edx = room.x - room.gateX, edz = room.z - room.gateZ;
+    const len2 = edx * edx + edz * edz;
+    const pdx = x - room.gateX, pdz = z - room.gateZ;
+    const t = Math.max(0, Math.min(1, (pdx * edx + pdz * edz) / len2));
+    const cx = room.gateX + t * edx, cz = room.gateZ + t * edz;
+    if ((x - cx) * (x - cx) + (z - cz) * (z - cz) <= hw2) return true;
+  }
+  return false;
 }
 
 function createSurvivalState() {
@@ -3124,6 +3148,35 @@ function createSurvivalState() {
   sides[2].monsters = sides[1].monsters;
   sides[3].monsters = sides[1].monsters;
   sides[4].monsters = sides[1].monsters;
+  // Fas 4: spawna 2 rum-bossar (valfria, starka). Lägg i bossRoomBosses OCH i den delade
+  // monsters-arrayen → all existerande combat-pipeline (AA/skills/projectiles) träffar dem automatiskt.
+  // Rummet är stängt (gatesOpen=false) → heroes kan inte nå dem förrän Nyckeln köps.
+  const SURVIVAL_BOSS_ROOM_HP = 4500;
+  const SURVIVAL_BOSS_ROOM_DAMAGE = 45;
+  const SURVIVAL_BOSS_ROOM_ATTACK_RANGE = 3.5;
+  const SURVIVAL_BOSS_ROOM_ATTACK_INTERVAL = 1.5;
+  const SURVIVAL_BOSS_ROOM_SPEED = 2.5;
+  for (const room of SURVIVAL_BOSS_ROOMS) {
+    const rb = {
+      id: state.nextEntityId++,
+      x: room.x, z: room.z, ry: 0,
+      hp: SURVIVAL_BOSS_ROOM_HP, maxHp: SURVIVAL_BOSS_ROOM_HP,
+      speed: SURVIVAL_BOSS_ROOM_SPEED,
+      damage: SURVIVAL_BOSS_ROOM_DAMAGE,
+      attackRange: SURVIVAL_BOSS_ROOM_ATTACK_RANGE,
+      attackInterval: SURVIVAL_BOSS_ROOM_ATTACK_INTERVAL, atkCd: 0,
+      roomId: room.id,
+      rewardItemId: room.id === 1 ? 'bwi_sv_warlord' : 'bwi_sv_dragon',
+      isSurvivalBossRoomBoss: true,
+      dead: false, _rewardGiven: false,
+      aac: 0,
+      frozenTime: 0, dotRemaining: 0, dotPerSec: 0,
+      slowTime: 0, slowMul: 1, poisonRemaining: 0,
+      nyroMarked: 0,
+    };
+    state.bossRoomBosses.push(rb);
+    sides[1].monsters.push(rb);   // delar monster-arrayen med sides[2..4]
+  }
   return state;
 }
 
@@ -3271,13 +3324,81 @@ function tickSurvivalBot(state, idx, dt) {
 function checkSurvivalEnd(state) {
   if (state.matchState.gameOver) return;
   if (state.centerBuilding.hp <= 0) { state.matchState.gameOver = true; state.matchState.winner = 2; return; }   // byggnad förstörd = förlust
-  if (state.survivalWave.number >= SURVIVAL_TOTAL_WAVES && state.sides[1].monsters.length === 0 && state.survivalWave.queue.length === 0) {
+  // Räkna enbart survival-minions (boss-rum-bossar ska ej blockera vinst) — räkna för att undvika filter-allokering
+  let aliveMinions = 0;
+  for (const m of state.sides[1].monsters) if (m.isSurvivalMinion && m.hp > 0) aliveMinions++;
+  if (state.survivalWave.number >= SURVIVAL_TOTAL_WAVES && aliveMinions === 0 && state.survivalWave.queue.length === 0) {
     state.matchState.gameOver = true; state.matchState.winner = 1;   // alla vågor klarade = vinst
+  }
+}
+
+// ───────── Fas 4: ticka de 2 valfria boss-rum-bossarna ──────────────────────
+// Anropas varje tick från tickSurvival. Bossarna är inaktiva (stagnerar i rummet) tills
+// gates öppnas; efter det aktiveras de när en hjälte är inom AGGRO_RANGE. Vid HP≤0 (killed
+// av hero via killMonster-hook som sätter m.dead=true) ges en permanent reward till laget.
+const SURVIVAL_BOSS_ROOM_AGGRO_RANGE = 13;   // m — bossen aktiveras när hjälte är innanför
+function tickSurvivalBossRooms(state, dt) {
+  const allSides = [1, 2, 3, 4].map(i => state.sides[i]).filter(Boolean);
+  for (const boss of state.bossRoomBosses) {
+    // Dödshantering: ge reward en gång, hoppa sedan over
+    if (boss.dead || boss.hp <= 0) {
+      boss.dead = true; boss.hp = 0;
+      if (!boss._rewardGiven) {
+        boss._rewardGiven = true;
+        for (const s of allSides) {
+          if (s.hero.dead) continue;
+          if (!s.bossWarsItems) s.bossWarsItems = [];
+          // Lägg till boss-exklusiv item (max 6 slots — bossar kan ej köpa i shop ändå)
+          if (!s.bossWarsItems.includes(boss.rewardItemId) && s.bossWarsItems.length < 6) {
+            s.bossWarsItems.push(boss.rewardItemId);
+            recomputeArenaSideStats(state, s);
+          }
+        }
+      }
+      continue;
+    }
+    // Inaktiv tills gates öppnas
+    if (!state.bossGatesOpen) continue;
+    // Status-effekter
+    if ((boss.frozenTime || 0) > 0) { boss.frozenTime = Math.max(0, boss.frozenTime - dt); continue; }
+    if ((boss.slowTime || 0) > 0) { boss.slowTime = Math.max(0, boss.slowTime - dt); if (boss.slowTime <= 0) boss.slowMul = 1; }
+    if ((boss.dotRemaining || 0) > 0) {
+      boss.dotRemaining = Math.max(0, boss.dotRemaining - dt);
+      boss.hp -= (boss.dotPerSec || 0) * dt;
+      if (boss.hp <= 0) { boss.dead = true; boss.hp = 0; continue; }
+    }
+    // Hitta närmaste hjälte inom aggro-range (hero i korridoren/rummet)
+    let nearestSide = null, nearestDist = SURVIVAL_BOSS_ROOM_AGGRO_RANGE;
+    for (const s of allSides) {
+      if (s.hero.dead) continue;
+      const d = Math.hypot(s.hero.x - boss.x, s.hero.z - boss.z);
+      if (d < nearestDist) { nearestDist = d; nearestSide = s; }
+    }
+    if (!nearestSide) { boss.atkCd = Math.max(0, (boss.atkCd || 0) - dt); continue; }   // ingen hero i rummet
+    // Jaga + attackera närmaste hjälte
+    const hdx = nearestSide.hero.x - boss.x, hdz = nearestSide.hero.z - boss.z;
+    const hd = Math.hypot(hdx, hdz) || 1;
+    if (hd > boss.attackRange) {
+      const sp = boss.speed * (boss.slowMul || 1) * dt;
+      boss.x += (hdx / hd) * sp;
+      boss.z += (hdz / hd) * sp;
+      boss.ry = Math.atan2(hdx, hdz);
+    } else {
+      boss.atkCd = (boss.atkCd || 0) - dt;
+      if (boss.atkCd <= 0) {
+        boss.atkCd = boss.attackInterval;
+        boss.aac = (boss.aac || 0) + 1;
+        damageHero(nearestSide, boss.damage);   // standard hero-dmg med DR/shields
+      }
+    }
   }
 }
 
 function tickSurvival(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
+  // Synka gates-flagga per side → heroWalk/applyMovement använder den utan state-ref
+  const gatesNow = state.bossGatesOpen;
+  for (const idx of [1, 2, 3, 4]) { if (state.sides[idx]) state.sides[idx]._svBossGatesOpen = gatesNow; }
   for (const idx of [1, 2, 3, 4]) if (state.sides[idx] && state.sides[idx].isBot) tickSurvivalBot(state, idx, dt);
   // 1) Rörelse (4 hjältar)
   for (const idx of [1, 2, 3, 4]) {
@@ -3301,7 +3422,9 @@ function tickSurvival(state, dt) {
   tickSurvivalWaves(state, dt);
   updateSurvivalMinions(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
-  // 5) Win/lose
+  // 5) Fas 4: valfria boss-rum-bossar (tickas oavsett gates-status → reward-leverans vid stängd gate)
+  tickSurvivalBossRooms(state, dt);
+  // 6) Win/lose
   checkSurvivalEnd(state);
 }
 
@@ -3327,6 +3450,7 @@ const _svSnap = {
   hm:  { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
   iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
   kCln:{ 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
+  rb: null,   // fas 4: boss-rum-bossar [{id,x,z,ry,hp,mh,dead}]
 };
 function serializeSurvivalState(state) {
   const snap = _svSnap;
@@ -3348,6 +3472,8 @@ function serializeSurvivalState(state) {
   snap.wt = r2(Math.max(0, state.survivalWave.countdown));
   snap.g = state.bossGatesOpen ? 1 : 0;
   snap.over = state.matchState.gameOver ? state.matchState.winner : 0;
+  // Fas 4: boss-rum-bossar (rb) — allokeras per tick (max 2 element, låg GC-kostnad)
+  snap.rb = state.bossRoomBosses.map(b => ({ id: b.id, x: r2(b.x), z: r2(b.z), ry: r3(b.ry || 0), hp: ri(b.hp), mh: b.maxHp, dead: b.dead ? 1 : 0 }));
   // Hero skill-entities per side (1..4) — SHARED shape med Arena/Boss Wars.
   for (let i = 1; i <= 4; i++) writeSkillEntitiesInto(state.sides[i], snap, i);
   return snap;
@@ -4840,6 +4966,8 @@ function killMonster(arenaSide, idx, byPlayerSide) {
   if (!m) return;
   if (m.isSandboxDummy) { m.hp = 1; return; }   // sandbox-dummy är odödlig — despawna aldrig
   arenaSide.monsters.splice(idx, 1);
+  // Survival boss-rum-bossen (fas 4): markera som dead → tickSurvivalBossRooms delar ut reward. Ingen guld/XP (room-boss).
+  if (m.isSurvivalBossRoomBoss) { m.dead = true; m.hp = 0; return; }
   // Boss-2-ad hero-kill (decision 118): wipe om kill-cooldown löper, annars starta den. Ingen reward.
   if (m.isBoss2Ad && m._bwState) { onBoss2AdHeroKill(m._bwState, m); return; }
   // Boss-4 bärar-minion hero-kill (decision 132): droppa giftväska där den dog. Ingen reward.
@@ -8614,7 +8742,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  const check = side.inSurvival ? isSurvivalWalkable
+  const check = side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
