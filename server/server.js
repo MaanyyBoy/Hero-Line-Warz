@@ -528,6 +528,14 @@ function handleArenaMessage(room, fromWs, envelope) {
       if (room.game && room.game.ready && room.game.ready[sideIdx] !== undefined) room.game.ready[sideIdx] = !!payload.value;
       return;
     }
+    if (t === 'a-loadout') {
+      // Prep-fas-loadout (#15-17): klienten väljer bwt_/bwi_ i en grid under prep.
+      // Server cappar 3 talents / 4 items + validerar ids (spoof-skydd, identiskt boss wars).
+      const sideIdx = fromWs.peerIdx || ((fromWs === room.host) ? 1 : 2);
+      try { engine.applyArenaLoadout(room.game, sideIdx, payload.tals, payload.items); }
+      catch (e) { console.warn('arena loadout error', e); }
+      return;
+    }
     if (t === 'a-talent') {
       const sideIdx = fromWs.peerIdx || ((fromWs === room.host) ? 1 : 2);
       const tal = room.game && room.game.talents && room.game.talents[sideIdx];
