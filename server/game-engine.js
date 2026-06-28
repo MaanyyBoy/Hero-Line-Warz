@@ -2216,6 +2216,7 @@ function _makeHeroSnapBuf() {
     gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
     taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
     tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
+    rsp: 0,   // respawn-nedräkning (sek kvar, avrundat upp); 0 om hjälten lever/läget saknar respawn. Initial i struct → hidden class stabil.
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2295,6 +2296,15 @@ function serializeArenaHero(side, buf) {
   buf.xlnch = (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined;
   buf.xcl = nzr2(side.xinaCloakRem);
   buf.xul = nzr2(side.xinaUltRem);
+  // Respawn-nedräkning (sek kvar, avrundat upp) → klientens död-overlay visar "respawning in Ns"
+  // (Line Wars använder fältet `rt` i serializeSide; detta är den delade arena/survival-vägen).
+  // ADDITIVT fält. Källa per läge: Arena = hero.respawnTimer; Survival = side-level _svRespawn;
+  // Boss Wars = permanent död → 0. Lever hjälten / läget saknar respawn → 0.
+  // Skrivs VARJE serialisering (buf återanvänds in-place) annars läcker stale-värde till nästa tick.
+  buf.rsp = side.hero.dead
+    ? (side.inBossWars ? 0
+       : (side._svRespawn != null ? Math.ceil(side._svRespawn) : Math.ceil(side.hero.respawnTimer || 0)))
+    : 0;
   return buf;
 }
 
