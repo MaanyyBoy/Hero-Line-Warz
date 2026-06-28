@@ -978,7 +978,7 @@ function recomputeSideStats(side) {
   // Boss Wars-loadout: talents + items stat-bonusar (mirror main.js recomputeSideStats
   // 15834-15842). Foldas in i samma accumulator → läggs på FÖRE level-mult, exakt som klienten.
   let _bwAaLifesteal = 0, _bwCritDmgBonus = 0, _bwPhoenix = false;
-  if (side.inBossWars || side.inSurvival) {   // survival delar item/talent-katalogen (shop + boss-drops)
+  if (side.inBossWars || side.inSurvival || side.inArena1v1) {   // arena: lobby-loadout flyttad till prep-grid (a-loadout); survival delar item/talent-katalogen (shop + boss-drops)
     const _applyBw = (def) => {
       if (!def) return;
       if (def.stats) addStats(def.stats);
@@ -1026,7 +1026,7 @@ function recomputeSideStats(side) {
   side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
   // Boss Wars-extras (mirror main.js 15880-15891): crit-dmg läses i combat via side.critDmgMul.
   // AA-lifesteal + phoenix-revive-BETEENDE = Phase B (fälten sätts här, behavior wiras separat).
-  if (side.inBossWars) {
+  if (side.inBossWars || side.inArena1v1) {   // arena loadout (a-loadout) ärver crit-dmg + AA-lifesteal; phoenix-revive läses bara under inBossWars (no-op i arena)
     side.critDmgMul = 2.0 + _bwCritDmgBonus;
     side.aaLifestealPct = _bwAaLifesteal;
     side.phoenixReviveAvailable = _bwPhoenix && (side.phoenixReviveAvailable !== false);
@@ -1183,6 +1183,20 @@ function recomputeArenaSideStats(state, side) {
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
     side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
   }
+}
+
+// Arena prep-loadout (decision: lobby-loadout flyttad in i arena-matchens prep-fas, #15-17).
+// Klienten skickar a-loadout {tals, items} med bwt_/bwi_-ids under prep → vi lagrar dem på
+// EXAKT samma fält som boss wars (side.bossWarsTalents/Items, cap 3/4) och kör om stats.
+// recomputeSideStats foldar in dem (inArena1v1-grenen). Bara under prep → ingen mid-fight-swap.
+function applyArenaLoadout(state, sideIdx, tals, items) {
+  const side = state && state.sides && state.sides[sideIdx];
+  if (!side || !side.inArena1v1) return;
+  if (state.phase !== 'prep') return;   // loadout låst när rundan startat (anti mid-fight stat-swap)
+  side.bossWarsTalents = [...new Set(((Array.isArray(tals) ? tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id])))].slice(0, 3);
+  side.bossWarsItems   = [...new Set(((Array.isArray(items) ? items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id])))].slice(0, 4);
+  recomputeArenaSideStats(state, side);
+  side.hero.hp = side.hero.maxHp;   // toppa upp HP under prep så maxHpPct-loadout inte lämnar dig skadad vid fight-start
 }
 
 // Gandulf passive-helpers — buff/shield på skill-hit
@@ -10533,6 +10547,7 @@ module.exports = {
   serializeState,
   applyEvent,
   recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
+  applyArenaLoadout,       // arena prep-loadout (a-loadout): bwt_/bwi_ → side.bossWarsTalents/Items + recompute
   isArenaTalent: (id) => !!ENGINE_ARENA_TALENTS[id], // validera klient-skickad talentId (anti-cheat 2026-06-23)
   createSandboxState,      // sandbox-träningsläge (2026-06-18): hjälte + 3 dummies, server-auth
   tickSandbox,             // sandbox-tick (återanvänder boss-wars hjälte-combat, egen funktion)
