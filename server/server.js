@@ -244,8 +244,9 @@ function gameLoopTick(room) {
         if (room.client.bufferedAmount < BACKPRESSURE_LIMIT) { try { room.client.send(payload); } catch (_) {} }
         else room._drops = (room._drops || 0) + 1;
       }
-      // Multi-peer (boss wars 3p / team-arena 4-6p): broadcasta till room.clients[].
-      if ((_isBoss || _isArena) && room.clients) {
+      // Multi-peer (boss wars 3p / team-arena 4-6p / survival 4p): broadcasta till room.clients[].
+      // Survival saknades → spelare 3 & 4 fick aldrig sv-state = frusen match (korrekthet-sweep 2026-06-28).
+      if ((_isBoss || _isArena || _isSurvival) && room.clients) {
         for (const c of room.clients) {
           if (c && c.readyState === 1) {
             if (c.bufferedAmount < BACKPRESSURE_LIMIT) { try { c.send(payload); } catch (_) {} }

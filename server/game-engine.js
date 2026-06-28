@@ -3191,7 +3191,7 @@ function spawnSurvivalMinion(state, lane, waveNum, isBoss) {
     attackType: 'melee', attackRange: isBoss ? 2.6 : 2.0, attackInterval: 1.0, atkCd: 0,
     tier, lane: lane.id, pathIndex: 0,
     slowTime: 0, slowMul: 1, frozenTime: 0, dotRemaining: 0, dotPerSec: 0, poisonRemaining: 0,
-    aac: 0, isSurvivalMinion: true, survivalBoss: !!isBoss,
+    aac: 0, isSurvivalMinion: true, survivalBoss: !!isBoss, isMiniBoss: !!isBoss,   // isMiniBoss → killMonster gives mul=5 gold (was 5g trash reward)
   });
 }
 
