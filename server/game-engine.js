@@ -10548,7 +10548,10 @@ module.exports = {
   applyEvent,
   recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
   applyArenaLoadout,       // arena prep-loadout (a-loadout): bwt_/bwi_ → side.bossWarsTalents/Items + recompute
-  isArenaTalent: (id) => !!ENGINE_ARENA_TALENTS[id], // validera klient-skickad talentId (anti-cheat 2026-06-23)
+  // Validera klient-skickad talentId mot TALENT-ids (ENGINE_ARENA_TALENTS keyas på HJÄLTE-id, värdena är
+  // talent-arrayer) — `!!ENGINE_ARENA_TALENTS[id]` slog upp talent-id som hjälte-nyckel → alltid false →
+  // BLOCKERADE alla arena native-stat-talents (HP/DMG/AS/CDR) server-side. Bugfix 2026-06-29.
+  isArenaTalent: (id) => { for (const arr of Object.values(ENGINE_ARENA_TALENTS)) if (arr.some(t => t.id === id)) return true; return false; },
   createSandboxState,      // sandbox-träningsläge (2026-06-18): hjälte + 3 dummies, server-auth
   tickSandbox,             // sandbox-tick (återanvänder boss-wars hjälte-combat, egen funktion)
   serializeSandboxState,   // sandbox → sb-state-meddelande
