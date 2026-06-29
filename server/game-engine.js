@@ -1026,7 +1026,7 @@ function recomputeSideStats(side) {
   side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
   // Boss Wars-extras (mirror main.js 15880-15891): crit-dmg läses i combat via side.critDmgMul.
   // AA-lifesteal + phoenix-revive-BETEENDE = Phase B (fälten sätts här, behavior wiras separat).
-  if (side.inBossWars || side.inArena1v1) {   // arena loadout (a-loadout) ärver crit-dmg + AA-lifesteal; phoenix-revive läses bara under inBossWars (no-op i arena)
+  if (side.inBossWars || side.inArena1v1 || side.inSurvival) {   // arena loadout ärver crit-dmg + AA-lifesteal; survival: bwi_sv_warlord har critDmgBonus → skrivs hit; phoenix-revive no-op i arena+survival (inga phoenix-items i deras shops)
     side.critDmgMul = 2.0 + _bwCritDmgBonus;
     side.aaLifestealPct = _bwAaLifesteal;
     side.phoenixReviveAvailable = _bwPhoenix && (side.phoenixReviveAvailable !== false);
