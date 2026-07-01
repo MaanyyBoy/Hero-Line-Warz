@@ -1700,6 +1700,17 @@ function applyLaserBeamTickServer(state, side) {
     boss.hp = Math.max(0, boss.hp - bossWarsDmgMod(boss, boss.maxHp * LASER_TICK_DMG_PCT));   // fas-immunitet+DR; clamp (death=slice 4)
     return;
   }
+  if (state.mode === 'survival') {   // survival: lasern träffar alla minions i strålen
+    for (const m of (side.monsters || [])) {
+      if (!m || m.hp <= 0) continue;
+      const mdx = m.x - side.hero.x, mdz = m.z - side.hero.z;
+      const along = mdx * lb.dx + mdz * lb.dz;
+      if (along < 0 || along > LASER_RANGE) continue;
+      if (Math.abs(mdx * (-lb.dz) + mdz * lb.dx) >= LASER_WIDTH) continue;
+      m.hp = Math.max(0, m.hp - m.maxHp * LASER_TICK_DMG_PCT);
+    }
+    return;
+  }
   if (state.mode === 'sandbox') {   // sandbox: lasern träffar dummies i strålen (odödliga)
     for (const d of (state.sandboxDummies || [])) {
       if (d.hp <= 1) continue;
@@ -1778,6 +1789,17 @@ function tickGimluRageServer(state, side, dt) {
         const dmg = bossWarsDmgMod(bossTarget, bossTarget.maxHp * RAGE_PULSE_DMG_PCT);   // fas-immunitet + DR
         const dealt = Math.min(dmg, bossTarget.hp);
         bossTarget.hp = Math.max(0, bossTarget.hp - dmg);   // clamp; death slice 4
+        if (dealt > 0 && !side.hero.dead) {
+          side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
+        }
+      }
+    } else if (state.mode === 'survival') {   // survival: rage-pulserna träffar alla minions i radien
+      for (const m of (side.monsters || [])) {
+        if (!m || m.hp <= 0) continue;
+        if (Math.hypot(m.x - side.hero.x, m.z - side.hero.z) >= RAGE_PULSE_RADIUS) continue;
+        const dmg = m.maxHp * RAGE_PULSE_DMG_PCT;
+        const dealt = Math.min(dmg, m.hp);
+        m.hp = Math.max(0, m.hp - dmg);
         if (dealt > 0 && !side.hero.dead) {
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + dealt * RAGE_HEAL_PCT);
         }
@@ -3235,6 +3257,13 @@ function tickSurvivalHeroFrame(state, s, dt) {
   tickGimluTauntLvl5(state, s, null, dt);
   flushIronWillReflectLvl5(state, s, null);
   tickAragurnBannersLvl5(s, dt);
+  if (s.heroId === 'elar') {
+    s._elarCountTickAccum = (s._elarCountTickAccum || 0) + dt;
+    if (s._elarCountTickAccum >= 0.2 || s.elarNearbyCount == null) {
+      s._elarCountTickAccum = 0;
+      s.elarNearbyCount = elarNearbyCount(state, s);
+    }
+  }
   updateNovaEffects(state, s, null, dt);
   updateActiveBuffs(s, dt);
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
@@ -6206,7 +6235,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block/fear).
   // heroFearTime tillagd (QA 2026-06-17): bot-guards immobiliserar redan vid fear; människo-
   // spelare gjorde det inte → Gimlu Titan's Rage-fear hade ingen effekt på riktiga spelare.
-  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars || side.inSurvival) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
   const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0 || !target.inRange) return;   // out of attack range → chase (movement loop), don't fire
   side.attackCounter++;
@@ -6247,8 +6276,8 @@ function updateHeroAttack(state, side, opp, dt) {
   // Aragurn Berserk (R): +150% AA-dmg + 25% lifesteal under 5s. (AS oförändrad.)
   // Gate på inArena1v1 — berserkRemaining tickas bara ner i arena-loopen; i classic
   // skulle ett oavsiktligt satt fält ge permanent buff.
-  const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.berserkRemaining || 0) > 0;
-  const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars)
+  const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.berserkRemaining || 0) > 0;
+  const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars/survival)
   let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * elarShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
@@ -8741,7 +8770,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
   // heroFearTime tillagd (QA 2026-06-17) — feared människo-spelare kunde annars gå fritt.
-  if ((side.inArena1v1 || side.inBossWars) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars || side.inSurvival) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   // Full movement-speed så fort en riktning valts (användarbeslut 2026-06-04) —
@@ -8752,7 +8781,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   else { side.hero.facingX = ndx; side.hero.facingZ = ndz; }
   // Slow (Kostefo Slider / Aragurn Shout / Gimlu Hammer lvl5) — appliceras nu på
   // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
-  const slowMul = ((side.inArena1v1 || side.inBossWars) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
+  const slowMul = ((side.inArena1v1 || side.inBossWars || side.inSurvival) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.nyroInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
@@ -8766,7 +8795,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
-  const rageMs = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars only)
+  const rageMs = (side.inArena1v1 || side.inBossWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars/survival)
   const shoutMs = (side.elarShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
   const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
@@ -8786,7 +8815,8 @@ function applyMovement(side, joyX, joyZ, dt) {
 
 // ===== ZHEYNA SKILLS (server-auth, decision 134) =====
 function zheynaWalk(side) {
-  return side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
+  return side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
+       : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
        : side.inDuel ? isArenaWalkable
        : (x, z) => isHeroWalkable(side.idx, x, z, null);
@@ -9294,7 +9324,7 @@ function applyEvent(state, sideIdx, ev) {
     // freeze/root/fear/ice-block were cosmetic for SKILLS against a custom client: a stunned player
     // could still Blink/Leap/ult out (anti-cheat audit 2026-06-23). Gimlu Rage zeroes these timers
     // (CC-immune) so it is unaffected. Arena/boss only — classic CC model is unchanged.
-    if ((side.inArena1v1 || side.inBossWars) &&
+    if ((side.inArena1v1 || side.inBossWars || side.inSurvival) &&
         ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
     // R-cast (ult): server-side consume + lockout. Per-hero ult-effekter
     // implementeras separat (klient-side endast just nu). Här säkerställs
@@ -9345,7 +9375,7 @@ function applyEvent(state, sideIdx, ev) {
         // berserk-AA m.m.) och hero-skadan är duel-gatead (isHeroPvpActive) i tick-funktionerna.
         // Magiker Master Beam: 3s svängande laser (AoE-tick mot opp hero). Riktning
         // från ev.dx/dz (cast-aim) med facing-fallback. Klient renderar via lz-snap.
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'zyro' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && side.heroId === 'zyro' && !side.hero.dead) {
           let ldx = ev.dx, ldz = ev.dz;
           const lm = Math.hypot(ldx || 0, ldz || 0);
           if (lm < 0.01) { ldx = side.hero.facingX || 0; ldz = side.hero.facingZ || 1; }
@@ -9354,16 +9384,16 @@ function applyEvent(state, sideIdx, ev) {
           applyLaserBeamTickServer(state, side);   // initial tick direkt (matchar klientens host-fn)
         }
         // Gimlu Rage: 5s AoE-pulser + 20% lifesteal + CC-immun
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'kryx' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && side.heroId === 'kryx' && !side.hero.dead) {
           side.rageRemaining = RAGE_DURATION;
           side.rageTickAccum = 0;
         }
         // Aragurn Berserk: 5s +150% AA-dmg + 25% lifesteal (AA-modifier i updateHeroAttack)
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'elar' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && side.heroId === 'elar' && !side.hero.dead) {
           side.berserkRemaining = BERSERK_DURATION;
         }
         // Xina Shuriken Storm: 5 orbiterande shurikens 5s + buffs, skjuts sedan ut (tickXina).
-        if ((side.inArena1v1 || side.inBossWars || side.inLineWars) && side.heroId === 'xina' && !side.hero.dead) {
+        if ((side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && side.heroId === 'xina' && !side.hero.dead) {
           castXinaUlt(state, side);
         }
       }
