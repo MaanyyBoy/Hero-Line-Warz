@@ -2471,6 +2471,7 @@ const BOSSWARS_TIER_HP = { 1: 6500, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  //
 const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.0 };    // matchar BOSS_WARS_DEFS (T5 3.5→3.0: one-shot-nerf 2026-06-07)
 const BOSSWARS_TIER_SPEED = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };       // matchar spawnBossWarsBoss
 const BOSSWARS_TIER_PHASE_THRESH = { 1: 0.5, 2: 0.5, 3: 0.5, 4: 0.3, 5: 0.3 };
+const BOSSWARS_INTRO_GRACE = 2.5;   // sek odödlig+passiv boss-intro vid aktivering → alla klienter ser 100% HP-start (user 2026-07-01)
 const BOSSWARS_TIER_AA = {
   1: { kind: 'bw_goblinArrow', range: 8.5, interval: 1.2, travel: 0.6 },
   2: { kind: 'bw_warlockOrb',  range: 8.0, interval: 1.4, travel: 0.9 },
@@ -3790,7 +3791,14 @@ function maybeActivateBossWars(state) {
     anyAlive = true;
     if (!isInsideBossRoom(s.hero.x, s.hero.z)) { allInside = false; break; }
   }
-  if (anyAlive && allInside) { state.bossActivated = true; state.gateClosed = true; }
+  if (anyAlive && allInside) {
+    state.bossActivated = true; state.gateClosed = true;
+    // Intro-grace: håll bossen odödlig + passiv en kort stund vid aktivering så ALLA klienter
+    // (även de som renderar in i striden något sent pga scen-laddning) ser bossen på 100% HP vid
+    // start av matchen, istället för mitt i lagets DPS-race (user 2026-07-01). bossWarsDmgMod → 0
+    // och tickBossWarsBoss hoppar AI under grace. Sätts en gång (boss aktiveras bara en gång).
+    if (state.boss) state.boss.introGraceRemaining = BOSSWARS_INTRO_GRACE;
+  }
 }
 // Boss-AA-projektil mot specifik hjälte (homing via bossTargetIdx i updateMonsterProjectiles).
 // Ligger i sides[1].monsterProjectiles → serialiseras i mr[1], renderas av klient (projKind-mesh).
@@ -4044,6 +4052,7 @@ function tickBossWarsSkills(state, boss, dt) {
 // Returnerar effektiv skada (0 = immun). Anropas i ALLA boss-skadevägar; no-op för icke-boss-monster.
 function bossWarsDmgMod(m, dmg) {
   if (!m || !m.isBossWarsBoss) return dmg;
+  if ((m.introGraceRemaining || 0) > 0) return 0;        // intro-grace: odödlig precis vid aktivering (100% HP-start, user 2026-07-01)
   if (m.warlord && m.warlord.engaged) return 0;          // immun hela symbol-fasen (boss 3): full reveal → pulser klart
   if (m.dragon && m.dragon.active) return 0;             // immun under boss 5-mekanik (decision 135)
   if ((m.phaseTransitionRemaining || 0) > 0) return 0;   // immun under fas-övergång
@@ -4098,6 +4107,13 @@ function triggerBossWarsPhaseTransition(state, boss) {
 function tickBossWarsBoss(state, dt) {
   const boss = state.boss;
   if (!boss || boss.hp <= 0 || !state.bossActivated) return;
+  // Intro-grace (user 2026-07-01): precis efter aktivering står bossen still + odödlig (via
+  // bossWarsDmgMod) en kort stund så striden inte redan hunnit tära HP:t när sena klienter
+  // renderar in → alla ser 100% vid start. Ingen activeTime/DR-uppbyggnad, ingen AI under grace.
+  if ((boss.introGraceRemaining || 0) > 0) {
+    boss.introGraceRemaining = Math.max(0, boss.introGraceRemaining - dt);
+    return;
+  }
   boss.activeTime = (boss.activeTime || 0) + dt;   // tidsbaserad DR-step (decision 110, bossWarsDmgMod)
   // Absorption-buff timeout (minion-absorption +20%/5s, decision 116) — bossEffectiveDamage läser damageBuffMul.
   if ((boss.damageBuffRemaining || 0) > 0) {
