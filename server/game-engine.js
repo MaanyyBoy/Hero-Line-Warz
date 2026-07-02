@@ -737,10 +737,12 @@ function gainUltOnSkillHit(side) {
 }
 const ACTIVE_DURATION = 5;
 const ACTIVE_COOLDOWN = 30;
-const bootsPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+// Primär-stat nerfad (user 2026-07-02): 1.2→1.1665 compound → max (lvl 10) 0.5159→0.40, för att
+// dämpa boots/glove auto-pick-dominans mot övriga items. Sekundär (Slow) + heal orörda.
+const bootsPct = (level) => 0.10 * Math.pow(1.1665, level - 1);
 const bootsPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
 // Glove huvud-stats start på 10%, heal start på 1%. "Slow"-varianten halverar compound (1.1×).
-const gloveBigPct = (level) => 0.10 * Math.pow(1.2, level - 1);
+const gloveBigPct = (level) => 0.10 * Math.pow(1.1665, level - 1);
 const gloveBigPctSlow = (level) => 0.10 * Math.pow(1.1, level - 1);
 const gloveHealPct = (level) => 0.01 * Math.pow(1.2, level - 1);
 const gloveHealPctSlow = (level) => 0.01 * Math.pow(1.1, level - 1);
