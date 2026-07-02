@@ -3237,6 +3237,7 @@ const SURVIVAL_SPAWN_INTERVAL = 0.4;   // stagger mellan minion-spawns i en våg
 const SURVIVAL_WAVE_GAP = 16;          // sek mellan vågor
 const SURVIVAL_BASE_MINIONS = 4;       // minions per lane i våg 1 (skalar med våg)
 const SURVIVAL_BUILDING_RADIUS = 3;    // byggnadens radie (minion attackerar inom radius+1.5)
+const SURVIVAL_MINION_HERO_REACH = 2.2; // minion attackerar en hjälte som står i dess väg (annars fortsätter den mot byggnaden)
 const SURVIVAL_TOTAL_WAVES = 20;       // klara alla = vinst
 const SURVIVAL_RESPAWN_TIME = 8;       // sek innan död hjälte respawnar (co-op)
 
@@ -3341,9 +3342,23 @@ function updateSurvivalMinions(state, dt) {
     if ((m.slowTime || 0) > 0) { m.slowTime -= dt; if (m.slowTime <= 0) m.slowMul = 1; }
     if ((m.dotRemaining || 0) > 0) { m.dotRemaining -= dt; m.hp -= (m.dotPerSec || 0) * dt; }
     if ((m.frozenTime || 0) > 0) { m.frozenTime -= dt; continue; }   // frusen = står still
+    // Närmaste LEVANDE hjälte (survival-hjältar bor på sides[1..4]). En minion attackerar en hjälte som
+    // står i dess väg, men BYGGNADEN är alltid det yttersta målet (user 2026-07-02): finns ingen hjälte
+    // inom räckhåll fortsätter den mot mitten som förut → attackerar byggnaden.
+    let hero = null, hSide = null, hd = Infinity;
+    for (let si = 1; si <= 4; si++) {
+      const s = state.sides[si];
+      if (!s || !s.hero || s.hero.dead) continue;
+      const dh = Math.hypot(s.hero.x - m.x, s.hero.z - m.z);
+      if (dh < hd) { hd = dh; hero = s.hero; hSide = s; }
+    }
     const dx = b.x - m.x, dz = b.z - m.z;
     const d = Math.hypot(dx, dz) || 1;
-    if (d > reach) {   // marschera mot byggnaden
+    if (hero && hd <= SURVIVAL_MINION_HERO_REACH) {   // hjälte i vägen → attackera hjälten (stanna, vänd mot den)
+      m.ry = Math.atan2(hero.x - m.x, hero.z - m.z);
+      m.atkCd = (m.atkCd || 0) - dt;
+      if (m.atkCd <= 0) { m.atkCd = m.attackInterval; damageHero(hSide, m.damage, true); m.aac = (m.aac || 0) + 1; }
+    } else if (d > reach) {   // marschera mot byggnaden
       const sp = m.speed * (m.slowMul || 1) * dt;
       m.x += (dx / d) * sp; m.z += (dz / d) * sp;
       m.ry = Math.atan2(dx, dz);
