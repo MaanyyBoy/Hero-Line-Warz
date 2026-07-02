@@ -755,9 +755,11 @@ const ITEM_TYPES = {
         activeAtMax: { duration: 5, cooldown: 30, stats: { moveSpeedPct: 0.5, attackSpeedPct: 0.5 } },
       },
       magic: {
+        // Differentiated from Glove of Spell (both were skillDmg+cdr, byte-identical): boots =
+        // mobile burst mage (skillDmg + move speed), glove keeps skillDmg + cdr (cooldown spammer).
         id: 'magic', name: 'Boots of Magic',
-        statsAtLevel: (level) => ({ skillDmgPct: bootsPct(level), cdrPct: bootsPctSlow(level) }),
-        activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, cdrPct: 0.5 } },
+        statsAtLevel: (level) => ({ skillDmgPct: bootsPct(level), moveSpeedPct: bootsPctSlow(level) }),
+        activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, moveSpeedPct: 0.5 } },
       },
       tank: {
         id: 'tank', name: 'Boots of Tank',
@@ -1112,8 +1114,8 @@ const ENGINE_BOSS_WARS_TALENTS = {
   bwt_dr:    { stats: { dmgReductionPct: 0.18 } },
   bwt_ls:    { stats: {}, lifestealOnAa: 0.12 },
   bwt_crit:  { stats: { critChancePct: 0.15 }, critDmgBonus: 0.25 },
-  bwt_ms:    { stats: { moveSpeedPct: 0.15 } },
-  bwt_heal:  { stats: { healPerSecPct: 0.02 } },
+  bwt_ms:    { stats: { moveSpeedPct: 0.25 } },   // buffed 0.15→0.25 (was a dead pick vs Iron Body +25% HP)
+  bwt_heal:  { stats: { healPerSecPct: 0.035 } }, // buffed 0.02→0.035 (real sustain identity)
 };
 const ENGINE_BOSS_WARS_ITEMS = {
   bwi_blade:    { stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
