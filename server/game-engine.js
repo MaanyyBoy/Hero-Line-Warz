@@ -10323,6 +10323,14 @@ function _writeLwCrp(c, e) {
   e.fz = flag((c.frozenTime || 0) > 0); e.dot = flag((c.dotRemaining || 0) > 0);
 }
 
+// Hjälte-projektil-element (P-arrayen): poolat — dessa fylls kontinuerligt av hjälte-AA mid-combat.
+function _newLwProj() { return { id: 0, x: 0, y: 0, z: 0, aoe: undefined }; }
+function _writeLwProj(p, e) { e.id = p.id; e.x = r2(p.x); e.y = r2(p.y); e.z = r2(p.z); e.aoe = p.isAoE; }
+// Creep-/monster-projektil-element (CP + MR — identisk shape {id,x,y,z,kind}): poolat — distans-
+// creeps/monster skjuter på cooldown under aktiva vågor → tidigare 1 array+1 obj/element/tick i onödan.
+function _newLwKProj() { return { id: 0, x: 0, y: 0, z: 0, kind: undefined }; }
+function _writeLwKProj(p, e) { e.id = p.id; e.x = r2(p.x); e.y = r2(p.y); e.z = r2(p.z); e.kind = p.kind; }
+
 // Inventory-element (inv-arrayen): poolat. inv är alltid array (tom = [], ej undefined).
 function _newLwInv() { return { id: '', vt: null, lv: 0, ar: 0, ac: 0 }; }
 function _writeLwInv(it, e) {
@@ -10340,6 +10348,9 @@ function _writeLwDuelOrb(o, e) {
 const _lwMPool1 = [], _lwMPool2 = [];       // monster-pools per sida
 const _lwCPool1 = [], _lwCPool2 = [];       // creep-pools per sida
 const _lwInvPool1 = [], _lwInvPool2 = [];   // inventory-pools per sida
+const _lwPPool1 = [], _lwPPool2 = [];       // hjälte-projektil-pools per sida (P)
+const _lwCPPool1 = [], _lwCPPool2 = [];     // creep-projektil-pools per sida (CP)
+const _lwMRPool1 = [], _lwMRPool2 = [];     // monster-projektil-pools per sida (MR)
 const _lwDuelOrbPool = [];                  // duel-orb-pool + output-array för dO-fältet
 
 // Persistent duelBigOrb-buffer (dBO: null eller denna buffert).
@@ -10425,7 +10436,7 @@ function _serializeLwHero(side, buf) {
 }
 
 // Muterar sidebuffern in-place. Alla fältnamn matchar original serializeSide-output exakt.
-function _serializeLwSide(side, buf, mPool, cPool, invPool) {
+function _serializeLwSide(side, buf, mPool, cPool, invPool, pPool, cpPool, mrPool) {
   _serializeLwHero(side, buf.h);
   buf.g    = side.gold;
   buf.inc  = side.income;
@@ -10483,17 +10494,17 @@ function _serializeLwSide(side, buf, mPool, cPool, invPool) {
   buf.w.b  = side.wave.isBoss ? 1 : 0;
   buf.w.p  = side.wave.bannerPulse || 0;
   buf.w.wr = side.wave.waveReady ? 1 : 0;
-  // Entity-arrayer: M/C poolade (eliminerar ~60 element-allokeringar/tick i late-game).
-  // Övriga via arrOpt (oftast tomma i Line Wars → undefined → JSON-skip).
+  // Entity-arrayer: M/C/P/CP/MR poolade (eliminerar de kontinuerliga per-tick element-allokeringarna
+  // i late-game — hjälte-AA + distans-creep/monster-skott). Övriga via arrOpt (oftast tomma → JSON-skip).
   buf.M   = _lwFillPool(mPool, side.monsters, _writeLwMon, _newLwMon);
   buf.BP  = arrOpt(side.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz), kind: p.kind }));
   buf.BPL = arrOpt(side.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), rad: p.radius, life: r3(p.life / p.duration) }));
   buf.C   = _lwFillPool(cPool, side.playerCreeps, _writeLwCrp, _newLwCrp);
   buf.F   = arrOpt(side.fireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) }));
-  buf.P   = arrOpt(side.projectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), aoe: p.isAoE }));
+  buf.P   = _lwFillPool(pPool, side.projectiles, _writeLwProj, _newLwProj);
   buf.N   = arrOpt(side.novaEffects, n => ({ id: n.id, x: r2(n.x), z: r2(n.z), r: r2(n.r || NOVA_RADIUS), life: r3(n.life / n.maxLife), k: n.kind }));
-  buf.CP  = arrOpt(side.creepProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind }));
-  buf.MR  = arrOpt(side.monsterProjectiles, p => ({ id: p.id, x: r2(p.x), y: r2(p.y), z: r2(p.z), kind: p.kind }));
+  buf.CP  = _lwFillPool(cpPool, side.creepProjectiles, _writeLwKProj, _newLwKProj);
+  buf.MR  = _lwFillPool(mrPool, side.monsterProjectiles, _writeLwKProj, _newLwKProj);
   buf.HC  = arrOpt(side.heroCopies, c => ({ id: c.id, owner: c.ownerSideIdx, heroId: c.heroId || 'zyro', x: r2(c.x), z: r2(c.z), ry: r3(c.ry), hp: ri(c.hp), mh: c.maxHp }));
   buf.HCF = arrOpt(side.heroCopyFireballs, f => ({ id: f.id, x: r2(f.x), y: r2(f.y), z: r2(f.z) }));
   buf.FW  = arrOpt(side.fireWaves, f => ({ id: f.id, x: r2(f.x), z: r2(f.z), dx: r3(f.dx), dz: r3(f.dz), life: r3(f.life / f.maxLife), k: f.kind }));
@@ -10575,8 +10586,8 @@ function serializeState(state) {
   } else {
     snap.dBO = null;
   }
-  _serializeLwSide(state.sides[1], _lwSideBuf1, _lwMPool1, _lwCPool1, _lwInvPool1);
-  _serializeLwSide(state.sides[2], _lwSideBuf2, _lwMPool2, _lwCPool2, _lwInvPool2);
+  _serializeLwSide(state.sides[1], _lwSideBuf1, _lwMPool1, _lwCPool1, _lwInvPool1, _lwPPool1, _lwCPPool1, _lwMRPool1);
+  _serializeLwSide(state.sides[2], _lwSideBuf2, _lwMPool2, _lwCPool2, _lwInvPool2, _lwPPool2, _lwCPPool2, _lwMRPool2);
   return snap;
 }
 
