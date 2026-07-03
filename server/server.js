@@ -778,9 +778,25 @@ wss.on('connection', (ws) => {
           ws.role = 'client';
           ws.peerIdx = 2;
         } else {
+          // peerIdx = smallest unused slot in [3..maxPeers], NOT `2 + clients.length`.
+          // Bug (server-debug sweep 2026-07-03): clients.length shrinks when ANY non-last
+          // member of room.clients[] disconnects (handleDisconnect splices it out), but the
+          // remaining members keep their already-assigned ws.peerIdx. A later joiner computed
+          // from the now-smaller length could collide with a still-connected peer's peerIdx
+          // (e.g. 4-player Survival: peerIdx 3 leaves, clients.length drops 2->1, a new joiner
+          // then gets 2+1=3... but if instead the *earlier* slot 3 leaves while 4 stays, the
+          // next joiner recomputes 2+len and can land on 4 again). A collision means two
+          // sockets write into the same room.game.lastInputs[sideIdx] / engine.applyEvent(...,
+          // sideIdx, ...) — two players fight over one hero while another side's hero gets no
+          // input at all (frozen). Fill the lowest free slot instead so every connected peer
+          // keeps a unique, stable peerIdx.
+          const used = new Set([1, 2]);   // host=1, room.client=2 (guaranteed occupied here)
+          for (const c of room.clients) used.add(c.peerIdx);
+          let idx = 3;
+          while (used.has(idx)) idx++;
           room.clients.push(ws);
-          ws.role = 'client' + (1 + room.clients.length);   // 'client2', 'client3', ...
-          ws.peerIdx = 2 + room.clients.length;             // 3, 4, ...
+          ws.role = 'client' + (idx - 1);   // 'client2', 'client3', ... (naming convention only)
+          ws.peerIdx = idx;
         }
       }
       ws.roomCode = code;

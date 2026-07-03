@@ -3340,7 +3340,14 @@ function updateSurvivalMinions(state, dt) {
     if (m.hp <= 0) { monsters.splice(i, 1); continue; }
     if (!m.isSurvivalMinion) continue;
     if ((m.slowTime || 0) > 0) { m.slowTime -= dt; if (m.slowTime <= 0) m.slowMul = 1; }
-    if ((m.dotRemaining || 0) > 0) { m.dotRemaining -= dt; m.hp -= (m.dotPerSec || 0) * dt; }
+    if ((m.dotRemaining || 0) > 0) {
+      m.dotRemaining -= dt; m.hp -= (m.dotPerSec || 0) * dt;
+      // DOT-kill must go through killMonster (like classic updateMonsters does) so gold/XP is
+      // awarded. Without this, a minion finished off by a DOT tick (Zyro fireball burn / Kryx
+      // hammer scorch) fell through to the generic `if (m.hp <= 0) splice` at the top of this
+      // loop NEXT tick — removed silently with no reward (server-debug sweep 2026-07-03).
+      if (m.hp <= 0) { killMonster(state.sides[1], i, state.sides[1]); continue; }
+    }
     if ((m.frozenTime || 0) > 0) { m.frozenTime -= dt; continue; }   // frusen = står still
     // Närmaste LEVANDE hjälte (survival-hjältar bor på sides[1..4]). En minion attackerar en hjälte som
     // står i dess väg, men BYGGNADEN är alltid det yttersta målet (user 2026-07-02): finns ingen hjälte
