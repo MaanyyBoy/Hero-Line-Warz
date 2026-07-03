@@ -2128,10 +2128,9 @@ function initArenaMatch(heroes, teamSize) {
   const state = createArenaState(teamSize);
   for (const idx of arenaKeys(state)) {
     const side = state.sides[idx];
-    if (heroes && typeof heroes[idx] === 'string') {
-      side.heroId = heroes[idx];
-      side.heroPickConfirmed = true;
-    }
+    if (heroes && HERO_DEFS[heroes[idx]]) side.heroId = heroes[idx];   // whitelist real heroes only (security 2026-07-04) — unknown id → keep the default, never serialize a bad id to peers
+    if (!HERO_DEFS[side.heroId]) side.heroId = 'zyro';                 // ensure a valid default
+    side.heroPickConfirmed = true;
     // Arena = full-power lvl 30: alla skills unlockade + maxade (matchar klientens
     // enterPlayPhase). Utan detta är skillLvl 0 server-side → skill-lock-gaten i
     // applyEvent avvisar casten → ingen cd sätts → skills blir spambara.
@@ -3107,7 +3106,7 @@ function initBossWarsMatch(heroes, tier, loadouts) {
   const state = createBossWarsState(tier);
   for (const idx of [1, 2, 3]) {
     const side = state.sides[idx];
-    if (heroes && typeof heroes[idx] === 'string') {
+    if (heroes && HERO_DEFS[heroes[idx]]) {   // whitelist real heroes only (security 2026-07-04); C3-fallback below handles unknown/undefined
       side.heroId = heroes[idx];
       side.heroPickConfirmed = true;
     }
@@ -3253,7 +3252,7 @@ function initSurvivalMatch(heroes) {
   const state = createSurvivalState();
   for (const idx of [1, 2, 3, 4]) {
     const side = state.sides[idx];
-    if (heroes && typeof heroes[idx] === 'string') { side.heroId = heroes[idx]; side.heroPickConfirmed = true; }
+    if (heroes && HERO_DEFS[heroes[idx]]) { side.heroId = heroes[idx]; side.heroPickConfirmed = true; }   // whitelist real heroes only (security 2026-07-04)
     if (!side.heroId) side.heroId = 'zyro';
     recomputeArenaSideStats(state, side);     // bas-stats (loadout/shop = fas 2)
   }
@@ -4964,6 +4963,7 @@ function serializeBossWarsState(state) {
   // Kill-cooldown: återstående sekunder (>0 = WIPE-risk, röd-state). Klienten visar countdown
   // i HOLD-FIRE-bannern + truthy-värdet driver ad-röd-färg (0 = falsy = säkert). Playtest #1.
   snap.b2r = state.boss2KillCooldown.remaining > 0 ? r2(state.boss2KillCooldown.remaining) : 0;
+  snap.b2t = (state.boss2AdWaveTimer && state.boss2AdWaveTimer.active) ? r2(state.boss2AdWaveTimer.remaining) : 0;   // T2 ad-wave death-timer → client explosion countdown (boss-mechanic 2026-07-04)
   const boss = state.boss;
   if (boss) {
     const o = _bwBossBuf;
@@ -9728,7 +9728,7 @@ function applyEvent(state, sideIdx, ev) {
   const isArenaPrep = (state.mode === 'arena1v1') && (state.phase === 'prep');
   if (!isArenaPrep && !inSideBase(side.idx, side.hero.x, side.hero.z)) return;
   if (ev.kind === 'item') {
-    if (state.mode === 'arena1v1') return;   // arena uses the loadout (bwt_/bwi_), NOT the gold item shop — the gold-item path draws gold with no stat effect (recompute folds bossWarsItems, not inventory) (economy 2026-07-03)
+    if (state.mode !== 'classic') return;   // ONLY classic Line Wars uses the gold item shop; arena/boss/survival use the loadout / sv-buy — the gold-item path draws gold with no stat effect there (economy 2026-07-04, widened from arena1v1)
     const def = ITEM_TYPES[ev.item];
     if (!def) return;
     const existing = side.inventory.find(it => it.itemId === ev.item);
@@ -10055,6 +10055,7 @@ function endDuel(state) {
     // Level-up belöning (Fas 5 hanterar lvl 30 → hero-kopia istället)
     if (winner.level < MAX_LEVEL) {
       winner.level += 1;
+      winner.unspentPoints = (winner.unspentPoints || 0) + POINTS_PER_LEVEL;   // duel level-up grants a skill/stat point (economy 2026-07-04; online lacked it while solo HeroLevel.GrantLevel gave it)
       winner.xp = 0;
       winner.xpToNext = winner.level >= MAX_LEVEL ? 0 : xpForLevel(winner.level);
       recomputeSideStats(winner);
