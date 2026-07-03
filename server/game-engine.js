@@ -9446,7 +9446,7 @@ function applyEvent(state, sideIdx, ev) {
   }
   if (ev.type === 'hero-pick') {
     if (state.phase !== 'pick') return;
-    if (typeof ev.heroId === 'string' && ev.heroId.length < 32) {
+    if (typeof ev.heroId === 'string' && HERO_DEFS[ev.heroId]) {   // whitelist REAL heroes only (security 2026-07-03) — an unknown id fell through to the default Mage skills / desync
       side.heroId = ev.heroId;
       side.heroPickConfirmed = false; // ändrade val — unconfirm
     }
