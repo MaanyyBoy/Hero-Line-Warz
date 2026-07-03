@@ -204,6 +204,16 @@ function gameLoopTick(room) {
   }
   const _simMs = Date.now() - _simStart;
   if (room.game) {
+    // Tick-idle-läcka-fix: under host-grace (host disconnectad, rum hålls
+    // levande HOST_GRACE_MS för reclaim) fanns ingen live-peer men serialize+
+    // stringify+broadcast kördes ändå VARJE tick i upp till 30s = ren CPU-slöseri
+    // på Render free-tier (delad CPU). Guard: kör serialize/send-blocket bara om
+    // minst en peer faktiskt är ansluten (OPEN). Sim-tick + spike-log +
+    // scheduleNextTick nedanför körs oförändrat.
+    const _anyLive = (room.host && room.host.readyState === 1)
+      || (room.client && room.client.readyState === 1)
+      || (room.clients && room.clients.some(c => c && c.readyState === 1));
+    if (_anyLive) {
     // 30 Hz-fix v2 (2026-06-27): send a snapshot on EVERY tick, no interval guard. The old guard
     // (now - lastStateMs >= STATE_INTERVAL_MS) skipped catch-up ticks — on a jittery shared VM a late
     // tick is followed by an EARLY catch-up tick (now < its intended time), so now-lastStateMs < interval
@@ -256,6 +266,7 @@ function gameLoopTick(room) {
       }
     } catch (e) {
       console.error(`[${room.code}] serialize/send error:`, e && e.stack || e);
+    }
     }
   }
   // Diagnostik: spike-log för långa ticks. Decision 044.

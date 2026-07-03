@@ -3708,6 +3708,13 @@ function tickSandbox(state, dt) {
   tickGimluTauntLvl5(state, s, null, dt);
   flushIronWillReflectLvl5(state, s, null);
   tickAragurnBannersLvl5(s, dt);
+  if (s.heroId === 'elar') {
+    s._elarCountTickAccum = (s._elarCountTickAccum || 0) + dt;
+    if (s._elarCountTickAccum >= 0.2 || s.elarNearbyCount == null) {
+      s._elarCountTickAccum = 0;
+      s.elarNearbyCount = elarNearbyCount(state, s);
+    }
+  }
   updateNovaEffects(state, s, null, dt);
   updateActiveBuffs(s, dt);
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
@@ -10434,7 +10441,14 @@ function _serializeLwHero(side, buf) {
   buf.frz = nzr2(side.hero.frozenTime);
   buf.dot = nzr2(side.hero.dotRemaining);
   buf.tnt = nzr2(side.hero.tauntedTime);
-  buf.mlk = flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0);
+  // mlk (movement-locked) must mirror applyMovement's hard-CC gate (~line 8806):
+  // `(side.inArena1v1 || side.inBossWars || side.inSurvival) && (frozen/iceBlock/fear)`.
+  // Line Wars is intentionally EXCLUDED from that gate (CC does not immobilize in classic
+  // by design) — so the hero keeps moving server-side even while frozen/iced/feared.
+  // Emitting mlk=true here anyway (as before) told the LW client to freeze joystick
+  // prediction while the server kept moving the hero → rubber-band desync (server-debug
+  // 2026-07-03). Always false in _serializeLwHero to match the actual (non-)gate.
+  buf.mlk = undefined;
   buf.poi = nzr2(side.hero.poisonRemaining);
   buf.lMk = nzr2(side.hero.nyroMarked);
   // Zheyna (decision 134): klon/spjut/ult-spjut/laddning → klient-render (classic MP).
