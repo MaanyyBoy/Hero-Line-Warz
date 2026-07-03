@@ -6404,7 +6404,7 @@ function updateHeroAttack(state, side, opp, dt) {
   const warpathAsMul = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_AS) : 1;
   // Kryx-rework: Titan's Stomp AS-slow på hjälte (<1 → långsammare). Rage-AS-buff folds in i batch 2.
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
-  const rageAsMul = (side.inArena1v1 || side.inBossWars) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (arena/bosswars only)
+  const rageAsMul = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (all modes — was arena/boss only, inconsistent with the dmg/DR/MS buff; server-debug 2026-07-03)
   side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * xinaAttackSpeedMul(side));
   // Face the target and commit to the swing: the hero stops to attack (can't run + AA at once).
   // Lock scales with the just-computed interval → faster attack speed = shorter stop.
@@ -8814,7 +8814,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
-  const rageMs = (side.inArena1v1 || side.inBossWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (arena/bosswars/survival)
+  const rageMs = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (all modes — added inLineWars 2026-07-03)
   const shoutMs = (side.elarShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
   const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;

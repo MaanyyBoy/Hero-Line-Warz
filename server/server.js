@@ -278,7 +278,10 @@ function gameLoopTick(room) {
   // Arena: matchen slut → stoppa loopen (slut-staten broadcastades just ovan, så
   // klienterna fick phase='matchEnd'). Utan detta tickar ett avslutat arena-rum i
   // 30 Hz tills spelarna lämnar = onödig CPU. (Bug-hunter-fynd, decision 120.)
-  if ((_isArena || _isBoss || _isSurvival) && room.game && room.game.matchState.gameOver) {
+  // Classic Line Wars was missing here (server-debug 2026-07-03): a finished classic room kept ticking
+  // 30 Hz + full serializeState/JSON.stringify/send FOREVER (checkMatchEnd sets gameOver on tower death)
+  // = CPU/broadcast leak on free-tier. All modes now stop; the classic client already reads matchState.
+  if (room.game && room.game.matchState.gameOver) {
     // Boss wars: signalera match-slut till ALLA peers innan simmen stoppas (server-auth).
     if (_isBoss && !room.bossEndSent) {
       room.bossEndSent = true;
