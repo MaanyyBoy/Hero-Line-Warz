@@ -1357,6 +1357,11 @@ function killHero(side) {
     side.zheynaWarpathRem = 0; side.zheynaDmgBuffMul = 1; side.zheynaDmgBuffRem = 0;
   }
   if (side.heroId === 'xina') resetXinaState(side);   // avbryt shurikens/krok/storm + buffar vid död
+  // Ganji: avbryt R-klon/ms-burst + E-buff vid död (server-debug 2026-07-03, dedikerade fält).
+  if (side.heroId === 'ganji') {
+    side.ganjiClone = null; side.ganjiUltAaPending = false;
+    side.ganjiUltMsBurstRemaining = 0; side.ganjiSpeedRem = 0;
+  }
 }
 function respawnHero(side) {
   const cfg = SIDE_CFG[side.idx];
@@ -1393,6 +1398,12 @@ function respawnHero(side) {
   // invis-flagga med "0" rem men cleared aaPending — säkert att nolla allt).
   side.nyroInvisRemaining = 0;
   side.nyroUltAaPending = false;
+  // Ganji: rensa R-klon/ms-burst + E-buff vid respawn (server-debug 2026-07-03,
+  // speglar Zheyna/Legolus-mönstret ovan — dedikerade fält, se GANJI-sektionen).
+  side.ganjiClone = null;
+  side.ganjiUltAaPending = false;
+  side.ganjiUltMsBurstRemaining = 0;
+  side.ganjiSpeedRem = 0;
   // Rensa Kostefo-state vid respawn så cloud/ult inte hänger kvar från död-tick
   side.kostefoCloudRemaining = 0;
   side.kostefoCloudTickAccum = 0;
@@ -1895,6 +1906,7 @@ function tickArenaCombat(state, dt) {
     updateBossProjectiles(state, side, dt);
     updateBossPools(state, side, dt);
     tickLegolusInvis(side, dt);
+    tickGanjiUlt(state, side, dt);
     tickThornPools(state, side, dt);
     tickKostefoSkills(state, side, opp, dt);
     // Server-auth ults: zyro laser + kryx rage (elar berserk = AA-modifier nedan)
@@ -2025,6 +2037,8 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.rageLeechStart = 0; side.rageLeechTime = 0; side.rageLeechOwner = 0;
   side.berserkCharged = false; side.berserkDmgAccum = 0;   // berserk-mätare
   side.ganjiMeter = 0; side.ganjiPassiveReady = false;     // Ganji Katana's Slice-mätare
+  side.ganjiClone = null; side.ganjiUltAaPending = false;  // Ganji R (dedikerade fält, server-debug 2026-07-03)
+  side.ganjiUltMsBurstRemaining = 0; side.ganjiSpeedRem = 0;   // Ganji R ms-burst + E-buff
   side.iceBlockRemaining = 0;
   side.gold = (roundNum === 1) ? ARENA_GOLD_START : ((side.gold || 0) + ARENA_GOLD_PER_ROUND);
 }
@@ -2256,6 +2270,7 @@ function _makeHeroSnapBuf() {
     tx: 0, tz: 0, aus: undefined, art: undefined, ads: undefined,
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,   // Zheyna (decision 134)
     xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,   // Xina (decision 139)
+    gjCl: undefined, gjSpd: undefined,   // Ganji R-klon-position + E-buff (dedikerade fält, server-debug 2026-07-03)
     gmBk: 0,   // Kryx berserk-mätare (0..1 andel, 1 = charged). Initialt i struct → V8 hidden class stabil.
     taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
     tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
@@ -2339,6 +2354,13 @@ function serializeArenaHero(side, buf) {
   buf.xlnch = (side.xinaLaunch && side.xinaLaunch.length) ? side.xinaLaunch.map(s => ({ x: r2(s.x), z: r2(s.z), dx: r3(s.dx), dz: r3(s.dz) })) : undefined;
   buf.xcl = nzr2(side.xinaCloakRem);
   buf.xul = nzr2(side.xinaUltRem);
+  // Ganji (server-debug 2026-07-03): R-klon-position (rushar mot lockat mål) + E-buff-timer.
+  // Dedikerade fält — ersätter tidigare felaktig återanvändning av nyroBuffRemaining/
+  // zheynaWarpathRem för E (se castGanjiSpeed). NYA fält klienten kan hooka in (ej gjort ännu):
+  // gjCl = klon-position att rendera en Ganji-look-alike på; gjSpd = E-buff-timer (egen glow,
+  // ersätter den gamla/felaktiga gröna Legolus-glowen som lbf/zwr av misstag triggade för Ganji).
+  buf.gjCl = side.ganjiClone ? { x: r2(side.ganjiClone.x), z: r2(side.ganjiClone.z) } : undefined;
+  buf.gjSpd = nzr2(side.ganjiSpeedRem);
   // Respawn-nedräkning (sek kvar, avrundat upp) → klientens död-overlay visar "respawning in Ns"
   // (Line Wars använder fältet `rt` i serializeSide; detta är den delade arena/survival-vägen).
   // ADDITIVT fält. Källa per läge: Arena = hero.respawnTimer; Survival = side-level _svRespawn;
@@ -3257,6 +3279,7 @@ function tickSurvivalHeroFrame(state, s, dt) {
   updateAragurnShoutHeal(s, dt);
   updateSoulDrain(state, s, null, dt);
   tickLegolusInvis(s, dt);
+  tickGanjiUlt(state, s, dt);
   tickThornPools(state, s, dt);
   tickKostefoSkills(state, s, null, dt);
   tickGimluTauntLvl5(state, s, null, dt);
@@ -3625,6 +3648,8 @@ function sandboxSetupHero(state, heroId) {
   side.gandulfBuffRemaining = 0; side.gandulfBuffStacks = 0; side.nyroBuffRemaining = 0;
   side.nyroInvisRemaining = 0; side.nyroUltAaPending = false; side.kostefoCloudRemaining = 0;
   side.kostefoCompanion = null; side.kostefoUltRemaining = 0; side.kostefoUltJointsState = null;
+  side.ganjiClone = null; side.ganjiUltAaPending = false;   // Ganji R (server-debug 2026-07-03)
+  side.ganjiUltMsBurstRemaining = 0; side.ganjiSpeedRem = 0;
   side.zheynaClone = null; side.zheynaSpear = null; side.zheynaUltSpear = null; side.zheynaUltCharging = false;
   side.zheynaWarpathRem = 0; side.windPuffMsRem = 0; side.kryxHammerMsRem = 0; side.titansTauntRemaining = 0;
   resetXinaState(side);   // Xina (decision 139)
@@ -3703,6 +3728,7 @@ function tickSandbox(state, dt) {
   updateAragurnShoutHeal(s, dt);
   updateSoulDrain(state, s, null, dt);
   tickLegolusInvis(s, dt);
+  tickGanjiUlt(state, s, dt);
   tickThornPools(state, s, dt);
   tickKostefoSkills(state, s, null, dt);
   tickGimluTauntLvl5(state, s, null, dt);
@@ -4765,6 +4791,7 @@ function tickBossWars(state, dt) {
     updateAragurnShoutHeal(s, dt);
     updateSoulDrain(state, s, null, dt);
     tickLegolusInvis(s, dt);
+    tickGanjiUlt(state, s, dt);
     tickThornPools(state, s, dt);
     tickKostefoSkills(state, s, null, dt);
     tickGimluTauntLvl5(state, s, null, dt);
@@ -6282,19 +6309,33 @@ function updateHeroAttack(state, side, opp, dt) {
   let critMulBase = (side.critDmgMul || 2.0) + (buffActive ? LEGOLUS_BUFF_CRIT_DMG_PCT : 0);
   // Xina passive: +15% crit chance, +15% crit damage, +15% lifesteal on crits (lifesteal below).
   if (side.heroId === 'xina') { critChance += 0.15; critMulBase += 0.15; }
+  // Ganji E "Ninja's Speed": +20% AA-crit-chance (dedicated ganjiSpeedRem, server-debug 2026-07-03).
+  if ((side.ganjiSpeedRem || 0) > 0) critChance += GANJI_E_CRIT;
   // Legolus dash-buff aktiv? Nästa AA = 100% crit + 20% lifesteal
   const dashBuffed = !!side.nyroDashBuffPending;
   if (dashBuffed) {
     critChance = 1.0;
     side.nyroDashBuffPending = false;
   }
+  // Ganji R "Ninja's Mastery": the break-stealth AA (fired manually while nyroInvisRemaining is
+  // active, ganjiUltAaPending set at ult-cast) takes priority over the passive meter-proc below —
+  // it already refills the meter itself afterward (spec: "refills Katana's Slice"), so a single AA
+  // never double-consumes both empowers.
+  const ganjiUltAaNow = side.heroId === 'ganji' && !!side.ganjiUltAaPending;
   // Ganji passive "Katana's Slice": full meter → this AA is a guaranteed crit + 50% bonus
   // dmg, then the meter resets. Mirrors the Legolus dash-buff pattern (one empowered AA).
-  const ganjiEmpowered = side.heroId === 'ganji' && !!side.ganjiPassiveReady;
+  const ganjiEmpowered = side.heroId === 'ganji' && !!side.ganjiPassiveReady && !ganjiUltAaNow;
   if (ganjiEmpowered) {
     critChance = 1.0;
     side.ganjiPassiveReady = false;
     side.ganjiMeter = 0;
+  }
+  if (ganjiUltAaNow) {
+    critChance = 1.0;
+    critMulBase += GANJI_ULT_AA_CRIT_DMG_BONUS;   // +100% crit damage on top of the base crit multiplier
+    side.ganjiUltAaPending = false;
+    side.nyroInvisRemaining = 0;                  // reveal Ganji himself on the break-stealth strike
+    side.ganjiPassiveReady = true; side.ganjiMeter = 1;   // "refills Katana's Slice" — next normal AA is ALSO empowered
   }
   const isCrit = critChance > 0 && Math.random() < critChance;
   const critMul = isCrit ? critMulBase : 1;
@@ -6311,7 +6352,10 @@ function updateHeroAttack(state, side, opp, dt) {
   // skulle ett oavsiktligt satt fält ge permanent buff.
   const berserkActive = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.berserkRemaining || 0) > 0;
   const rageDmgMul = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg (arena/boss/line wars/survival)
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * elarShoutDmgMul(side) * xinaOutMul(side);
+  // Ganji E "Ninja's Speed": +20% outgoing AA dmg (dedicated ganjiSpeedRem). R break-stealth AA: +50%.
+  const ganjiSpeedDmgMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_DMG) : 1;
+  const ganjiUltAaDmgMul = ganjiUltAaNow ? GANJI_ULT_AA_DMG_MUL : 1;
+  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -6341,12 +6385,13 @@ function updateHeroAttack(state, side, opp, dt) {
     targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0,
     ownerSideIdx: side.idx,
     damage: aaDmg, isAoE, isCrit,
-    lifestealRatio: (dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs)) + (side.heroId === 'xina' && isCrit ? 0.15 : 0),   // Xina passive: 15% crit-lifesteal
+    lifestealRatio: (dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs)) + (side.heroId === 'xina' && isCrit ? 0.15 : 0) + (ganjiUltAaNow ? GANJI_ULT_AA_LIFESTEAL : 0),   // Xina passive: 15% crit-lifesteal; Ganji R break-stealth AA: 100% lifesteal
     knockback: zheynaKnock,
     nyroBuffed: dashBuffed,
     appliesPoison: splitNow,
     nyroUltAa: ultAaNow,             // → vid hit: stun nearby + thorn pool
     ganjiMark: ganjiEmpowered,          // → vid hit: 5% maxHP/s DoT (ej boss) + 20% slow
+    ganjiUltAa: ganjiUltAaNow,          // → vid hit: true sight (revealar targetens invis, om någon)
   });
   // Zheyna Clone: kopierar AA (50% dmg) från klon-position mot samma target.
   if (side.heroId === 'zheyna' && side.zheynaClone) {
@@ -6419,7 +6464,8 @@ function updateHeroAttack(state, side, opp, dt) {
   // Kryx-rework: Titan's Stomp AS-slow på hjälte (<1 → långsammare). Rage-AS-buff folds in i batch 2.
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
   const rageAsMul = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (all modes — was arena/boss only, inconsistent with the dmg/DR/MS buff; server-debug 2026-07-03)
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * xinaAttackSpeedMul(side));
+  const ganjiSpeedAsMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_AS) : 1;   // Ganji E "Ninja's Speed" +20% AS (dedicated field)
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * ganjiSpeedAsMul * xinaAttackSpeedMul(side));
   // Face the target and commit to the swing: the hero stops to attack (can't run + AA at once).
   // Lock scales with the just-computed interval → faster attack speed = shorter stop.
   { const _fx = target.entity.x - side.hero.x, _fz = target.entity.z - side.hero.z, _fd = Math.hypot(_fx, _fz) || 1;
@@ -6645,6 +6691,7 @@ function tickLegolusInvis(side, dt) {
   side.nyroInvisRemaining = Math.max(0, side.nyroInvisRemaining - dt);
   if (side.nyroInvisRemaining <= 0) {
     side.nyroUltAaPending = false;
+    side.ganjiUltAaPending = false;   // Ganji ult timed out without an AA — cancel the pending empowered break-stealth hit (server-debug 2026-07-03)
   }
 }
 
@@ -7133,11 +7180,42 @@ function castLegolusDash(state, sideIdx, ev) {
   side.nyroDashBuffPending = true;
 }
 
-// === Ganji (melee sword ninja) — v1 server kit reusing proven, hero-agnostic effects.
-// Q = Thousand Slashes -> Whirlwind (spinning melee AoE). F = Shadow Step (blink).
-// E = Ninja's Speed (Hunter's Focus AA buff + Warpath MS/AS). R = invis (in the ult block).
-// Clone + the exact channel/passive are deferred to a later pass. ===
+// === Ganji (melee sword ninja) — server kit.
+// Q = Thousand Slashes -> Whirlwind (spinning melee AoE, reuses castAragurnWhirlwind).
+// F = Shadow Step (blink). E = Ninja's Speed (dedicated 5s buff, see GANJI_E_* below).
+// R = Ninja's Mastery: invis (reuses nyroInvisRemaining, intentionally agnostic) + a
+// rushing clone + an empowered break-stealth AA (dedicated ganji* fields, see below —
+// server-debug 2026-07-03; previously only the invis part was implemented). ===
 const GANJI_STEP_DISTANCE = 8;
+// Ninja's Speed (E) — dedicated buff (server-debug 2026-07-03): previously reused
+// nyroBuffRemaining (Legolus Hunter's Focus) + zheynaWarpathRem (Zheyna Warpath), which gave
+// Ganji the WRONG numbers (attack-speed double-dipped both buffs' AS bonuses), leaked Zheyna's
+// melee knockback/range onto Ganji's AA, and painted the client's green Legolus-buff glow on a
+// Ganji hero. SkillSetup.cs Ganji-E spec: 5s, +20% each of MS/AS/outgoing dmg (skill+AA)/DR/
+// evasion(dodge chance vs a hit)/AA-crit-chance. Cooldown 12s (HERO_SKILL_CD override below).
+const GANJI_E_DUR = 5.0;
+const GANJI_E_MS = 0.20;
+const GANJI_E_AS = 0.20;
+const GANJI_E_DMG = 0.20;
+const GANJI_E_DR = 0.20;
+const GANJI_E_EVASION = 0.20;
+const GANJI_E_CRIT = 0.20;
+// Ninja's Mastery (R) — clone + empowered break-stealth AA (server-debug 2026-07-03).
+// SkillSetup.cs Ganji-R spec: vanish 5s (+100% MS for the first 1s) + summon a clone that
+// rushes the nearest enemy for a 1.5s stunning strike; the AA that breaks stealth (fired
+// manually by the player while invis) deals +50% dmg, is a guaranteed crit (+100% crit dmg),
+// 100% lifesteal, refills Katana's Slice (next normal AA is ALSO an empowered guaranteed crit)
+// and marks the target with true sight (clears the target's own invis, if any).
+const GANJI_ULT_MS_BURST_DUR = 1.0;
+const GANJI_ULT_MS_BURST_BONUS = 1.0;
+const GANJI_ULT_CLONE_SPEED = 14;          // m/s rush speed toward the locked target
+const GANJI_ULT_CLONE_STRIKE_RANGE = 1.6;  // melee reach for the stunning strike
+const GANJI_ULT_CLONE_STUN_DUR = 1.5;      // "1.5 s stunning strike"
+const GANJI_ULT_CLONE_DMG_MUL = 1.0;       // clone strike = 1x Ganji's own AA damage (spec gives no explicit number)
+const GANJI_ULT_CLONE_LIFETIME = 5.0;      // despawns with the ult's vanish window if it never connects
+const GANJI_ULT_AA_DMG_MUL = 1.5;          // break-stealth AA: +50% damage
+const GANJI_ULT_AA_CRIT_DMG_BONUS = 1.0;   // +100% crit damage (added on top of the base crit multiplier)
+const GANJI_ULT_AA_LIFESTEAL = 1.0;        // 100% lifesteal
 // Ganji passive "Katana's Slice" (port av GanjiKit): rörelse fyller en mätare; full vid
 // 10 m → nästa AA garanterad crit + 50% bonus-dmg, sen nollas mätaren. Server-auth, alla
 // lägen (fylls i applyMovement + Shadow Step). Mätaren serialiseras som gjMk (klient-bar).
@@ -7176,12 +7254,74 @@ function castGanjiStep(state, sideIdx, ev) { // F: blink to the aim direction
   side.hero.x = nx; side.hero.z = nz;
   ganjiAddMeter(side, dist); // Shadow Step distance counts toward the passive (solo parity)
 }
-function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff
+function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff (dedicated field, see GANJI_E_*)
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.e.cd > 0) return;
   side.skills.e.cd = side.skills.e.max;
-  side.nyroBuffRemaining = LEGOLUS_BUFF_DURATION; // +AA dmg/crit/attack-speed (agnostic effect)
-  side.zheynaWarpathRem = ZHEYNA_E_DUR;              // +move/attack speed (agnostic effect)
+  side.ganjiSpeedRem = GANJI_E_DUR;
+}
+
+// R: lock the nearest enemy (same acquisition rules as AA-targeting/findClosestHostile — respects
+// PvP-active/duel/arena-orb gating) and spawn a rushing clone that delivers one stunning strike.
+function spawnGanjiUltClone(state, side) {
+  const opp = arenaOpp(state, side.idx);
+  const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, TAP_AIM_RANGE, state);
+  if (!t || t.isDuelOrb || t.isArenaOrb) return;   // clone rushes an ENEMY, not an inanimate orb
+  const clone = { id: state.nextEntityId++, x: side.hero.x, z: side.hero.z, struck: false, remaining: GANJI_ULT_CLONE_LIFETIME };
+  if (t.isHero) { clone.kind = 'hero'; clone.targetSideIdx = t.targetSideIdx; }
+  else if (t.isMonster) { clone.kind = 'monster'; clone.ref = t.entity; }
+  else { clone.kind = 'creep'; clone.ref = t.entity; clone.ownerSide = opp; }
+  side.ganjiClone = clone;
+}
+
+// Mode-agnostic per-tick upkeep for Ganji's R: ms-burst decay + clone rush/strike/lifetime.
+// Called from every mode-tick loop right next to tickLegolusInvis (mirrors that wiring).
+function tickGanjiUlt(state, side, dt) {
+  if ((side.ganjiUltMsBurstRemaining || 0) > 0) side.ganjiUltMsBurstRemaining = Math.max(0, side.ganjiUltMsBurstRemaining - dt);
+  const cl = side.ganjiClone;
+  if (!cl) return;
+  cl.remaining -= dt;
+  if (cl.remaining <= 0) { side.ganjiClone = null; return; }
+  let tx, tz, alive;
+  if (cl.kind === 'hero') {
+    const ts = state.sides[cl.targetSideIdx];
+    alive = !!(ts && !ts.hero.dead);
+    if (alive) { tx = ts.hero.x; tz = ts.hero.z; }
+  } else {
+    alive = !!(cl.ref && cl.ref.hp > 0);
+    if (alive) { tx = cl.ref.x; tz = cl.ref.z; }
+  }
+  if (!alive) { side.ganjiClone = null; return; }
+  const dx = tx - cl.x, dz = tz - cl.z;
+  const dist = Math.hypot(dx, dz);
+  if (!cl.struck && dist <= GANJI_ULT_CLONE_STRIKE_RANGE) {
+    cl.struck = true;
+    const dmg = side.attackDmg * GANJI_ULT_CLONE_DMG_MUL;
+    if (cl.kind === 'hero') {
+      const ts = state.sides[cl.targetSideIdx];
+      if (ts && !ts.hero.dead) {
+        applySkillDamageToOppHero(state, side, ts, dmg);
+        ts.hero.frozenTime = Math.max(ts.hero.frozenTime || 0, GANJI_ULT_CLONE_STUN_DUR);
+      }
+    } else if (cl.kind === 'monster') {
+      const idx = side.monsters.indexOf(cl.ref);
+      if (idx >= 0) {
+        applySkillDamageToMonster(state, side, arenaOpp(state, side.idx), idx, dmg);
+        if (cl.ref.hp > 0) cl.ref.frozenTime = Math.max(cl.ref.frozenTime || 0, GANJI_ULT_CLONE_STUN_DUR);
+      }
+    } else if (cl.kind === 'creep') {
+      applySkillDamageToCreep(state, side, cl.ownerSide, cl.ref, dmg);
+      if (cl.ref.hp > 0) { cl.ref.frozenTime = Math.max(cl.ref.frozenTime || 0, GANJI_ULT_CLONE_STUN_DUR); }
+      else if (cl.ownerSide) {
+        const ci = cl.ownerSide.playerCreeps.indexOf(cl.ref);
+        if (ci >= 0) { cl.ownerSide.playerCreeps.splice(ci, 1); side.gold += minionBounty(cl.ref); gainXp(side, minionXp(cl.ref)); }
+      }
+    }
+    cl.remaining = Math.min(cl.remaining, 0.3);   // brief linger after the strike for the visual, then despawn
+  } else if (!cl.struck) {
+    const step = Math.min(GANJI_ULT_CLONE_SPEED * dt, dist);
+    if (dist > 0.01) { cl.x += (dx / dist) * step; cl.z += (dz / dist) * step; }
+  }
 }
 
 // === Gimlu-skills ===
@@ -8831,8 +8971,12 @@ function applyMovement(side, joyX, joyZ, dt) {
   const rageMs = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (all modes — added inLineWars 2026-07-03)
   const shoutMs = (side.elarShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
   const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * strength * dt;
+  // Ganji: E "Ninja's Speed" +20% MS (dedicated ganjiSpeedRem) + R "Ninja's Mastery" +100% MS
+  // burst for the first 1s (ganjiUltMsBurstRemaining) — dedicated fields (server-debug 2026-07-03).
+  const ganjiSpeedMs = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_MS) : 1;
+  const ganjiUltMs = (side.ganjiUltMsBurstRemaining || 0) > 0 ? (1 + GANJI_ULT_MS_BURST_BONUS) : 1;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
@@ -9387,10 +9531,17 @@ function applyEvent(state, sideIdx, ev) {
           // player presses ATK again (then aaActive→true fires the pending empowered AA).
           side.aaActive = false; side.targetId = 0; side.targetType = '';
         }
-        // Ganji Ninja's Mastery: 5 s invisibility (+move speed, agnostic effect).
-        // Clone + the empowered break-AA are deferred to a later pass.
+        // Ganji Ninja's Mastery: 5s invisibility (nyroInvisRemaining — intentionally shared/
+        // agnostic effect, unlike E) + 100% MS for the first 1s + a rushing clone (dedicated
+        // ganji* fields, server-debug 2026-07-03). The break-stealth empowered AA fires the next
+        // time the player presses ATK (mirrors the Legolus ult-AA pattern below).
         if (side.heroId === 'ganji' && !side.hero.dead) {
           side.nyroInvisRemaining = LEGOLUS_INVIS_DURATION;
+          side.ganjiUltMsBurstRemaining = GANJI_ULT_MS_BURST_DUR;
+          side.ganjiUltAaPending = true;
+          side.attackCd = 0;
+          side.aaActive = false; side.targetId = 0; side.targetType = '';
+          spawnGanjiUltClone(state, side);
         }
         // Kostefo Joint Avengers: summona 8 joints som orbiterar + kopierar AA
         if (side.heroId === 'kostefo' && !side.hero.dead) {
@@ -10044,6 +10195,7 @@ function tickGame(state, dt) {
       updateBossProjectiles(state, side, dt);
       updateBossPools(state, side, dt);
       tickLegolusInvis(side, dt);
+      tickGanjiUlt(state, side, dt);
       tickThornPools(state, side, dt);
       tickKostefoSkills(state, side, opp, dt);
       // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning
@@ -10207,6 +10359,7 @@ function tickGame(state, dt) {
     updateBossProjectiles(state, side, dt);
     updateBossPools(state, side, dt);
     tickLegolusInvis(side, dt);
+    tickGanjiUlt(state, side, dt);
     tickThornPools(state, side, dt);
     tickKostefoSkills(state, side, opp, dt);
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning.
@@ -10298,6 +10451,7 @@ function _makeLwHeroBuf() {
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,
     xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,
     trg: undefined, lz: undefined, rg: undefined, bz: undefined,
+    gjCl: undefined, gjSpd: undefined,   // Ganji R-klon-position + E-buff (server-debug 2026-07-03)
   };
 }
 const _lwHeroBuf1 = _makeLwHeroBuf();
@@ -10469,6 +10623,9 @@ function _serializeLwHero(side, buf) {
   buf.lz  = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
   buf.rg  = nzr2(side.rageRemaining);
   buf.bz  = nzr2(side.berserkRemaining);
+  // Ganji (server-debug 2026-07-03): R-klon-position + E-buff-timer, dedikerade fält.
+  buf.gjCl = side.ganjiClone ? { x: r2(side.ganjiClone.x), z: r2(side.ganjiClone.z) } : undefined;
+  buf.gjSpd = nzr2(side.ganjiSpeedRem);
 }
 
 // Muterar sidebuffern in-place. Alla fältnamn matchar original serializeSide-output exakt.
