@@ -3132,30 +3132,30 @@ function initBossWarsMatch(heroes, tier, loadouts) {
 // EGEN tick (rör ALDRIG tickBossWars). Bas = boss-wars co-op hero-combat + line-wars
 // monster-march + torn-HP. FAS 1 = foundation (state nu; tick + serialize nästa).
 const SURVIVAL_CX = 0, SURVIVAL_CZ = 0;
-const SURVIVAL_ARENA_RADIUS = 28;            // walkable circle (≈ boss wars ×1.25); klient-geometrin matchar
+const SURVIVAL_ARENA_RADIUS = 56;            // walkable circle (2× tidigare); klient-geometrin matchar (ArenaRadius)
 const SURVIVAL_BUILDING_MAX_HP = 300;        // center-struktur heroes försvarar
 const SURVIVAL_PREP_TIME = 12;               // sek innan första vågen
 const SURVIVAL_HERO_SPAWNS = {               // 4 kvadrant-spawns inne i cirkeln (runt byggnaden)
-  1: { x: -10, z: -10 }, 2: { x: 10, z: -10 }, 3: { x: 10, z: 10 }, 4: { x: -10, z: 10 },
+  1: { x: -20, z: -20 }, 2: { x: 20, z: -20 }, 3: { x: 20, z: 20 }, 4: { x: -20, z: 20 },
 };
 // 4 raka lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden (per kartbild).
 const SURVIVAL_LANES = [
-  { id: 1, name: 'N', sx: 0, sz: -42 },
-  { id: 2, name: 'S', sx: 0, sz: 42 },
-  { id: 3, name: 'E', sx: 42, sz: 0 },
-  { id: 4, name: 'W', sx: -42, sz: 0 },
+  { id: 1, name: 'N', sx: 0, sz: -84 },
+  { id: 2, name: 'S', sx: 0, sz: 84 },
+  { id: 3, name: 'E', sx: 84, sz: 0 },
+  { id: 4, name: 'W', sx: -84, sz: 0 },
 ];
 // 2 diagonala BOSS-lanes (uppe-vänster + uppe-höger) → varsitt boss-rum (kartbild 2026-06-27). En GATE
 // vid lane-starten (just utanför cirkeln) är STÄNGD tills laget köper en dyr Nyckel i shoppen → öppnar
 // båda gates för ALLA spelare. Bossen i rummet droppar bra gear + stat-buffar. (Logik = fas 4.)
 const SURVIVAL_BOSS_ROOMS = [
-  { id: 1, name: 'NW', x: -40, z: -40, gateX: -21, gateZ: -21 },
-  { id: 2, name: 'NE', x: 40, z: -40, gateX: 21, gateZ: -21 },
+  { id: 1, name: 'NW', x: -80, z: -80, gateX: -42, gateZ: -42 },
+  { id: 2, name: 'NE', x: 80, z: -80, gateX: 42, gateZ: -42 },
 ];
 // Hjälte-walkability: inne i arena-cirkeln, men inte genom center-byggnaden.
 // Fas 4: när boss-gates öppnas (gatesOpen=true) är de diagonala korridorerna + rummen walkable.
-const SURVIVAL_BOSS_ROOM_RADIUS = 11;         // walkable circle-radie runt varje rum-center
-const SURVIVAL_BOSS_ROOM_CORRIDOR_HW = 4.5;  // halv-bredd av diagonal korridor mot rummet
+const SURVIVAL_BOSS_ROOM_RADIUS = 22;         // walkable circle-radie runt varje rum-center
+const SURVIVAL_BOSS_ROOM_CORRIDOR_HW = 9;    // halv-bredd av diagonal korridor mot rummet
 function isSurvivalWalkable(x, z, gatesOpen) {
   const r2v = x * x + z * z;
   const br = SURVIVAL_BUILDING_RADIUS + 0.6;
