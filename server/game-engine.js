@@ -1023,7 +1023,7 @@ function recomputeSideStats(side) {
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
   // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
   // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
-  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1181,7 +1181,7 @@ function recomputeArenaSideStats(state, side) {
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
   // Uppdatera CD-max för skills efter ev. cdrPct-förändring
   if (cdrPct !== 0) {
-    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 } };
+    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
     const heroCd = HERO_SKILL_CD[side.heroId] || {};
     side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1269,7 +1269,10 @@ function damageHero(side, amount, isAaDamage) {
   const bannerMul = side.inAragurnBanner ? (1 - ARAGURN_LVL5_BANNER_DR_BONUS) : 1;
   // E3 War Shout: -20% incoming dmg medan buffen är aktiv (self + buffade allierade)
   const shoutDrMul = (side.elarShoutBuffTime || 0) > 0 ? (1 - SHOUT_BUFF_DR) : 1;
-  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * kryxMul * elarMul * bannerMul * shoutDrMul;
+  // Ganji E "Ninja's Speed": -20% incoming dmg, ALL sources (dedicated ganjiSpeedRem,
+  // unlike Xina's cloak which is skill-only — spec says plain "damage reduction").
+  const ganjiSpeedDrMul = (side.ganjiSpeedRem || 0) > 0 ? (1 - GANJI_E_DR) : 1;
+  let final = amount * (side.dmgReductionMul ?? 1) * auraMul * kryxMul * elarMul * bannerMul * shoutDrMul * ganjiSpeedDrMul;
   // Xina Ninja's Cloak: 50% DR mot skill-skada (AA hanteras separat av evasion vid projektil-träff).
   if (side.heroId === 'xina' && (side.xinaCloakRem || 0) > 0 && !isAaDamage) final *= (1 - XINA_CLOAK_SKILL_DR);
   // Zheyna Clone: medan klonen lever tar Zheyna -50%, klonen soakar samma instans ×1.5 (egen
@@ -6544,11 +6547,18 @@ function updateProjectiles(state, side, opp, dt) {
       if (p.targetIsHero) {
         const ts = state.sides[p.targetSideIdx];
         // Xina Ninja's Cloak: 50% evasion mot auto-attacks → dodge (ingen skada/lifesteal).
-        const dodged = ts && !ts.hero.dead && (ts.xinaCloakRem || 0) > 0 && Math.random() < XINA_CLOAK_EVASION;
+        // Ganji E "Ninja's Speed": +20% evasion, samma dodge-mekanik (dedicated ganjiSpeedRem).
+        const dodged = ts && !ts.hero.dead && (
+          ((ts.xinaCloakRem || 0) > 0 && Math.random() < XINA_CLOAK_EVASION) ||
+          ((ts.ganjiSpeedRem || 0) > 0 && Math.random() < GANJI_E_EVASION)
+        );
         if (!dodged) {
           if (ts) aaDmgDealt = Math.min(ts.hero.hp, _primaryDmg);
           damageHero(state.sides[p.targetSideIdx], _primaryDmg, true);   // isAaDamage=true → kringgår Xina skill-DR
           if (state.sides[p.targetSideIdx] && state.sides[p.targetSideIdx].hero.dead) killedTarget = true;
+          // Ganji R "Ninja's Mastery": break-stealth AA marks the target with true sight — reveal
+          // the target's own invisibility (if any), same fields tickLegolusInvis/heroHidden check.
+          if (p.ganjiUltAa && ts) { ts.nyroInvisRemaining = 0; ts.kostefoInCloud = false; }
         }
       } else if (p.targetIsDuelOrb) {
         const orb = state.duelBigOrb;
@@ -7274,9 +7284,11 @@ function spawnGanjiUltClone(state, side) {
   side.ganjiClone = clone;
 }
 
-// Mode-agnostic per-tick upkeep for Ganji's R: ms-burst decay + clone rush/strike/lifetime.
-// Called from every mode-tick loop right next to tickLegolusInvis (mirrors that wiring).
+// Mode-agnostic per-tick upkeep for Ganji's E + R: E-buff decay, R ms-burst decay, R clone
+// rush/strike/lifetime. Called from every mode-tick loop right next to tickLegolusInvis
+// (mirrors that wiring — server-debug 2026-07-03).
 function tickGanjiUlt(state, side, dt) {
+  if ((side.ganjiSpeedRem || 0) > 0) side.ganjiSpeedRem = Math.max(0, side.ganjiSpeedRem - dt);
   if ((side.ganjiUltMsBurstRemaining || 0) > 0) side.ganjiUltMsBurstRemaining = Math.max(0, side.ganjiUltMsBurstRemaining - dt);
   const cl = side.ganjiClone;
   if (!cl) return;
@@ -9626,7 +9638,10 @@ function applyEvent(state, sideIdx, ev) {
     const _prevSkillDmgMul = side.skillDmgMul;
     const _skLvl = (side.skillLvl && side.skillLvl[ev.key]) || 1;
     const _lvlMul = 1 + SKILL_LEVEL_DMG_PER_PT * Math.max(0, _skLvl - 1);
-    side.skillDmgMul = _prevSkillDmgMul * _lvlMul;
+    // Ganji E "Ninja's Speed": +20% outgoing SKILL dmg during the buff window (dedicated
+    // ganjiSpeedRem; the AA-dmg side of this is folded into updateHeroAttack separately).
+    const _ganjiSpeedSkillMul = (isGanji && (side.ganjiSpeedRem || 0) > 0) ? (1 + GANJI_E_DMG) : 1;
+    side.skillDmgMul = _prevSkillDmgMul * _lvlMul * _ganjiSpeedSkillMul;
     try {
       if (ev.key === 'q') {
         if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
