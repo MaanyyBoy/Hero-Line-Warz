@@ -133,6 +133,9 @@ function stopGame(room) {
   room.arenaSim = false;
   room.sandboxSim = false;   // R4: defensiv — förhindra latent state-läcka vid ev. framtida sandbox-rum-reuse
   room.survivalSim = false;  // Survival Wars (2026-06-27)
+  room.survivalEndSent = false;   // server-debug sweep 2026-07-03: saknades — analogt bossEndSent-glapp,
+                                   // ett återanvänt rum (rematch utan full disconnect) hade fastnat med
+                                   // survivalEndSent kvar `true` från förra matchen → nästa sv-end tystnades.
 }
 
 // Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
@@ -280,7 +283,7 @@ function gameLoopTick(room) {
   if (room._lastPayloadLen) _tel.pay.push(room._lastPayloadLen);
   if (now - _tel.lastLog >= TELEMETRY_LOG_INTERVAL_MS) {
     _tel.lastLog = now;
-    const mode = _isArena ? 'arena' : (_isBoss ? 'boss' : 'lw');
+    const mode = _isArena ? 'arena' : (_isBoss ? 'boss' : (_isSandbox ? 'sandbox' : (_isSurvival ? 'survival' : 'lw')));
     console.log(`[${room.code}] TEL ${mode} ticks:${_tel.total.length} sends:${room._sends || 0} sim[${_telFmt(_tel.sim)}]ms total[${_telFmt(_tel.total)}]ms payload[${_telFmt(_tel.pay)}]B drops:${room._drops || 0} ents:${_telEntityCount(room.game)}`);
     _tel.sim.length = 0; _tel.total.length = 0; _tel.pay.length = 0; room._drops = 0; room._sends = 0;
   }

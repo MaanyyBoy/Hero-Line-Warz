@@ -3461,7 +3461,18 @@ function tickSurvivalBossRooms(state, dt) {
     if ((boss.dotRemaining || 0) > 0) {
       boss.dotRemaining = Math.max(0, boss.dotRemaining - dt);
       boss.hp -= (boss.dotPerSec || 0) * dt;
-      if (boss.hp <= 0) { boss.dead = true; boss.hp = 0; continue; }
+      if (boss.hp <= 0) {
+        boss.dead = true; boss.hp = 0;
+        // DOT-kill bypasses killMonster (which normally splices the dead entity out of
+        // sides[1].monsters) — without this, the boss corpse lingered forever in the SHARED
+        // monster array (all 4 heroes' AA/skill auto-targeting scans it via findClosestHostile,
+        // which has no hp>0 filter), permanently eligible as a 0-dmg "closest target" in the
+        // room. Every other death path (killMonster) already splices; only this DOT-tick path
+        // didn't (server-debug sweep 2026-07-03).
+        const mi = state.sides[1].monsters.indexOf(boss);
+        if (mi >= 0) state.sides[1].monsters.splice(mi, 1);
+        continue;
+      }
     }
     // Hitta närmaste hjälte inom aggro-range (hero i korridoren/rummet)
     let nearestSide = null, nearestDist = SURVIVAL_BOSS_ROOM_AGGRO_RANGE;
