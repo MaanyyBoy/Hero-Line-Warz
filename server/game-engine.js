@@ -7221,8 +7221,8 @@ const GANJI_E_DUR = 5.0;
 const GANJI_E_MS = 0.20;
 const GANJI_E_AS = 0.20;
 const GANJI_E_DMG = 0.20;
-const GANJI_E_DR = 0.20;
-const GANJI_E_EVASION = 0.20;
+const GANJI_E_DR = 0.10;      // nerf 2026-07-03 (was 0.20): E was overloaded — 6 buffs on one button
+const GANJI_E_EVASION = 0.0;  // nerf 2026-07-03 (was 0.20): removed the evasion layer (DR already mitigates); keeps MS/AS/dmg/crit at 0.20
 const GANJI_E_CRIT = 0.20;
 // Ninja's Mastery (R) — clone + empowered break-stealth AA (server-debug 2026-07-03).
 // SkillSetup.cs Ganji-R spec: vanish 5s (+100% MS for the first 1s) + summon a clone that
