@@ -2138,6 +2138,7 @@ function initArenaMatch(heroes, teamSize) {
     side.level = 30;
     side.xp = 0;
     side.xpToNext = xpForLevel(30);
+    side.unspentPoints = 0;   // lvl-30 skills are pre-maxed here; no free stat point to spend (economy 2026-07-03) — else a rigged client spst's +1 free stat outside the loadout economy
     side.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
   }
   startArenaRound(state, 1);
@@ -3042,6 +3043,7 @@ function createBossWarsState(tier) {
     // Boss wars = full-power lvl 30 + maxade skills (mirror initArenaMatch / klientens enterPlayPhase).
     s.level = 30; s.xp = 0; s.xpToNext = xpForLevel(30);
     s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+    s.unspentPoints = 0;   // pre-maxed → no free stat point (economy 2026-07-03)
   }
   // STATISK boss (slice 0) i sides[1].monsters — full AI/skills/faser portas slice 2-3.
   // x/z direkt på objektet (server har ingen mesh); raid-buff ×3 matchar spawnBossWarsBoss.
@@ -3140,10 +3142,10 @@ const SURVIVAL_HERO_SPAWNS = {               // 4 kvadrant-spawns inne i cirkeln
 };
 // 4 raka lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden (per kartbild).
 const SURVIVAL_LANES = [
-  { id: 1, name: 'N', sx: 0, sz: -84 },
-  { id: 2, name: 'S', sx: 0, sz: 84 },
-  { id: 3, name: 'E', sx: 84, sz: 0 },
-  { id: 4, name: 'W', sx: -84, sz: 0 },
+  { id: 1, name: 'N', sx: 0, sz: -60 },
+  { id: 2, name: 'S', sx: 0, sz: 60 },
+  { id: 3, name: 'E', sx: 60, sz: 0 },
+  { id: 4, name: 'W', sx: -60, sz: 0 },
 ];
 // 2 diagonala BOSS-lanes (uppe-vänster + uppe-höger) → varsitt boss-rum (kartbild 2026-06-27). En GATE
 // vid lane-starten (just utanför cirkeln) är STÄNGD tills laget köper en dyr Nyckel i shoppen → öppnar
@@ -3209,6 +3211,7 @@ function createSurvivalState() {
     s.hero.facingX = -Math.sign(sp.x) || 0; s.hero.facingZ = -Math.sign(sp.z) || 0;   // face the centre
     s.level = 30; s.xp = 0; s.xpToNext = xpForLevel(30);
     s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
+    s.unspentPoints = 0;   // pre-maxed → no free stat point (economy 2026-07-03)
   }
   // Co-op: dela ETT monster-array → alla 4 hjältars targeting/combat ser varje minion.
   sides[2].monsters = sides[1].monsters;
@@ -9725,6 +9728,7 @@ function applyEvent(state, sideIdx, ev) {
   const isArenaPrep = (state.mode === 'arena1v1') && (state.phase === 'prep');
   if (!isArenaPrep && !inSideBase(side.idx, side.hero.x, side.hero.z)) return;
   if (ev.kind === 'item') {
+    if (state.mode === 'arena1v1') return;   // arena uses the loadout (bwt_/bwi_), NOT the gold item shop — the gold-item path draws gold with no stat effect (recompute folds bossWarsItems, not inventory) (economy 2026-07-03)
     const def = ITEM_TYPES[ev.item];
     if (!def) return;
     const existing = side.inventory.find(it => it.itemId === ev.item);
