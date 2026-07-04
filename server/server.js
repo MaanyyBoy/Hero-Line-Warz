@@ -60,6 +60,10 @@ const wss = new WebSocketServer({
 
 // roomCode -> { host, client, game, tickHandle, lastStateMs, hostGoneAt? }
 const rooms = new Map();
+// In-app presence for the friends list + invite (2026-07-04): username → ws for every client that
+// sent a 'hello'. Low-stakes identity (unverified username) — worst case is a fake online dot or a
+// spam invite, nothing gameplay-affecting. Cleared on disconnect.
+const onlineUsers = new Map();
 
 function genCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -705,6 +709,38 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (msg.t === 'hello') {
+      // Klienten identifierar sitt konto → presence för friends list + invite.
+      const u = (typeof msg.username === 'string' ? msg.username : '').trim().slice(0, 32);
+      if (u) {
+        if (ws.username && onlineUsers.get(ws.username) === ws) onlineUsers.delete(ws.username);
+        ws.username = u;
+        onlineUsers.set(u, ws);
+      }
+      return;
+    }
+
+    if (msg.t === 'friends-online') {
+      // Klienten skickar sina vänners användarnamn → servern svarar vilka som är online just nu.
+      const names = Array.isArray(msg.usernames) ? msg.usernames : [];
+      const online = names.filter(n => typeof n === 'string' && onlineUsers.has(n) && onlineUsers.get(n) !== ws);
+      send(ws, { t: 'friends-online', online });
+      return;
+    }
+
+    if (msg.t === 'invite') {
+      // Host bjuder in en online-vän till sitt rum → relä till vännens socket.
+      const to = (typeof msg.to === 'string' ? msg.to : '').trim();
+      const target = onlineUsers.get(to);
+      if (target && target !== ws) {
+        send(target, { t: 'invited', from: ws.username || 'A friend', code: (msg.code || '').toUpperCase(), mode: msg.mode || '' });
+        send(ws, { t: 'invite-sent', to });
+      } else {
+        send(ws, { t: 'invite-failed', to, msg: 'That friend is offline.' });
+      }
+      return;
+    }
+
     if (msg.t === 'host') {
       if (ws.roomCode) return;
       const code = genCode();
@@ -851,7 +887,10 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => { handleDisconnect(ws); });
+  ws.on('close', () => {
+    if (ws.username && onlineUsers.get(ws.username) === ws) onlineUsers.delete(ws.username); // presence cleanup
+    handleDisconnect(ws);
+  });
   ws.on('error', () => {});
 });
 
