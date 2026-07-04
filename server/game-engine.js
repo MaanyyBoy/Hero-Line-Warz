@@ -1023,7 +1023,7 @@ function recomputeSideStats(side) {
   // Per-hero CD-override för specifika skills. Legolas Shadow Dash = 6s
   // (var 10s default) — buff för rörlighet. Kostefo Cannabis Cloud = 12s
   // (var 10s default) — längre CD för stark sustain-skill. Övriga = base.
-  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
+  const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 }, xina: { q: 7.0, f: 9.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
   const heroCd = HERO_SKILL_CD[side.heroId] || {};
   side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
   side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1181,7 +1181,7 @@ function recomputeArenaSideStats(state, side) {
   side.healPerSecPct = (side.healPerSecPct || 0) + healPerSecPct;
   // Uppdatera CD-max för skills efter ev. cdrPct-förändring
   if (cdrPct !== 0) {
-    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
+    const HERO_SKILL_CD = { nyro: { e: 6.0 }, kostefo: { q: 6.0, e: 12.0 }, zheyna: { q: 9.0, f: 10.0, e: 12.0 }, ganji: { e: 12.0 }, xina: { q: 7.0, f: 9.0 } };   // Ganji E "Ninja's Speed" cd=12s (SkillSetup.cs spec; was falling back to SKILL_BASE_CD.e=10 — server-debug 2026-07-03)
     const heroCd = HERO_SKILL_CD[side.heroId] || {};
     side.skills.q.max = (heroCd.q !== undefined ? heroCd.q : SKILL_BASE_CD.q) * side.cdrMul;
     side.skills.f.max = (heroCd.f !== undefined ? heroCd.f : SKILL_BASE_CD.f) * side.cdrMul;
@@ -1883,6 +1883,18 @@ function tickArenaBotServer(state, sideIdx, dt) {
   }
 }
 
+// Per-mode parity for hero buff/debuff timers that were previously only decremented in tickGame
+// (Line Wars) — audit 2026-07-05. Without this they never expired in Arena/Boss/Survival/Sandbox:
+// Zyro's Arcane Convergence buff (gandulfBuff, +45% skill dmg/+30% MS), Wind Puff's +20% damage-taken
+// debuff on the enemy hero, and Nyro's lvl-5 Vine Trap mark all became PERMANENT. Call once per hero
+// per frame in every mode tick, next to the existing nyroBuffRemaining/windPuffMsRem decrements.
+function tickHeroBuffTimers(sd, dt) {
+  if (!sd || !sd.hero) return;
+  if ((sd.gandulfBuffRemaining || 0) > 0) { sd.gandulfBuffRemaining = Math.max(0, sd.gandulfBuffRemaining - dt); if (sd.gandulfBuffRemaining <= 0) sd.gandulfBuffStacks = 0; }
+  if ((sd.hero.dmgTakenDebuffTime || 0) > 0) { sd.hero.dmgTakenDebuffTime = Math.max(0, sd.hero.dmgTakenDebuffTime - dt); if (sd.hero.dmgTakenDebuffTime <= 0) sd.hero.dmgTakenDebuffMul = 1; }
+  if ((sd.hero.nyroMarked || 0) > 0) sd.hero.nyroMarked = Math.max(0, sd.hero.nyroMarked - dt);
+}
+
 function tickArenaCombat(state, dt) {
   // Bot-AI (arena online-vs-bot): sätt rörelse-input + AA/skill före rörelse-loopen.
   for (const sideIdx of arenaKeys(state)) if (state.sides[sideIdx] && state.sides[sideIdx].isBot) tickArenaBotServer(state, sideIdx, dt);
@@ -1934,6 +1946,7 @@ function tickArenaCombat(state, dt) {
     tickGimluTauntLvl5(state, side, opp, dt);
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.kryxHammerMsRem || 0) > 0) side.kryxHammerMsRem = Math.max(0, side.kryxHammerMsRem - dt);
+    tickHeroBuffTimers(side, dt);   // gandulf buff / wind-puff debuff / nyro mark expiry (audit 2026-07-05)
     tickZheyna(state, side, dt); tickXina(state, side, dt);
     // CC-timers på hero: tickas ner här (tickGame gör detta i sin loop, men
     // tickArenaCombat är en separat path). Utan detta fastnar frozenTime/
@@ -2325,7 +2338,7 @@ function serializeArenaHero(side, buf) {
   buf.lz = (side.laserBeam && side.laserBeam.remaining > 0) ? { dx: r3(side.laserBeam.dx), dz: r3(side.laserBeam.dz) } : undefined;
   buf.rg = nzr2(side.rageRemaining);
   buf.bz = nzr2(side.berserkRemaining);
-  buf.gmBk = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : 0);   // Gimlu berserk-mätare: 1 = charged, 0..1 = andel
+  buf.gmBk = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / (side.hero.maxHp * BERSERK_FULL_PCT)) : 0);   // Gimlu berserk-mätare: 1 = charged, 0..1 = andel
   buf.gjMk = side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : 0);   // Ganji Katana's Slice-mätare
   buf.lInv = nzr2(side.nyroInvisRemaining);
   buf.kUlt = nzr2(side.kostefoUltRemaining);
@@ -3307,6 +3320,7 @@ function tickSurvivalHeroFrame(state, s, dt) {
   if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
   if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
   if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
+  tickHeroBuffTimers(s, dt);   // gandulf buff / wind-puff debuff / nyro mark expiry (audit 2026-07-05)
   tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
@@ -3767,6 +3781,7 @@ function tickSandbox(state, dt) {
   if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
   if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
   if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
+  tickHeroBuffTimers(s, dt);   // gandulf buff / wind-puff debuff / nyro mark expiry (audit 2026-07-05)
   tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
@@ -4841,6 +4856,7 @@ function tickBossWars(state, dt) {
     if ((s.nyroBuffRemaining || 0) > 0) s.nyroBuffRemaining = Math.max(0, s.nyroBuffRemaining - dt);
     if ((s.windPuffMsRem || 0) > 0) s.windPuffMsRem = Math.max(0, s.windPuffMsRem - dt);
     if ((s.kryxHammerMsRem || 0) > 0) s.kryxHammerMsRem = Math.max(0, s.kryxHammerMsRem - dt);
+    tickHeroBuffTimers(s, dt);   // gandulf buff / wind-puff debuff / nyro mark expiry (audit 2026-07-05)
     tickZheyna(state, s, dt); tickXina(state, s, dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
@@ -8761,6 +8777,14 @@ function tickKostefoSliderDots(state, side, opp, dt) {
       if (c.kostefoDotRemaining <= 0) { c.kostefoDotRemaining = 0; c.kostefoDotPerSec = 0; }
     }
   }
+  // Enemy HERO (PvP): Joint Slider's DOT was set on opp.hero but never ticked here, so the advertised
+  // ~16% maxHP DOT dealt ZERO damage in Arena/duel/enemy-territory (audit 2026-07-05). Tick the dedicated
+  // field (not the generic hero.dotRemaining, to avoid clobbering a concurrent DOT such as a fire wave).
+  if (isHeroPvpActive(state) && opp && opp.hero && !opp.hero.dead && (opp.hero.kostefoDotRemaining || 0) > 0) {
+    opp.hero.kostefoDotRemaining -= dt;
+    damageHero(opp, (opp.hero.kostefoDotPerSec || 0) * dt);
+    if (opp.hero.kostefoDotRemaining <= 0) { opp.hero.kostefoDotRemaining = 0; opp.hero.kostefoDotPerSec = 0; }
+  }
 }
 
 // Tickar Cannabis Cloud: stationär vid cast-pos. Beräknar hero-in-cloud per
@@ -10771,7 +10795,7 @@ function _serializeLwSide(side, buf, mPool, cPool, invPool, pPool, cpPool, mrPoo
   buf.dSp     = nzr2(side.duelSpeedBuffRemaining);
   buf.IWE     = arrOpt(side.ironWillExplosions, e => ({ id: e.id, x: r2(e.x), z: r2(e.z), life: r3(e.life / e.maxLife) }));
   // Kryx berserk-mätare i classic MP (duel): 1 = charged, 0..1 = andel. Undefined → JSON-skip.
-  buf.gmBk    = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / side.hero.maxHp) : undefined);
+  buf.gmBk    = side.berserkCharged ? 1 : (side.berserkDmgAccum > 0 && side.hero.maxHp > 0 ? r2(side.berserkDmgAccum / (side.hero.maxHp * BERSERK_FULL_PCT)) : undefined);
   // Ganji passive-mätare (Katana's Slice) i classic MP: 1 = full/armed, 0..1 = bygger.
   buf.gjMk    = side.ganjiPassiveReady ? 1 : ((side.ganjiMeter || 0) > 0 ? r2(side.ganjiMeter) : undefined);
 }
