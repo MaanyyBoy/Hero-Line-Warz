@@ -6324,7 +6324,7 @@ function maintainTargetLock(side, opp, state) {
 function updateHeroAttack(state, side, opp, dt) {
   side.attackCd = Math.max(0, side.attackCd - dt);
   side.aaMoveLockTime = Math.max(0, (side.aaMoveLockTime || 0) - dt);   // swing-commit window ticks down
-  if (side.hero.dead || !side.aaActive) return;
+  if (side.hero.dead || !side.aaActive || (side.whirlwindRemaining || 0) > 0) return;   // AA disabled while spinning (Whirlwind) — matches tooltip (audit 2026-07-05)
   // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block/fear).
   // heroFearTime tillagd (QA 2026-06-17): bot-guards immobiliserar redan vid fear; människo-
   // spelare gjorde det inte → Gimlu Titan's Rage-fear hade ingen effekt på riktiga spelare.
@@ -6624,9 +6624,7 @@ function updateProjectiles(state, side, opp, dt) {
         if (p.targetIsHero) {
           const ts = state.sides[p.targetSideIdx];
           if (ts && !ts.hero.dead) {
-            const walk = ts.inBossWars ? (x, z) => isBossWarsWalkable(x, z, ts._bwGateClosed)
-                       : ts.inArena1v1 ? isArena1v1Walkable
-                       : (x, z) => isHeroWalkable(ts.idx, x, z, null);
+            const walk = zheynaWalk(ts);   // mode-agnostic (covers Survival/Duel too) — parity with zheynaKnockEnt (audit 2026-07-05)
             if (walk(knx, knz)) { ts.hero.x = knx; ts.hero.z = knz; }
           }
         } else if (p.targetIsMonster && p.target && p.target.hp > 0) {
@@ -9004,7 +9002,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   else { side.hero.facingX = ndx; side.hero.facingZ = ndz; }
   // Slow (Kostefo Slider / Aragurn Shout / Gimlu Hammer lvl5) — appliceras nu på
   // rörelsen (saknades). Arena-gatead. heroSlowMul = 1 när ej slowad (bf2d230).
-  const slowMul = ((side.inArena1v1 || side.inBossWars || side.inSurvival) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;
+  const slowMul = ((side.inArena1v1 || side.inBossWars || side.inSurvival || side.inLineWars || side.inDuel) && (side.heroSlowTime || 0) > 0) ? (side.heroSlowMul || 1) : 1;   // +inLineWars/inDuel so slows aren't cosmetic in classic PvP (audit 2026-07-05)
   const speedMul = (side.duelSpeedBuffRemaining > 0) ? (1 + DUEL_ORB_SPEED_BONUS) : 1;
   const invisMul = (side.nyroInvisRemaining > 0) ? (1 + LEGOLUS_INVIS_SPEED_BONUS) : 1;
   const cloudMul = side.kostefoInCloud ? (1 + KOSTEFO_CLOUD_MS_BONUS) : 1;
@@ -9025,8 +9023,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   // burst for the first 1s (ganjiUltMsBurstRemaining) — dedicated fields (server-debug 2026-07-03).
   const ganjiSpeedMs = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_MS) : 1;
   const ganjiUltMs = (side.ganjiUltMsBurstRemaining || 0) > 0 ? (1 + GANJI_ULT_MS_BURST_BONUS) : 1;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * strength * dt;
+  const wwMul = (side.whirlwindRemaining || 0) > 0 ? (1 + WHIRLWIND_MS_BUFF) : 1;   // +20% MS while spinning (Whirlwind) — matches tooltip (audit 2026-07-05)
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
