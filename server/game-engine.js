@@ -7994,9 +7994,18 @@ function elarNearbyCount(state, side) {
       const dx = c.x - hx, dz = c.z - hz;
       if (dx * dx + dz * dz < r2) count++;
     }
-    if (isHeroPvpActive(state) && !opp.hero.dead) {
-      const dx = opp.hero.x - hx, dz = opp.hero.z - hz;
-      if (dx * dx + dz * dz < r2) count++;
+    if (isHeroPvpActive(state)) {
+      if (state.teamSize > 1) {   // team arena: count EVERY opposing-team hero in radius, not just the nearest (audit 2026-07-05)
+        for (const k of (state.sideKeys || Object.keys(state.sides))) {
+          const e = state.sides[k];
+          if (!e || !e.hero || e.hero.dead || (e.team || k) === (side.team || side.idx)) continue;
+          const dx = e.hero.x - hx, dz = e.hero.z - hz;
+          if (dx * dx + dz * dz < r2) count++;
+        }
+      } else if (!opp.hero.dead) {
+        const dx = opp.hero.x - hx, dz = opp.hero.z - hz;
+        if (dx * dx + dz * dz < r2) count++;
+      }
     }
   }
   return count;
@@ -8145,12 +8154,17 @@ function castAragurnShout(state, sideIdx, dirX, dirZ) {
   side.elarShoutHealPct = SHOUT_HEAL_SELF_PCT;
   // E3: self-buff (MS/dmg/DR) + ally-buff i stor cirkel (boss wars co-op). Ally får HoT med.
   side.elarShoutBuffTime = SHOUT_BUFF_DURATION;
-  if (side.inBossWars) {
+  // Ally-buff + HoT spread — was gated `if (side.inBossWars)` on hardcoded [1,2,3], so allies got nothing
+  // in Survival (4p) or team Arena (2v2/3v3). Elar is a support hero (audit 2026-07-05).
+  const shoutCoop = side.inBossWars || side.inSurvival;
+  if (shoutCoop || state.teamSize > 1) {
     const br2 = SHOUT_BUFF_RADIUS * SHOUT_BUFF_RADIUS;
-    for (const idx of [1, 2, 3]) {
-      if (idx === sideIdx) continue;
-      const a = state.sides[idx];
-      if (!a || a.hero.dead) continue;
+    for (const k of (state.sideKeys || Object.keys(state.sides))) {
+      if (+k === +sideIdx) continue;
+      const a = state.sides[k];
+      if (!a || !a.hero || a.hero.dead) continue;
+      const isAlly = shoutCoop || ((a.team || k) === (side.team || sideIdx));
+      if (!isAlly) continue;
       const dx = a.hero.x - side.hero.x, dz = a.hero.z - side.hero.z;
       if (dx * dx + dz * dz <= br2) {
         a.elarShoutBuffTime = SHOUT_BUFF_DURATION;
