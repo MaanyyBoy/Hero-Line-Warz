@@ -9098,13 +9098,16 @@ function zheynaKnockEnt(state, side, e, ox, oz, dist) {
   else if (ent.hp > 0) { ent.x = nx; ent.z = nz; }
 }
 // Q Spear Pierce — kast + re-press-teleport
-function castZheynaQ(state, sideIdx, ev) {
+function castZheynaQ(state, sideIdx, ev, adx, adz) {
   const side = state.sides[sideIdx];
   if (!side || side.hero.dead) return;
   if (side.zheynaSpear && (side.zheynaSpear.repress || 0) > 0) { zheynaTeleportToSpear(state, side); return; }
   if (side.skills.q.cd > 0) return;
   side.skills.q.cd = side.skills.q.max;
   let dx = ev && ev.dx, dz = ev && ev.dz;
+  // Quick-cast tap: use the dispatcher's resolved tap-aim (adx/adz) instead of falling to facing,
+  // matching castXinaQ/castKostefoJointAttack (audit 2026-07-05). Manual drag aim keeps ev.dx/ev.dz.
+  if ((ev && ev.tap) && Math.hypot(dx || 0, dz || 0) < 0.01 && Math.hypot(adx || 0, adz || 0) >= 0.01) { dx = adx; dz = adz; }
   const m = Math.hypot(dx || 0, dz || 0);
   if (m < 0.01) { dx = side.hero.facingX || 0; dz = side.hero.facingZ || 1; } else { dx /= m; dz /= m; }
   side.zheynaSpear = {
@@ -9699,7 +9702,7 @@ function applyEvent(state, sideIdx, ev) {
         else if (isGimlu) castGimluTaunt(state, sideIdx);
         else if (isAragurn) castAragurnWhirlwind(state, sideIdx);
         else if (isKostefo) castKostefoJointAttack(state, sideIdx, dx, dz);
-        else if (isZheyna) castZheynaQ(state, sideIdx, ev);
+        else if (isZheyna) castZheynaQ(state, sideIdx, ev, dx, dz);
         else if (isGanji) castAragurnWhirlwind(state, sideIdx); // Ganji Q = Thousand Slashes (spinning AoE)
         else if (isXina) castXinaQ(state, sideIdx, dx, dz);   // Xina Q = Shuriken Toss (bumerang-fläkt)
         else castWindPuff(state, sideIdx, dx, dz);   // Magiker Q = Wind Puff (cone push+debuff)
