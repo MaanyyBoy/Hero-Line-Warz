@@ -578,6 +578,9 @@ const GIMLU_LVL5_HAMMER_MS_DURATION = 1.0;     // Hammer lvl5: caster MS-buff va
 const GIMLU_LVL5_HAMMER_MS_MUL = 1.50;         // +50% MS
 const GIMLU_LVL5_HAMMER_SLOW_DURATION = 2.0;   // Hammer lvl5: slow på hit-targets
 const GIMLU_LVL5_HAMMER_SLOW_MUL = 0.80;       // -20% MS på hit
+const GIMLU_LVL5_STOMP_RADIUS_MUL = 1.30;      // Titan's Stomp lvl5: +30% AoE radius (audit 2026-07-05, user-approved)
+const GIMLU_LVL5_STOMP_DR_DUR_MUL = 1.5;       // Titan's Stomp lvl5: +50% DR duration
+const GANJI_LVL5_CC_IMMUNE_DUR = 1.0;          // Ganji E lvl5: 1s CC-immunity on cast
 // Aragurn
 const ARAGURN_LVL5_SHOUT_PULL_PCT = 0.5;       // War Shout lvl5: dra targets halvvägs mot Aragurn
 const ARAGURN_LVL5_SHOUT_STUN_DURATION = 1.0;  // 1s stun på hit
@@ -1289,14 +1292,12 @@ function damageHero(side, amount, isAaDamage) {
   }
   side.hero.hp = Math.max(0, side.hero.hp - final);
   // (Titan's Stomp har ingen self-heal längre — borttagen i reworken.)
-  // Iron Will: stacka tagen skada för senare explosion
-  if ((side.ironWillRemaining || 0) > 0) {
-    side.ironWillStored = (side.ironWillStored || 0) + final;
-    // Lvl 5: queue 30% damage-reflect (AoE runt Gimlu vid nästa tick)
-    if (side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX && final > 0) {
-      side.ironWillReflectQueue = side.ironWillReflectQueue || [];
-      side.ironWillReflectQueue.push(final * GIMLU_LVL5_IW_REFLECT_PCT);
-    }
+  // Titan's Rage lvl 5: reflect 30% of incoming damage as an AoE around Kryx on the next tick. Gated on
+  // the NEW titansRageTime (the reworked ult; the old ironWillRemaining is dead code, so the reflect never
+  // fired before) — audit 2026-07-05, user-approved lvl-5 bonus.
+  if ((side.titansRageTime || 0) > 0 && side.skillLvl && side.skillLvl.f >= SKILL_LEVEL_MAX && final > 0) {
+    side.ironWillReflectQueue = side.ironWillReflectQueue || [];
+    side.ironWillReflectQueue.push(final * GIMLU_LVL5_IW_REFLECT_PCT);
   }
   // Gimlu tank-mekanik: bygger ult genom att tanka skada (kompenserar låg AA-frekvens
   // + single-target skills). 5% av damage taken som ult-gain, cap 2% per hit.
@@ -1893,6 +1894,11 @@ function tickHeroBuffTimers(sd, dt) {
   if ((sd.gandulfBuffRemaining || 0) > 0) { sd.gandulfBuffRemaining = Math.max(0, sd.gandulfBuffRemaining - dt); if (sd.gandulfBuffRemaining <= 0) sd.gandulfBuffStacks = 0; }
   if ((sd.hero.dmgTakenDebuffTime || 0) > 0) { sd.hero.dmgTakenDebuffTime = Math.max(0, sd.hero.dmgTakenDebuffTime - dt); if (sd.hero.dmgTakenDebuffTime <= 0) sd.hero.dmgTakenDebuffMul = 1; }
   if ((sd.hero.nyroMarked || 0) > 0) sd.hero.nyroMarked = Math.max(0, sd.hero.nyroMarked - dt);
+  if ((sd.ganjiCcImmuneRem || 0) > 0) {   // Ganji E lvl5 CC-immunity window — keep hard-CC cleared (audit 2026-07-05)
+    sd.ganjiCcImmuneRem = Math.max(0, sd.ganjiCcImmuneRem - dt);
+    sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.hero.heroFearTime = 0;
+    if (sd.hero.iceBlockRemaining) sd.hero.iceBlockRemaining = 0;
+  }
 }
 
 function tickArenaCombat(state, dt) {
@@ -7298,6 +7304,13 @@ function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff (dedicat
   if (side.hero.dead || side.skills.e.cd > 0) return;
   side.skills.e.cd = side.skills.e.max;
   side.ganjiSpeedRem = GANJI_E_DUR;
+  // Lvl 5: 1s CC-immunity — clear current hard-CC + open an immunity window (kept clear in tickHeroBuffTimers)
+  // (audit 2026-07-05, user-approved lvl-5 bonus).
+  if (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
+    side.ganjiCcImmuneRem = GANJI_LVL5_CC_IMMUNE_DUR;
+    side.hero.frozenTime = 0; side.hero.tauntedTime = 0; side.hero.heroFearTime = 0;
+    if (side.hero.iceBlockRemaining) side.hero.iceBlockRemaining = 0;
+  }
 }
 
 // R: lock the nearest enemy (same acquisition rules as AA-targeting/findClosestHostile — respects
@@ -7376,7 +7389,8 @@ function castGimluTaunt(state, sideIdx) {
   // Passive empower: full berserk → 100% större AoE, +50% skada, 60% slow.
   const emp = consumeBerserk(side);
   const rageMul = (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage outgoing-dmg
-  const eRad = emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS;
+  const isLvl5Q = !!(side.skillLvl && side.skillLvl.q >= SKILL_LEVEL_MAX);   // Titan's Stomp lvl5: bigger AoE + longer DR (audit 2026-07-05)
+  const eRad = (emp ? STOMP_RADIUS * BERSERK_STOMP_RADIUS_MUL : STOMP_RADIUS) * (isLvl5Q ? GIMLU_LVL5_STOMP_RADIUS_MUL : 1);
   const r2 = eRad * eRad;
   const eDmgPct = STOMP_DMG_PCT * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;
   const eDmgPctHero = STOMP_DMG_PCT_HERO * (emp ? BERSERK_STOMP_DMG_MUL : 1) * rageMul;   // PvP-nerf
@@ -7433,7 +7447,7 @@ function castGimluTaunt(state, sideIdx) {
     }
   }
   // DR till Kryx (3s) — fräsch stack per stomp (cap 70% total appliceras i damageHero).
-  if (drGain > 0) { side.titansStompDr = drGain; side.titansStompDrTime = STOMP_DR_DUR; }
+  if (drGain > 0) { side.titansStompDr = drGain; side.titansStompDrTime = STOMP_DR_DUR * (isLvl5Q ? GIMLU_LVL5_STOMP_DR_DUR_MUL : 1); }
 }
 
 // Kryx-rework-timers (Stomp-DR + hjälte-AS-slow + Titan's Rage). Kallas i alla tick-loopar.
