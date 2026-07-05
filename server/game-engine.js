@@ -6947,6 +6947,10 @@ function castFrostnova(state, sideIdx, ev) {
       applySkillDamageToOppHero(state, side, opp, novaDmg);
       if (frostHeal) frostHealTotal += Math.min(novaDmg, hpBefore) * 0.15;
       if (!opp.hero.dead && !wasFrozen) opp.hero.frozenTime = NOVA_FREEZE_TIME;
+      if (isLvl5) {   // Frost Nova lvl5: also -50% attack speed on the enemy hero (consumed in updateHeroAttack) — audit 2026-07-05
+        opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, GANDULF_LVL5_FN_AS_MUL);
+        opp.heroASlowTime = Math.max(opp.heroASlowTime || 0, GANDULF_LVL5_FN_AS_DURATION);
+      }
     }
   }
   // m_frost_heal: applicera samlad heal
@@ -8081,14 +8085,15 @@ function castAragurnWhirlwind(state, sideIdx) {
   if (side.hero.dead || side.skills.q.cd > 0) return;
   if ((side.whirlwindRemaining || 0) > 0) return;
   side.whirlwindRemaining = WHIRLWIND_DURATION + (engineHasTalent(state, side, 'a_spin_extend') ? 1.5 : 0);
-  side.whirlwindTickAccum = 0;
-  // Initial tick direkt
-  applyWhirlwindTick(state, side, arenaOpp(state, sideIdx));
+  // Fire the first tick on the NEXT frame via updateAragurnWhirlwind (accum primed to one interval) instead
+  // of here inside the cast wrap: the wrap inflates skillDmgMul by the rank mult, so ticking now while
+  // applyWhirlwindTick ALSO folds in skillLvlMul.q would double-count rank scaling (audit 2026-07-05).
+  side.whirlwindTickAccum = WHIRLWIND_TICK;
 }
 
 function applyWhirlwindTick(state, side, opp) {
   const r2 = WHIRLWIND_RADIUS * WHIRLWIND_RADIUS;
-  const skillMul = (side.skillDmgMul || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);
+  const skillMul = (side.skillDmgMul || 1) * ((side.skillLvlMul && side.skillLvlMul.q) || 1) * (side.heroFountainAura ? FOUNTAIN_DMG_MUL : 1);   // fold rank mult here so every tick (all outside the cast wrap now) scales with rank (audit 2026-07-05)
   let totalDealt = 0;   // Whirlwind heal: 10% av all damage done tickas till hero
   // Monsters
   for (let i = side.monsters.length - 1; i >= 0; i--) {
