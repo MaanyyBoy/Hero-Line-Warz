@@ -40,7 +40,9 @@ async function verifyToken(accessToken) {
     });
     if (!res.ok) return null;
     const user = await res.json();
-    return user && user.id ? { id: user.id } : null;
+    if (!user || !user.id) return null;
+    const username = (user.user_metadata && user.user_metadata.username) || null;   // verified nickname (can't be spoofed)
+    return { id: user.id, username };
   } catch (_) { return null; }
 }
 

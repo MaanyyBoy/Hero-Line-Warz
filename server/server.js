@@ -5,6 +5,7 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const engine = require('./game-engine.js');
+const accountReport = require('./accountReport.js');   // server-auth identity verification + XP (2026-07-05)
 
 const PORT = process.env.PORT || 3000;
 const TICK_RATE = 30;                       // simuleringssteg per sekund
@@ -723,12 +724,26 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.t === 'hello') {
-      // Klienten identifierar sitt konto → presence för friends list + invite.
-      const u = (typeof msg.username === 'string' ? msg.username : '').trim().slice(0, 32);
-      if (u) {
+      // Identity for presence / friends-invite. When the client sends its Supabase access_token we VERIFY it
+      // (via /auth/v1/user, public anon key — no secret needed) and take the REAL username from the token, so
+      // nobody can impersonate another player. A tokenless client (guest/old build) falls back to its claimed
+      // name, flagged unverified (audit 2026-07-05, fixes hello/presence/invite spoofing).
+      const claimed = (typeof msg.username === 'string' ? msg.username : '').trim().slice(0, 32);
+      const token = (typeof msg.token === 'string') ? msg.token : '';
+      const bind = (name, userId, authed) => {
+        if (!name) return;
         if (ws.username && onlineUsers.get(ws.username) === ws) onlineUsers.delete(ws.username);
-        ws.username = u;
-        onlineUsers.set(u, ws);
+        ws.username = name; ws.userId = userId || null; ws.authed = !!authed;
+        onlineUsers.set(name, ws);
+      };
+      if (token) {
+        accountReport.verifyToken(token).then(v => {
+          if (v && v.username) bind(v.username, v.id, true);        // verified identity wins
+          else if (v) bind(claimed, v.id, true);                    // valid token, no username in metadata
+          else if (claimed) bind(claimed, null, false);             // invalid token → fall back unverified
+        }).catch(() => { if (claimed) bind(claimed, null, false); });
+      } else if (claimed) {
+        bind(claimed, null, false);
       }
       return;
     }
