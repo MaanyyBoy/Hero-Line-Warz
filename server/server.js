@@ -64,6 +64,9 @@ const rooms = new Map();
 // sent a 'hello'. Low-stakes identity (unverified username) — worst case is a fake online dot or a
 // spam invite, nothing gameplay-affecting. Cleared on disconnect.
 const onlineUsers = new Map();
+// Per-socket flood guard for CONTROL (non-gameplay) messages — token bucket (audit 2026-07-05).
+const CONTROL_MSG_REFILL = 15;   // tokens refilled per second
+const CONTROL_MSG_BURST = 40;    // max burst / initial tokens
 
 function genCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -695,11 +698,21 @@ wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
   ws.isAlive = true;
+  ws.msgTokens = CONTROL_MSG_BURST; ws.lastRefillMs = Date.now();   // control-message flood guard (audit 2026-07-05)
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
+
+    // Control-message flood guard (gameplay 'msg' inputs + keepalive 'ping' exempt) — audit 2026-07-05.
+    if (msg.t !== 'msg' && msg.t !== 'ping') {
+      const now = Date.now();
+      ws.msgTokens = Math.min(CONTROL_MSG_BURST, (ws.msgTokens != null ? ws.msgTokens : CONTROL_MSG_BURST) + (now - (ws.lastRefillMs || now)) / 1000 * CONTROL_MSG_REFILL);
+      ws.lastRefillMs = now;
+      if (ws.msgTokens < 1) return;   // over budget → drop silently
+      ws.msgTokens -= 1;
+    }
 
     if (msg.t === 'ping') {
       // Keepalive från klient — håller WS levande mot proxy. Svara med pong.
@@ -722,7 +735,7 @@ wss.on('connection', (ws) => {
 
     if (msg.t === 'friends-online') {
       // Klienten skickar sina vänners användarnamn → servern svarar vilka som är online just nu.
-      const names = Array.isArray(msg.usernames) ? msg.usernames : [];
+      const names = Array.isArray(msg.usernames) ? msg.usernames.slice(0, 200) : [];   // cap to bound the loop (audit 2026-07-05)
       const online = names.filter(n => typeof n === 'string' && onlineUsers.has(n) && onlineUsers.get(n) !== ws);
       send(ws, { t: 'friends-online', online });
       return;
@@ -929,6 +942,19 @@ function handleDisconnect(ws) {
       console.log(`[${code}] peer left (${newTotal}/${room.maxPeers})`);
       return;
     }
+  }
+  // Multi-peer SERVER-AUTH host drop: the server owns the sim, so keep it running and give the host a grace
+  // window to reclaim instead of ending everyone's match on a single mobile blip (audit 2026-07-05). Clients
+  // keep receiving snapshots (send() is null-host-safe); the grace sweeper closes the room if the host never
+  // reclaims. Do NOT send a bare peer-left — clients read that as "host left — match over".
+  if (room.host === ws && peerCount > 0 && room.game) {
+    room.host = null;
+    room.hostGoneAt = Date.now();
+    const graceMsg = { t: 'host-gone-grace', graceMs: HOST_GRACE_MS };
+    if (room.client) send(room.client, graceMsg);
+    if (room.clients) for (const c of room.clients) send(c, graceMsg);
+    console.log(`[${code}] host dropped mid-match — sim continues, grace ${HOST_GRACE_MS}ms`);
+    return;
   }
   // Annars normal stängning (klassisk 2-peer eller host i multi-peer)
   closeRoomNow(room);
