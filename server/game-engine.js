@@ -3413,7 +3413,7 @@ function updateSurvivalMinions(state, dt) {
     if (hero && hd <= SURVIVAL_MINION_HERO_REACH) {   // hjälte i vägen → attackera hjälten (stanna, vänd mot den)
       m.ry = Math.atan2(hero.x - m.x, hero.z - m.z);
       m.atkCd = (m.atkCd || 0) - dt;
-      if (m.atkCd <= 0) { m.atkCd = m.attackInterval; damageHero(hSide, m.damage, true); m.aac = (m.aac || 0) + 1; }
+      if (m.atkCd <= 0) { m.atkCd = m.attackInterval; if (!heroAaEvades(hSide)) damageHero(hSide, m.damage, true); m.aac = (m.aac || 0) + 1; }   // cloak dodge vs Survival minion AA (audit 2026-07-05)
     } else if (d > reach) {   // marschera mot byggnaden
       const sp = m.speed * (m.slowMul || 1) * dt;
       m.x += (dx / d) * sp; m.z += (dz / d) * sp;
@@ -5693,8 +5693,17 @@ function bossDamageHero(side, dmg, tier) {
 // kommer från mekanik/för många skills, inte ett enda slag. Bara reducerande (Math.min) → minions
 // (som slår < 20%) är opåverkade.
 const BOSS_HERO_AA_MAX_HIT_FRAC = 0.20;
+// Xina Ninja's Cloak 50% dodge vs auto-attacks (+ Ganji's nerfed evasion). Rolled at EVERY AA damage site —
+// was only checked vs enemy-hero AA, so the dodge did nothing vs boss/minion AAs in Boss Wars/Survival
+// despite the tooltip (audit 2026-07-05).
+function heroAaEvades(sd) {
+  if (!sd || !sd.hero || sd.hero.dead) return false;
+  return ((sd.xinaCloakRem || 0) > 0 && Math.random() < XINA_CLOAK_EVASION) ||
+         ((sd.ganjiSpeedRem || 0) > 0 && Math.random() < GANJI_E_EVASION);
+}
 function bossAaDamageHero(heroSide, dmg) {
   if (!heroSide || !heroSide.hero) return;
+  if (heroAaEvades(heroSide)) return;   // cloak/ninja dodge vs boss auto-attacks (audit 2026-07-05)
   damageHero(heroSide, Math.min(dmg, heroSide.hero.maxHp * BOSS_HERO_AA_MAX_HIT_FRAC));
 }
 // Anti-one-shot för boss SKILLS (user 2026-06-26: feel-audit — circle/cone/line/beam/projektil gick
