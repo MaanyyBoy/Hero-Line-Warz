@@ -1897,8 +1897,8 @@ function tickHeroBuffTimers(sd, dt) {
   if ((sd.hero.nyroMarked || 0) > 0) sd.hero.nyroMarked = Math.max(0, sd.hero.nyroMarked - dt);
   if ((sd.ganjiCcImmuneRem || 0) > 0) {   // Ganji E lvl5 CC-immunity window — keep hard-CC cleared (audit 2026-07-05)
     sd.ganjiCcImmuneRem = Math.max(0, sd.ganjiCcImmuneRem - dt);
-    sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.hero.heroFearTime = 0;
-    if (sd.hero.iceBlockRemaining) sd.hero.iceBlockRemaining = 0;
+    sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.heroFearTime = 0;
+    if (sd.iceBlockRemaining) sd.iceBlockRemaining = 0;
   }
 }
 
@@ -7337,8 +7337,8 @@ function castGanjiSpeed(state, sideIdx) { // E: Ninja's Speed self-buff (dedicat
   // (audit 2026-07-05, user-approved lvl-5 bonus).
   if (side.skillLvl && side.skillLvl.e >= SKILL_LEVEL_MAX) {
     side.ganjiCcImmuneRem = GANJI_LVL5_CC_IMMUNE_DUR;
-    side.hero.frozenTime = 0; side.hero.tauntedTime = 0; side.hero.heroFearTime = 0;
-    if (side.hero.iceBlockRemaining) side.hero.iceBlockRemaining = 0;
+    side.hero.frozenTime = 0; side.hero.tauntedTime = 0; side.heroFearTime = 0;
+    if (side.iceBlockRemaining) side.iceBlockRemaining = 0;
   }
 }
 
@@ -10358,6 +10358,13 @@ function tickGame(state, dt) {
       // expirerade marken aldrig under duel = permanent +20% dmg, och buffen frös.
       if ((side.hero.nyroMarked || 0) > 0) side.hero.nyroMarked = Math.max(0, side.hero.nyroMarked - dt);
       if ((side.gandulfBuffRemaining || 0) > 0) { side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt); if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0; }
+      // Ganji E lvl5 CC-immunity window (duel) — tickHeroBuffTimers handles this in Arena/Boss/Survival/Sandbox,
+      // but classic duel has its own tick block, so mirror it here (server-debug 2026-07-05).
+      if ((side.ganjiCcImmuneRem || 0) > 0) {
+        side.ganjiCcImmuneRem = Math.max(0, side.ganjiCcImmuneRem - dt);
+        side.hero.frozenTime = 0; side.hero.tauntedTime = 0; side.heroFearTime = 0;
+        if (side.iceBlockRemaining) side.iceBlockRemaining = 0;
+      }
       if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
     }
     // Pickup-orbs (heal + speed) + big duel-arena orb
@@ -10449,6 +10456,13 @@ function tickGame(state, dt) {
       if (side.hero.dmgTakenDebuffTime > 0) {
         side.hero.dmgTakenDebuffTime -= dt;
         if (side.hero.dmgTakenDebuffTime <= 0) side.hero.dmgTakenDebuffMul = 1;
+      }
+      // Ganji E lvl5 CC-immunity window (push-phase/enemy-territory PvP) — mirrors tickHeroBuffTimers
+      // (server-debug 2026-07-05: was only ticked in Arena/Boss/Survival/Sandbox, permanent no-op in classic).
+      if ((side.ganjiCcImmuneRem || 0) > 0) {
+        side.ganjiCcImmuneRem = Math.max(0, side.ganjiCcImmuneRem - dt);
+        side.hero.frozenTime = 0; side.hero.tauntedTime = 0; side.heroFearTime = 0;
+        if (side.iceBlockRemaining) side.iceBlockRemaining = 0;
       }
       // Titans Taunt passive heal: 20% av maxHP per sek (= 10% per halvsek) medan tauntet är aktivt
       if ((side.titansTauntRemaining || 0) > 0 && side.hero.hp < side.hero.maxHp) {
