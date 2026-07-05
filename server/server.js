@@ -745,6 +745,21 @@ function handleSurvivalMessage(room, fromWs, envelope) {
   relaySurvivalMessage(room, fromWs, envelope);
 }
 
+// ── Mandatory picking phase (2026-07-05): the host drives a 30 s hero-lock phase
+// BEFORE the match launches, in ALL online modes (arena / boss wars / survival /
+// line wars). These four control messages are pure lobby-flow relays — the client
+// owns all the logic; the server just broadcasts each to every OTHER peer in the room
+// so everyone's pick UI stays in sync. They never touch room.game.
+//   pick-phase  host  -> peers   {t:'pick-phase'}                begin the 30 s phase
+//   pick-lock   peer  -> all     {t:'pick-lock', idx, hid}       this player locked hero hid
+//   pick-ready  peer  -> all     {t:'pick-ready', idx}           this player pressed READY
+//   pick-go     host  -> peers   {t:'pick-go', secs}             final countdown started
+function relayPickPhase(room, fromWs, envelope) {
+  if (room.host && fromWs !== room.host) send(room.host, envelope);
+  if (room.client && fromWs !== room.client) send(room.client, envelope);
+  for (const c of (room.clients || [])) if (c !== fromWs) send(c, envelope);
+}
+
 wss.on('connection', (ws) => {
   ws.role = null;
   ws.roomCode = null;
@@ -947,7 +962,9 @@ wss.on('connection', (ws) => {
       const room = rooms.get(ws.roomCode);
       if (!room) return;
       const payload = msg.d;
-      if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
+      if (payload && typeof payload.t === 'string' && payload.t.startsWith('pick-')) {
+        relayPickPhase(room, ws, msg);   // mandatory picking-phase sync (all modes)
+      } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('a-')) {
         handleArenaMessage(room, ws, msg);
       } else if (payload && typeof payload.t === 'string' && payload.t.startsWith('b-')) {
         handleBossMessage(room, ws, msg);
