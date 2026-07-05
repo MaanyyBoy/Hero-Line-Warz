@@ -1742,16 +1742,17 @@ function applyLaserBeamTickServer(state, side) {
     return;
   }
   const opp = arenaOpp(state, side.idx);
-  if (!opp || opp.hero.dead) return;
   // Line wars: only deal hero damage during a duel / enemy-territory PvP window — never during the
   // creep-pushing phase (2026-06-23). Arena is always PvP so inArena1v1 short-circuits.
   if (!side.inArena1v1 && !isHeroPvpActive(state)) return;
-  const ddx = opp.hero.x - side.hero.x, ddz = opp.hero.z - side.hero.z;
-  const along = ddx * lb.dx + ddz * lb.dz;
-  if (along < 0 || along > LASER_RANGE) return;
-  const perp = Math.abs(ddx * (-lb.dz) + ddz * lb.dx);
-  if (perp >= LASER_WIDTH) return;
-  damageHero(opp, opp.hero.maxHp * LASER_TICK_DMG_PCT);
+  for (const eSide of enemyHeroSidesInArena(state, side, opp)) {   // team arena: beam hits every enemy hero in the line, not just nearest (audit 2026-07-05)
+    const ddx = eSide.hero.x - side.hero.x, ddz = eSide.hero.z - side.hero.z;
+    const along = ddx * lb.dx + ddz * lb.dz;
+    if (along < 0 || along > LASER_RANGE) continue;
+    const perp = Math.abs(ddx * (-lb.dz) + ddz * lb.dx);
+    if (perp >= LASER_WIDTH) continue;
+    damageHero(eSide, eSide.hero.maxHp * LASER_TICK_DMG_PCT);
+  }
 }
 
 function tickMagikerLaserServer(state, side, dt) {
@@ -6884,6 +6885,21 @@ function updateFireballs(state, side, opp, dt) {
 }
 
 // Frost Nova (F): target-AoE. Skadar + fryser fiender 2s. Frusen + ny skill-träff → shatter.
+// Team-arena AoE hero targeting: every LIVE opposing-team hero side (so AoE skills hit ALL enemies in
+// the area in 2v2/3v3, not just the nearest), or the single opponent in 1v1 (audit 2026-07-05).
+function enemyHeroSidesInArena(state, side, opp) {
+  if (!isHeroPvpActive(state)) return [];
+  if (!state.teamSize || state.teamSize <= 1) return (opp && opp.hero && !opp.hero.dead) ? [opp] : [];
+  const out = [];
+  for (const k of (state.sideKeys || Object.keys(state.sides))) {
+    const e = state.sides[k];
+    if (!e || !e.hero || e.hero.dead) continue;
+    if ((e.team || k) === (side.team || side.idx)) continue;
+    out.push(e);
+  }
+  return out;
+}
+
 function castFrostnova(state, sideIdx, ev) {
   const side = state.sides[sideIdx];
   if (side.hero.dead || side.skills.f.cd > 0) return;
@@ -6939,17 +6955,17 @@ function castFrostnova(state, sideIdx, ev) {
       }
     }
   }
-  if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
-    if (Math.hypot(opp.hero.x - center.x, opp.hero.z - center.z) < NOVA_RADIUS) {
-      const wasFrozen = (opp.hero.frozenTime || 0) > 0;
-      onGandulfSkillHit(side, opp.hero);
-      const hpBefore = opp.hero.hp;
-      applySkillDamageToOppHero(state, side, opp, novaDmg);
+  for (const eSide of enemyHeroSidesInArena(state, side, opp)) {   // team arena: hit ALL enemy heroes in radius, not just nearest (audit 2026-07-05)
+    if (Math.hypot(eSide.hero.x - center.x, eSide.hero.z - center.z) < NOVA_RADIUS) {
+      const wasFrozen = (eSide.hero.frozenTime || 0) > 0;
+      onGandulfSkillHit(side, eSide.hero);
+      const hpBefore = eSide.hero.hp;
+      applySkillDamageToOppHero(state, side, eSide, novaDmg);
       if (frostHeal) frostHealTotal += Math.min(novaDmg, hpBefore) * 0.15;
-      if (!opp.hero.dead && !wasFrozen) opp.hero.frozenTime = NOVA_FREEZE_TIME;
-      if (isLvl5) {   // Frost Nova lvl5: also -50% attack speed on the enemy hero (consumed in updateHeroAttack) — audit 2026-07-05
-        opp.heroASlowMul = Math.min(opp.heroASlowMul == null ? 1 : opp.heroASlowMul, GANDULF_LVL5_FN_AS_MUL);
-        opp.heroASlowTime = Math.max(opp.heroASlowTime || 0, GANDULF_LVL5_FN_AS_DURATION);
+      if (!eSide.hero.dead && !wasFrozen) eSide.hero.frozenTime = NOVA_FREEZE_TIME;
+      if (isLvl5) {   // Frost Nova lvl5: also -50% attack speed on each enemy hero (consumed in updateHeroAttack) — audit 2026-07-05
+        eSide.heroASlowMul = Math.min(eSide.heroASlowMul == null ? 1 : eSide.heroASlowMul, GANDULF_LVL5_FN_AS_MUL);
+        eSide.heroASlowTime = Math.max(eSide.heroASlowTime || 0, GANDULF_LVL5_FN_AS_DURATION);
       }
     }
   }
@@ -7096,11 +7112,11 @@ function updateBlackHoles(state, side, opp, dt) {
           else if (stunDur > 0) c.frozenTime = Math.max(c.frozenTime || 0, stunDur);
         }
       }
-      if (isHeroPvpActive(state) && opp && !opp.hero.dead) {
-        if (Math.hypot(opp.hero.x - bh.x, opp.hero.z - bh.z) < bhExplosionR) {
-          onGandulfSkillHit(side, opp.hero);
-          applySkillDamageToOppHero(state, side, opp, bh.explosionDmg);
-          if (stunDur > 0 && !opp.hero.dead) opp.hero.frozenTime = Math.max(opp.hero.frozenTime || 0, stunDur);
+      for (const eSide of enemyHeroSidesInArena(state, side, opp)) {   // team arena: explosion hits every enemy hero in radius (audit 2026-07-05)
+        if (Math.hypot(eSide.hero.x - bh.x, eSide.hero.z - bh.z) < bhExplosionR) {
+          onGandulfSkillHit(side, eSide.hero);
+          applySkillDamageToOppHero(state, side, eSide, bh.explosionDmg);
+          if (stunDur > 0 && !eSide.hero.dead) eSide.hero.frozenTime = Math.max(eSide.hero.frozenTime || 0, stunDur);
         }
       }
       side.blackHoles.splice(i, 1);
@@ -7819,16 +7835,17 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
       if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
     }
   }
-  // Duel: opp.hero i cone
-  if (isHeroPvpActive(state) && opp && !opp.hero.dead && inCone(opp.hero.x, opp.hero.z)) {
-    const dmg = opp.hero.maxHp * WIND_PUFF_DMG_PCT * skillMul;
-    onGandulfSkillHit(side, opp.hero);
-    applySkillDamageToOppHero(state, side, opp, dmg);
-    if (!opp.hero.dead) {
-      opp.hero.x += dirX * WIND_PUFF_PUSH_DIST;
-      opp.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
-      opp.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
-      opp.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+  // Every enemy hero in the cone (team arena: ALL, not just nearest) — audit 2026-07-05
+  for (const eSide of enemyHeroSidesInArena(state, side, opp)) {
+    if (!inCone(eSide.hero.x, eSide.hero.z)) continue;
+    const dmg = eSide.hero.maxHp * WIND_PUFF_DMG_PCT * skillMul;
+    onGandulfSkillHit(side, eSide.hero);
+    applySkillDamageToOppHero(state, side, eSide, dmg);
+    if (!eSide.hero.dead) {
+      eSide.hero.x += dirX * WIND_PUFF_PUSH_DIST;
+      eSide.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
+      eSide.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
+      eSide.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
     }
   }
 }
