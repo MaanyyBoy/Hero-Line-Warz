@@ -4987,6 +4987,7 @@ function serializeBossWarsState(state) {
     o.hp = ri(boss.hp); o.mh = boss.maxHp;
     o.ph = boss.bossPhase || 1;
     o.pt = nzr2(boss.phaseTransitionRemaining);
+    o.ig = nzr2(boss.introGraceRemaining);   // intro-grace remaining → client drives BOSS PREPARING shield/timer (audit 2026-07-05)
     o.aac = boss.aaCount || 0;
     // Härdnings-DR (playtest #4): aktuell time-step-DR i % så klienten kan visa "Hardened".
     const _drSteps = Math.floor((boss.activeTime || 0) / (boss.dmgReductionStepIntervalSec || 120));
