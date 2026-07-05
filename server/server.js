@@ -534,6 +534,16 @@ function handleBossMessage(room, fromWs, envelope) {
   if (room.bossSim) {
     // Server-auth aktivt: input → engine, b-state ägs av servern (ignorera host:ens).
     if (t === 'b-input') { applyBossWarsInput(room, fromWs, payload); return; }
+    if (t === 'b-loadout') {
+      // Spawn-fas-loadout (TASK I): klienten väljer bwt_/bwi_ i spawn-rummet innan bossen aktiveras.
+      // Server cappar 3 talents / 4 items + validerar ids (spoof-skydd, identiskt arena/lobby).
+      const sideIdx = fromWs.peerIdx;
+      if (sideIdx >= 1 && sideIdx <= 3) {
+        try { engine.applyBossWarsLoadout(room.game, sideIdx, payload.tals, payload.items); }
+        catch (e) { console.warn('boss loadout error', e); }
+      }
+      return;
+    }
     if (t === 'b-state') return;
     // Övriga b- (b-tier/b-ready/b-pick/b-launch/b-end lobby-flöde) reläas — de skickas
     // före sim-start, eller är match-flödes-signaler host fortf. äger.

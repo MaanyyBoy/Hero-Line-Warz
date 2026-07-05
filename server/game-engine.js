@@ -1206,6 +1206,20 @@ function applyArenaLoadout(state, sideIdx, tals, items) {
   side.hero.hp = side.hero.maxHp;   // toppa upp HP under prep så maxHpPct-loadout inte lämnar dig skadad vid fight-start
 }
 
+// Boss Wars spawn-phase-loadout (TASK I 2026-07-05). Klienten kan öppna TALENTS/ITEMS-pickern i
+// spawn-rummet (innan bossen aktiveras) och skicka b-loadout {tals, items}. Mirror av applyArenaLoadout:
+// samma fält (side.bossWarsTalents/Items), samma cap 3/4 + id-validering (spoof-skydd), recompute.
+// Bara medan bossen INTE är aktiverad (spawn-fasen) → ingen mid-fight stat-swap.
+function applyBossWarsLoadout(state, sideIdx, tals, items) {
+  const side = state && state.sides && state.sides[sideIdx];
+  if (!side || !side.inBossWars) return;
+  if (state.bossActivated) return;   // loadout låst när fighten börjat (anti mid-fight stat-swap)
+  side.bossWarsTalents = [...new Set(((Array.isArray(tals) ? tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id])))].slice(0, 3);
+  side.bossWarsItems   = [...new Set(((Array.isArray(items) ? items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id])))].slice(0, 4);
+  recomputeArenaSideStats(state, side);
+  if (side.hero) side.hero.hp = side.hero.maxHp;   // toppa upp HP så maxHpPct-loadout inte lämnar dig skadad
+}
+
 // Gandulf passive-helpers — buff/shield på skill-hit
 function gandulfSkillDmgMul(side) {
   if (side.heroId !== 'zyro' || !(side.gandulfBuffRemaining > 0)) return 1;
@@ -10933,6 +10947,7 @@ module.exports = {
   applyEvent,
   recomputeArenaSideStats, // exponeras för talent-recompute i server.js vid a-talent
   applyArenaLoadout,       // arena prep-loadout (a-loadout): bwt_/bwi_ → side.bossWarsTalents/Items + recompute
+  applyBossWarsLoadout,    // boss wars spawn-phase-loadout (b-loadout): bwt_/bwi_ → side.bossWarsTalents/Items + recompute
   // Validera klient-skickad talentId mot TALENT-ids (ENGINE_ARENA_TALENTS keyas på HJÄLTE-id, värdena är
   // talent-arrayer) — `!!ENGINE_ARENA_TALENTS[id]` slog upp talent-id som hjälte-nyckel → alltid false →
   // BLOCKERADE alla arena native-stat-talents (HP/DMG/AS/CDR) server-side. Bugfix 2026-06-29.
