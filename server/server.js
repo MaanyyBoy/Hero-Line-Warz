@@ -144,6 +144,51 @@ function stopGame(room) {
   room.survivalEndSent = false;   // server-debug sweep 2026-07-03: saknades — analogt bossEndSent-glapp,
                                    // ett återanvänt rum (rematch utan full disconnect) hade fastnat med
                                    // survivalEndSent kvar `true` från förra matchen → nästa sv-end tystnades.
+  room._resultReported = false;   // XP/stat-rapportering (2026-07-05) — samma "återanvänt rum"-skäl som ovan.
+}
+
+// XP/stat-rapportering (2026-07-05): anropas EN gång per avslutad match (guardad av
+// room._resultReported i gameLoopTick), fire-and-forget för varje RIKTIG, INLOGGAD peer
+// (ws.authed && ws.userId — gäster/overifierade/bots hoppas över, bots har ingen ws alls).
+// Läge → accountReport-mode: classic→'linewars', arena1v1→'arena', bosswars→'boss'.
+// survival→'survival': ingen kolumn-gren i reportMatchResult (ingen win/loss-stat sparas
+// än för Survival) men XP (account_xp/hero_xp) ges ändå, eftersom den delen av patchen är
+// mode-oberoende — se accountReport.js. sandbox saknar win/loss helt och triggar aldrig
+// matchState.gameOver, så den når aldrig hit.
+function reportMatchResults(room) {
+  const g = room.game;
+  if (!g || !g.matchState) return;
+  const winner = g.matchState.winner;
+  let accMode;
+  if (room.mode === 'classic') accMode = 'linewars';
+  else if (room.mode === 'arena1v1') accMode = 'arena';
+  else if (room.mode === 'bosswars') accMode = 'boss';
+  else if (room.mode === 'survival') accMode = 'survival';
+  else return;   // okänt/sandbox — inget att rapportera
+  const coop = (accMode === 'boss' || accMode === 'survival');   // co-op: alla peers delar samma utfall
+  const peers = [];
+  if (room.host) peers.push(room.host);
+  if (room.client) peers.push(room.client);
+  if (room.clients) for (const c of room.clients) peers.push(c);
+  for (const ws of peers) {
+    if (!ws || !ws.authed || !ws.userId) continue;   // gäster/overifierade rapporteras ej
+    const sideIdx = ws.peerIdx;
+    const side = g.sides && g.sides[sideIdx];
+    if (!side || side.isBot) continue;
+    let outcome;
+    if (coop) {
+      outcome = (winner === 1) ? 'win' : 'loss';
+    } else {
+      if (winner !== 1 && winner !== 2) continue;   // ingen draw-kolumn att rapportera
+      const team = side.team || sideIdx;            // 1v1: team==sideIdx; team-arena: side.team
+      outcome = (team === winner) ? 'win' : 'loss';
+    }
+    accountReport.reportMatchResult({
+      userId: ws.userId, outcome, mode: accMode,
+      heroLegacyId: side.heroId,
+      bossTier: accMode === 'boss' ? g.tier : undefined,
+    }).catch(() => {});
+  }
 }
 
 // Self-correcting tick-loop: räknar ut nästa absolut tick-deadline och kompenserar
@@ -304,6 +349,11 @@ function gameLoopTick(room) {
   // 30 Hz + full serializeState/JSON.stringify/send FOREVER (checkMatchEnd sets gameOver on tower death)
   // = CPU/broadcast leak on free-tier. All modes now stop; the classic client already reads matchState.
   if (room.game && room.game.matchState.gameOver) {
+    // XP/stat-rapportering — en gång per match, innan rummet ev. stängs/återanvänds.
+    if (!room._resultReported) {
+      room._resultReported = true;
+      try { reportMatchResults(room); } catch (e) { console.warn('reportMatchResults error', e); }
+    }
     // Boss wars: signalera match-slut till ALLA peers innan simmen stoppas (server-auth).
     if (_isBoss && !room.bossEndSent) {
       room.bossEndSent = true;
