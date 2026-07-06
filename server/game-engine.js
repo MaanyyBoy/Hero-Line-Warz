@@ -3249,6 +3249,7 @@ function createSurvivalState() {
     s.level = 30; s.xp = 0; s.xpToNext = xpForLevel(30);
     s.skillLvl = { q: SKILL_LEVEL_MAX, f: SKILL_LEVEL_MAX, e: SKILL_LEVEL_MAX };
     s.unspentPoints = 0;   // pre-maxed → no free stat point (economy 2026-07-03)
+    s.gold = SURVIVAL_START_GOLD;   // start-guld (user 2026-07-06)
   }
   // Co-op: dela ETT monster-array → alla 4 hjältars targeting/combat ser varje minion.
   sides[2].monsters = sides[1].monsters;
@@ -3303,7 +3304,8 @@ const SURVIVAL_WAVE_GAP = 16;          // sek mellan vågor
 const SURVIVAL_BASE_MINIONS = 4;       // minions per lane i våg 1 (skalar med våg)
 const SURVIVAL_BUILDING_RADIUS = 3;    // byggnadens radie (minion attackerar inom radius+1.5)
 const SURVIVAL_MINION_HERO_REACH = 2.2; // minion attackerar en hjälte som står i dess väg (annars fortsätter den mot byggnaden)
-const SURVIVAL_TOTAL_WAVES = 20;       // klara alla = vinst
+const SURVIVAL_TOTAL_WAVES = 100;      // klara alla = vinst (user 2026-07-06: 20→100; mini-boss var 5:e våg finns redan nedan)
+const SURVIVAL_START_GOLD = 240;       // start-guld per hjälte (user 2026-07-06)
 const SURVIVAL_RESPAWN_TIME = 8;       // sek innan död hjälte respawnar (co-op)
 
 // Delad co-op hjälte-combat-frame — EXAKT samma skill-pipeline som boss wars + sandbox (bara anrops-
