@@ -3948,13 +3948,16 @@ function maybeActivateBossWars(state) {
 }
 // Boss-AA-projektil mot specifik hjälte (homing via bossTargetIdx i updateMonsterProjectiles).
 // Ligger i sides[1].monsterProjectiles → serialiseras i mr[1], renderas av klient (projKind-mesh).
+// Boss Wars boss AUTO-ATTACK damage multiplier (user 2026-07-06: -30% for all tiers). Applies ONLY to
+// the AA projectile below — boss SKILL damage (bossEffectiveDamage / applyBoss*Dmg) is unaffected.
+const BOSS_AA_DMG_MUL = 0.7;
 function spawnBossAaProjectile(state, boss, targetIdx) {
   const travel = boss.projTime || 0.8;
   state.sides[1].monsterProjectiles.push({
     id: state.nextEntityId++,
     x: boss.x, y: MONSTER_PROJ_Y, z: boss.z,
     srcX: boss.x, srcZ: boss.z,
-    damage: boss.damage || 40,
+    damage: Math.round((boss.damage || 40) * BOSS_AA_DMG_MUL),
     timer: travel, totalTime: travel,
     kind: boss.projKind || 'magic',
     isBoss: true,
