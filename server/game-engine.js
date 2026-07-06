@@ -1607,7 +1607,7 @@ function isArena1v1Walkable(x, z) {
 // teleport/leap-skills (dash/leap/hammer-tp/slider-tp) — annars använder de classic
 // isHeroWalkable som avvisar arena1v1-positioner (z≈80) → teleport-skills misslyckas.
 function heroWalk(side, x, z, opts) {
-  if (side.inSurvival) return isSurvivalWalkable(x, z, side._svBossGatesOpen);
+  if (side.inSurvival) return survivalHeroWalkable(side, x, z);
   if (side.inBossWars) return isBossWarsWalkable(x, z, side._bwGateClosed);
   if (side.inArena1v1) return isArena1v1Walkable(x, z);
   if (side.inDuel) return isArenaWalkable(x, z);
@@ -1740,7 +1740,8 @@ function applyLaserBeamTickServer(state, side) {
       const along = mdx * lb.dx + mdz * lb.dz;
       if (along < 0 || along > LASER_RANGE) continue;
       if (Math.abs(mdx * (-lb.dz) + mdz * lb.dx) >= LASER_WIDTH) continue;
-      m.hp = Math.max(0, m.hp - m.maxHp * LASER_TICK_DMG_PCT);
+      const raw = m.maxHp * LASER_TICK_DMG_PCT;
+      m.hp = Math.max(0, m.hp - (m.isBossWarsBoss ? bossWarsDmgMod(m, raw) : raw));   // raid-boss: fas-immunitet+DR+per-hit-tak
     }
     return;
   }
@@ -1831,7 +1832,7 @@ function tickGimluRageServer(state, side, dt) {
       for (const m of (side.monsters || [])) {
         if (!m || m.hp <= 0) continue;
         if (Math.hypot(m.x - side.hero.x, m.z - side.hero.z) >= RAGE_PULSE_RADIUS) continue;
-        const dmg = m.maxHp * RAGE_PULSE_DMG_PCT;
+        const dmg = m.isBossWarsBoss ? bossWarsDmgMod(m, m.maxHp * RAGE_PULSE_DMG_PCT) : m.maxHp * RAGE_PULSE_DMG_PCT;   // raid-boss: DR+per-hit-tak
         const dealt = Math.min(dmg, m.hp);
         m.hp = Math.max(0, m.hp - dmg);
         if (dealt > 0 && !side.hero.dead) {
@@ -3230,6 +3231,10 @@ function createSurvivalState() {
     duelActive: false,                        // co-op, ingen PvP
     bossProjectiles: [], bossPools: [],       // boss-skill-entiteter (fas 3)
     survivalWave: { number: 0, countdown: SURVIVAL_PREP_TIME, active: false, queue: [], spawnAccum: 0 },
+    // Raid-boss (user 2026-07-06): nedräkning → boss-fight → hem. bossActivated/gateClosed återanvänds av
+    // tickBossWarsBoss (som annars är boss-wars-only). raidBoss = referens till den aktiva boss-objektet.
+    raidActive: false, raidTimer: SURVIVAL_RAID_INTERVAL, raidCount: 0, raidElapsed: 0, raidBoss: null,
+    bossActivated: false, gateClosed: false, _raidReward: 0,
     bossGatesOpen: false,                     // Nyckeln (köps i shoppen) öppnar båda boss-gates för alla (fas 4)
     bossRoomBosses: [],                       // de 2 starka valfria bossarna (fas 4)
     centerBuilding: null,                     // sätts nedan (behöver nextEntityId)
@@ -3306,6 +3311,25 @@ const SURVIVAL_BUILDING_RADIUS = 3;    // byggnadens radie (minion attackerar in
 const SURVIVAL_MINION_HERO_REACH = 2.2; // minion attackerar en hjälte som står i dess väg (annars fortsätter den mot byggnaden)
 const SURVIVAL_TOTAL_WAVES = 100;      // klara alla = vinst (user 2026-07-06: 20→100; mini-boss var 5:e våg finns redan nedan)
 const SURVIVAL_START_GOLD = 240;       // start-guld per hjälte (user 2026-07-06)
+
+// ───────── SURVIVAL RAID BOSS (user 2026-07-06) — periodisk Boss-Wars-lik raid-interlude ─────────
+// Var SURVIVAL_RAID_INTERVAL:e sekund pausas vågorna, ALLA hjältar teleporteras till en separat raid-
+// arena och slåss mot en skalande Boss-Wars-boss (co-op, respawn vid död). Boss dödad → guld/XP + hem.
+// Bossen blir starkare för varje raid. Återanvänder boss-wars-maskineriet (tickBossWarsBoss/skills/proj).
+const SURVIVAL_RAID_INTERVAL = 600;    // sek mellan raider (10 min)
+const SURVIVAL_RAID_MAX_TIME = 240;    // säkerhets-tak: raiden avslutas ändå efter 4 min (boss "flyr", ingen reward)
+const SURVIVAL_RAID_BASE_TIER = 4;     // boss-wars-tier raid-bossen baseras på (skills/AA/stats). Ej 3/5 (special-hooks).
+const SURVIVAL_RAID_SCALE_PER = 0.45;  // +45% HP & damage per TIDIGARE raid (starkare varje gång)
+const SURVIVAL_RAID_RESPAWN = 6;       // sek respawn under raiden (co-op)
+const SURVIVAL_RAID_GOLD = 400;        // guld per hjälte vid raid-kill
+const SURVIVAL_RAID_GOLD_PER = 150;    // + extra guld per tidigare raid
+const SURVIVAL_RAID_XP = 300;          // hjälte-XP (no-op vid lvl 30, men framtidssäkert)
+const SURVIVAL_RAID_CX = 600, SURVIVAL_RAID_CZ = 0;   // raid-arena-center (långt från r56-cirkeln → egen "rum")
+const SURVIVAL_RAID_RADIUS = 34;       // raid-arena walkable-radie
+const SURVIVAL_RAID_HERO_SPAWNS = {
+  1: { x: SURVIVAL_RAID_CX - 14, z: -14 }, 2: { x: SURVIVAL_RAID_CX + 14, z: -14 },
+  3: { x: SURVIVAL_RAID_CX + 14, z: 14 },  4: { x: SURVIVAL_RAID_CX - 14, z: 14 },
+};
 const SURVIVAL_RESPAWN_TIME = 8;       // sek innan död hjälte respawnar (co-op)
 
 // Delad co-op hjälte-combat-frame — EXAKT samma skill-pipeline som boss wars + sandbox (bara anrops-
@@ -3451,12 +3475,15 @@ function tickSurvivalBot(state, idx, dt) {
   const monsters = state.sides[1].monsters;
   let best = null, bestD = Infinity;
   for (const m of monsters) {
-    if (m.hp <= 0 || !m.isSurvivalMinion) continue;
+    if (m.hp <= 0) continue;
+    // Under raid: jaga raid-bossen; annars: närmaste survival-minion (så boten faktiskt bidrar i raiden).
+    if (state.raidActive ? !m.isSurvivalRaidBoss : !m.isSurvivalMinion) continue;
     const d = Math.hypot(m.x - s.hero.x, m.z - s.hero.z);
     if (d < bestD) { bestD = d; best = m; }
   }
   const inp = state.lastInputs[idx];
-  if (best && bestD > 2.2) { const dx = best.x - s.hero.x, dz = best.z - s.hero.z, dd = Math.hypot(dx, dz) || 1; inp.j = { x: dx / dd, z: dz / dd }; }
+  const reach = state.raidActive ? 6.0 : 2.2;   // håll skjutavstånd till bossen (annars melee-avstånd till minions)
+  if (best && bestD > reach) { const dx = best.x - s.hero.x, dz = best.z - s.hero.z, dd = Math.hypot(dx, dz) || 1; inp.j = { x: dx / dd, z: dz / dd }; }
   else inp.j = { x: 0, z: 0 };
 }
 
@@ -3544,6 +3571,118 @@ function tickSurvivalBossRooms(state, dt) {
   }
 }
 
+// ───────── SURVIVAL RAID BOSS — logik ─────────
+// Hjälte-walkable under survival: raid-arena-cirkeln medan raiden pågår, annars huvud-cirkeln.
+function survivalHeroWalkable(side, x, z) {
+  if (side && side._svRaidActive) {
+    const dx = x - SURVIVAL_RAID_CX, dz = z - SURVIVAL_RAID_CZ, r = SURVIVAL_RAID_RADIUS - HERO_R;
+    return dx * dx + dz * dz <= r * r;
+  }
+  return isSurvivalWalkable(x, z, side ? side._svBossGatesOpen : false);
+}
+
+// Bygg en Boss-Wars-boss (skalad) med samma recept som createBossWarsState (rad ~3088). raidsPrior =
+// antal tidigare klarade raider → HP/damage ×(1 + SCALE_PER × raidsPrior). Ej tier 3/5 (special-hooks).
+function makeSurvivalRaidBoss(state, raidsPrior) {
+  const t = SURVIVAL_RAID_BASE_TIER;
+  const scale = 1 + SURVIVAL_RAID_SCALE_PER * raidsPrior;
+  const aa = BOSSWARS_TIER_AA[t];
+  const hp = Math.round(BOSSWARS_TIER_HP[t] * 3.0 * 2.5 * scale);
+  return {
+    id: state.nextEntityId++, isBossWarsBoss: true, isBoss: true, isSurvivalRaidBoss: true,
+    x: SURVIVAL_RAID_CX, z: SURVIVAL_RAID_CZ,
+    hp, maxHp: hp,
+    bossPhase: 1, phaseTransitionRemaining: 0, aaCount: 0,
+    activeCast: null, bossTier: t,
+    speed: BOSSWARS_TIER_SPEED[t],
+    damage: Math.round(42 * BOSSWARS_TIER_DMGSCALE[t] * 1.5 * 1.25 * scale),
+    attackType: 'range', attackRange: aa.range, attackInterval: aa.interval,
+    projTime: aa.travel, projKind: aa.kind, atkCd: 0,
+    phaseThreshold: BOSSWARS_TIER_PHASE_THRESH[t],
+    bossSkills: BOSSWARS_TIER_SKILLS[t],
+    skillCds: BOSSWARS_TIER_SKILLS[t].map(s => s.cd * 0.4),
+    phase2Skills: BOSSWARS_TIER_PHASE2_SKILLS[t], _pendingPhase2: false, phaseTransitionTotal: 2.5,
+    dmgReductionBase: BOSSWARS_TIER_DR[t], dmgReductionStep: 0.05,
+    dmgReductionStepIntervalSec: 120, dmgReductionCap: 0.70, spawnTime: 0,
+    introGraceRemaining: 2.0,   // kort odödlig grace vid spawn så hjältar hinner teleporteras in
+  };
+}
+
+function startSurvivalRaid(state) {
+  state.raidActive = true;
+  state.raidElapsed = 0;
+  state.raidCount = (state.raidCount || 0) + 1;
+  for (const idx of [1, 2, 3, 4]) {
+    const s = state.sides[idx]; if (!s) continue;
+    s._svRaidActive = true; s._raidRespawn = null; s._svRespawn = null;
+    s.hero.dead = false; s.hero.hp = s.hero.maxHp;
+    const sp = SURVIVAL_RAID_HERO_SPAWNS[idx];
+    s.hero.x = sp.x; s.hero.z = sp.z; s.hero.facingX = 1; s.hero.facingZ = 0;
+  }
+  const boss = makeSurvivalRaidBoss(state, state.raidCount - 1);
+  state.raidBoss = boss;
+  state.boss = boss;              // tickBossWarsBoss läser state.boss
+  state.bossActivated = true;
+  state.gateClosed = false;
+  state.sides[1].monsters.push(boss);   // delad array → alla hjältars combat targetar bossen
+  if (!state.bossProjectiles) state.bossProjectiles = [];
+  if (!state.bossPools) state.bossPools = [];
+}
+
+function endSurvivalRaid(state, killed) {
+  if (killed) {
+    const reward = SURVIVAL_RAID_GOLD + SURVIVAL_RAID_GOLD_PER * (Math.max(1, state.raidCount) - 1);
+    for (const idx of [1, 2, 3, 4]) {
+      const s = state.sides[idx]; if (!s) continue;
+      s.gold = (s.gold || 0) + reward; gainXp(s, SURVIVAL_RAID_XP);
+    }
+    state._raidReward = reward;
+  } else state._raidReward = 0;
+  // Ta bort bossen ur delade monster-arrayen + rensa boss-refs/entiteter
+  const monsters = state.sides[1].monsters;
+  const bi = monsters.indexOf(state.raidBoss);
+  if (bi >= 0) monsters.splice(bi, 1);
+  state.raidBoss = null; state.boss = null; state.bossActivated = false;
+  if (state.bossProjectiles) state.bossProjectiles.length = 0;
+  if (state.bossPools) state.bossPools.length = 0;
+  if (state.sides[1].monsterProjectiles) state.sides[1].monsterProjectiles.length = 0;   // rensa boss-AA-projektiler
+  // Teleportera tillbaka till survival, levande + full HP
+  for (const idx of [1, 2, 3, 4]) {
+    const s = state.sides[idx]; if (!s) continue;
+    s._svRaidActive = false; s._raidRespawn = null; s._svRespawn = null;
+    s.hero.dead = false; s.hero.hp = s.hero.maxHp;
+    const sp = SURVIVAL_HERO_SPAWNS[idx];
+    s.hero.x = sp.x; s.hero.z = sp.z;
+  }
+  state.raidActive = false; state.raidElapsed = 0;
+  state.raidTimer = SURVIVAL_RAID_INTERVAL;   // nollställ nedräkningen
+}
+
+function tickSurvivalRaid(state, dt) {
+  if (!state.raidActive) {
+    state.raidTimer = (state.raidTimer == null ? SURVIVAL_RAID_INTERVAL : state.raidTimer) - dt;
+    if (state.raidTimer <= 0) startSurvivalRaid(state);
+    return;
+  }
+  state.raidElapsed += dt;
+  tickBossWarsBoss(state, dt);          // boss-AI (rörelse/AA/faser) — state.boss = raidBoss
+  tickBossWarsProjectiles(state, dt);   // skill-projektiler
+  tickBossWarsPools(state, dt);         // DoT-pooler
+  // Raid-respawn (död hjälte kommer tillbaka i raid-arenan efter kort delay)
+  for (const idx of [1, 2, 3, 4]) {
+    const s = state.sides[idx]; if (!s) continue;
+    if (s.hero.dead) {
+      if (s._raidRespawn == null) s._raidRespawn = SURVIVAL_RAID_RESPAWN;
+      else { s._raidRespawn -= dt; if (s._raidRespawn <= 0) {
+        s.hero.dead = false; s.hero.hp = s.hero.maxHp;
+        const sp = SURVIVAL_RAID_HERO_SPAWNS[idx]; s.hero.x = sp.x; s.hero.z = sp.z; s._raidRespawn = null;
+      } }
+    } else s._raidRespawn = null;
+  }
+  if (state.raidBoss && state.raidBoss.hp <= 0) { endSurvivalRaid(state, true); return; }   // dödad → reward + hem
+  if (state.raidElapsed >= SURVIVAL_RAID_MAX_TIME) { endSurvivalRaid(state, false); return; }   // tak → boss flyr
+}
+
 function tickSurvival(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
   // Synka gates-flagga per side → heroWalk/applyMovement använder den utan state-ref
@@ -3560,20 +3699,24 @@ function tickSurvival(state, dt) {
   }
   // 2) Hjälte-combat (delad pipeline, co-op)
   for (const idx of [1, 2, 3, 4]) { const s = state.sides[idx]; if (s) tickSurvivalHeroFrame(state, s, dt); }
-  // 3) Respawn (co-op: död hjälte återföds efter delay så försvaret fortsätter)
-  for (const idx of [1, 2, 3, 4]) {
+  // 3) Respawn (co-op: död hjälte återföds efter delay) — PAUSAS under raid (raiden har egen respawn)
+  if (!state.raidActive) for (const idx of [1, 2, 3, 4]) {
     const s = state.sides[idx]; if (!s) continue;
     if (s.hero.dead) {
       if (s._svRespawn == null) s._svRespawn = SURVIVAL_RESPAWN_TIME;
       else { s._svRespawn -= dt; if (s._svRespawn <= 0) { s.hero.dead = false; s.hero.hp = s.hero.maxHp; const sp = SURVIVAL_HERO_SPAWNS[idx]; s.hero.x = sp.x; s.hero.z = sp.z; s._svRespawn = null; } }
     } else s._svRespawn = null;
   }
-  // 4) Vågor + minions mot byggnaden
-  tickSurvivalWaves(state, dt);
-  updateSurvivalMinions(state, dt);
-  updateMonsterProjectiles(state, state.sides[1], dt);
-  // 5) Fas 4: valfria boss-rum-bossar (tickas oavsett gates-status → reward-leverans vid stängd gate)
-  tickSurvivalBossRooms(state, dt);
+  // 3b) Raid-boss (user 2026-07-06): nedräkning → boss-fight → hem. Pausar vågorna medan aktiv.
+  tickSurvivalRaid(state, dt);
+  // 4) Vågor + minions mot byggnaden — PAUSAS under raiden
+  if (!state.raidActive) {
+    tickSurvivalWaves(state, dt);
+    updateSurvivalMinions(state, dt);
+  }
+  updateMonsterProjectiles(state, state.sides[1], dt);   // survival har inga minion-projektiler; under raid = boss-AA
+  // 5) Fas 4: valfria boss-rum-bossar — PAUSAS under raiden (hjältarna är borta i raid-arenan)
+  if (!state.raidActive) tickSurvivalBossRooms(state, dt);
   resolveSurvivalCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   // 6) Win/lose
   checkSurvivalEnd(state);
@@ -3602,7 +3745,13 @@ const _svSnap = {
   iwe: { 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
   kCln:{ 1: _ARENA_EMPTY_ARR, 2: _ARENA_EMPTY_ARR, 3: _ARENA_EMPTY_ARR, 4: _ARENA_EMPTY_ARR },
   rb: null,   // fas 4: boss-rum-bossar [{id,x,z,ry,hp,mh,dead}]
+  // Raid-boss (user 2026-07-06): rA=aktiv, rTmr=sek till nästa raid, rBoss=boss (b-state-form),
+  // rmr=boss-AA-projektiler, rbp=skill-projektiler, rbpl=DoT-pooler.
+  rA: 0, rTmr: 0, rBoss: null, rmr: _ARENA_EMPTY_ARR, rbp: _ARENA_EMPTY_ARR, rbpl: _ARENA_EMPTY_ARR,
 };
+// Persistenta raid-boss-buffrar (mirror _bwBossBuf/_bwCastBuf) → ingen 30 Hz-allokering.
+const _svRaidBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: undefined, aac: 0, dr: 0, c: undefined };
+const _svRaidCastBuf = { n: '', k: 'circle', rad: 0, len: 0, ha: 0, w: 0, ph: 'telegraph', t: 0, tg: 0, tx: null, tz: null, ox: null, oz: null, dx: null, dz: null };
 function serializeSurvivalState(state) {
   const snap = _svSnap;
   const monsters = state.sides[1].monsters;
@@ -3627,6 +3776,30 @@ function serializeSurvivalState(state) {
   snap.rb = state.bossRoomBosses.map(b => ({ id: b.id, x: r2(b.x), z: r2(b.z), ry: r3(b.ry || 0), hp: ri(b.hp), mh: b.maxHp, dead: b.dead ? 1 : 0 }));
   // Hero skill-entities per side (1..4) — SHARED shape med Arena/Boss Wars.
   for (let i = 1; i <= 4; i++) writeSkillEntitiesInto(state.sides[i], snap, i);
+  // Raid-boss (user 2026-07-06): mirror b-state-formen så klienten kan återanvända boss-wars-render.
+  snap.rA = state.raidActive ? 1 : 0;
+  snap.rTmr = state.raidActive ? 0 : r1(Math.max(0, state.raidTimer == null ? SURVIVAL_RAID_INTERVAL : state.raidTimer));
+  if (state.raidActive && state.raidBoss) {
+    const b = state.raidBoss, o = _svRaidBossBuf;
+    o.x = r2(b.x); o.z = r2(b.z); o.hp = ri(b.hp); o.mh = b.maxHp;
+    o.ph = b.bossPhase || 1; o.pt = nzr2(b.phaseTransitionRemaining); o.aac = b.aaCount || 0;
+    const drSteps = Math.floor((b.activeTime || 0) / (b.dmgReductionStepIntervalSec || 120));
+    o.dr = Math.round(Math.min(b.dmgReductionCap || 0.70, (b.dmgReductionBase || 0) + drSteps * (b.dmgReductionStep || 0.05) + (b.phase2DrBonus || 0)) * 100);
+    const ac = b.activeCast;
+    if (ac && ac.skill) {
+      const c = _svRaidCastBuf, sk = ac.skill;
+      c.n = sk.id || ''; c.k = sk.kind || 'circle'; c.rad = sk.radius || 0; c.len = sk.length || 0; c.ha = sk.halfAngle || 0; c.w = sk.width || 0;
+      c.ph = ac.phase || 'telegraph'; c.t = r2(ac.timer || 0); c.tg = r2(sk.telegraph || 0);
+      c.tx = ac.targetX != null ? r2(ac.targetX) : null; c.tz = ac.targetZ != null ? r2(ac.targetZ) : null;
+      c.ox = ac.originX != null ? r2(ac.originX) : null; c.oz = ac.originZ != null ? r2(ac.originZ) : null;
+      c.dx = ac.dirX != null ? r3(ac.dirX) : null; c.dz = ac.dirZ != null ? r3(ac.dirZ) : null;
+      o.c = c;
+    } else o.c = undefined;
+    snap.rBoss = o;
+    snap.rmr = arrOpt(state.sides[1].monsterProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), k: p.kind || 'magic' })) || _ARENA_EMPTY_ARR;
+    snap.rbp = arrOpt(state.bossProjectiles, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), dx: r3(p.dx), dz: r3(p.dz) })) || _ARENA_EMPTY_ARR;
+    snap.rbpl = arrOpt(state.bossPools, p => ({ id: p.id, x: r2(p.x), z: r2(p.z), r: p.radius, life: r2(p.maxLife ? p.life / p.maxLife : p.life) })) || _ARENA_EMPTY_ARR;
+  } else { snap.rBoss = null; snap.rmr = _ARENA_EMPTY_ARR; snap.rbp = _ARENA_EMPTY_ARR; snap.rbpl = _ARENA_EMPTY_ARR; }
   return snap;
 }
 
@@ -3852,7 +4025,7 @@ const _sandboxHeroBuf = _makeHeroSnapBuf();
 // mesh-refs borttagna (boss = state.boss x/z), isHeroWalkable → isBossWarsWalkable.
 // ADDITIVT — anropas av cast-machinen (slice 2b-ii).
 function bossWarsTargets(state) {
-  return [state.sides[1], state.sides[2], state.sides[3]].filter(s => s);
+  return [state.sides[1], state.sides[2], state.sides[3], state.sides[4]].filter(s => s);   // sides[4] = survival raid (undefined i boss wars → droppas)
 }
 function bossEffectiveDamage(m) {
   // boss4DmgBuff: +20% utgående skada medan Demon Prince (tier 4) står i en giftpool.
@@ -3972,7 +4145,7 @@ function spawnBossAaProjectile(state, boss, targetIdx) {
 // visual-spawns skippade (klienten ritar telegraph från serialiserad b.c).
 function nearestLiveHero(state, x, z) {
   let best = null, bestSq = Infinity;
-  for (const idx of [1, 2, 3]) {
+  for (const idx of [1, 2, 3, 4]) {   // +4 för survival-raid (undefined i boss wars → skippas)
     const s = state.sides[idx];
     if (!s || s.hero.dead) continue;
     const dx = s.hero.x - x, dz = s.hero.z - z;
@@ -4185,7 +4358,7 @@ function tickBossWarsSkills(state, boss, dt) {
   if (boss.activeCast) { tickBossWarsCast(state, boss, dt); return; }
   // Casta bara om någon levande hjälte är inom 18m.
   let best = Infinity;
-  for (const idx of [1, 2, 3]) {
+  for (const idx of [1, 2, 3, 4]) {   // +4 för survival-raid
     const s = state.sides[idx];
     if (!s || s.hero.dead) continue;
     const dd = Math.hypot(s.hero.x - boss.x, s.hero.z - boss.z);
@@ -4229,7 +4402,7 @@ function triggerBossWarsPhaseTransition(state, boss) {
   boss.hp = Math.max(boss.hp, boss.maxHp * (boss.phaseThreshold || 0.5));
   boss.phase2DrBonus = 0.20;
   boss.activeCast = null;   // avbryt pågående cast
-  for (const idx of [1, 2, 3]) {
+  for (const idx of [1, 2, 3, 4]) {   // +4 för survival-raid
     const s = state.sides[idx];
     if (!s || s.hero.dead) continue;
     s.hero.frozenTime = Math.max(s.hero.frozenTime || 0, 2.0);   // 2s stun (var 3s — kändes som handlingsförlust)
@@ -4295,7 +4468,7 @@ function tickBossWarsBoss(state, dt) {
   tickBossWarsSkills(state, boss, dt);
   if (boss.activeCast) return;
   let target = null, bestSq = Infinity;
-  for (const idx of [1, 2, 3]) {
+  for (const idx of [1, 2, 3, 4]) {   // +4 för survival-raid
     const s = state.sides[idx];
     if (!s || s.hero.dead) continue;
     const dx = s.hero.x - boss.x, dz = s.hero.z - boss.z;
@@ -4309,7 +4482,11 @@ function tickBossWarsBoss(state, dt) {
   if (dist > atkRange * 0.9) {
     const ux = (target.hero.x - boss.x) / dist, uz = (target.hero.z - boss.z) / dist;
     const nx = boss.x + ux * boss.speed * dt, nz = boss.z + uz * boss.speed * dt;
-    if (isBossWarsWalkable(nx, nz, state.gateClosed)) { boss.x = nx; boss.z = nz; }
+    // Raid-bossen rör sig i raid-arena-cirkeln; boss-wars-bossen i boss-arenan.
+    const okMove = boss.isSurvivalRaidBoss
+      ? ((nx - SURVIVAL_RAID_CX) * (nx - SURVIVAL_RAID_CX) + (nz - SURVIVAL_RAID_CZ) * (nz - SURVIVAL_RAID_CZ) <= (SURVIVAL_RAID_RADIUS - 1) * (SURVIVAL_RAID_RADIUS - 1))
+      : isBossWarsWalkable(nx, nz, state.gateClosed);
+    if (okMove) { boss.x = nx; boss.z = nz; }
   }
   // AA (range): homing-projektil mot target-hjälten.
   boss.atkCd = Math.max(0, (boss.atkCd || 0) - dt);
@@ -9113,7 +9290,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
   const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  const check = side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
+  const check = side.inSurvival ? (x, z) => survivalHeroWalkable(side, x, z)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
@@ -9154,7 +9331,7 @@ function _addCollider(e, r, inv, clamp) {
 // a wall / out of the arena. Mirrors applyMovement's `check` (rad ~9107) exactly.
 function heroWalkCheck(side) {
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
-  return side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
+  return side.inSurvival ? (x, z) => survivalHeroWalkable(side, x, z)
        : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
        : side.inDuel ? isArenaWalkable
@@ -9224,7 +9401,7 @@ function resolveSurvivalCollisions(state) {
   for (let k = 0; k < monsters.length; k++) {
     const m = monsters[k];
     if (!m || m.hp <= 0) continue;
-    if (m.isSurvivalBossRoomBoss) _addCollider(m, BODY_R_BOSS, 0, null);   // big optional boss
+    if (m.isSurvivalBossRoomBoss || m.isSurvivalRaidBoss) _addCollider(m, BODY_R_BOSS, 0, null);   // big optional / raid boss (immovable)
     else _addCollider(m, (m.survivalBoss || m.isMiniBoss) ? BODY_R_MINIBOSS : BODY_R_MINION, 1, null);
   }
   if (state.centerBuilding) _addCollider(state.centerBuilding, SURVIVAL_BUILDING_RADIUS, 0, null);   // castle keeps pushed minions out
@@ -9279,7 +9456,7 @@ function resolveLineWarsCollisions(state) {
 
 // ===== ZHEYNA SKILLS (server-auth, decision 134) =====
 function zheynaWalk(side) {
-  return side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
+  return side.inSurvival ? (x, z) => survivalHeroWalkable(side, x, z)
        : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
        : side.inDuel ? isArenaWalkable
