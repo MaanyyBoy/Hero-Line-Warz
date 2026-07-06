@@ -3174,11 +3174,14 @@ const SURVIVAL_HERO_SPAWNS = {               // 4 kvadrant-spawns inne i cirkeln
   1: { x: -20, z: -20 }, 2: { x: 20, z: -20 }, 3: { x: 20, z: 20 }, 4: { x: -20, z: 20 },
 };
 // 4 raka lanes: spawn UTANFÖR cirkeln (N/S/E/W), monster marscherar mot center-byggnaden (per kartbild).
+// Lane spawn radius 104 (user 2026-07-06: 3× longer lanes → long approach corridors). Minions march
+// freely from here to the centre building; heroes stay inside the r56 circle, so the outer ~48u is an
+// unopposed runway (ranged/skills reach the near end). Client mirrors this via SurvivalMpMode.LaneEnd.
 const SURVIVAL_LANES = [
-  { id: 1, name: 'N', sx: 0, sz: -60 },
-  { id: 2, name: 'S', sx: 0, sz: 60 },
-  { id: 3, name: 'E', sx: 60, sz: 0 },
-  { id: 4, name: 'W', sx: -60, sz: 0 },
+  { id: 1, name: 'N', sx: 0, sz: -104 },
+  { id: 2, name: 'S', sx: 0, sz: 104 },
+  { id: 3, name: 'E', sx: 104, sz: 0 },
+  { id: 4, name: 'W', sx: -104, sz: 0 },
 ];
 // 2 diagonala BOSS-lanes (uppe-vänster + uppe-höger) → varsitt boss-rum (kartbild 2026-06-27). En GATE
 // vid lane-starten (just utanför cirkeln) är STÄNGD tills laget köper en dyr Nyckel i shoppen → öppnar
