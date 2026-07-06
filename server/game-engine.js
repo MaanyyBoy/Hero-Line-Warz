@@ -2276,6 +2276,7 @@ function tickArena(state, dt) {
   } else if (state.phase === 'fight') {
     state.fightTimer += dt;
     tickArenaCombat(state, dt);
+    resolveArenaCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
     tickArenaShrink(state, dt);
     tickArenaOrbTimer(state, dt);
     checkArenaRoundEnd(state);
@@ -3571,6 +3572,7 @@ function tickSurvival(state, dt) {
   updateMonsterProjectiles(state, state.sides[1], dt);
   // 5) Fas 4: valfria boss-rum-bossar (tickas oavsett gates-status → reward-leverans vid stängd gate)
   tickSurvivalBossRooms(state, dt);
+  resolveSurvivalCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   // 6) Win/lose
   checkSurvivalEnd(state);
 }
@@ -3828,6 +3830,7 @@ function tickSandbox(state, dt) {
     if ((d.frozenTime || 0) > 0) d.frozenTime = Math.max(0, d.frozenTime - dt);
     d.dotRemaining = 0; d.poisonRemaining = 0;
   }
+  resolveSandboxCollisions(state);   // hero can't walk through the training dummies (2026-07-06)
 }
 function serializeSandboxState(state) {
   const snap = {
@@ -4914,6 +4917,7 @@ function tickBossWars(state, dt) {
   tickBossWarsProjectiles(state, dt);
   tickBossWarsPools(state, dt);
   updateMonsterProjectiles(state, state.sides[1], dt);
+  resolveBossWarsCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   checkBossWarsEnd(state);   // boss död → spelarna vinner (server.js stoppar loop + skickar b-end)
 }
 // Match-slut: boss död → spelarna vinner. (Lose-villkor = slice 4: wipe/time.)
@@ -9116,6 +9120,158 @@ function applyMovement(side, joyX, joyZ, dt) {
   if (side.heroId === 'ganji') ganjiAddMeter(side, Math.hypot(side.hero.x - ox, side.hero.z - oz));
 }
 
+// ═══════════ ENTITY BODY-COLLISION (2026-07-06, user) ═════════════════════════════════════════
+// Characters can't overlap / walk through each other in ANY mode. ONE shared separation pass runs at
+// the END of each mode's tick (after ALL movement, dashes and teleports). Positions are authoritative
+// and serialized every tick, so clients reflect the resolved positions automatically — no client change.
+// Body radii are deliberately small: the shortest melee attack range is 2.5, so even a boss (r 1.5) +
+// hero (r 0.45) = 1.95 min separation stays inside melee reach. Bosses/dummies/buildings are immovable
+// (inv=0) so heroes/minions get pushed out of them but their own AI/anchor still controls their motion.
+const BODY_R_HERO = HERO_R, BODY_R_MINION = 0.55, BODY_R_MINIBOSS = 1.0, BODY_R_BOSS = 1.5;   // HERO_R = 0.45
+const COLLIDE_MAX_STEP = 0.6;          // max a body is pushed per tick (avoids pops when many stack)
+const _collPushX = [], _collPushZ = [];   // reused push-accumulator scratch → no per-tick allocation
+
+// Pooled collider list — reused every tick. Node ticks rooms sequentially and each tick fully consumes
+// the pool (collect → separate) before the next, so ONE shared module-level pool is safe and avoids
+// per-tick allocation (matches this file's GC discipline: persistent snap-buffers, _collPushX/Z, …).
+// Slot shape: { e, r, inv, clamp }. inv=0 → immovable; clamp(x,z)→bool walkable, or null for free push.
+const _collItems = [];
+let _collN = 0;
+function _resetColliders() { _collN = 0; }
+function _addCollider(e, r, inv, clamp) {
+  let it = _collItems[_collN];
+  if (!it) { it = { e: null, r: 0, inv: 0, clamp: null }; _collItems[_collN] = it; }
+  it.e = e; it.r = r; it.inv = inv; it.clamp = clamp;
+  _collN++;
+}
+
+// The same per-mode walkable check applyMovement uses, so a collision push can't shove a hero through
+// a wall / out of the arena. Mirrors applyMovement's `check` (rad ~9107) exactly.
+function heroWalkCheck(side) {
+  const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
+  return side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
+       : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
+       : side.inArena1v1 ? isArena1v1Walkable
+       : side.inDuel ? isArenaWalkable
+       : (x, z) => isHeroWalkable(side.idx, x, z, opts);
+}
+
+// Resolve overlaps among the currently-collected colliders (_collItems[0.._collN]). Two-phase so the
+// result is order-independent: accumulate all pairwise pushes, then apply once (capped to COLLIDE_MAX_STEP).
+// Releases entity/closure refs from used slots at the end so a dead entity isn't retained until reuse.
+function separateColliders() {
+  const n = _collN;
+  if (n < 2) { for (let i = 0; i < n; i++) { _collItems[i].e = null; _collItems[i].clamp = null; } return; }
+  for (let i = 0; i < n; i++) { _collPushX[i] = 0; _collPushZ[i] = 0; }
+  for (let i = 0; i < n; i++) {
+    const A = _collItems[i];
+    for (let j = i + 1; j < n; j++) {
+      const B = _collItems[j];
+      if (A.inv === 0 && B.inv === 0) continue;                 // both immovable → nothing to resolve
+      let dx = B.e.x - A.e.x, dz = B.e.z - A.e.z;
+      const minD = A.r + B.r;
+      if (dx > minD || dx < -minD || dz > minD || dz < -minD) continue;   // cheap AABB reject before sqrt
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= minD * minD) continue;
+      let d = Math.sqrt(d2);
+      if (d < 1e-4) { dx = ((A.e.id || i) <= (B.e.id || j)) ? 1 : -1; dz = 0; d = 1; }   // exact overlap → deterministic axis
+      const overlap = minD - d, nx = dx / d, nz = dz / d, invSum = A.inv + B.inv;
+      const sA = overlap * (A.inv / invSum), sB = overlap * (B.inv / invSum);
+      _collPushX[i] -= nx * sA; _collPushZ[i] -= nz * sA;
+      _collPushX[j] += nx * sB; _collPushZ[j] += nz * sB;
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const A = _collItems[i];
+    if (A.inv !== 0) {
+      let px = _collPushX[i], pz = _collPushZ[i];
+      const mag = Math.hypot(px, pz);
+      if (mag >= 1e-4) {
+        if (mag > COLLIDE_MAX_STEP) { const s = COLLIDE_MAX_STEP / mag; px *= s; pz *= s; }
+        const nx = A.e.x + px, nz = A.e.z + pz;
+        if (!A.clamp) { A.e.x = nx; A.e.z = nz; }
+        else if (A.clamp(nx, nz)) { A.e.x = nx; A.e.z = nz; }    // axis-separated slide → push can't cross a wall
+        else if (A.clamp(nx, A.e.z)) A.e.x = nx;
+        else if (A.clamp(A.e.x, nz)) A.e.z = nz;
+      }
+    }
+    A.e = null; A.clamp = null;   // release refs (don't retain a dead entity / hero closure until reuse)
+  }
+}
+
+function _pushHeroCollider(side) {
+  if (!side || !side.hero || side.hero.dead) return;
+  _addCollider(side.hero, BODY_R_HERO, 1, heroWalkCheck(side));
+}
+
+// Per-mode collectors — each called once at the end of its tick. Kept separate so a single mode's
+// collision can be disabled by removing its one call site (no shared-flag entanglement).
+function resolveArenaCollisions(state) {
+  _resetColliders();
+  for (const k in state.sides) _pushHeroCollider(state.sides[k]);   // 1v1 + team arena
+  separateColliders();
+}
+
+function resolveSurvivalCollisions(state) {
+  _resetColliders();
+  for (const idx of [1, 2, 3, 4]) _pushHeroCollider(state.sides[idx]);
+  const monsters = state.sides[1].monsters;   // shared array (sides 2..4 alias it) → iterate once
+  for (let k = 0; k < monsters.length; k++) {
+    const m = monsters[k];
+    if (!m || m.hp <= 0) continue;
+    if (m.isSurvivalBossRoomBoss) _addCollider(m, BODY_R_BOSS, 0, null);   // big optional boss
+    else _addCollider(m, (m.survivalBoss || m.isMiniBoss) ? BODY_R_MINIBOSS : BODY_R_MINION, 1, null);
+  }
+  if (state.centerBuilding) _addCollider(state.centerBuilding, SURVIVAL_BUILDING_RADIUS, 0, null);   // castle keeps pushed minions out
+  separateColliders();
+}
+
+function resolveBossWarsCollisions(state) {
+  _resetColliders();
+  for (const idx of [1, 2, 3]) _pushHeroCollider(state.sides[idx]);
+  const monsters = state.sides[1].monsters;   // shared array (sides 2..3 alias it); boss is also in it
+  for (let k = 0; k < monsters.length; k++) {
+    const m = monsters[k];
+    if (!m || m.hp <= 0) continue;
+    if (m === state.boss) _addCollider(m, BODY_R_BOSS, 0, null);   // tier boss immovable (own AI moves it)
+    else _addCollider(m, m.isMiniBoss ? BODY_R_MINIBOSS : BODY_R_MINION, 1, null);
+  }
+  separateColliders();
+}
+
+function resolveSandboxCollisions(state) {
+  _resetColliders();
+  _pushHeroCollider(state.sides[1]);
+  const dummies = state.sandboxDummies;
+  if (dummies) for (let k = 0; k < dummies.length; k++) {
+    const d = dummies[k];
+    if (d) _addCollider(d, d.isBossWarsBoss ? BODY_R_BOSS : BODY_R_MINION, 0, null);   // anchored → immovable
+  }
+  separateColliders();
+}
+
+function resolveLineWarsCollisions(state) {
+  _resetColliders();
+  for (const k in state.sides) {
+    const side = state.sides[k];
+    if (!side) continue;
+    _pushHeroCollider(side);
+    const ms = side.monsters;
+    if (ms) for (let i = 0; i < ms.length; i++) {
+      const m = ms[i];
+      if (!m || m.hp <= 0) continue;
+      _addCollider(m, (m.isBoss || m.isMiniBoss) ? BODY_R_MINIBOSS : BODY_R_MINION, m.isBoss ? 0 : 1, isCreepPos);
+    }
+    const pc = side.playerCreeps;
+    if (pc) for (let i = 0; i < pc.length; i++) {
+      const m = pc[i];
+      if (!m || m.hp <= 0) continue;
+      _addCollider(m, BODY_R_MINION, 1, isCreepPos);
+    }
+  }
+  separateColliders();
+}
+
 // ===== ZHEYNA SKILLS (server-auth, decision 134) =====
 function zheynaWalk(side) {
   return side.inSurvival ? (x, z) => isSurvivalWalkable(x, z, side._svBossGatesOpen)
@@ -10392,6 +10548,7 @@ function tickGame(state, dt) {
     const s1 = state.sides[1], s2 = state.sides[2];
     const someoneDead = s1.hero.dead || s2.hero.dead;
     if (someoneDead || state.duelMatchTimer <= 0) endDuel(state);
+    resolveLineWarsCollisions(state);   // duel heroes can't overlap / walk through each other (2026-07-06)
     return;
   }
   // Portal-state tick (utanför duel)
@@ -10555,6 +10712,7 @@ function tickGame(state, dt) {
       }
     }
   }
+  resolveLineWarsCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   // Decision 105: synka wave-progression mellan sidor (nästa wave startar
   // bara när BÅDA har avslutat sin wave).
   syncWaves(state.sides);
