@@ -166,6 +166,10 @@ function reportMatchResults(room) {
   else if (room.mode === 'survival') accMode = 'survival';
   else return;   // okänt/sandbox — inget att rapportera
   const coop = (accMode === 'boss' || accMode === 'survival');   // co-op: alla peers delar samma utfall
+  // Anti-farm (2026-07-07): innehöll matchen bottar? Då skippas leaderboard-kolumnerna men XP ges.
+  // Speglar klientens gate (AccountService.ReportResult vsBots) som servern tidigare saknade.
+  const allSides = g.sides ? Object.values(g.sides).filter(Boolean) : [];
+  const hadBot = allSides.some(s => s.isBot);
   const peers = [];
   if (room.host) peers.push(room.host);
   if (room.client) peers.push(room.client);
@@ -187,6 +191,7 @@ function reportMatchResults(room) {
       userId: ws.userId, outcome, mode: accMode,
       heroLegacyId: side.heroId,
       bossTier: accMode === 'boss' ? g.tier : undefined,
+      vsBots: hadBot,
     }).catch(() => {});
   }
 }
@@ -807,6 +812,13 @@ wss.on('connection', (ws) => {
       const token = (typeof msg.token === 'string') ? msg.token : '';
       const bind = (name, userId, authed) => {
         if (!name) return;
+        // Anti-hijack (2026-07-07): en OVERIFIERAD bind får inte kapa ett namn som redan hålls av en
+        // VERIFIERAD socket → annars kan {t:'hello', username:'Offer'} utan token stjäla offrets
+        // presence-slot och kapa invites. Verifierade binds vinner alltid (token bevisar ägarskap).
+        if (!authed) {
+          const held = onlineUsers.get(name);
+          if (held && held !== ws && held.authed) return;
+        }
         if (ws.username && onlineUsers.get(ws.username) === ws) onlineUsers.delete(ws.username);
         ws.username = name; ws.userId = userId || null; ws.authed = !!authed;
         onlineUsers.set(name, ws);
@@ -896,6 +908,8 @@ wss.on('connection', (ws) => {
       room.hostGoneAt = null;
       ws.role = 'host';
       ws.roomCode = code;
+      ws.peerIdx = 1;   // host = alltid sideIdx 1 (den nya socketen har aldrig fått peerIdx) —
+                        // utan detta släpper boss/survival-input tyst (kräver peerIdx 1..3/1..4) → host fryser efter reconnect
       send(ws, { t: 'reclaimed', code, hasClient: !!room.client });
       if (room.client) send(room.client, { t: 'peer-rejoined' });
       console.log(`[${code}] host reclaimed (rooms=${rooms.size})`);

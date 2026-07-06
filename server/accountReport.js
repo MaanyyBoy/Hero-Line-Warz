@@ -48,7 +48,9 @@ async function verifyToken(accessToken) {
 
 // Report one player's match result. outcome: 'win' | 'loss'. mode: 'arena' | 'linewars' | 'boss'.
 // Read-modify-write via SERVICE_ROLE (per-user concurrency is ~nil, so a race is negligible).
-async function reportMatchResult({ userId, outcome, mode, heroLegacyId, bossTier }) {
+// vsBots: när matchen innehöll bottar hoppar vi över leaderboard-kolumnerna (win/loss/boss_clears)
+// men ger fortfarande XP — exakt som klientens anti-farm-gate (AccountService.ReportResult).
+async function reportMatchResult({ userId, outcome, mode, heroLegacyId, bossTier, vsBots }) {
   if (!enabled() || !userId) return;
   const won = outcome === 'win';
   try {
@@ -61,12 +63,14 @@ async function reportMatchResult({ userId, outcome, mode, heroLegacyId, bossTier
     const cur = (rows && rows[0]) || {};
 
     const patch = {};
-    // win/loss columns per mode
-    if (mode === 'arena') patch[won ? 'arena_wins' : 'arena_losses'] = (cur[won ? 'arena_wins' : 'arena_losses'] || 0) + 1;
-    else if (mode === 'linewars') patch[won ? 'lw_wins' : 'lw_losses'] = (cur[won ? 'lw_wins' : 'lw_losses'] || 0) + 1;
-    else if (mode === 'boss' && won) {
-      patch.boss_clears = (cur.boss_clears || 0) + 1;
-      if (bossTier && bossTier > (cur.best_boss_tier || 0)) patch.best_boss_tier = bossTier;
+    // win/loss columns per mode — SKIPPAS för bot-matcher (anti-farm), XP ges ändå nedan
+    if (!vsBots) {
+      if (mode === 'arena') patch[won ? 'arena_wins' : 'arena_losses'] = (cur[won ? 'arena_wins' : 'arena_losses'] || 0) + 1;
+      else if (mode === 'linewars') patch[won ? 'lw_wins' : 'lw_losses'] = (cur[won ? 'lw_wins' : 'lw_losses'] || 0) + 1;
+      else if (mode === 'boss' && won) {
+        patch.boss_clears = (cur.boss_clears || 0) + 1;
+        if (bossTier && bossTier > (cur.best_boss_tier || 0)) patch.best_boss_tier = bossTier;
+      }
     }
     // XP (account + per-hero) — identical to client AddMatchXp
     const gain = won ? MATCH_WIN_XP : MATCH_LOSS_XP;

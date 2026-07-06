@@ -3817,6 +3817,7 @@ const SURVIVAL_SHOP = [
 ];
 function applySurvivalBuy(state, side, id) {
   if (!state || !side) return;
+  if (side.hero && side.hero.dead) return;   // ingen shopping medan död (2026-07-07)
   const item = SURVIVAL_SHOP.find(s => s.id === id);
   if (!item || (side.gold || 0) < item.cost) return;   // okänt id / inte råd
   if (item.kind === 'item') {
