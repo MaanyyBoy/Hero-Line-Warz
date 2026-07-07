@@ -986,7 +986,7 @@ function recomputeSideStats(side) {
   // Boss Wars-loadout: talents + items stat-bonusar (mirror main.js recomputeSideStats
   // 15834-15842). Foldas in i samma accumulator → läggs på FÖRE level-mult, exakt som klienten.
   let _bwAaLifesteal = 0, _bwCritDmgBonus = 0, _bwPhoenix = false;
-  if (side.inBossWars || side.inSurvival || side.inArena1v1) {   // arena: lobby-loadout flyttad till prep-grid (a-loadout); survival delar item/talent-katalogen (shop + boss-drops)
+  if (side.inBossWars || side.inSurvival || side.inArena1v1 || side.inLineWars) {   // +inLineWars 2026-07-07: köper de 12 items via bw-item-buy → bossWarsItems + itemPassives (ersätter item1/item2)
     const _applyBw = (def) => {
       if (!def) return;
       if (def.stats) addStats(def.stats);
@@ -1052,7 +1052,7 @@ function recomputeSideStats(side) {
   side.skills.e.max = (heroCd.e !== undefined ? heroCd.e : SKILL_BASE_CD.e) * side.cdrMul;
   // Boss Wars-extras (mirror main.js 15880-15891): crit-dmg läses i combat via side.critDmgMul.
   // AA-lifesteal + phoenix-revive-BETEENDE = Phase B (fälten sätts här, behavior wiras separat).
-  if (side.inBossWars || side.inArena1v1 || side.inSurvival) {   // arena loadout ärver crit-dmg + AA-lifesteal; survival: bwi_sv_warlord har critDmgBonus → skrivs hit; phoenix-revive no-op i arena+survival (inga phoenix-items i deras shops)
+  if (side.inBossWars || side.inArena1v1 || side.inSurvival || side.inLineWars) {   // +inLineWars 2026-07-07: Bloodfang-lifesteal (aaLifestealPct) måste skrivas även i Line Wars (matchar accumulator-gaten :989)
     side.critDmgMul = 2.0 + _bwCritDmgBonus;
     side.aaLifestealPct = _bwAaLifesteal;
     side.phoenixReviveAvailable = _bwPhoenix && (side.phoenixReviveAvailable !== false);
@@ -1424,6 +1424,21 @@ function upgradeBwItem(state, side, itemId) {
   side.gold -= cost;
   side.bwItemLevels[itemId] = cur + 1;
   recomputeArenaSideStats(state, side);                    // no-op:ar arena-talents i boss/survival
+}
+
+// Köp ett av de 12 items för guld (Line Wars item-shop; ersätter item1/item2). Lägger till på Lv1.
+// Loadout-lägena (arena/boss) får sina gratis via loadout-parse; survival via sv-buy. Cap 6 i Line Wars.
+const BW_ITEM_CAP = 6;
+function buyBwItem(state, side, id) {
+  if (!side || side.hero.dead || !ENGINE_BOSS_WARS_ITEMS[id]) return;
+  if (!side.bossWarsItems) side.bossWarsItems = [];
+  if (side.bossWarsItems.includes(id)) return;              // äger redan (uppgradera via bw-item-up)
+  if (side.bossWarsItems.length >= BW_ITEM_CAP) return;     // inventory fullt
+  const cost = ENGINE_BOSS_WARS_ITEMS[id].buyCost || 250;
+  if ((side.gold || 0) < cost) return;                      // inte råd
+  side.gold -= cost;
+  side.bossWarsItems.push(id);
+  recomputeArenaSideStats(state, side);
 }
 
 const ITEM_BLINK_DIST = 6;
@@ -2143,11 +2158,18 @@ function tickHeroBuffTimers(sd, dt) {
     sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.heroFearTime = 0;
     if (sd.iceBlockRemaining) sd.iceBlockRemaining = 0;
   }
-  // ── ITEM-PASSIVER (Fas B, 2026-07-07) — delad per-side per-frame (alla lägen via denna) ──
+  tickItemPassiveTimers(sd, dt);   // item-passiv/aktiv-timers (delad; ANROPAS ÄVEN från tickGame för Line Wars)
+}
+
+// ── ITEM-PASSIV/AKTIV-TIMERS (Fas B/C 2026-07-07) — delad per-side per-frame. Anropas från tickHeroBuffTimers
+// (arena/boss/survival/sandbox) OCH separat från tickGame (Line Wars, som ej kör tickHeroBuffTimers). EGEN
+// funktion så Line Wars kan ticka den UTAN att dubbel-ticka gandulf/nyro/ganji-timersen ovan.
+function tickItemPassiveTimers(sd, dt) {
+  if (!sd || !sd.hero) return;
   sd.noDamageTime = (sd.noDamageTime || 0) + dt;                                   // Silent Steps: tid utan att ta skada
-  if ((sd.battleMomentumRem || 0) > 0) sd.battleMomentumRem = Math.max(0, sd.battleMomentumRem - dt);  // Battle Momentum MS-buff (set wiras i dmg-batch)
-  if ((sd.arcaneFlowRem || 0) > 0) sd.arcaneFlowRem = Math.max(0, sd.arcaneFlowRem - dt);              // Arcane Flow MS-buff (set wiras i cast-batch)
-  if ((sd.manaSurgeRem || 0) > 0) sd.manaSurgeRem = Math.max(0, sd.manaSurgeRem - dt);                 // Mana Surge (Arcane Striders): nästa skill +25% inom fönstret
+  if ((sd.battleMomentumRem || 0) > 0) sd.battleMomentumRem = Math.max(0, sd.battleMomentumRem - dt);  // Battle Momentum MS-buff
+  if ((sd.arcaneFlowRem || 0) > 0) sd.arcaneFlowRem = Math.max(0, sd.arcaneFlowRem - dt);              // Arcane Flow MS-buff
+  if ((sd.manaSurgeRem || 0) > 0) sd.manaSurgeRem = Math.max(0, sd.manaSurgeRem - dt);                 // Mana Surge: nästa skill +25%
   if (sd.itemActiveCd) for (const k in sd.itemActiveCd) if (sd.itemActiveCd[k] > 0) sd.itemActiveCd[k] = Math.max(0, sd.itemActiveCd[k] - dt);   // item-active-cooldowns
   if ((sd.ironWallCd || 0) > 0) sd.ironWallCd = Math.max(0, sd.ironWallCd - dt);
   if ((sd.rebirthCd || 0) > 0) sd.rebirthCd = Math.max(0, sd.rebirthCd - dt);
@@ -10476,6 +10498,11 @@ function applyEvent(state, sideIdx, ev) {
     activateBwItem(state, side, ev.id, ev.dx, ev.dz);
     return;
   }
+  if (ev.type === 'bw-item-buy') {   // Line Wars: köp ett av de 12 items för guld (Lv1)
+    if (side.hero.dead) return;
+    buyBwItem(state, side, ev.id);
+    return;
+  }
   // Spendera 1 skill-point på Q/F/E (R kan inte uppgraderas via points)
   if (ev.type === 'spsk') {
     const key = ev.key;
@@ -10977,6 +11004,7 @@ function tickGame(state, dt) {
     if ((us.rageRemaining || 0) > 0) tickGimluRageServer(state, us, dt);
     tickBurningAura(state, us, dt);   // Burning Aura även i classic Line Wars/duell (framtidssäkrar Line Wars-item-shop)
     tickFrozenDomains(state, us, dt);
+    tickItemPassiveTimers(us, dt);    // item-aktiv-cd + MS-buffar + iron wall + rebirth (Line Wars kör ej tickHeroBuffTimers)
     if ((us.berserkRemaining || 0) > 0) { if (us.hero.dead) us.berserkRemaining = 0; else us.berserkRemaining = Math.max(0, us.berserkRemaining - dt); }
   }
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
@@ -11377,6 +11405,7 @@ function _makeLwSideBuf(heroBuf) {
     g: 0, inc: 0, incT: 0, incC: 0,
     ptu: undefined, ptc: undefined, pet: undefined, petT: undefined,
     tu: null, inv: [],
+    bwi: undefined, bil: undefined, bac: undefined,   // de 12 loadout-items (bw-item-buy) → LoadoutItemBar
     ms: 0, ad: 0, ac: 0,
     tw: { hp: 0, mh: 0 },
     fa: undefined, aa: undefined, aml: undefined,
@@ -11474,6 +11503,10 @@ function _serializeLwSide(side, buf, mPool, cPool, invPool, pPool, cpPool, mrPoo
   // Inventory: poolat, alltid array (ej undefined). _lwFillPool sätter invPool.length.
   _lwFillPool(invPool, side.inventory, _writeLwInv, _newLwInv);
   buf.inv  = invPool;
+  // De 12 loadout-items (bw-item-buy): ägda ids + nivåer + active-cd → klientens LoadoutItemBar (2026-07-07).
+  buf.bwi  = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;
+  buf.bil  = side.bwItemLevels || undefined;
+  buf.bac  = side.itemActiveCd || undefined;
   buf.ms   = r2(side.moveSpeed);
   buf.ad   = r1(side.attackDmg);
   buf.ac   = side.attackCounter;
