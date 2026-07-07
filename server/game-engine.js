@@ -993,8 +993,17 @@ function recomputeSideStats(side) {
       if (def.critDmgBonus) _bwCritDmgBonus += def.critDmgBonus;
       if (def.phoenixRevive) _bwPhoenix = true;
     };
+    // Items skalas per nivå (Lv1/2/3); talents är oskalade (ej nivåbara).
+    const _applyBwItem = (def, level) => {
+      if (!def) return;
+      const mul = itemBwLevelMul(level);
+      if (def.stats) { const s = {}; for (const k in def.stats) s[k] = def.stats[k] * mul; addStats(s); }
+      if (def.lifestealOnAa) _bwAaLifesteal += def.lifestealOnAa * mul;
+      if (def.critDmgBonus) _bwCritDmgBonus += def.critDmgBonus * mul;
+      if (def.phoenixRevive) _bwPhoenix = true;   // binär effekt — skalas ej
+    };
     if (side.bossWarsTalents) for (const tid of side.bossWarsTalents) _applyBw(ENGINE_BOSS_WARS_TALENTS[tid]);
-    if (side.bossWarsItems) for (const iid of side.bossWarsItems) _applyBw(ENGINE_BOSS_WARS_ITEMS[iid]);
+    if (side.bossWarsItems) for (const iid of side.bossWarsItems) _applyBwItem(ENGINE_BOSS_WARS_ITEMS[iid], (side.bwItemLevels && side.bwItemLevels[iid]) || 1);
   }
   // Per-skill level-mult (för tick-skills som kan läsa skillLvlMul[key] live)
   side.skillLvlMul = {
@@ -1122,6 +1131,12 @@ const ENGINE_BOSS_WARS_TALENTS = {
   bwt_ms:    { stats: { moveSpeedPct: 0.25 } },   // buffed 0.15→0.25 (was a dead pick vs Iron Body +25% HP)
   bwt_heal:  { stats: { healPerSecPct: 0.035 } }, // buffed 0.02→0.035 (real sustain identity)
 };
+// 3-nivå item-uppgradering (user 2026-07-07): loadout-items skalas Lv1/2/3 = ×1.0/×1.6/×2.2 på ALLA stats
+// (+active). Lv1 = bas → befintliga loadouts oförändrade tills man uppgraderar. Per-item nivå lagras i
+// side.bwItemLevels[itemId] (default 1). Köp/uppgradering för guld = klient-shop-fas.
+const ITEM_BW_MAX_LEVEL = 3;
+const itemBwLevelMul = (lvl) => 1 + 0.6 * (Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1)) - 1);   // 1.0 / 1.6 / 2.2
+const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
 const ENGINE_BOSS_WARS_ITEMS = {
   bwi_blade:    { stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
   bwi_helm:     { stats: { maxHpPct: 0.35 } },
