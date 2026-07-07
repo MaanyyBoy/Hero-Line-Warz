@@ -1426,6 +1426,33 @@ function upgradeBwItem(state, side, itemId) {
   recomputeArenaSideStats(state, side);                    // no-op:ar arena-talents i boss/survival
 }
 
+const ITEM_BLINK_DIST = 6;
+// Aktivera ett items ACTIVE (Frozen Domain/Time Warp/Blink/Charge/Mana Surge). Server-auth: kräver att
+// man äger itemet (side.itemActives[id] finns), ej på cd, ej död. Effekt per id, sen sätts cd.
+function activateBwItem(state, side, id, dx, dz) {
+  if (!side || side.hero.dead) return;
+  if (!side.itemActives || !(id in side.itemActives)) return;   // äger ej item med denna active
+  if (!side.itemActiveCd) side.itemActiveCd = {};
+  if ((side.itemActiveCd[id] || 0) > 0) return;                 // på cooldown
+  const cd = side.itemActives[id];
+  if (id === 'blink') {                                         // Shadowstep Boots: teleport kort sträcka i sikt-riktning
+    let bx = dx || 0, bz = dz || 0; const m = Math.hypot(bx, bz);
+    if (m < 0.01) { bx = side.hero.facingX || 0; bz = side.hero.facingZ || 1; } else { bx /= m; bz /= m; }
+    const walk = zheynaWalk(side);   // mode-agnostisk walkable (arena/boss/survival/duel)
+    const nx = side.hero.x + bx * ITEM_BLINK_DIST, nz = side.hero.z + bz * ITEM_BLINK_DIST;
+    if (walk(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
+    else { const hx = side.hero.x + bx * ITEM_BLINK_DIST * 0.5, hz = side.hero.z + bz * ITEM_BLINK_DIST * 0.5; if (walk(hx, hz)) { side.hero.x = hx; side.hero.z = hz; } }
+  } else if (id === 'timeWarp') {                              // Chrono Crystal: nollställ senast använda skill (ej ult)
+    const k = side._lastNonUltSkillKey;
+    if (k && side.skills[k]) side.skills[k].cd = 0;
+  } else if (id === 'manaSurge') {                             // Arcane Striders: nästa skill inom 4s +25% dmg
+    side.manaSurgeRem = 4;
+  } else {
+    return;   // charge / frozenDomain implementeras i nästa batch (rör ej cd:n förrän dess)
+  }
+  side.itemActiveCd[id] = cd;
+}
+
 function killHero(side) {
   if (side.hero.dead) return;
   // Boss Wars Phoenix Amulet (Phase B): revive EN gång vid 50% HP istället för att dö.
@@ -2032,6 +2059,8 @@ function tickHeroBuffTimers(sd, dt) {
   sd.noDamageTime = (sd.noDamageTime || 0) + dt;                                   // Silent Steps: tid utan att ta skada
   if ((sd.battleMomentumRem || 0) > 0) sd.battleMomentumRem = Math.max(0, sd.battleMomentumRem - dt);  // Battle Momentum MS-buff (set wiras i dmg-batch)
   if ((sd.arcaneFlowRem || 0) > 0) sd.arcaneFlowRem = Math.max(0, sd.arcaneFlowRem - dt);              // Arcane Flow MS-buff (set wiras i cast-batch)
+  if ((sd.manaSurgeRem || 0) > 0) sd.manaSurgeRem = Math.max(0, sd.manaSurgeRem - dt);                 // Mana Surge (Arcane Striders): nästa skill +25% inom fönstret
+  if (sd.itemActiveCd) for (const k in sd.itemActiveCd) if (sd.itemActiveCd[k] > 0) sd.itemActiveCd[k] = Math.max(0, sd.itemActiveCd[k] - dt);   // item-active-cooldowns
   if ((sd.ironWallCd || 0) > 0) sd.ironWallCd = Math.max(0, sd.ironWallCd - dt);
   if ((sd.rebirthCd || 0) > 0) sd.rebirthCd = Math.max(0, sd.rebirthCd - dt);
   // Rebirth (Phoenix Core): in-place-revive 3s efter död @25% HP. Avbryter mode-respawn så ingen dubbel.
@@ -2482,6 +2511,7 @@ function _makeHeroSnapBuf() {
     rsp: 0,   // respawn-nedräkning (sek kvar, avrundat upp); 0 om hjälten lever/läget saknar respawn. Initial i struct → hidden class stabil.
     bil: undefined,   // loadout-item-nivåer { itemId: 1..3 } → klient-shop visar nivå/uppgraderingskostnad
     bwi: undefined,   // ägda loadout-item-ids (för shoppen; survival köper in-match så listan ändras)
+    bac: undefined,   // item-active-cooldowns { activeId: sek kvar } → klient-aktiv-knappar visar cd
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2509,6 +2539,7 @@ function serializeArenaHero(side, buf) {
   buf.g = nz(side.gold);
   buf.bil = side.bwItemLevels || undefined;   // loadout-item-nivåer för in-match uppgraderings-shop
   buf.bwi = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;   // ägda item-ids
+  buf.bac = side.itemActiveCd || undefined;   // item-active-cooldowns för klient-knappar
   buf.ue = nzr2(side.ultEnergy);
   buf.tnt = nzr2(side.hero.tauntedTime);
   buf.fzt = nzr2(side.hero.frozenTime);
@@ -10292,10 +10323,12 @@ function applyEvent(state, sideIdx, ev) {
     // Ganji E "Ninja's Speed": +20% outgoing SKILL dmg during the buff window (dedicated
     // ganjiSpeedRem; the AA-dmg side of this is folded into updateHeroAttack separately).
     const _ganjiSpeedSkillMul = (isGanji && (side.ganjiSpeedRem || 0) > 0) ? (1 + GANJI_E_DMG) : 1;
-    side.skillDmgMul = _prevSkillDmgMul * _lvlMul * _ganjiSpeedSkillMul;
-    // Arcane Flow (Arcane Striders): +20% MS 1.5s vid lyckad cast. Detektera cast via cd-ökning
-    // (cast-fn:erna sätter side.skills[key].cd) → ingen falsk trigger vid spam på cooldown.
-    const _afCd0 = (side.itemPassives && side.itemPassives.has('arcaneFlow') && side.skills[ev.key]) ? (side.skills[ev.key].cd || 0) : -1;
+    // Mana Surge (Arcane Striders): nästa skill inom fönstret gör +25% skada. Multiplikatorn appliceras
+    // nu men KONSUMERAS först vid lyckad cast (nedan) → slösas ej bort om skillen var på cooldown.
+    const _manaSurgeMul = ((side.manaSurgeRem || 0) > 0) ? 1.25 : 1;
+    side.skillDmgMul = _prevSkillDmgMul * _lvlMul * _ganjiSpeedSkillMul * _manaSurgeMul;
+    // Cast-lyckad-detektering via cd-ökning (cast-fn:erna sätter side.skills[key].cd först vid lyckad cast).
+    const _cdBefore = side.skills[ev.key] ? (side.skills[ev.key].cd || 0) : 0;
     try {
       if (ev.key === 'q') {
         if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
@@ -10328,7 +10361,11 @@ function applyEvent(state, sideIdx, ev) {
     } finally {
       side.skillDmgMul = _prevSkillDmgMul;
     }
-    if (_afCd0 >= 0 && side.skills[ev.key] && (side.skills[ev.key].cd || 0) > _afCd0) side.arcaneFlowRem = 1.5;   // cd ökade → cast lyckades
+    if (side.skills[ev.key] && (side.skills[ev.key].cd || 0) > _cdBefore) {   // cd ökade → cast LYCKADES
+      side._lastNonUltSkillKey = ev.key;                                       // Time Warp nollställer senast LYCKADE cast
+      if (_manaSurgeMul > 1) side.manaSurgeRem = 0;                            // konsumera Mana Surge bara vid lyckad cast
+      if (side.itemPassives && side.itemPassives.has('arcaneFlow')) side.arcaneFlowRem = 1.5;   // Arcane Flow +20% MS
+    }
     return;
   }
   if (ev.type === 'activate') {
@@ -10339,6 +10376,10 @@ function applyEvent(state, sideIdx, ev) {
   if (ev.type === 'bw-item-up') {   // uppgradera en loadout-item Lv1→2→3 för guld (Arena/Boss/Survival)
     if (side.hero.dead) return;
     upgradeBwItem(state, side, ev.id);
+    return;
+  }
+  if (ev.type === 'bw-item-active') {   // aktivera ett items ACTIVE (frozenDomain/timeWarp/blink/charge/manaSurge)
+    activateBwItem(state, side, ev.id, ev.dx, ev.dz);
     return;
   }
   // Spendera 1 skill-point på Q/F/E (R kan inte uppgraderas via points)
