@@ -1298,6 +1298,11 @@ function tickGandulfMark(state, target, dt) {
 // och nollas direkt efter → boss/DoT/miljö-skada har _dmgActor=null (ingen falsk attribution). Säkert
 // modul-lokalt eftersom ticks är helt synkrona (ingen async mellan set och läsning).
 let _dmgActor = null;
+// Chain Lightning (Stormcall Staff): skill-träffar köas här och processas i arena-combat-loopen
+// (behöver state + fiende-lista). _inChainBounce hindrar att studs-skadan re-proccar → ingen oändlig kedja.
+let _chainQueue = [];
+let _inChainBounce = false;
+const CHAIN_LIGHTNING_RANGE = 7;
 
 function damageHero(side, amount, isAaDamage) {
   if (side.hero.dead) return;
@@ -1362,6 +1367,11 @@ function damageHero(side, amount, isAaDamage) {
   if (final > 0 && !isAaDamage && _dmgActor && _dmgActor !== side && _dmgActor.itemPassives && _dmgActor.itemPassives.has('frozenSoul')) {
     side.heroSlowMul = Math.min(side.heroSlowMul == null ? 1 : side.heroSlowMul, 0.85);
     side.heroSlowTime = Math.max(side.heroSlowTime || 0, 2);
+  }
+  // Chain Lightning (Stormcall Staff): skill-skada har 20% chans att köa en studs till 2 närliggande
+  // fiender för 35% av skill-skadan (processas i combat-loopen). _inChainBounce → studsen re-proccar ej.
+  if (final > 0 && !isAaDamage && !_inChainBounce && _dmgActor && _dmgActor !== side && _dmgActor.itemPassives && _dmgActor.itemPassives.has('chainLightning') && Math.random() < 0.20) {
+    _chainQueue.push({ attacker: _dmgActor, victimIdx: side.idx, x: side.hero.x, z: side.hero.z, dmg: amount * 0.35 });
   }
   if (side.hero.hp <= 0) {
     // Harvest (Soul Collector): en hjälte-KILL ger skadegöraren +1% skill-dmg (cap 15%).
@@ -2132,6 +2142,26 @@ function tickArenaCombat(state, dt) {
     updateNovaEffects(state, side, opp, dt);
     updateActiveBuffs(side, dt);
     _dmgActor = null;   // sluta attribuera utgående skada till denna side (boss/miljö/DoT = oattribuerad)
+  }
+  // Chain Lightning-studsar: hoppa till upp till 2 närmaste fiende-hjältar (annat lag, ej ursprungsoffret)
+  // inom range, 35% av skill-skadan. _inChainBounce → ingen re-proc (oändlig kedja omöjlig).
+  if (_chainQueue.length) {
+    for (const c of _chainQueue) {
+      const attTeam = c.attacker.team || c.attacker.idx;
+      const cand = [];
+      for (const idx of arenaKeys(state)) {
+        const s2 = state.sides[idx];
+        if (!s2 || s2.hero.dead || idx === c.victimIdx) continue;
+        if ((s2.team || idx) === attTeam) continue;   // hoppa allierade
+        const d = Math.hypot(s2.hero.x - c.x, s2.hero.z - c.z);
+        if (d <= CHAIN_LIGHTNING_RANGE) cand.push({ s2, d });
+      }
+      cand.sort((a, b) => a.d - b.d);
+      _inChainBounce = true; _dmgActor = c.attacker;
+      for (let i = 0; i < Math.min(2, cand.length); i++) damageHero(cand[i].s2, c.dmg, false);
+      _inChainBounce = false; _dmgActor = null;
+    }
+    _chainQueue.length = 0;
   }
 }
 
