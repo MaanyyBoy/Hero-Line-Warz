@@ -1411,6 +1411,13 @@ function killHero(side) {
     side.phoenixImmuneRemaining = 1.5;
     return;   // överlever — INTE dead
   }
+  // Rebirth (Phoenix Core, 2026-07-07): schemalägg in-place-revive om 3s @25% HP (180s CD). Faller
+  // IGENOM till normal död (dead=true + state-reset nedan); tickHeroBuffTimers återupplivar vid
+  // rebirthPending<=0 och avbryter mode-respawn (respawnTimer/_svRespawn) så ingen dubbel-revive.
+  if (side.itemPassives && side.itemPassives.has('rebirth') && (side.rebirthCd || 0) <= 0 && (side.rebirthPending || 0) <= 0) {
+    side.rebirthPending = 3;
+    side.rebirthCd = 180;
+  }
   side.hero.dead = true;
   side.hero.respawnTimer = RESPAWN_TIME;
   // Zheyna: avbryt klon/spjut/ult-laddning + DR vid död (decision 134)
@@ -1998,6 +2005,21 @@ function tickHeroBuffTimers(sd, dt) {
   if ((sd.battleMomentumRem || 0) > 0) sd.battleMomentumRem = Math.max(0, sd.battleMomentumRem - dt);  // Battle Momentum MS-buff (set wiras i dmg-batch)
   if ((sd.arcaneFlowRem || 0) > 0) sd.arcaneFlowRem = Math.max(0, sd.arcaneFlowRem - dt);              // Arcane Flow MS-buff (set wiras i cast-batch)
   if ((sd.ironWallCd || 0) > 0) sd.ironWallCd = Math.max(0, sd.ironWallCd - dt);
+  if ((sd.rebirthCd || 0) > 0) sd.rebirthCd = Math.max(0, sd.rebirthCd - dt);
+  // Rebirth (Phoenix Core): in-place-revive 3s efter död @25% HP. Avbryter mode-respawn så ingen dubbel.
+  if ((sd.rebirthPending || 0) > 0) {
+    if (!sd.hero.dead) sd.rebirthPending = 0;   // återupplivad på annat sätt → avbryt
+    else {
+      sd.rebirthPending = Math.max(0, sd.rebirthPending - dt);
+      if (sd.rebirthPending <= 0) {
+        sd.hero.dead = false;
+        sd.hero.hp = Math.max(1, Math.round(sd.hero.maxHp * 0.25));
+        sd.hero.respawnTimer = 0;   // avbryt line-wars/arena respawn-timer
+        sd._svRespawn = null;       // avbryt survival respawn
+        sd.phoenixImmuneRemaining = Math.max(sd.phoenixImmuneRemaining || 0, 1.0);   // 1s immunitet mot direkt-död
+      }
+    }
+  }
   // Iron Wall (Guardian Bulwark): HP < 30% → sköld = 20% maxHP, 90s CD.
   if (sd.itemPassives && sd.itemPassives.has('ironWall') && !sd.hero.dead && sd.hero.hp > 0
       && sd.hero.hp < sd.hero.maxHp * 0.30 && (sd.ironWallCd || 0) <= 0) {
@@ -2269,9 +2291,13 @@ function initArenaMatch(heroes, teamSize) {
   return state;
 }
 
+// En hjälte räknas som slutgiltigt död för runda/wipe-koll först när ev. Rebirth-fönstret gått ut
+// (rebirthPending>0 = ska återupplivas om 0-3s → rundan/matchen väntar in det, annars vore Rebirth värdelöst).
+function heroFinallyDead(s) { return !!(s && s.hero.dead && (s.rebirthPending || 0) <= 0); }
+
 function checkArenaRoundEnd(state) {
   if (!state.teamSize || state.teamSize <= 1) {
-    const d1 = state.sides[1].hero.dead, d2 = state.sides[2].hero.dead;
+    const d1 = heroFinallyDead(state.sides[1]), d2 = heroFinallyDead(state.sides[2]);
     if (d1 && d2) { transitionArenaRoundEnd(state, 0); return; }
     if (d1) { transitionArenaRoundEnd(state, 2); return; }
     if (d2) { transitionArenaRoundEnd(state, 1); return; }
@@ -2281,7 +2307,7 @@ function checkArenaRoundEnd(state) {
   let alive1 = 0, alive2 = 0;
   for (const idx of state.sideKeys) {
     const s = state.sides[idx];
-    if (!s || s.hero.dead) continue;
+    if (!s || heroFinallyDead(s)) continue;   // rebirth-väntande räknas som levande (rundan väntar in reviven)
     if ((s.team || idx) === 1) alive1++; else alive2++;
   }
   if (alive1 === 0 && alive2 === 0) transitionArenaRoundEnd(state, 0);
@@ -5213,7 +5239,7 @@ function checkBossWarsEnd(state) {
   // Lose: ALLA sides döda (wipe). INGEN respawn i boss wars (användarbeslut 2026-06-05) — döda
   // hjältar stannar döda, så matchen tar slut när hela laget ligger nere (ej nödvändigtvis samma tick).
   const heroes = [state.sides[1], state.sides[2], state.sides[3]].filter(Boolean);
-  if (heroes.length > 0 && heroes.every(h => h.hero.dead)) {
+  if (heroes.length > 0 && heroes.every(h => heroFinallyDead(h))) {   // rebirth-väntande = ej wipe än
     state.matchState.gameOver = true;
     state.matchState.winner = 2;   // 2 = bossen vann
   }
