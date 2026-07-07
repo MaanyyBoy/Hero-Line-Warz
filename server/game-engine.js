@@ -951,10 +951,11 @@ function recomputeSideStats(side) {
   let moveSpeedFlat = def.baseMoveSpeed;
   let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0, dmgReductionPct = 0, maxHpPct = 0;
-  let critChancePct = 0, healPerSecPct = 0;
+  let critChancePct = 0, healPerSecPct = 0, attackDmgPct = 0;
   const addStats = (s) => {
     if (!s) return;
     attackDmg += s.attackDmg || 0;
+    attackDmgPct += s.attackDmgPct || 0;   // Physical Damage % (items) — appliceras multiplikativt på attackDmg nedan
     moveSpeedFlat += s.moveSpeed || 0;
     maxHpFlat += s.maxHp || 0;
     attackSpeedPct += s.attackSpeedPct || 0;
@@ -1017,7 +1018,7 @@ function recomputeSideStats(side) {
   const levelDmgMul = 1 + LEVEL_DMG_PCT * lvl;
   const levelHpMul = 1 + LEVEL_HP_PCT * lvl;
   const levelMsMul = 1 + LEVEL_MS_PCT * lvl;
-  side.attackDmg = attackDmg * levelDmgMul;
+  side.attackDmg = attackDmg * (1 + attackDmgPct) * levelDmgMul;   // +attackDmgPct = Physical Damage-items
   side.moveSpeed = moveSpeedFlat * (1 + moveSpeedPct) * levelMsMul * MOVE_SPEED_FEEL_MUL;
   side.attackSpeedMul = 1 + attackSpeedPct;
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
@@ -1133,24 +1134,27 @@ const ENGINE_BOSS_WARS_TALENTS = {
 };
 // 3-nivå item-uppgradering (user 2026-07-07): loadout-items skalas Lv1/2/3 = ×1.0/×1.6/×2.2 på ALLA stats
 // (+active). Lv1 = bas → befintliga loadouts oförändrade tills man uppgraderar. Per-item nivå lagras i
-// side.bwItemLevels[itemId] (default 1). Köp/uppgradering för guld = klient-shop-fas.
+// side.bwItemLevels[itemId] (default 1) — Lv1/2/3 = ×1/×2/×3 alla stats. Köp/uppgradering för guld.
 const ITEM_BW_MAX_LEVEL = 3;
-const itemBwLevelMul = (lvl) => 1 + 0.6 * (Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1)) - 1);   // 1.0 / 1.6 / 2.2
+const itemBwLevelMul = (lvl) => Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1));   // Lv1/2/3 = ×1 / ×2 / ×3 på ALLA stats (user 2026-07-07)
 const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
+// === ITEMS (user 2026-07-07: ersatte hela gamla katalogen med 12 nya items från referensbild) ===
+// stats skalas Lv1/2/3 = ×1/×2/×3 (itemBwLevelMul). passive/active = unika mekaniker som wiras i
+// senare faser (Fas B passiver / Fas C aktiver); här ligger bara metadatan + stats. buyCost = köp-guld.
+// physical damage = attackDmgPct (basattack-skada). boots=true → boots-kategori.
 const ENGINE_BOSS_WARS_ITEMS = {
-  bwi_blade:    { stats: { attackDmg: 15, attackSpeedPct: 0.15 } },
-  bwi_helm:     { stats: { maxHpPct: 0.35 } },
-  bwi_boots:    { stats: { moveSpeedPct: 0.25 } },
-  bwi_cape:     { stats: { dmgReductionPct: 0.20 } },
-  bwi_amulet:   { stats: { skillDmgPct: 0.30 } },
-  bwi_ring:     { stats: { cdrPct: 0.20, attackSpeedPct: 0.15 } },
-  bwi_tome:     { stats: { skillDmgPct: 0.35, maxHpPct: 0.15 } },
-  bwi_gauntlet: { stats: { attackDmg: 18 }, lifestealOnAa: 0.15 },
-  bwi_crit:     { stats: { critChancePct: 0.25 }, critDmgBonus: 0.35 },
-  bwi_phoenix:  { stats: { maxHpPct: 0.10 }, phoenixRevive: true },
-  // Survival boss-rum-exklusiva drops (kan ej köpas i shoppen — fås bara från valfria rum-bossar)
-  bwi_sv_warlord: { stats: { attackDmg: 22, critChancePct: 0.20 }, critDmgBonus: 0.30 },   // NW boss drop
-  bwi_sv_dragon:  { stats: { maxHpPct: 0.45, dmgReductionPct: 0.18 } },                    // NE boss drop
+  frostheart:     { name: 'Frostheart Amulet',  buyCost: 260, stats: { skillDmgPct: 0.20, maxHp: 350 }, passive: 'frozenSoul',     active: { id: 'frozenDomain', cd: 60 } },
+  titanbreaker:   { name: 'Titanbreaker Axe',   buyCost: 260, stats: { attackDmgPct: 0.25, maxHp: 350 }, passive: 'crushingBlows' },
+  phoenixcore:    { name: 'Phoenix Core',       buyCost: 300, stats: { maxHp: 500, skillDmgPct: 0.10 }, passive: 'rebirth' },
+  bloodfang:      { name: 'Bloodfang Blade',    buyCost: 260, stats: { attackDmgPct: 0.20 }, lifestealOnAa: 0.18, passive: 'bloodFeast' },
+  stormcall:      { name: 'Stormcall Staff',    buyCost: 280, stats: { skillDmgPct: 0.25, cdrPct: 0.15 }, passive: 'chainLightning' },
+  bulwark:        { name: 'Guardian Bulwark',   buyCost: 280, stats: { maxHp: 900, dmgReductionPct: 0.12 }, passive: 'ironWall' },
+  soulcollector:  { name: 'Soul Collector',     buyCost: 280, stats: { skillDmgPct: 0.20, cdrPct: 0.15 }, passive: 'harvest' },
+  infernal:       { name: 'Infernal Crown',     buyCost: 300, stats: { attackDmgPct: 0.15, skillDmgPct: 0.15 }, passive: 'burningAura' },
+  chrono:         { name: 'Chrono Crystal',     buyCost: 300, stats: { skillDmgPct: 0.20, cdrPct: 0.20 }, active: { id: 'timeWarp', cd: 75 } },
+  shadowstep:     { name: 'Shadowstep Boots',   buyCost: 220, stats: { moveSpeedPct: 0.15 }, passive: 'silentSteps',   active: { id: 'blink', cd: 30 }, boots: true },
+  warbringer:     { name: 'Warbringer Greaves', buyCost: 240, stats: { moveSpeedPct: 0.20, maxHp: 400, dmgReductionPct: 0.08 }, passive: 'battleMomentum', active: { id: 'charge', cd: 60 }, boots: true },
+  arcanestriders: { name: 'Arcane Striders',    buyCost: 240, stats: { moveSpeedPct: 0.18, skillDmgPct: 0.10, cdrPct: 0.10 }, passive: 'arcaneFlow', active: { id: 'manaSurge', cd: 60 }, boots: true },
 };
 
 // Kolla om en side valt en specifik talent (för arena server-auth skill-modifier-logic).
@@ -3318,7 +3322,7 @@ function createSurvivalState() {
       attackRange: SURVIVAL_BOSS_ROOM_ATTACK_RANGE,
       attackInterval: SURVIVAL_BOSS_ROOM_ATTACK_INTERVAL, atkCd: 0,
       roomId: room.id,
-      rewardItemId: room.id === 1 ? 'bwi_sv_warlord' : 'bwi_sv_dragon',
+      rewardItemId: room.id === 1 ? 'bloodfang' : 'bulwark',   // boss-rum-drop = ett av de 12 items (var bwi_sv_*)
       isSurvivalBossRoomBoss: true,
       dead: false, _rewardGiven: false,
       aac: 0,
@@ -3847,10 +3851,8 @@ function serializeSurvivalState(state) {
 // Fas 2: hjälten tjänar guld från kills (killMonster) och köper boss-wars-items/talents (samma katalog,
 // foldas i recomputeSideStats) + en dyr Nyckel som öppnar boss-gates för ALLA (fas-4-hook).
 const SURVIVAL_SHOP = [
-  { id: 'bwi_blade',   name: 'Blade (+Damage)',      cost: 120, kind: 'item' },
-  { id: 'bwi_helm',    name: 'Helm (+HP)',           cost: 120, kind: 'item' },
-  { id: 'bwi_boots',   name: 'Boots (+Move Speed)',  cost: 100, kind: 'item' },
-  { id: 'bwi_tome',    name: 'Tome (+Skill Power)',  cost: 140, kind: 'item' },
+  // De 12 items (auto-synkad från katalogen) — köp Lv1 för guld, uppgradera Lv2/3 via bw-item-up.
+  ...Object.keys(ENGINE_BOSS_WARS_ITEMS).map(id => ({ id, name: ENGINE_BOSS_WARS_ITEMS[id].name, cost: ENGINE_BOSS_WARS_ITEMS[id].buyCost || 250, kind: 'item' })),
   { id: 'bwt_dmg',     name: 'Talent: Power',        cost: 150, kind: 'talent' },
   { id: 'bwt_hp',      name: 'Talent: Vitality',     cost: 150, kind: 'talent' },
   { id: 'key',         name: 'BOSS KEY (opens gates)', cost: 600, kind: 'key' },
