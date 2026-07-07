@@ -1293,6 +1293,12 @@ function tickGandulfMark(state, target, dt) {
   }
 }
 
+// Skadegörar-kontext (2026-07-07) för item-passiver som behöver "vem skadade/dödade" (Frozen Soul/
+// Harvest/Chain Lightning). Sätts till aktuell side runt varje sides utgående-skada-block i combat-looparna
+// och nollas direkt efter → boss/DoT/miljö-skada har _dmgActor=null (ingen falsk attribution). Säkert
+// modul-lokalt eftersom ticks är helt synkrona (ingen async mellan set och läsning).
+let _dmgActor = null;
+
 function damageHero(side, amount, isAaDamage) {
   if (side.hero.dead) return;
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
@@ -1352,7 +1358,19 @@ function damageHero(side, amount, isAaDamage) {
       if (side.berserkDmgAccum >= side.hero.maxHp * BERSERK_FULL_PCT) { side.berserkDmgAccum = side.hero.maxHp * BERSERK_FULL_PCT; side.berserkCharged = true; }
     }
   }
-  if (side.hero.hp <= 0) killHero(side);
+  // Frozen Soul (Frostheart Amulet): skill-skada (ej AA) slöar fiende-hjälten 15% i 2s.
+  if (final > 0 && !isAaDamage && _dmgActor && _dmgActor !== side && _dmgActor.itemPassives && _dmgActor.itemPassives.has('frozenSoul')) {
+    side.heroSlowMul = Math.min(side.heroSlowMul == null ? 1 : side.heroSlowMul, 0.85);
+    side.heroSlowTime = Math.max(side.heroSlowTime || 0, 2);
+  }
+  if (side.hero.hp <= 0) {
+    // Harvest (Soul Collector): en hjälte-KILL ger skadegöraren +1% skill-dmg (cap 15%).
+    if (_dmgActor && _dmgActor !== side && _dmgActor.itemPassives && _dmgActor.itemPassives.has('harvest')) {
+      _dmgActor.harvestStacks = Math.min(15, (_dmgActor.harvestStacks || 0) + 1);
+      recomputeSideStats(_dmgActor);
+    }
+    killHero(side);
+  }
 }
 
 function updateActiveBuffs(side, dt) {
@@ -2039,6 +2057,7 @@ function tickArenaCombat(state, dt) {
   for (const sideIdx of arenaKeys(state)) {
     const side = state.sides[sideIdx];
     const opp = arenaOpp(state, sideIdx);
+    _dmgActor = side;   // attribuera denna sides utgående skada (Frozen Soul/Harvest/Chain Lightning)
     updateSkillCooldowns(side, dt);
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
     updateProjectiles(state, side, opp, dt);
@@ -2112,6 +2131,7 @@ function tickArenaCombat(state, dt) {
     }
     updateNovaEffects(state, side, opp, dt);
     updateActiveBuffs(side, dt);
+    _dmgActor = null;   // sluta attribuera utgående skada till denna side (boss/miljö/DoT = oattribuerad)
   }
 }
 
