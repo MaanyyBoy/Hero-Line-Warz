@@ -1369,6 +1369,21 @@ function activateInventoryItem(side, slotIdx) {
   recomputeSideStats(side);
 }
 
+// Uppgradera en loadout-item Lv1→2→3 för guld (Arena/Boss/Survival). Kräver att man äger itemet
+// (finns i side.bossWarsItems från loadout/shop). Server-auth: validerar id, ägande, nivåtak, guld.
+function upgradeBwItem(state, side, itemId) {
+  if (!side || !ENGINE_BOSS_WARS_ITEMS[itemId]) return;
+  if (!side.bossWarsItems || !side.bossWarsItems.includes(itemId)) return;   // måste ägas
+  if (!side.bwItemLevels) side.bwItemLevels = {};
+  const cur = side.bwItemLevels[itemId] || 1;
+  if (cur >= ITEM_BW_MAX_LEVEL) return;                    // redan max
+  const cost = ITEM_BW_UPGRADE_COST[cur + 1];
+  if (!cost || (side.gold || 0) < cost) return;            // okänd nivå / inte råd
+  side.gold -= cost;
+  side.bwItemLevels[itemId] = cur + 1;
+  recomputeArenaSideStats(state, side);                    // no-op:ar arena-talents i boss/survival
+}
+
 function killHero(side) {
   if (side.hero.dead) return;
   // Boss Wars Phoenix Amulet (Phase B): revive EN gång vid 50% HP istället för att dö.
@@ -1636,6 +1651,10 @@ const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_START = 400;
 const ARENA_GOLD_PER_ROUND = 250;
 const ARENA_GOLD_WIN_BONUS = 500;
+// Boss Wars-guld (item-uppgraderingar, user 2026-07-07): loadout är gratis men uppgraderingar kostar
+// guld → co-op-raiden behöver ett guld-flöde (fanns inte; ad-kills ger ingen reward). Start + passiv income.
+const BOSSWARS_GOLD_START = 300;
+const BOSSWARS_GOLD_PER_SEC = 12;
 const ARENA_ORB_MAX_HP = 100;
 const ARENA_ORB_RESPAWN_DELAY = 15;
 const ARENA_ORB_HEAL_PCT = 0.30;       // dödaren får +30% maxHp heal
@@ -2330,6 +2349,7 @@ function _makeHeroSnapBuf() {
     taunt: undefined, iw: undefined, iwS: undefined,   // Gimlu: taunt-timer + iron-will (serialize-paritet arena/boss wars)
     tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
     rsp: 0,   // respawn-nedräkning (sek kvar, avrundat upp); 0 om hjälten lever/läget saknar respawn. Initial i struct → hidden class stabil.
+    bil: undefined,   // loadout-item-nivåer { itemId: 1..3 } → klient-shop visar nivå/uppgraderingskostnad
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2355,6 +2375,7 @@ function serializeArenaHero(side, buf) {
   buf.hid = side.heroId || 'zyro';
   buf.ac = side.attackCounter || 0;
   buf.g = nz(side.gold);
+  buf.bil = side.bwItemLevels || undefined;   // loadout-item-nivåer för in-match uppgraderings-shop
   buf.ue = nzr2(side.ultEnergy);
   buf.tnt = nzr2(side.hero.tauntedTime);
   buf.fzt = nzr2(side.hero.frozenTime);
@@ -3172,6 +3193,7 @@ function initBossWarsMatch(heroes, tier, loadouts) {
     // (anti-cheat audit 2026-06-23). Set() removes dupes; filter drops unknown ids.
     side.bossWarsTalents = [...new Set(((lo && Array.isArray(lo.tals)) ? lo.tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id]))].slice(0, 3);
     side.bossWarsItems = [...new Set(((lo && Array.isArray(lo.items)) ? lo.items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id]))].slice(0, 4);
+    side.gold = BOSSWARS_GOLD_START;   // start-guld för in-match item-uppgraderingar
     // recomputeArenaSideStats no-op:ar arena-talent-delen (state.talents saknas i boss wars)
     // men kör recomputeSideStats → bas-stats + boss-wars-loadout (foldas i recomputeSideStats).
     recomputeArenaSideStats(state, side);
@@ -5011,6 +5033,8 @@ function tickBossWarsBot(state, sideIdx, dt) {
 
 function tickBossWars(state, dt) {
   if (state.matchState && state.matchState.gameOver) return;
+  // Passiv guld-income → item-uppgraderingar under raiden (user 2026-07-07). Bottar behöver ej.
+  for (const idx of [1, 2, 3]) { const s = state.sides[idx]; if (s && !s.isBot) s.gold = (s.gold || 0) + BOSSWARS_GOLD_PER_SEC * dt; }
   // Bot-AI (co-op-medspelare): sätter rörelse-input + AA/skill före rörelse-loopen.
   for (const idx of [1, 2, 3]) if (state.sides[idx] && state.sides[idx].isBot) tickBossWarsBot(state, idx, dt);
   // 1) Rörelse (alla 3 hjältar) — applyMovement använder isBossWarsWalkable.
@@ -10151,6 +10175,11 @@ function applyEvent(state, sideIdx, ev) {
   if (ev.type === 'activate') {
     if (side.hero.dead) return;
     activateInventoryItem(side, ev.slot);
+    return;
+  }
+  if (ev.type === 'bw-item-up') {   // uppgradera en loadout-item Lv1→2→3 för guld (Arena/Boss/Survival)
+    if (side.hero.dead) return;
+    upgradeBwItem(state, side, ev.id);
     return;
   }
   // Spendera 1 skill-point på Q/F/E (R kan inte uppgraderas via points)
