@@ -6693,6 +6693,12 @@ function updateHeroAttack(state, side, opp, dt) {
     zheynaLs = ZHEYNA_PASSIVE_LS_MAX * _f;
     if (_wp) zheynaKnock = ZHEYNA_E_KNOCKBACK;
   }
+  // Crushing Blows (Titanbreaker Axe): var 3:e basattack → +6% av målets maxHP i bonusskada (flat,
+  // ej crit-skalad). Boss-per-hit-taket (bossWarsDmgMod) cappar det automatiskt vid träff → ingen boss-exploit.
+  if (side.itemPassives && side.itemPassives.has('crushingBlows') && side.attackCounter % 3 === 0) {
+    aaDmg += 0.06 * (target.entity.maxHp || 0);
+  }
+  const _bloodFeast = !!(side.itemPassives && side.itemPassives.has('bloodFeast'));   // Bloodfang Blade
   side.projectiles.push({
     id: state.nextEntityId++,
     x: side.hero.x, y: 1.5, z: side.hero.z,
@@ -6703,7 +6709,7 @@ function updateHeroAttack(state, side, opp, dt) {
     targetIsArenaOrb: !!target.isArenaOrb,
     targetSideIdx: target.isHero ? (target.targetSideIdx || (3 - side.idx)) : 0,
     ownerSideIdx: side.idx,
-    damage: aaDmg, isAoE, isCrit,
+    damage: aaDmg, isAoE, isCrit, bloodFeast: _bloodFeast,
     lifestealRatio: (dashBuffed ? (engineHasTalent(state, side, 'l_dash_buff') ? 0.50 : LEGOLUS_DASH_LIFESTEAL) : (berserkActive ? BERSERK_AA_LIFESTEAL : zheynaLs)) + (side.heroId === 'xina' && isCrit ? 0.15 : 0) + (ganjiUltAaNow ? GANJI_ULT_AA_LIFESTEAL : 0),   // Xina passive: 15% crit-lifesteal; Ganji R break-stealth AA: 100% lifesteal
     knockback: zheynaKnock,
     nyroBuffed: dashBuffed,
@@ -6935,6 +6941,10 @@ function updateProjectiles(state, side, opp, dt) {
       // Gate på aaDmgDealt > 0 → ingen heal mot immun boss (warlord/dragon-mekanik) — annars farm-exploit.
       if (p.lifestealRatio > 0 && aaDmgDealt > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + p.damage * p.lifestealRatio);
+      }
+      // Blood Feast (Bloodfang Blade): basattacker mot HJÄLTAR healar dig +3% av din maxHP (utöver lifesteal).
+      if (p.bloodFeast && p.targetIsHero && aaDmgDealt > 0 && !side.hero.dead) {
+        side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * 0.03);
       }
       if (p.nyroBuffed && killedTarget) {
         side.skills.e.cd = 0;
