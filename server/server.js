@@ -137,6 +137,7 @@ function stopGame(room) {
   // Defensiv härdning: nollställ server-auth-flaggor så ett ev. återanvänt rum (framtida
   // rematch utan disconnect) kan skicka b-end/a-end igen och starta ny sim rent.
   room.bossEndSent = false;
+  room.arenaEndSent = false;   // 2026-07-07: redundant arena-slut-signal (a-end), analogt bossEndSent/survivalEndSent
   room.bossSim = false;
   room.arenaSim = false;
   room.sandboxSim = false;   // R4: defensiv — förhindra latent state-läcka vid ev. framtida sandbox-rum-reuse
@@ -363,6 +364,16 @@ function gameLoopTick(room) {
     if (_isBoss && !room.bossEndSent) {
       room.bossEndSent = true;
       const endMsg = JSON.stringify({ t: 'msg', d: { t: 'b-end', won: room.game.matchState.winner === 1 } });
+      if (room.host && room.host.readyState === 1) { try { room.host.send(endMsg); } catch (_) {} }
+      if (room.client && room.client.readyState === 1) { try { room.client.send(endMsg); } catch (_) {} }
+      if (room.clients) for (const c of room.clients) { if (c && c.readyState === 1) { try { c.send(endMsg); } catch (_) {} } }
+    }
+    // Arena: redundant slut-signal (2026-07-07, resilience-audit). Arena förlitade sig tidigare på EN
+    // enda phase='matchEnd'-snapshot; tappades den (backpressure/jitter vid matchslut) fastnade klienten
+    // utan VICTORY/DEFEAT. a-end bär vinnande LAG (mw) så 1v1/2v2/3v3 alla kan avgöra utfall.
+    if (_isArena && !room.arenaEndSent) {
+      room.arenaEndSent = true;
+      const endMsg = JSON.stringify({ t: 'msg', d: { t: 'a-end', mw: room.game.matchState.winner } });
       if (room.host && room.host.readyState === 1) { try { room.host.send(endMsg); } catch (_) {} }
       if (room.client && room.client.readyState === 1) { try { room.client.send(endMsg); } catch (_) {} }
       if (room.clients) for (const c of room.clients) { if (c && c.readyState === 1) { try { c.send(endMsg); } catch (_) {} } }

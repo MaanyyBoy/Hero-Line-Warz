@@ -6549,7 +6549,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Arena: kan inte auto-attackera medan hard-CC:ad (freeze/stun/ice-block/fear).
   // heroFearTime tillagd (QA 2026-06-17): bot-guards immobiliserar redan vid fear; människo-
   // spelare gjorde det inte → Gimlu Titan's Rage-fear hade ingen effekt på riktiga spelare.
-  if ((side.inArena1v1 || side.inBossWars || side.inSurvival) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars || side.inSurvival || side.inLineWars || side.inDuel) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;   // +inLineWars/inDuel: hard-CC ej längre kosmetisk i classic PvP (matchar slow-gaten, user-beslut 2026-07-07)
   const target = maintainTargetLock(side, opp, state);
   if (!target || side.attackCd > 0 || !target.inRange) return;   // out of attack range → chase (movement loop), don't fire
   side.attackCounter++;
@@ -9255,7 +9255,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // rörelse helt — annars var CC kosmetisk (timern tickade men hjälten rörde sig).
   // Gatead till arena1v1 så classic-rörelse är orörd. Klienten speglar via readLocalJoystick.
   // heroFearTime tillagd (QA 2026-06-17) — feared människo-spelare kunde annars gå fritt.
-  if ((side.inArena1v1 || side.inBossWars || side.inSurvival) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
+  if ((side.inArena1v1 || side.inBossWars || side.inSurvival || side.inLineWars || side.inDuel) && ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;   // +inLineWars/inDuel: hard-CC ej längre kosmetisk i classic PvP (matchar slow-gaten, user-beslut 2026-07-07)
   const mag = Math.hypot(joyX, joyZ);
   if (mag < 0.05) return;
   // Full movement-speed så fort en riktning valts (användarbeslut 2026-06-04) —
@@ -9968,9 +9968,9 @@ function applyEvent(state, sideIdx, ev) {
     // Hard-CC blocks ALL casts (mirror the movement/AA guard at applyMovement) — without this,
     // freeze/root/fear/ice-block were cosmetic for SKILLS against a custom client: a stunned player
     // could still Blink/Leap/ult out (anti-cheat audit 2026-06-23). Gimlu Rage zeroes these timers
-    // (CC-immune) so it is unaffected. Arena/boss only — classic CC model is unchanged.
-    if ((side.inArena1v1 || side.inBossWars || side.inSurvival) &&
-        ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;
+    // (CC-immune) so it is unaffected. Nu även Line Wars/duel-PvP (user-beslut 2026-07-07).
+    if ((side.inArena1v1 || side.inBossWars || side.inSurvival || side.inLineWars || side.inDuel) &&
+        ((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0)) return;   // +inLineWars/inDuel: hard-CC ej längre kosmetisk i classic PvP (user-beslut 2026-07-07)
     // R-cast (ult): server-side consume + lockout. Per-hero ult-effekter
     // implementeras separat (klient-side endast just nu). Här säkerställs
     // att ultEnergy faktiskt nollställs så snap inte hoppar tillbaka till 100,
