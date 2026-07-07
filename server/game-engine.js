@@ -1615,6 +1615,7 @@ function heroWalk(side, x, z, opts) {
 }
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
 const ARENA_PREP_TIME = 18;        // nerf 25→18: ~2.5min meny/Bo5 var för mycket dödtid; ready-knappen skippar ändå (matchar klient)
+const ARENA_FIRST_PREP_TIME = 30;  // runda 1: mer tid att välja items/talents (user 2026-07-07); ready-knappen skippar ändå
 const ARENA_ROUND_END_PAUSE = 5;   // +1s så utfallet hinner läsas
 const ARENA_BO5_WINS_NEEDED = 3;
 const ARENA_GOLD_START = 400;
@@ -2094,7 +2095,7 @@ function _arenaResetReady(state) {
 function startArenaRound(state, roundNum) {
   state.roundNum = roundNum;
   state.phase = 'prep';
-  state.prepTimer = ARENA_PREP_TIME;
+  state.prepTimer = (roundNum <= 1) ? ARENA_FIRST_PREP_TIME : ARENA_PREP_TIME;   // runda 1 = 30s för loadout-val
   state.fightTimer = 0;
   state.shrinkRadius = 0;
   state.shrinkDamageAccum = 0;
