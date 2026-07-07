@@ -1903,6 +1903,35 @@ function tickGimluRageServer(state, side, dt) {
   if (side.rageRemaining <= 0) side.rageRemaining = 0;
 }
 
+// Burning Aura (Infernal Crown, 2026-07-07): fiender inom radie tar 1.5% av sin maxHP/sek. Kontinuerlig
+// (per-frame ×dt). Speglar tickGimluRageServers per-läge-fiende-resolution (state.boss / survival-minions /
+// opp.hero i PvP) — samma bevisat säkra vägar; död-städning sköts av respektive mode-tick (som för rage).
+const BURNING_AURA_RADIUS = 6;
+const BURNING_AURA_DMG_PER_SEC = 0.015;
+function tickBurningAura(state, side, dt) {
+  if (!side || side.hero.dead || !side.itemPassives || !side.itemPassives.has('burningAura')) return;
+  const rr = BURNING_AURA_RADIUS * BURNING_AURA_RADIUS, hx = side.hero.x, hz = side.hero.z;
+  const perSec = BURNING_AURA_DMG_PER_SEC * dt;
+  const inR = (e) => { const dx = e.x - hx, dz = e.z - hz; return (dx * dx + dz * dz) < rr; };
+  if (state.mode === 'bosswars') {
+    const b = state.boss;
+    if (b && b.hp > 0 && inR(b)) b.hp = Math.max(0, b.hp - bossWarsDmgMod(b, b.maxHp * perSec));
+    return;
+  }
+  if (state.mode === 'survival') {
+    for (const m of (side.monsters || [])) {
+      if (!m || m.hp <= 0 || !inR(m)) continue;
+      m.hp = Math.max(0, m.hp - (m.isBossWarsBoss ? bossWarsDmgMod(m, m.maxHp * perSec) : m.maxHp * perSec));
+    }
+    return;
+  }
+  // Arena / Line Wars-duell / PvP: motståndar-hjälte.
+  const opp = arenaOpp(state, side.idx);
+  if (opp && !opp.hero.dead && (side.inArena1v1 || isHeroPvpActive(state)) && inR(opp.hero)) {
+    damageHero(opp, opp.hero.maxHp * perSec);
+  }
+}
+
 // Arena online-vs-bot (server-auth). Speglar klientens tickArenaBot: target enemy-hero,
 // chase/kite/strafe, AA + skills (ult tillåten). Driver sides[idx].isBot via lastInputs/applyEvent.
 function tickArenaBotServer(state, sideIdx, dt) {
@@ -2009,6 +2038,7 @@ function tickArenaCombat(state, dt) {
     // Server-auth ults: zyro laser + kryx rage (elar berserk = AA-modifier nedan)
     if (side.laserBeam) tickMagikerLaserServer(state, side, dt);
     if ((side.rageRemaining || 0) > 0) tickGimluRageServer(state, side, dt);
+    tickBurningAura(state, side, dt);
     if ((side.berserkRemaining || 0) > 0) {
       // Nollställ vid död (som laser/rage) — annars svävar berserk-svärdet kvar
       // på liket i hela round-end-pausen (klientens _srvBerserkMesh följer bz>0).
@@ -3430,6 +3460,7 @@ function tickSurvivalHeroFrame(state, s, dt) {
   updateActiveBuffs(s, dt);
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
   if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+  tickBurningAura(state, s, dt);
   if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
   if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
   if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
@@ -4040,6 +4071,7 @@ function tickSandbox(state, dt) {
   updateActiveBuffs(s, dt);
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
   if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+  tickBurningAura(state, s, dt);
   if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
   if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
   if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
@@ -5119,6 +5151,7 @@ function tickBossWars(state, dt) {
     // Ults (slice 1d): laser/rage träffar boss-monstret; berserk = AA-modifier (decrement här).
     if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
     if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
+  tickBurningAura(state, s, dt);
     if ((s.berserkRemaining || 0) > 0) {
       if (s.hero.dead) s.berserkRemaining = 0;
       else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt);
@@ -10731,6 +10764,7 @@ function tickGame(state, dt) {
     if (!us) continue;
     if (us.laserBeam) tickMagikerLaserServer(state, us, dt);
     if ((us.rageRemaining || 0) > 0) tickGimluRageServer(state, us, dt);
+    tickBurningAura(state, us, dt);   // Burning Aura även i classic Line Wars/duell (framtidssäkrar Line Wars-item-shop)
     if ((us.berserkRemaining || 0) > 0) { if (us.hero.dead) us.berserkRemaining = 0; else us.berserkRemaining = Math.max(0, us.berserkRemaining - dt); }
   }
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
