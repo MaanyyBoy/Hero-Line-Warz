@@ -6946,6 +6946,10 @@ function updateProjectiles(state, side, opp, dt) {
       if (p.bloodFeast && p.targetIsHero && aaDmgDealt > 0 && !side.hero.dead) {
         side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * 0.03);
       }
+      // Battle Momentum (Warbringer Greaves): att skada en fiende-HJÄLTE (via AA) ger +15% MS i 2s.
+      if (p.targetIsHero && aaDmgDealt > 0 && side.itemPassives && side.itemPassives.has('battleMomentum')) {
+        side.battleMomentumRem = 2;
+      }
       if (p.nyroBuffed && killedTarget) {
         side.skills.e.cd = 0;
       }
@@ -10071,6 +10075,7 @@ function applyEvent(state, sideIdx, ev) {
       if ((side.ultEnergy || 0) >= ULT_ENERGY_MAX && (side._ultLockoutTime || 0) <= 0) {
         side.ultEnergy = 0;
         side._ultLockoutTime = ULT_LOCKOUT_AFTER_CAST;
+        if (side.itemPassives && side.itemPassives.has('arcaneFlow')) side.arcaneFlowRem = 1.5;   // Arcane Striders: +20% MS 1.5s vid skill-användning (ult)
         // Legolus Shadow Volley: invis 5s + empowered next-AA. Revealar vid AA-fire eller timeout.
         if (side.heroId === 'nyro' && !side.hero.dead) {
           side.nyroInvisRemaining = LEGOLUS_INVIS_DURATION;
@@ -10179,6 +10184,9 @@ function applyEvent(state, sideIdx, ev) {
     // ganjiSpeedRem; the AA-dmg side of this is folded into updateHeroAttack separately).
     const _ganjiSpeedSkillMul = (isGanji && (side.ganjiSpeedRem || 0) > 0) ? (1 + GANJI_E_DMG) : 1;
     side.skillDmgMul = _prevSkillDmgMul * _lvlMul * _ganjiSpeedSkillMul;
+    // Arcane Flow (Arcane Striders): +20% MS 1.5s vid lyckad cast. Detektera cast via cd-ökning
+    // (cast-fn:erna sätter side.skills[key].cd) → ingen falsk trigger vid spam på cooldown.
+    const _afCd0 = (side.itemPassives && side.itemPassives.has('arcaneFlow') && side.skills[ev.key]) ? (side.skills[ev.key].cd || 0) : -1;
     try {
       if (ev.key === 'q') {
         if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
@@ -10211,6 +10219,7 @@ function applyEvent(state, sideIdx, ev) {
     } finally {
       side.skillDmgMul = _prevSkillDmgMul;
     }
+    if (_afCd0 >= 0 && side.skills[ev.key] && (side.skills[ev.key].cd || 0) > _afCd0) side.arcaneFlowRem = 1.5;   // cd ökade → cast lyckades
     return;
   }
   if (ev.type === 'activate') {
