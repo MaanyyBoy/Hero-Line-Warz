@@ -1447,10 +1447,98 @@ function activateBwItem(state, side, id, dx, dz) {
     if (k && side.skills[k]) side.skills[k].cd = 0;
   } else if (id === 'manaSurge') {                             // Arcane Striders: nästa skill inom 4s +25% dmg
     side.manaSurgeRem = 4;
+  } else if (id === 'charge') {                                // Warbringer Greaves: dash + skada/slow i banan
+    activateCharge(state, side, dx, dz);
+  } else if (id === 'frozenDomain') {                          // Frostheart Amulet: frostfält 4s, slöar 40%
+    activateFrozenDomain(state, side);
   } else {
-    return;   // charge / frozenDomain implementeras i nästa batch (rör ej cd:n förrän dess)
+    return;
   }
   side.itemActiveCd[id] = cd;
+}
+
+// Charge (Warbringer Greaves): dash upp till CHARGE_DIST framåt (walkable), skada+slöa fiender längs banan.
+const CHARGE_DIST = 8, CHARGE_WIDTH = 2.6, CHARGE_DMG_PCT = 0.10, CHARGE_SLOW_MUL = 0.70, CHARGE_SLOW_TIME = 1.5;
+function _distToSeg(px, pz, ax, az, bx, bz) {
+  const abx = bx - ax, abz = bz - az, ab2 = abx * abx + abz * abz;
+  let t = ab2 > 0 ? ((px - ax) * abx + (pz - az) * abz) / ab2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + abx * t), pz - (az + abz * t));
+}
+function activateCharge(state, side, dx, dz) {
+  let cx = dx || 0, cz = dz || 0; const m = Math.hypot(cx, cz);
+  if (m < 0.01) { cx = side.hero.facingX || 0; cz = side.hero.facingZ || 1; } else { cx /= m; cz /= m; }
+  const walk = zheynaWalk(side);
+  const sx = side.hero.x, sz = side.hero.z;
+  let end = 0;
+  for (let d = 1; d <= CHARGE_DIST; d++) { if (walk(sx + cx * d, sz + cz * d)) end = d; else break; }
+  const ex = sx + cx * end, ez = sz + cz * end;
+  side.hero.x = ex; side.hero.z = ez;
+  side.hero.facingX = cx; side.hero.facingZ = cz;
+  _dmgActor = side;   // attribuera charge-skadan (harvest/frozen soul om ägd)
+  const attTeam = side.team || side.idx;
+  const keys = (state.mode === 'arena1v1') ? arenaKeys(state) : [];
+  for (const idx of keys) {
+    const s2 = state.sides[idx]; if (!s2 || s2.hero.dead || idx === side.idx) continue;
+    if ((s2.team || idx) === attTeam) continue;
+    if (_distToSeg(s2.hero.x, s2.hero.z, sx, sz, ex, ez) <= CHARGE_WIDTH) {
+      damageHero(s2, s2.hero.maxHp * CHARGE_DMG_PCT, false);
+      s2.heroSlowMul = Math.min(s2.heroSlowMul == null ? 1 : s2.heroSlowMul, CHARGE_SLOW_MUL);
+      s2.heroSlowTime = Math.max(s2.heroSlowTime || 0, CHARGE_SLOW_TIME);
+    }
+  }
+  const opp = arenaOpp(state, side.idx);   // line wars-duell: motståndar-hjälte
+  if (opp && !opp.hero.dead && isHeroPvpActive(state) && _distToSeg(opp.hero.x, opp.hero.z, sx, sz, ex, ez) <= CHARGE_WIDTH) {
+    damageHero(opp, opp.hero.maxHp * CHARGE_DMG_PCT, false);
+    opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, CHARGE_SLOW_MUL);
+    opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, CHARGE_SLOW_TIME);
+  }
+  // monster/boss längs banan (boss wars/survival/line wars). Bakåt-loop + killMonster på letal skada
+  // (annars kringgås gold/XP + boss-2-ad-kill-cd + boss-4-väskdropp — server-debug 2026-07-07).
+  for (let mi = (side.monsters || []).length - 1; mi >= 0; mi--) {
+    const mm = side.monsters[mi];
+    if (!mm || mm.hp <= 0) continue;
+    if (_distToSeg(mm.x, mm.z, sx, sz, ex, ez) <= CHARGE_WIDTH) {
+      mm.hp = Math.max(0, mm.hp - (mm.isBossWarsBoss ? bossWarsDmgMod(mm, mm.maxHp * CHARGE_DMG_PCT) : mm.maxHp * CHARGE_DMG_PCT));
+      if (typeof applyGanjiSlow === 'function') applyGanjiSlow(mm);
+      if (mm.hp <= 0) killMonster(side, mi, side);
+    }
+  }
+  _dmgActor = null;
+}
+
+// Frozen Domain (Frostheart Amulet): frostfält FROZEN_DOMAIN_TIME sek som slöar fiender FROZEN_DOMAIN_SLOW.
+const FROZEN_DOMAIN_RADIUS = 4, FROZEN_DOMAIN_TIME = 4, FROZEN_DOMAIN_SLOW_MUL = 0.60;
+function activateFrozenDomain(state, side) {
+  if (!side.frozenDomains) side.frozenDomains = [];
+  side.frozenDomains.push({ x: side.hero.x, z: side.hero.z, remaining: FROZEN_DOMAIN_TIME, radius: FROZEN_DOMAIN_RADIUS });
+}
+function tickFrozenDomains(state, side, dt) {
+  const arr = side.frozenDomains;
+  if (!arr || !arr.length) return;
+  const opp = arenaOpp(state, side.idx);
+  const attTeam = side.team || side.idx;
+  const keys = (state.mode === 'arena1v1') ? arenaKeys(state) : null;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const z = arr[i];
+    z.remaining -= dt;
+    if (z.remaining <= 0) { arr.splice(i, 1); continue; }
+    const rr = z.radius * z.radius;
+    const slowHero = (s2) => {
+      if (!s2 || s2.hero.dead) return;
+      const ddx = s2.hero.x - z.x, ddz = s2.hero.z - z.z;
+      if (ddx * ddx + ddz * ddz > rr) return;
+      s2.heroSlowMul = Math.min(s2.heroSlowMul == null ? 1 : s2.heroSlowMul, FROZEN_DOMAIN_SLOW_MUL);
+      s2.heroSlowTime = Math.max(s2.heroSlowTime || 0, 0.4);   // top-up varje frame medan i fältet
+    };
+    if (keys) { for (const idx of keys) { const s2 = state.sides[idx]; if (s2 && idx !== side.idx && (s2.team || idx) !== attTeam) slowHero(s2); } }
+    else if (opp && isHeroPvpActive(state)) slowHero(opp);
+    for (const mm of (side.monsters || [])) {   // monster/boss i fältet
+      if (!mm || mm.hp <= 0) continue;
+      const ddx = mm.x - z.x, ddz = mm.z - z.z;
+      if (ddx * ddx + ddz * ddz <= rr && typeof applyGanjiSlow === 'function') applyGanjiSlow(mm);
+    }
+  }
 }
 
 function killHero(side) {
@@ -2119,6 +2207,7 @@ function tickArenaCombat(state, dt) {
     if (side.laserBeam) tickMagikerLaserServer(state, side, dt);
     if ((side.rageRemaining || 0) > 0) tickGimluRageServer(state, side, dt);
     tickBurningAura(state, side, dt);
+    tickFrozenDomains(state, side, dt);
     if ((side.berserkRemaining || 0) > 0) {
       // Nollställ vid död (som laser/rage) — annars svävar berserk-svärdet kvar
       // på liket i hela round-end-pausen (klientens _srvBerserkMesh följer bz>0).
@@ -2512,6 +2601,7 @@ function _makeHeroSnapBuf() {
     bil: undefined,   // loadout-item-nivåer { itemId: 1..3 } → klient-shop visar nivå/uppgraderingskostnad
     bwi: undefined,   // ägda loadout-item-ids (för shoppen; survival köper in-match så listan ändras)
     bac: undefined,   // item-active-cooldowns { activeId: sek kvar } → klient-aktiv-knappar visar cd
+    fd: undefined,    // Frozen Domain-fält [{x,z,radius}] → klient renderar frostfält-VFX
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2540,6 +2630,7 @@ function serializeArenaHero(side, buf) {
   buf.bil = side.bwItemLevels || undefined;   // loadout-item-nivåer för in-match uppgraderings-shop
   buf.bwi = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;   // ägda item-ids
   buf.bac = side.itemActiveCd || undefined;   // item-active-cooldowns för klient-knappar
+  buf.fd = (side.frozenDomains && side.frozenDomains.length) ? side.frozenDomains.map(z => ({ x: r2(z.x), z: r2(z.z), radius: z.radius })) : undefined;   // Frozen Domain-fält
   buf.ue = nzr2(side.ultEnergy);
   buf.tnt = nzr2(side.hero.tauntedTime);
   buf.fzt = nzr2(side.hero.frozenTime);
@@ -3568,6 +3659,7 @@ function tickSurvivalHeroFrame(state, s, dt) {
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
   if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
   tickBurningAura(state, s, dt);
+  tickFrozenDomains(state, s, dt);
   if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
   if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
   if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
@@ -4179,6 +4271,7 @@ function tickSandbox(state, dt) {
   if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
   if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
   tickBurningAura(state, s, dt);
+  tickFrozenDomains(state, s, dt);
   if ((s.berserkRemaining || 0) > 0) { if (s.hero.dead) s.berserkRemaining = 0; else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt); }
   if (!s.hero.dead) gainUltEnergy(s, ULT_GAIN_PASSIVE * dt);
   if ((s._ultLockoutTime || 0) > 0) s._ultLockoutTime = Math.max(0, s._ultLockoutTime - dt);
@@ -5259,6 +5352,7 @@ function tickBossWars(state, dt) {
     if (s.laserBeam) tickMagikerLaserServer(state, s, dt);
     if ((s.rageRemaining || 0) > 0) tickGimluRageServer(state, s, dt);
   tickBurningAura(state, s, dt);
+  tickFrozenDomains(state, s, dt);
     if ((s.berserkRemaining || 0) > 0) {
       if (s.hero.dead) s.berserkRemaining = 0;
       else s.berserkRemaining = Math.max(0, s.berserkRemaining - dt);
@@ -10882,6 +10976,7 @@ function tickGame(state, dt) {
     if (us.laserBeam) tickMagikerLaserServer(state, us, dt);
     if ((us.rageRemaining || 0) > 0) tickGimluRageServer(state, us, dt);
     tickBurningAura(state, us, dt);   // Burning Aura även i classic Line Wars/duell (framtidssäkrar Line Wars-item-shop)
+    tickFrozenDomains(state, us, dt);
     if ((us.berserkRemaining || 0) > 0) { if (us.hero.dead) us.berserkRemaining = 0; else us.berserkRemaining = Math.max(0, us.berserkRemaining - dt); }
   }
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
