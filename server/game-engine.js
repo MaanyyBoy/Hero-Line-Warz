@@ -1005,6 +1005,15 @@ function recomputeSideStats(side) {
     };
     if (side.bossWarsTalents) for (const tid of side.bossWarsTalents) _applyBw(ENGINE_BOSS_WARS_TALENTS[tid]);
     if (side.bossWarsItems) for (const iid of side.bossWarsItems) _applyBwItem(ENGINE_BOSS_WARS_ITEMS[iid], (side.bwItemLevels && side.bwItemLevels[iid]) || 1);
+    // Item-passiv/aktiv-index (Fas B/C 2026-07-07) → mekanik-hooks slår upp side.itemPassives.has(id) / side.itemActives[id].
+    side.itemPassives = null; side.itemActives = null;
+    if (side.bossWarsItems) for (const iid of side.bossWarsItems) {
+      const it = ENGINE_BOSS_WARS_ITEMS[iid]; if (!it) continue;
+      if (it.passive) (side.itemPassives || (side.itemPassives = new Set())).add(it.passive);
+      if (it.active) (side.itemActives || (side.itemActives = {}))[it.active.id] = it.active.cd;
+    }
+    // Harvest (Soul Collector): +1% skill-dmg per hjälte-kill, cap 15% (stack-inkrement wiras i kill-batch).
+    if (side.itemPassives && side.itemPassives.has('harvest')) skillDmgPct += Math.min(0.15, (side.harvestStacks || 0) * 0.01);
   }
   // Per-skill level-mult (för tick-skills som kan läsa skillLvlMul[key] live)
   side.skillLvlMul = {
@@ -1287,6 +1296,7 @@ function tickGandulfMark(state, target, dt) {
 function damageHero(side, amount, isAaDamage) {
   if (side.hero.dead) return;
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
+  if (amount > 0) side.noDamageTime = 0;   // Silent Steps (Shadowstep Boots): återställ "tid utan skada"
   // Kryx-DR (rework 2026-06-07): Titan's Stomp-stack + Titan's Rage, cap 70%. Passiven
   // är nu berserk-mätaren (offensiv empower, INGEN DR) → gamla Stalwart Resolve borttagen.
   let kryxMul = 1;
@@ -1953,6 +1963,17 @@ function tickHeroBuffTimers(sd, dt) {
     sd.ganjiCcImmuneRem = Math.max(0, sd.ganjiCcImmuneRem - dt);
     sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.heroFearTime = 0;
     if (sd.iceBlockRemaining) sd.iceBlockRemaining = 0;
+  }
+  // ── ITEM-PASSIVER (Fas B, 2026-07-07) — delad per-side per-frame (alla lägen via denna) ──
+  sd.noDamageTime = (sd.noDamageTime || 0) + dt;                                   // Silent Steps: tid utan att ta skada
+  if ((sd.battleMomentumRem || 0) > 0) sd.battleMomentumRem = Math.max(0, sd.battleMomentumRem - dt);  // Battle Momentum MS-buff (set wiras i dmg-batch)
+  if ((sd.arcaneFlowRem || 0) > 0) sd.arcaneFlowRem = Math.max(0, sd.arcaneFlowRem - dt);              // Arcane Flow MS-buff (set wiras i cast-batch)
+  if ((sd.ironWallCd || 0) > 0) sd.ironWallCd = Math.max(0, sd.ironWallCd - dt);
+  // Iron Wall (Guardian Bulwark): HP < 30% → sköld = 20% maxHP, 90s CD.
+  if (sd.itemPassives && sd.itemPassives.has('ironWall') && !sd.hero.dead && sd.hero.hp > 0
+      && sd.hero.hp < sd.hero.maxHp * 0.30 && (sd.ironWallCd || 0) <= 0) {
+    sd.shield = Math.max(sd.shield || 0, Math.round(sd.hero.maxHp * 0.20));
+    sd.ironWallCd = 90;
   }
 }
 
@@ -9332,8 +9353,14 @@ function applyMovement(side, joyX, joyZ, dt) {
   const ganjiSpeedMs = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_MS) : 1;
   const ganjiUltMs = (side.ganjiUltMsBurstRemaining || 0) > 0 ? (1 + GANJI_ULT_MS_BURST_BONUS) : 1;
   const wwMul = (side.whirlwindRemaining || 0) > 0 ? (1 + WHIRLWIND_MS_BUFF) : 1;   // +20% MS while spinning (Whirlwind) — matches tooltip (audit 2026-07-05)
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * strength * dt;
+  // Item-MS-buffar (Fas B 2026-07-07): Silent Steps (+15% efter 4s oskadd), Battle Momentum (+15% 2s),
+  // Arcane Flow (+20% 1.5s). battleMomentum/arcaneFlow-timers sätts i senare batchar; multiplikatorerna är redo.
+  let itemMsMul = 1;
+  if (side.itemPassives && side.itemPassives.has('silentSteps') && (side.noDamageTime || 0) >= 4) itemMsMul *= 1.15;
+  if ((side.battleMomentumRem || 0) > 0) itemMsMul *= 1.15;
+  if ((side.arcaneFlowRem || 0) > 0) itemMsMul *= 1.20;
+  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul * strength * dt;
+  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inSurvival ? (x, z) => survivalHeroWalkable(side, x, z)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
