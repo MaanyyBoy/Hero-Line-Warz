@@ -2350,6 +2350,7 @@ function _makeHeroSnapBuf() {
     tm: undefined,   // team-arena: lag (1/2); undefined i 1v1 → payload oförändrad
     rsp: 0,   // respawn-nedräkning (sek kvar, avrundat upp); 0 om hjälten lever/läget saknar respawn. Initial i struct → hidden class stabil.
     bil: undefined,   // loadout-item-nivåer { itemId: 1..3 } → klient-shop visar nivå/uppgraderingskostnad
+    bwi: undefined,   // ägda loadout-item-ids (för shoppen; survival köper in-match så listan ändras)
   };
 }
 const _heroSnapBuf1 = _makeHeroSnapBuf();
@@ -2376,6 +2377,7 @@ function serializeArenaHero(side, buf) {
   buf.ac = side.attackCounter || 0;
   buf.g = nz(side.gold);
   buf.bil = side.bwItemLevels || undefined;   // loadout-item-nivåer för in-match uppgraderings-shop
+  buf.bwi = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;   // ägda item-ids
   buf.ue = nzr2(side.ultEnergy);
   buf.tnt = nzr2(side.hero.tauntedTime);
   buf.fzt = nzr2(side.hero.frozenTime);
