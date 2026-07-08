@@ -1230,6 +1230,7 @@ function applyArenaLoadout(state, sideIdx, tals, items) {
   if (state.phase !== 'prep') return;   // loadout låst när rundan startat (anti mid-fight stat-swap)
   side.bossWarsTalents = [...new Set(((Array.isArray(tals) ? tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id])))].slice(0, 3);
   side.bossWarsItems   = [...new Set(((Array.isArray(items) ? items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id])))].slice(0, 4);
+  if (side.bwItemLevels) for (const k in side.bwItemLevels) if (!side.bossWarsItems.includes(k)) delete side.bwItemLevels[k];   // #17: bortvalt item tappar sin betalda nivå (annars "bankas" Lv3 gratis vid åter-val)
   recomputeArenaSideStats(state, side);
   side.hero.hp = side.hero.maxHp;   // toppa upp HP under prep så maxHpPct-loadout inte lämnar dig skadad vid fight-start
 }
@@ -1244,6 +1245,7 @@ function applyBossWarsLoadout(state, sideIdx, tals, items) {
   if (state.bossActivated) return;   // loadout låst när fighten börjat (anti mid-fight stat-swap)
   side.bossWarsTalents = [...new Set(((Array.isArray(tals) ? tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id])))].slice(0, 3);
   side.bossWarsItems   = [...new Set(((Array.isArray(items) ? items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id])))].slice(0, 4);
+  if (side.bwItemLevels) for (const k in side.bwItemLevels) if (!side.bossWarsItems.includes(k)) delete side.bwItemLevels[k];   // #17: bortvalt item tappar sin betalda nivå (annars "bankas" Lv3 gratis vid åter-val)
   recomputeArenaSideStats(state, side);
   if (side.hero) side.hero.hp = side.hero.maxHp;   // toppa upp HP så maxHpPct-loadout inte lämnar dig skadad
 }
@@ -1432,6 +1434,7 @@ const BW_ITEM_CAP = 6;
 function buyBwItem(state, side, id) {
   if (!side || side.hero.dead || !ENGINE_BOSS_WARS_ITEMS[id]) return;
   if (!side.inLineWars) return;   // ENDAST Line Wars: arena/boss får gratis loadout (cap 4, fas-låst), survival via sv-buy. Utan denna gate kunde en modad klient köpa extra items (cap 6) mid-fight i de lägena.
+  if (!inSideBase(side.idx, side.hero.x, side.hero.z)) return;   // #16: köp endast i egna basen (som minion-shoppen)
   if (!side.bossWarsItems) side.bossWarsItems = [];
   if (side.bossWarsItems.includes(id)) return;              // äger redan (uppgradera via bw-item-up)
   if (side.bossWarsItems.length >= BW_ITEM_CAP) return;     // inventory fullt
