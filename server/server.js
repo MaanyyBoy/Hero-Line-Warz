@@ -285,11 +285,22 @@ function gameLoopTick(room) {
     room.lastStateMs = now;
     room._sends = (room._sends || 0) + 1;
     try {
+      const _serStart = Date.now();
       const stateMsg = _isArena ? engine.serializeArenaState(room.game)
                      : _isBoss ? engine.serializeBossWarsState(room.game)
                      : _isSandbox ? engine.serializeSandboxState(room.game)
                      : _isSurvival ? engine.serializeSurvivalState(room.game)
                      : engine.serializeState(room.game);
+      // Server-telemetri piggyback (2026-07-08, lagg-diagnos): tick-varaktighet (sim+serialize),
+      // event-loop-drift, entity-antal, anslutna spelare. Klienten visar dessa i 3-finger-HUD:en så vi
+      // ser om lagget är server-CPU (stk/slag spikar samtidigt som klient-ping) eller Fly-nätet. stateMsg
+      // är poolad → bara 4 tal skrivs, ingen ny allokering, ingen gameplay-påverkan.
+      stateMsg.stk = (Date.now() - _serStart) + _simMs;   // tick-varaktighet ms (sim+serialize)
+      stateMsg.slag = now - (room.nextTickAt || now);      // event-loop-drift ms (schemalagd vs faktisk start)
+      stateMsg.sent = _telEntityCount(room.game);          // entity-count i rummet
+      stateMsg.plc = (room.host && room.host.readyState === 1 ? 1 : 0)
+                   + (room.client && room.client.readyState === 1 ? 1 : 0)
+                   + (room.clients ? room.clients.filter(c => c && c.readyState === 1).length : 0);
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
