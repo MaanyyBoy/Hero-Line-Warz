@@ -3648,7 +3648,7 @@ function initSurvivalMatch(heroes) {
 
 // ───────── SURVIVAL — sim (tick + serialize), Fas 1 ─────────────────────────
 const SURVIVAL_SPAWN_INTERVAL = 0.4;   // stagger mellan minion-spawns i en våg
-const SURVIVAL_WAVE_GAP = 16;          // sek mellan vågor
+const SURVIVAL_WAVE_GAP = 32;          // sek mellan vågor (user 2026-07-08: dubblad tid mellan waves, var 16)
 const SURVIVAL_BASE_MINIONS = 4;       // minions per lane i våg 1 (skalar med våg)
 const SURVIVAL_BUILDING_RADIUS = 3;    // byggnadens radie (minion attackerar inom radius+1.5)
 const SURVIVAL_MINION_HERO_REACH = 2.2; // minion attackerar en hjälte som står i dess väg (annars fortsätter den mot byggnaden)
@@ -4823,6 +4823,7 @@ function tickBossWarsBoss(state, dt) {
   }
   if (!target) return;
   const dist = Math.sqrt(bestSq) || 0.0001;
+  boss.ry = Math.atan2(target.hero.x - boss.x, target.hero.z - boss.z);   // vänd ALLTID mot målet (facing → klient; annars fryser klientens delta-härledda facing när bossen står still och AA:ar)
   const atkRange = boss.attackRange || 7.5;
   // Rörelse: jaga om utanför ~90% av attack-range; annars stå och skjut.
   if (dist > atkRange * 0.9) {
@@ -5475,7 +5476,7 @@ const _bwHeroBuf1 = _makeHeroSnapBuf();
 const _bwHeroBuf2 = _makeHeroSnapBuf();
 const _bwHeroBuf3 = _makeHeroSnapBuf();
 const _bwMapMr = (p) => ({ id: p.id, x: r2(p.x), z: r2(p.z), kind: p.kind });
-const _bwBossBuf = { x: 0, z: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, dr: 0, c: undefined, wl: undefined, dg: undefined };
+const _bwBossBuf = { x: 0, z: 0, ry: 0, hp: 0, mh: 0, ph: 1, pt: 0, aac: 0, dr: 0, c: undefined, wl: undefined, dg: undefined };
 // Warlord (boss 3) symbol-mekanik-buffer (persistent → ingen 30 Hz-allokering). sy = mark-symboler.
 const _bwWarlordSy = [];
 const _bwWarlordBuf = { a: 0, r: 1, rv: null, pc: 0, pi: 0, pt: 0, pv: 5, sy: null };
@@ -5544,6 +5545,7 @@ function serializeBossWarsState(state) {
   if (boss) {
     const o = _bwBossBuf;
     o.x = r2(boss.x); o.z = r2(boss.z);
+    o.ry = r3(boss.ry || 0);   // boss-facing → klient roterar bossen mot målet (fixar fel facing under AA)
     o.hp = ri(boss.hp); o.mh = boss.maxHp;
     o.ph = boss.bossPhase || 1;
     o.pt = nzr2(boss.phaseTransitionRemaining);
