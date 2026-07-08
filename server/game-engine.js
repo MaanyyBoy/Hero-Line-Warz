@@ -2621,7 +2621,7 @@ function _makeHeroSnapBuf() {
   return {
     x: 0, z: 0, fx: 0, fz: 0, hp: 0, mh: 0, d: false,
     sh: undefined, lv: 0, sk: { q: 0, f: 0, e: 0 }, hid: 'zyro',
-    ac: 0, g: undefined, ue: undefined, tnt: undefined, fzt: undefined,
+    ac: 0, g: undefined, ms: 6, ue: undefined, tnt: undefined, fzt: undefined,
     fer: undefined, ibr: undefined, slm: undefined, slt: undefined,
     asp: undefined, adm: undefined, wwr: undefined,
     lp: undefined, lz: undefined, rg: undefined, bz: undefined,
@@ -2664,6 +2664,7 @@ function serializeArenaHero(side, buf) {
   buf.hid = side.heroId || 'zyro';
   buf.ac = side.attackCounter || 0;
   buf.g = nz(side.gold);
+  buf.ms = r2(side._effMoveSpeed || side.moveSpeed || 6);   // effektiv MS → klient-prediktion (fixar high-MS-stutter)
   buf.bil = side.bwItemLevels || undefined;   // loadout-item-nivåer för in-match uppgraderings-shop
   buf.bwi = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;   // ägda item-ids
   buf.bac = side.itemActiveCd || undefined;   // item-active-cooldowns för klient-knappar
@@ -2883,7 +2884,7 @@ function serializeArenaState(state) {
 // sides[1].monsters (isBossWarsBoss) precis som klientens buildBossWarsSnap läser den.
 // ADDITIVT — inget anropar detta än (server.js wirar in i slice 0d). Boss-AI/skills/ads
 // portas slice 2-4; HÄR bara state + STATISK boss för att validera pipelinen (slice 0).
-const BOSSWARS_TIER_HP = { 1: 6500, 2: 8000, 3: 13000, 4: 20000, 5: 30000 };  // bas-hp (×3 raid-buff vid spawn). Tier 1: 5000→6500 (crit-comp dödade på ~14s = trivialt, mekanik hann ej aktiveras).
+const BOSSWARS_TIER_HP = { 1: 13000, 2: 16000, 3: 26000, 4: 40000, 5: 60000 };  // bas-hp (×3 raid-buff vid spawn). +100% HP alla bossar (user 2026-07-08, var 6500/8000/13000/20000/30000).
 const BOSSWARS_TIER_DMGSCALE = { 1: 1.5, 2: 1.8, 3: 2.2, 4: 2.8, 5: 3.0 };    // matchar BOSS_WARS_DEFS (T5 3.5→3.0: one-shot-nerf 2026-06-07)
 const BOSSWARS_TIER_SPEED = { 1: 3.8, 2: 4.7, 3: 5.0, 4: 5.2, 5: 5.4 };       // matchar spawnBossWarsBoss
 const BOSSWARS_TIER_PHASE_THRESH = { 1: 0.5, 2: 0.5, 3: 0.5, 4: 0.3, 5: 0.3 };
@@ -3526,6 +3527,7 @@ const SURVIVAL_BOSS_ROOMS = [
 // Fas 4: när boss-gates öppnas (gatesOpen=true) är de diagonala korridorerna + rummen walkable.
 const SURVIVAL_BOSS_ROOM_RADIUS = 22;         // walkable circle-radie runt varje rum-center
 const SURVIVAL_BOSS_ROOM_CORRIDOR_HW = 9;    // halv-bredd av diagonal korridor mot rummet
+const SURVIVAL_LANE_CORRIDOR_HW = 3.2;       // halv-bredd hjälten får gå i N/S/E/W-lanesna (matchar klient LaneWidth=6)
 function isSurvivalWalkable(x, z, gatesOpen) {
   const r2v = x * x + z * z;
   const br = SURVIVAL_BUILDING_RADIUS + 0.6;
@@ -3533,7 +3535,18 @@ function isSurvivalWalkable(x, z, gatesOpen) {
     if (r2v < br * br) return false;                                                  // blockad av byggnaden
     return true;
   }
-  // Utanför huvud-arenan: walkable ENBART om gates öppna + punkt ligger i korridor/rum
+  // NYTT (user 2026-07-08): de 4 raka kardinal-lanesna är ALLTID gångbara för hjälten (ingen gate) — spring
+  // in i korridoren där minions spawnar. Axel-alignade lanes → enkel projektion på lane-axeln.
+  const laneHw2 = SURVIVAL_LANE_CORRIDOR_HW * SURVIVAL_LANE_CORRIDOR_HW;
+  for (const lane of SURVIVAL_LANES) {
+    const len = Math.hypot(lane.sx, lane.sz);
+    const ux = lane.sx / len, uz = lane.sz / len;
+    const proj = x * ux + z * uz;
+    if (proj < 0 || proj > len) continue;
+    const px = x - ux * proj, pz = z - uz * proj;
+    if (px * px + pz * pz <= laneHw2) return true;
+  }
+  // Utanför huvud-arenan/lanesna: walkable ENBART om gates öppna + punkt ligger i boss-korridor/rum
   if (!gatesOpen) return false;
   const hw2 = SURVIVAL_BOSS_ROOM_CORRIDOR_HW * SURVIVAL_BOSS_ROOM_CORRIDOR_HW;
   const rr2 = SURVIVAL_BOSS_ROOM_RADIUS * SURVIVAL_BOSS_ROOM_RADIUS;
@@ -9644,8 +9657,11 @@ function applyMovement(side, joyX, joyZ, dt) {
   if (side.itemPassives && side.itemPassives.has('silentSteps') && (side.noDamageTime || 0) >= 4) itemMsMul *= 1.15;
   if ((side.battleMomentumRem || 0) > 0) itemMsMul *= 1.15;
   if ((side.arcaneFlowRem || 0) > 0) itemMsMul *= 1.20;
-  const nx = side.hero.x + ndx * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul * strength * dt;
-  const nz = side.hero.z + ndz * side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul * strength * dt;
+  // Effektiv hastighet (alla buffar/items/slows, utan strength/dt) → serialiseras som buf.ms så KLIENTEN
+  // predikterar med RÄTT hastighet vid hög MS (annars springer servern ifrån → snap-loop/stutter, user 2026-07-08).
+  side._effMoveSpeed = side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul;
+  const nx = side.hero.x + ndx * side._effMoveSpeed * strength * dt;
+  const nz = side.hero.z + ndz * side._effMoveSpeed * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
   const check = side.inSurvival ? (x, z) => survivalHeroWalkable(side, x, z)
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
