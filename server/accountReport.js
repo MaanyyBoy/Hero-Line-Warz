@@ -72,11 +72,12 @@ async function reportMatchResult({ userId, outcome, mode, heroLegacyId, bossTier
         if (bossTier && bossTier > (cur.best_boss_tier || 0)) patch.best_boss_tier = bossTier;
       }
     }
-    // XP (account + per-hero) — identical to client AddMatchXp
+    // XP: account-XP ges alltid; per-hjälte hero_xp (= mastery-progress) ges EJ för bot-matcher (anti-farm,
+    // user 2026-07-08 — mastery ska bara byggas mot riktiga spelare).
     const gain = won ? MATCH_WIN_XP : MATCH_LOSS_XP;
     patch.account_xp = (cur.account_xp || 0) + gain;
     const heroXp = (cur.hero_xp && typeof cur.hero_xp === 'object') ? { ...cur.hero_xp } : {};
-    if (heroLegacyId) heroXp[heroLegacyId] = (heroXp[heroLegacyId] || 0) + gain;
+    if (!vsBots && heroLegacyId) heroXp[heroLegacyId] = (heroXp[heroLegacyId] || 0) + gain;
     patch.hero_xp = heroXp;
 
     // 2) write back
