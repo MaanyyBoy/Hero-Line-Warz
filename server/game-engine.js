@@ -2182,6 +2182,7 @@ function tickItemPassiveTimers(sd, dt) {
   if (sd.itemActiveCd) for (const k in sd.itemActiveCd) if (sd.itemActiveCd[k] > 0) sd.itemActiveCd[k] = Math.max(0, sd.itemActiveCd[k] - dt);   // item-active-cooldowns
   if ((sd.ironWallCd || 0) > 0) sd.ironWallCd = Math.max(0, sd.ironWallCd - dt);
   if ((sd.rebirthCd || 0) > 0) sd.rebirthCd = Math.max(0, sd.rebirthCd - dt);
+  if ((sd.phoenixImmuneRemaining || 0) > 0) sd.phoenixImmuneRemaining = Math.max(0, sd.phoenixImmuneRemaining - dt);   // 1s post-rebirth-immunitet — HÄR (körs 1×/side/frame i ALLA lägen) i st f per-mode, annars aldrig i arena/LW → permanent odödlighet
   // Rebirth (Phoenix Core): in-place-revive 3s efter död @25% HP. Avbryter mode-respawn så ingen dubbel.
   if ((sd.rebirthPending || 0) > 0) {
     if (!sd.hero.dead) sd.rebirthPending = 0;   // återupplivad på annat sätt → avbryt
@@ -3706,7 +3707,7 @@ function tickSurvivalHeroFrame(state, s, dt) {
   tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
-  if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
+  // (phoenixImmuneRemaining dekrementeras centralt i tickItemPassiveTimers — körs i alla lägen)
   if ((s.hero.dotRemaining || 0) > 0) { s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt); damageHero(s, (s.hero.dotPerSec || 0) * dt); }
   if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
   if ((s.heroSlowTime || 0) > 0) { s.heroSlowTime = Math.max(0, s.heroSlowTime - dt); if (s.heroSlowTime <= 0) { s.heroSlowTime = 0; s.heroSlowMul = 1; } }
@@ -4318,7 +4319,7 @@ function tickSandbox(state, dt) {
   tickZheyna(state, s, dt); tickXina(state, s, dt);
   if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
   if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
-  if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
+  // (phoenixImmuneRemaining dekrementeras centralt i tickItemPassiveTimers — körs i alla lägen)
   if ((s.hero.dotRemaining || 0) > 0) { s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt); damageHero(s, (s.hero.dotPerSec || 0) * dt); }
   if ((s.hero.poisonRemaining || 0) > 0) s.hero.poisonRemaining = Math.max(0, s.hero.poisonRemaining - dt);
   if ((s.heroSlowTime || 0) > 0) { s.heroSlowTime = Math.max(0, s.heroSlowTime - dt); if (s.heroSlowTime <= 0) { s.heroSlowTime = 0; s.heroSlowMul = 1; } }
@@ -5405,7 +5406,7 @@ function tickBossWars(state, dt) {
     tickZheyna(state, s, dt); tickXina(state, s, dt);
     if ((s.hero.frozenTime || 0) > 0) s.hero.frozenTime = Math.max(0, s.hero.frozenTime - dt);
     if ((s.hero.tauntedTime || 0) > 0) s.hero.tauntedTime = Math.max(0, s.hero.tauntedTime - dt);
-    if ((s.phoenixImmuneRemaining || 0) > 0) s.phoenixImmuneRemaining = Math.max(0, s.phoenixImmuneRemaining - dt);
+    // (phoenixImmuneRemaining dekrementeras centralt i tickItemPassiveTimers — körs i alla lägen)
     if ((s.hero.dotRemaining || 0) > 0) {
       s.hero.dotRemaining = Math.max(0, s.hero.dotRemaining - dt);
       damageHero(s, (s.hero.dotPerSec || 0) * dt);   // DoT-skada saknades i boss-wars-loopen
