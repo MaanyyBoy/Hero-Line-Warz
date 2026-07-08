@@ -305,6 +305,7 @@ function gameLoopTick(room) {
       // ser om lagget är server-CPU (stk/slag spikar samtidigt som klient-ping) eller Fly-nätet. stateMsg
       // är poolad → bara 4 tal skrivs, ingen ny allokering, ingen gameplay-påverkan.
       stateMsg.stk = (Date.now() - _serStart) + _simMs;   // tick-varaktighet ms (sim+serialize)
+      stateMsg.stot = room._lastTotalMs || 0;              // FÖREGÅENDE ticks TOTAL ms (inkl stringify+send+compress) → stot>>stk = send/compress tung
       stateMsg.slag = now - (room.nextTickAt || now);      // event-loop-drift ms (schemalagd vs faktisk start)
       stateMsg.sent = _telEntityCount(room.game);          // entity-count i rummet
       stateMsg.plc = (room.host && room.host.readyState === 1 ? 1 : 0)
@@ -353,6 +354,7 @@ function gameLoopTick(room) {
   }
   // Diagnostik: spike-log för långa ticks. Decision 044.
   const _totalMs = Date.now() - now;
+  room._lastTotalMs = _totalMs;   // skickas som stateMsg.stot nästa tick (telemetri: send/compress-kostnad)
   if (_totalMs >= TICK_SPIKE_WARN_MS) {
     console.warn(`[${room.code}] tick-spike ${_totalMs}ms (sim ${_simMs}ms)`);
   }
