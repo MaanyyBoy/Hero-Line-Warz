@@ -308,9 +308,10 @@ function gameLoopTick(room) {
       stateMsg.stot = room._lastTotalMs || 0;              // FÖREGÅENDE ticks TOTAL ms (inkl stringify+send+compress) → stot>>stk = send/compress tung
       stateMsg.slag = now - (room.nextTickAt || now);      // event-loop-drift ms (schemalagd vs faktisk start)
       stateMsg.sent = _telEntityCount(room.game);          // entity-count i rummet
-      stateMsg.plc = (room.host && room.host.readyState === 1 ? 1 : 0)
-                   + (room.client && room.client.readyState === 1 ? 1 : 0)
-                   + (room.clients ? room.clients.filter(c => c && c.readyState === 1).length : 0);
+      let _plc = (room.host && room.host.readyState === 1 ? 1 : 0)
+               + (room.client && room.client.readyState === 1 ? 1 : 0);
+      if (room.clients) for (let _i = 0; _i < room.clients.length; _i++) { const _c = room.clients[_i]; if (_c && _c.readyState === 1) _plc++; }  // loop, ej .filter() (undvik array-alloc per tick)
+      stateMsg.plc = _plc;
       // Pre-stringify EN gång + skicka samma raw-string till båda peers.
       // Tidigare körde send-helpern JSON.stringify 2x per broadcast (en gång per
       // peer). Vid 30 Hz × ~10-15 KB payload sparar detta ~50% serialize-tid.
