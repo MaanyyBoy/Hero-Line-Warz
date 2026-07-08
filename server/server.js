@@ -229,18 +229,27 @@ function _telFmt(arr) {
   const p95 = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
   return `avg${avg.toFixed(1)} p95:${p95} max:${s[s.length - 1]}`;
 }
+// Körs nu VARJE tick (server-telemetri) → måste vara allokeringsfri (ingen Set/array-literal per tick;
+// på delad server-CPU är per-tick-skräp precis det vi diagnostiserar). Återanvänd module-scratch för
+// monsters-dedup (samma array kan refereras av flera sides). Single-threaded → scratch är trådsäker.
+const _telSeenMonsters = [null, null, null, null];
 function _telEntityCount(game) {
   let n = 0;
   if (!game || !game.sides) return 0;
-  const seen = new Set();
-  for (const idx of [1, 2, 3, 4]) {
+  let seenCount = 0;
+  for (let idx = 1; idx <= 4; idx++) {
     const s = game.sides[idx];
     if (!s) continue;
-    if (s.monsters && !seen.has(s.monsters)) { seen.add(s.monsters); n += s.monsters.length; }
+    if (s.monsters) {
+      let dup = false;
+      for (let k = 0; k < seenCount; k++) { if (_telSeenMonsters[k] === s.monsters) { dup = true; break; } }
+      if (!dup) { _telSeenMonsters[seenCount++] = s.monsters; n += s.monsters.length; }
+    }
     if (s.playerCreeps) n += s.playerCreeps.length;
     if (s.projectiles) n += s.projectiles.length;
     if (s.monsterProjectiles) n += s.monsterProjectiles.length;
   }
+  for (let k = 0; k < seenCount; k++) _telSeenMonsters[k] = null;   // släpp referenser (ingen kvarhållning)
   return n;
 }
 
