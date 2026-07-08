@@ -1141,7 +1141,7 @@ const ENGINE_BOSS_WARS_TALENTS = {
   bwt_ms:    { stats: { moveSpeedPct: 0.25 } },   // buffed 0.15→0.25 (was a dead pick vs Iron Body +25% HP)
   bwt_heal:  { stats: { healPerSecPct: 0.035 } }, // buffed 0.02→0.035 (real sustain identity)
 };
-// 3-nivå item-uppgradering (user 2026-07-07): loadout-items skalas Lv1/2/3 = ×1.0/×1.6/×2.2 på ALLA stats
+// 3-nivå item-uppgradering (user 2026-07-07): loadout-items skalas Lv1/2/3 = ×1/×2/×3 på ALLA stats
 // (+active). Lv1 = bas → befintliga loadouts oförändrade tills man uppgraderar. Per-item nivå lagras i
 // side.bwItemLevels[itemId] (default 1) — Lv1/2/3 = ×1/×2/×3 alla stats. Köp/uppgradering för guld.
 const ITEM_BW_MAX_LEVEL = 3;
@@ -1431,6 +1431,7 @@ function upgradeBwItem(state, side, itemId) {
 const BW_ITEM_CAP = 6;
 function buyBwItem(state, side, id) {
   if (!side || side.hero.dead || !ENGINE_BOSS_WARS_ITEMS[id]) return;
+  if (!side.inLineWars) return;   // ENDAST Line Wars: arena/boss får gratis loadout (cap 4, fas-låst), survival via sv-buy. Utan denna gate kunde en modad klient köpa extra items (cap 6) mid-fight i de lägena.
   if (!side.bossWarsItems) side.bossWarsItems = [];
   if (side.bossWarsItems.includes(id)) return;              // äger redan (uppgradera via bw-item-up)
   if (side.bossWarsItems.length >= BW_ITEM_CAP) return;     // inventory fullt
@@ -1446,6 +1447,7 @@ const ITEM_BLINK_DIST = 6;
 // man äger itemet (side.itemActives[id] finns), ej på cd, ej död. Effekt per id, sen sätts cd.
 function activateBwItem(state, side, id, dx, dz) {
   if (!side || side.hero.dead) return;
+  dx = Number.isFinite(dx) ? dx : 0; dz = Number.isFinite(dz) ? dz : 0;   // sanera aim (blink/charge) mot NaN/Infinity → annars hero.x = NaN-exploit
   if (!side.itemActives || !(id in side.itemActives)) return;   // äger ej item med denna active
   if (!side.itemActiveCd) side.itemActiveCd = {};
   if ((side.itemActiveCd[id] || 0) > 0) return;                 // på cooldown
@@ -1502,11 +1504,15 @@ function activateCharge(state, side, dx, dz) {
       s2.heroSlowTime = Math.max(s2.heroSlowTime || 0, CHARGE_SLOW_TIME);
     }
   }
-  const opp = arenaOpp(state, side.idx);   // line wars-duell: motståndar-hjälte
-  if (opp && !opp.hero.dead && isHeroPvpActive(state) && _distToSeg(opp.hero.x, opp.hero.z, sx, sz, ex, ez) <= CHARGE_WIDTH) {
-    damageHero(opp, opp.hero.maxHp * CHARGE_DMG_PCT, false);
-    opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, CHARGE_SLOW_MUL);
-    opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, CHARGE_SLOW_TIME);
+  // Line wars-duell: motståndar-hjälte. ENDAST när keys-loopen INTE körde (arena1v1 täcks redan av keys →
+  // annars träffas samma opp TVÅ gånger, dubbel skada+slow). Speglar tickFrozenDomains if/else-mönstret.
+  if (!keys.length) {
+    const opp = arenaOpp(state, side.idx);
+    if (opp && !opp.hero.dead && isHeroPvpActive(state) && _distToSeg(opp.hero.x, opp.hero.z, sx, sz, ex, ez) <= CHARGE_WIDTH) {
+      damageHero(opp, opp.hero.maxHp * CHARGE_DMG_PCT, false);
+      opp.heroSlowMul = Math.min(opp.heroSlowMul == null ? 1 : opp.heroSlowMul, CHARGE_SLOW_MUL);
+      opp.heroSlowTime = Math.max(opp.heroSlowTime || 0, CHARGE_SLOW_TIME);
+    }
   }
   // monster/boss längs banan (boss wars/survival/line wars). Bakåt-loop + killMonster på letal skada
   // (annars kringgås gold/XP + boss-2-ad-kill-cd + boss-4-väskdropp — server-debug 2026-07-07).
@@ -2283,26 +2289,31 @@ function tickArenaCombat(state, dt) {
     updateActiveBuffs(side, dt);
     _dmgActor = null;   // sluta attribuera utgående skada till denna side (boss/miljö/DoT = oattribuerad)
   }
-  // Chain Lightning-studsar: hoppa till upp till 2 närmaste fiende-hjältar (annat lag, ej ursprungsoffret)
-  // inom range, 35% av skill-skadan. _inChainBounce → ingen re-proc (oändlig kedja omöjlig).
-  if (_chainQueue.length) {
-    for (const c of _chainQueue) {
-      const attTeam = c.attacker.team || c.attacker.idx;
-      const cand = [];
-      for (const idx of arenaKeys(state)) {
-        const s2 = state.sides[idx];
-        if (!s2 || s2.hero.dead || idx === c.victimIdx) continue;
-        if ((s2.team || idx) === attTeam) continue;   // hoppa allierade
-        const d = Math.hypot(s2.hero.x - c.x, s2.hero.z - c.z);
-        if (d <= CHAIN_LIGHTNING_RANGE) cand.push({ s2, d });
-      }
-      cand.sort((a, b) => a.d - b.d);
-      _inChainBounce = true; _dmgActor = c.attacker;
-      for (let i = 0; i < Math.min(2, cand.length); i++) damageHero(cand[i].s2, c.dmg, false);
-      _inChainBounce = false; _dmgActor = null;
+  drainChainQueue(state);
+}
+
+// Chain Lightning-studsar: hoppa till upp till 2 närmaste fiende-hjältar (annat lag, ej ursprungsoffret)
+// inom range, 35% av skill-skadan. _inChainBounce → ingen re-proc (oändlig kedja omöjlig). Delad: anropas
+// från tickArenaCombat OCH tickGame (Line Wars) så kön alltid töms (annars läcker den + stale-entries).
+function drainChainQueue(state) {
+  if (!_chainQueue.length) return;
+  for (const c of _chainQueue) {
+    if (!c.attacker) continue;
+    const attTeam = c.attacker.team || c.attacker.idx;
+    const cand = [];
+    for (const idx of arenaKeys(state)) {
+      const s2 = state.sides[idx];
+      if (!s2 || s2.hero.dead || idx === c.victimIdx) continue;
+      if ((s2.team || idx) === attTeam) continue;   // hoppa allierade
+      const d = Math.hypot(s2.hero.x - c.x, s2.hero.z - c.z);
+      if (d <= CHAIN_LIGHTNING_RANGE) cand.push({ s2, d });
     }
-    _chainQueue.length = 0;
+    cand.sort((a, b) => a.d - b.d);
+    _inChainBounce = true; _dmgActor = c.attacker;
+    for (let i = 0; i < Math.min(2, cand.length); i++) damageHero(cand[i].s2, c.dmg, false);
+    _inChainBounce = false; _dmgActor = null;
   }
+  _chainQueue.length = 0;
 }
 
 // ── Arena-flöde (server-side, ren logik — UI/mesh/FX stannar på klienten) ──
@@ -11022,6 +11033,7 @@ function tickGame(state, dt) {
     for (const sideIdx of [1, 2]) {
       const side = state.sides[sideIdx];
       const opp = arenaOpp(state, sideIdx);
+      _dmgActor = side;   // attribuera denna sides utgående skada (Frozen Soul/Harvest/Chain Lightning i duellen)
       updateSkillCooldowns(side, dt);
       if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
       updateProjectiles(state, side, opp, dt);
@@ -11091,7 +11103,9 @@ function tickGame(state, dt) {
         if (side.iceBlockRemaining) side.iceBlockRemaining = 0;
       }
       if (!side.hero.dead && (side.healPerSecPct || 0) > 0 && side.hero.hp < side.hero.maxHp) side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * side.healPerSecPct * dt);
+      _dmgActor = null;
     }
+    drainChainQueue(state);   // töm chain-kön (duell: max 1 opp → inga studsar, men undvik läcka/stale)
     // Pickup-orbs (heal + speed) + big duel-arena orb
     tickDuelOrbs(state, dt);
     tickDuelBigOrb(state, dt);
@@ -11200,6 +11214,7 @@ function tickGame(state, dt) {
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     const opp = arenaOpp(state, sideIdx);
+    _dmgActor = side;   // attribuera denna sides utgående skada (Frozen Soul/Harvest/Chain Lightning i enemy-territory-PvP)
     updateSkillCooldowns(side, dt);
     updateWaves(state, side, dt);
     updateMonsters(state, side, opp, dt);
@@ -11263,7 +11278,9 @@ function tickGame(state, dt) {
           side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + side.hero.maxHp * FOUNTAIN_REGEN_PCT * dt);
       }
     }
+    _dmgActor = null;
   }
+  drainChainQueue(state);   // töm chain-kön (line wars enemy-territory-PvP)
   resolveLineWarsCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   // Decision 105: synka wave-progression mellan sidor (nästa wave startar
   // bara när BÅDA har avslutat sin wave).
@@ -11405,7 +11422,7 @@ function _makeLwSideBuf(heroBuf) {
     g: 0, inc: 0, incT: 0, incC: 0,
     ptu: undefined, ptc: undefined, pet: undefined, petT: undefined,
     tu: null, inv: [],
-    bwi: undefined, bil: undefined, bac: undefined,   // de 12 loadout-items (bw-item-buy) → LoadoutItemBar
+    bwi: undefined, bil: undefined, bac: undefined, fd: undefined,   // de 12 loadout-items (bw-item-buy) → LoadoutItemBar + Frozen Domain-VFX
     ms: 0, ad: 0, ac: 0,
     tw: { hp: 0, mh: 0 },
     fa: undefined, aa: undefined, aml: undefined,
@@ -11507,6 +11524,7 @@ function _serializeLwSide(side, buf, mPool, cPool, invPool, pPool, cpPool, mrPoo
   buf.bwi  = (side.bossWarsItems && side.bossWarsItems.length) ? side.bossWarsItems : undefined;
   buf.bil  = side.bwItemLevels || undefined;
   buf.bac  = side.itemActiveCd || undefined;
+  buf.fd   = (side.frozenDomains && side.frozenDomains.length) ? side.frozenDomains.map(z => ({ x: r2(z.x), z: r2(z.z), radius: z.radius })) : undefined;   // Frozen Domain-fält (klient-VFX; klienten läser fd från SIDE-snap i Line Wars)
   buf.ms   = r2(side.moveSpeed);
   buf.ad   = r1(side.attackDmg);
   buf.ac   = side.attackCounter;

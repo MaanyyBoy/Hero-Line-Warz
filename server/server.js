@@ -398,8 +398,8 @@ function handleGameInput(room, ws, payload) {
   const sideIdx = (ws.role === 'host') ? 1 : 2;
   if (payload.j) {
     const j = payload.j;
-    const jx = Number(j.x) || 0;
-    const jz = Number(j.z) || 0;
+    const jx = Number.isFinite(+j.x) ? +j.x : 0;   // Number(..)||0 släpper igenom Infinity (truthy) → jx/mag = NaN → rörelse-NaN-exploit
+    const jz = Number.isFinite(+j.z) ? +j.z : 0;
     const mag = Math.hypot(jx, jz);
     if (mag > 1) {
       room.game.lastInputs[sideIdx].j = { x: jx / mag, z: jz / mag };
@@ -477,7 +477,7 @@ function applyArenaInput(room, ws, payload) {
   const sideIdx = ws.peerIdx || ((ws === room.host) ? 1 : 2);   // socket-identitet, ej payload (spoof-skydd)
   const inp = room.game.lastInputs[sideIdx];
   if (inp) {
-    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    let jx = Number.isFinite(+payload.jx) ? +payload.jx : 0, jz = Number.isFinite(+payload.jz) ? +payload.jz : 0;   // Infinity/NaN-guard → annars NaN-rörelse-exploit
     const mag = Math.hypot(jx, jz);
     if (mag > 1) { jx /= mag; jz /= mag; }
     inp.j = { x: jx, z: jz };
@@ -524,7 +524,7 @@ function applyBossWarsInput(room, ws, payload) {
   if (!(sideIdx >= 1 && sideIdx <= 3)) return;
   const inp = room.game.lastInputs[sideIdx];
   if (inp) {
-    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    let jx = Number.isFinite(+payload.jx) ? +payload.jx : 0, jz = Number.isFinite(+payload.jz) ? +payload.jz : 0;   // Infinity/NaN-guard → annars NaN-rörelse-exploit
     const mag = Math.hypot(jx, jz);
     if (mag > 1) { jx /= mag; jz /= mag; }
     inp.j = { x: jx, z: jz };
@@ -585,7 +585,7 @@ function applySandboxInput(room, ws, payload) {
   if (!room.game) return;
   const inp = room.game.lastInputs[1];   // sandbox = solo → alltid side 1
   if (inp) {
-    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    let jx = Number.isFinite(+payload.jx) ? +payload.jx : 0, jz = Number.isFinite(+payload.jz) ? +payload.jz : 0;   // Infinity/NaN-guard → annars NaN-rörelse-exploit
     const mag = Math.hypot(jx, jz);
     if (mag > 1) { jx /= mag; jz /= mag; }
     inp.j = { x: jx, z: jz };
@@ -732,7 +732,7 @@ function applySurvivalInput(room, ws, payload) {
   if (!(sideIdx >= 1 && sideIdx <= 4)) return;
   const inp = room.game.lastInputs[sideIdx];
   if (inp) {
-    let jx = Number(payload.jx) || 0, jz = Number(payload.jz) || 0;
+    let jx = Number.isFinite(+payload.jx) ? +payload.jx : 0, jz = Number.isFinite(+payload.jz) ? +payload.jz : 0;   // Infinity/NaN-guard → annars NaN-rörelse-exploit
     const mag = Math.hypot(jx, jz);
     if (mag > 1) { jx /= mag; jz /= mag; }
     inp.j = { x: jx, z: jz };
