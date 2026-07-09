@@ -1245,7 +1245,11 @@ function applyBossWarsLoadout(state, sideIdx, tals, items) {
   if (state.bossActivated) return;   // loadout låst när fighten börjat (anti mid-fight stat-swap)
   side.bossWarsTalents = [...new Set(((Array.isArray(tals) ? tals : []).filter(id => ENGINE_BOSS_WARS_TALENTS[id])))].slice(0, 3);
   side.bossWarsItems   = [...new Set(((Array.isArray(items) ? items : []).filter(id => ENGINE_BOSS_WARS_ITEMS[id])))].slice(0, 4);
-  if (side.bwItemLevels) for (const k in side.bwItemLevels) if (!side.bossWarsItems.includes(k)) delete side.bwItemLevels[k];   // #17: bortvalt item tappar sin betalda nivå (annars "bankas" Lv3 gratis vid åter-val)
+  // Boss Wars: valda items är GRATIS och startar DIREKT på Lv3 (max) — user 2026-07-09.
+  // (Arena = Lv1 + uppgradera för guld per runda; se applyArenaLoadout ovan.)
+  if (!side.bwItemLevels) side.bwItemLevels = {};
+  for (const k in side.bwItemLevels) if (!side.bossWarsItems.includes(k)) delete side.bwItemLevels[k];   // bortvalt item tappar sin nivå
+  for (const iid of side.bossWarsItems) side.bwItemLevels[iid] = ITEM_BW_MAX_LEVEL;                       // alla valda → Lv3
   recomputeArenaSideStats(state, side);
   if (side.hero) side.hero.hp = side.hero.maxHp;   // toppa upp HP så maxHpPct-loadout inte lämnar dig skadad
 }
