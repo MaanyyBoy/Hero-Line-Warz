@@ -4164,6 +4164,7 @@ const SURVIVAL_SHOP = [
 ];
 function applySurvivalBuy(state, side, id) {
   if (!state || !side) return;
+  if (!side.inSurvival) return;   // defensiv: köp bara i survival (annars skyddat av sv-input-routing)
   if (side.hero && side.hero.dead) return;   // ingen shopping medan död (2026-07-07)
   const item = SURVIVAL_SHOP.find(s => s.id === id);
   if (!item || (side.gold || 0) < item.cost) return;   // okänt id / inte råd
