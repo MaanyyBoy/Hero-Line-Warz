@@ -947,7 +947,7 @@ function recomputeSideStats(side) {
   const def = heroDef(side.heroId);
   side.attackRange = def.attackRange;
   side.attackInterval = def.attackInterval;
-  let attackDmg = def.baseDmg * AA_DMG_MUL;   // dubblad AA-skada (user 2026-07-10); pct/flat-modifiers appliceras ovanpå
+  let attackDmg = def.baseDmg;   // AA×2 flyttat till AA-fire-sites (2026-07-10) så SKILLS som skalar på attackDmg EJ dubblas
   let moveSpeedFlat = def.baseMoveSpeed;
   let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0, dmgReductionPct = 0, maxHpPct = 0;
@@ -1147,7 +1147,8 @@ const ENGINE_BOSS_WARS_TALENTS = {
 // (+active). Lv1 = bas → befintliga loadouts oförändrade tills man uppgraderar. Per-item nivå lagras i
 // side.bwItemLevels[itemId] (default 1) — Lv1/2/3 = ×1/×2/×3 alla stats. Köp/uppgradering för guld.
 const ITEM_BW_MAX_LEVEL = 3;
-const AA_DMG_MUL = 2;   // dubblad auto-attack-skada, ALLA hjältar (user 2026-07-10)
+const AA_DMG_MUL = 2;   // dubblad auto-attack-skada — ENDAST auto-attacker (appliceras i AA-fire-sites, ej på attackDmg), ALLA hjältar (user 2026-07-10)
+const ZHEYNA_AA_BONUS = 1.5;   // Zheyna: +50% extra AA-skada ovanpå (långsam AA kompenseras) (user 2026-07-10)
 const ITEM_NONSCALING_STATS = { cdrPct: true, dmgReductionPct: true };   // item-stats som INTE skalar med nivå: CDR + DR (nerf 2026-07-10; gratis Lv3 ×3 DR nådde 100% odödlighet)
 const itemBwLevelMul = (lvl) => Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1));   // Lv1/2/3 = ×1 / ×2 / ×3 på ALLA stats (user 2026-07-07)
 const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
@@ -6976,7 +6977,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Ganji E "Ninja's Speed": +20% outgoing AA dmg (dedicated ganjiSpeedRem). R break-stealth AA: +50%.
   const ganjiSpeedDmgMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_DMG) : 1;
   const ganjiUltAaDmgMul = ganjiUltAaNow ? GANJI_ULT_AA_DMG_MUL : 1;
-  let aaDmg = side.attackDmg * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
+  let aaDmg = side.attackDmg * AA_DMG_MUL * (side.heroId === 'zheyna' ? ZHEYNA_AA_BONUS : 1) * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -7059,7 +7060,7 @@ function updateHeroAttack(state, side, opp, dt) {
         targetIsMonster: ex.isMonster,
         targetIsHero: false,
         targetSideIdx: 0,
-        damage: side.attackDmg * auraDmg * buffDmgMul, isAoE: false, isCrit: false,
+        damage: side.attackDmg * AA_DMG_MUL * auraDmg * buffDmgMul, isAoE: false, isCrit: false,   // Nyro split = AA → ×2
         lifestealRatio: 0,
         nyroBuffed: false,
         appliesPoison: true,
