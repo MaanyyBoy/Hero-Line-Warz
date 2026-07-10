@@ -3,6 +3,7 @@
 // Klienterna skickar bara inputs och renderar mottagen state.
 
 const http = require('http');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const engine = require('./game-engine.js');
 const accountReport = require('./accountReport.js');   // server-auth identity verification + XP (2026-07-05)
@@ -69,6 +70,12 @@ const onlineUsers = new Map();
 // Per-socket flood guard for CONTROL (non-gameplay) messages — token bucket (audit 2026-07-05).
 const CONTROL_MSG_REFILL = 15;   // tokens refilled per second
 const CONTROL_MSG_BURST = 40;    // max burst / initial tokens
+
+// Konstant-tid-jämförelse av reclaim-secret (undvik timing-läckage + krasch på olik längd).
+function secretEq(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || a.length !== b.length) return false;
+  try { return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch { return false; }
+}
 
 function genCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -914,12 +921,17 @@ wss.on('connection', (ws) => {
         // eller 'classic'. Gammal klient utan fältet → 'classic' (oförändrat).
         mode: (msg.mode === 'arena1v1') ? 'arena1v1' : (msg.mode === 'bosswars') ? 'bosswars' : (msg.mode === 'sandbox') ? 'sandbox' : (msg.mode === 'survival') ? 'survival' : 'classic',
         game: null, tickHandle: null, lastStateMs: 0, lastTickMs: 0, hostGoneAt: null,
+        // Reclaim-identitet (2026-07-10): host-kapning-fix. hostUserId = verifierat konto (om inloggad),
+        // reclaimSecret = kryptografiskt slumpvärde som BARA hostens egen socket får. Vid reclaim måste
+        // återanslutaren bevisa EN av dessa — annars kan vem som helst med rumskoden ta över under grace.
+        hostUserId: ws.userId || null,
+        reclaimSecret: crypto.randomBytes(16).toString('hex'),
       };
       rooms.set(code, room);
       ws.role = 'host';
       ws.roomCode = code;
       ws.peerIdx = 1;          // host = peer 1
-      send(ws, { t: 'hosted', code, maxPeers, peerIdx: 1 });
+      send(ws, { t: 'hosted', code, maxPeers, peerIdx: 1, reclaimSecret: room.reclaimSecret });
       console.log(`[${code}] hosted maxPeers=${maxPeers} (rooms=${rooms.size})`);
     } else if (msg.t === 'list-rooms') {
       // Browse: returnera publika, joinbara rum (ej privata, ej fulla, ej igång).
@@ -955,6 +967,21 @@ wss.on('connection', (ws) => {
         // reclaim ska tillåtas (host kommer bara tillbaka till samma väntan, ingen dödscen). Utan
         // denna flagga nekade alla dessa legitima reclaims felaktigt med "matchen är redan slut".
         send(ws, { t: 'reclaim-error', msg: 'Matchen är redan slut.' });
+        return;
+      }
+      // IDENTITETS-KONTROLL (host-kapning-fix 2026-07-10): tillåt reclaim BARA om återanslutaren bevisar
+      // att den är den ursprungliga hosten. Två accept-vägar:
+      //  (a) reclaimSecret — det slumpvärde servern skickade i 'hosted' (BARA hostens egen socket fick det;
+      //      klienten sparar det i minne + PlayerPrefs för krasch-recovery). Primär, oberoende av inloggning.
+      //  (b) verifierat userId — inloggad host som tappat secret:en (t.ex. app-krasch utan PlayerPrefs-läsning)
+      //      men vars token bundit ws.userId === room.hostUserId. Sekundär.
+      // ws.userId sätts ASYNKRONT via verifyToken efter hello → kan vara null precis vid reconnect; därför är
+      // secret-vägen den pålitliga. Utan match nekas reclaim (annars tar vem som helst med koden över hosten).
+      const okSecret = room.reclaimSecret && secretEq(msg.reclaimSecret, room.reclaimSecret);
+      const okUser = room.hostUserId && ws.userId && ws.userId === room.hostUserId;
+      if (!okSecret && !okUser) {
+        send(ws, { t: 'reclaim-error', msg: 'Kunde inte verifiera din identitet för det här rummet.' });
+        console.log(`[reclaim-deny] code=${code} identity-mismatch (hasSecret=${!!msg.reclaimSecret} userId=${ws.userId || '-'})`);
         return;
       }
       room.host = ws;
