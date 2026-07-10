@@ -10199,12 +10199,13 @@ function xinaPullToHook(state, side) {
   if (w(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   side.hero.facingX = dx / d; side.hero.facingZ = dz / d;
   xinaStun(state, hk, XINA_E_PULL_STUN);   // stun 1.5s
-  // 2 snabba AA: 100% crit + 100% extra crit-dmg (passive +15%) + 50% lifesteal
+  // 2 snabba AA: 100% crit + 100% extra crit-dmg (passive +15%) + 50% lifesteal.
+  // Dessa ÄR auto-attacker → får AA_DMG_MUL (×2) precis som vanlig AA (user 2026-07-10).
   const eWrap = { ent: tgt, isHero: hk.isHero, isMonster: hk.isMonster, isCreep: hk.isCreep, sideIdx: hk.sideIdx };
   const critMul = (side.critDmgMul || 2.0) + 0.15 + 1.0;
   for (let i = 0; i < XINA_E_AA_COUNT; i++) {
     if (xinaHookDead(state, hk)) break;
-    const dmg = (side.attackDmg || 0) * critMul * xinaOutMul(side);
+    const dmg = (side.attackDmg || 0) * AA_DMG_MUL * critMul * xinaOutMul(side);
     const dealt = xinaApplyHitDamage(state, side, eWrap, dmg);
     if (dealt > 0) xinaHeal(side, dmg * XINA_E_AA_LIFESTEAL);
   }
