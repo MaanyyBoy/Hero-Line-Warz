@@ -3883,12 +3883,15 @@ function tickSurvivalBossRooms(state, dt) {
       if (!boss._rewardGiven) {
         boss._rewardGiven = true;
         for (const s of allSides) {
-          if (s.hero.dead) continue;
+          // Ge belöningen till HELA laget — även en hjälte som råkar vara DÖD i döds-ögonblicket (fairness-fix
+          // 2026-07-10: tidigare `if (s.hero.dead) continue;` gjorde att en död teammate ALDRIG fick itemet).
           if (!s.bossWarsItems) s.bossWarsItems = [];
           // Lägg till boss-exklusiv item (max 6 slots — bossar kan ej köpa i shop ändå)
           if (!s.bossWarsItems.includes(boss.rewardItemId) && s.bossWarsItems.length < 6) {
             s.bossWarsItems.push(boss.rewardItemId);
-            recomputeArenaSideStats(state, s);
+            const wasDead = s.hero.dead;
+            recomputeArenaSideStats(state, s);   // registrerar item-stats (maxHp/dmg/…) på sidan
+            if (wasDead) s.hero.hp = 0;   // recompute bumpar hp vid maxHp-ökning → återuppliva ALDRIG en död hjälte; respawn ger full HP inkl. det nya itemet
           }
         }
       }
@@ -11919,6 +11922,7 @@ function serializeState(state) {
   if (state.cloneBot && state.sides[3]) {
     _serializeLwSide(state.sides[3], _lwSideBuf3, _lwMPool3, _lwCPool3, _lwInvPool3, _lwPPool3, _lwCPPool3, _lwMRPool3);
     _lwSideBuf3.rem = r1(state.cloneBot.remaining);
+    _lwSideBuf3.tgt = state.cloneBot.targetIdx;   // vems lane klonen invaderar = DEN spelaren är försvarare (ska döda den); ägaren ser en positiv banner
     snap.clone = _lwSideBuf3;
   } else {
     snap.clone = undefined;

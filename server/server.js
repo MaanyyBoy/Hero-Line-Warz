@@ -949,13 +949,13 @@ wss.on('connection', (ws) => {
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) {
-        send(ws, { t: 'reclaim-error', msg: 'Rummet finns inte längre.' });
+        send(ws, { t: 'reclaim-error', msg: 'This room no longer exists.' });
         console.log(`[reclaim-fail] code=${code} not found`);
         return;
       }
       if (room.host) {
         // Någon är redan host — kan inte reclaim:a
-        send(ws, { t: 'reclaim-error', msg: 'Rummet är upptaget.' });
+        send(ws, { t: 'reclaim-error', msg: 'This room is already taken.' });
         return;
       }
       if (!room.game && room.everStarted) {
@@ -966,7 +966,7 @@ wss.on('connection', (ws) => {
         // eller ett host-only-rum som väntar på en andra spelare) — där är room.game LIKA null men
         // reclaim ska tillåtas (host kommer bara tillbaka till samma väntan, ingen dödscen). Utan
         // denna flagga nekade alla dessa legitima reclaims felaktigt med "matchen är redan slut".
-        send(ws, { t: 'reclaim-error', msg: 'Matchen är redan slut.' });
+        send(ws, { t: 'reclaim-error', msg: 'This match has already ended.' });
         return;
       }
       // IDENTITETS-KONTROLL (host-kapning-fix 2026-07-10): tillåt reclaim BARA om återanslutaren bevisar
@@ -980,7 +980,7 @@ wss.on('connection', (ws) => {
       const okSecret = room.reclaimSecret && secretEq(msg.reclaimSecret, room.reclaimSecret);
       const okUser = room.hostUserId && ws.userId && ws.userId === room.hostUserId;
       if (!okSecret && !okUser) {
-        send(ws, { t: 'reclaim-error', msg: 'Kunde inte verifiera din identitet för det här rummet.' });
+        send(ws, { t: 'reclaim-error', msg: 'Could not verify your identity for this room.' });
         console.log(`[reclaim-deny] code=${code} identity-mismatch (hasSecret=${!!msg.reclaimSecret} userId=${ws.userId || '-'})`);
         return;
       }
@@ -998,19 +998,19 @@ wss.on('connection', (ws) => {
       const code = (msg.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) {
-        send(ws, { t: 'join-error', msg: 'Rummet finns inte. Kontrollera koden eller be hosten skapa ett nytt rum.' });
+        send(ws, { t: 'join-error', msg: 'Room not found. Check the code or ask the host to create a new room.' });
         console.log(`[join-fail] code=${code} not found. Existing: ${[...rooms.keys()].join(',') || '(none)'}`);
         return;
       }
       if (!room.host) {
-        send(ws, { t: 'join-error', msg: 'Hosten har tappat anslutningen. Be hosten skapa ett nytt rum.' });
+        send(ws, { t: 'join-error', msg: 'The host lost connection. Ask them to create a new room.' });
         console.log(`[join-fail] code=${code} host gone`);
         return;
       }
       const maxPeers = room.maxPeers || 2;
       const peersNow = 1 + (room.client ? 1 : 0) + (room.clients ? room.clients.length : 0);
       if (peersNow >= maxPeers) {
-        send(ws, { t: 'join-error', msg: 'Rummet är fullt.' });
+        send(ws, { t: 'join-error', msg: 'This room is full.' });
         return;
       }
       // Klassisk 2-peer: använd room.client slot (kompatibel med befintlig kod).
