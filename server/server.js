@@ -265,26 +265,26 @@ function gameLoopTick(room) {
   const _isBoss = !!room.bossSim;            // decision 122 Fas 2: server-auth boss wars (3-peer)
   const _isSandbox = !!room.sandboxSim;      // sandbox-träningsläge (2026-06-18, solo, host-only)
   const _isSurvival = !!room.survivalSim;    // Survival Wars (2026-06-27, 4-player co-op defend)
+  // Live-peer-koll FÖRE simmen: frys sim-ticken när ingen peer är ansluten (host-grace/reclaim-fönster).
+  // Ett övergivet server-auth-rum brände annars 30 Hz AI/fysik i HELA grace-perioden (nu 90s) på Fly free-
+  // tier. Loopen fortsätter schemaläggas (billigt) och simmen återupptas oförändrad vid reclaim. (2026-07-10)
+  const _anyLive = (room.host && room.host.readyState === 1)
+    || (room.client && room.client.readyState === 1)
+    || (room.clients && room.clients.some(c => c && c.readyState === 1));
   try {
-    if (_isArena) engine.tickArena(room.game, dt);
-    else if (_isBoss) engine.tickBossWars(room.game, dt);
-    else if (_isSandbox) engine.tickSandbox(room.game, dt);
-    else if (_isSurvival) engine.tickSurvival(room.game, dt);
-    else engine.tickGame(room.game, dt);
+    if (_anyLive) {
+      if (_isArena) engine.tickArena(room.game, dt);
+      else if (_isBoss) engine.tickBossWars(room.game, dt);
+      else if (_isSandbox) engine.tickSandbox(room.game, dt);
+      else if (_isSurvival) engine.tickSurvival(room.game, dt);
+      else engine.tickGame(room.game, dt);
+    }
   } catch (e) {
     console.error(`[${room.code}] tick error:`, e && e.stack || e);
   }
   const _simMs = Date.now() - _simStart;
   if (room.game) {
-    // Tick-idle-läcka-fix: under host-grace (host disconnectad, rum hålls
-    // levande HOST_GRACE_MS för reclaim) fanns ingen live-peer men serialize+
-    // stringify+broadcast kördes ändå VARJE tick i upp till 30s = ren CPU-slöseri
-    // på Render free-tier (delad CPU). Guard: kör serialize/send-blocket bara om
-    // minst en peer faktiskt är ansluten (OPEN). Sim-tick + spike-log +
-    // scheduleNextTick nedanför körs oförändrat.
-    const _anyLive = (room.host && room.host.readyState === 1)
-      || (room.client && room.client.readyState === 1)
-      || (room.clients && room.clients.some(c => c && c.readyState === 1));
+    // Kör serialize/send-blocket bara om minst en peer är ansluten (samma _anyLive som ovan).
     if (_anyLive) {
     // 30 Hz-fix v2 (2026-06-27): send a snapshot on EVERY tick, no interval guard. The old guard
     // (now - lastStateMs >= STATE_INTERVAL_MS) skipped catch-up ticks — on a jittery shared VM a late
@@ -937,6 +937,12 @@ wss.on('connection', (ws) => {
       if (room.host) {
         // Någon är redan host — kan inte reclaim:a
         send(ws, { t: 'reclaim-error', msg: 'Rummet är upptaget.' });
+        return;
+      }
+      if (!room.game) {
+        // Matchen är redan slut (stopGame nollade room.game vid gameOver) — reclaim in i ett dött rum
+        // gav en tom scen utan tick-loop/snapshots. Neka så klienten faller tillbaka till menyn. (2026-07-10)
+        send(ws, { t: 'reclaim-error', msg: 'Matchen är redan slut.' });
         return;
       }
       room.host = ws;
