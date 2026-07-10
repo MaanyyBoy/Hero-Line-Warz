@@ -1034,7 +1034,7 @@ function recomputeSideStats(side) {
   side.attackSpeedMul = 1 + attackSpeedPct;
   side.skillDmgMul = (1 + skillDmgPct) * levelDmgMul;
   side.cdrMul = Math.max(0.1, 1 - cdrPct);
-  side.dmgReductionMul = Math.max(0.0, 1 - dmgReductionPct);
+  side.dmgReductionMul = Math.max(0.15, 1 - dmgReductionPct);   // tak 85% DR — förhindra 100% odödlighet (2026-07-10)
   side.critChancePct = Math.min(1, critChancePct);
   side.healPerSecPct = Math.max(0, healPerSecPct);
   const newMaxHp = Math.round(maxHpFlat * (1 + maxHpPct) * levelHpMul);
@@ -1148,7 +1148,7 @@ const ENGINE_BOSS_WARS_TALENTS = {
 // side.bwItemLevels[itemId] (default 1) — Lv1/2/3 = ×1/×2/×3 alla stats. Köp/uppgradering för guld.
 const ITEM_BW_MAX_LEVEL = 3;
 const AA_DMG_MUL = 2;   // dubblad auto-attack-skada, ALLA hjältar (user 2026-07-10)
-const ITEM_NONSCALING_STATS = { cdrPct: true };   // item-stats som INTE skalar med nivå (nerf: CDR, user 2026-07-10)
+const ITEM_NONSCALING_STATS = { cdrPct: true, dmgReductionPct: true };   // item-stats som INTE skalar med nivå: CDR + DR (nerf 2026-07-10; gratis Lv3 ×3 DR nådde 100% odödlighet)
 const itemBwLevelMul = (lvl) => Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1));   // Lv1/2/3 = ×1 / ×2 / ×3 på ALLA stats (user 2026-07-07)
 const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
 // === ITEMS (user 2026-07-07: ersatte hela gamla katalogen med 12 nya items från referensbild) ===
@@ -1206,7 +1206,7 @@ function recomputeArenaSideStats(state, side) {
   side.moveSpeed = (side.moveSpeed || HERO_BASE_MOVE_SPEED) * (1 + moveSpeedPct);
   side.skillDmgMul = (side.skillDmgMul || 1) * (1 + skillDmgPct);
   side.cdrMul = Math.max(0.1, (side.cdrMul || 1) * (1 - cdrPct));
-  side.dmgReductionMul = Math.max(0.0, (side.dmgReductionMul || 1) * (1 - dmgReductionPct));
+  side.dmgReductionMul = Math.max(0.15, (side.dmgReductionMul || 1) * (1 - dmgReductionPct));   // tak 85% DR (2026-07-10)
   const maxHpBefore = side.hero.maxHp;
   side.hero.maxHp = Math.round(side.hero.maxHp * (1 + maxHpPct));
   if (side.hero.maxHp > maxHpBefore) {
@@ -3151,7 +3151,13 @@ function dragonWipe(state) {   // raid wipe — alla 3 dör (ingen respawn i bos
 function tickDragonMechanics(state, dt, boss) {
   const d = boss.dragon; if (!d) return false;
   if (d.active) {
-    if (d.mech === 1) tickDragonMemory(state, dt, boss);
+    if (d.mech === 1) {
+      // AA×2 kan bränna 95→80% snabbare än symbolerna hinner visas (~3.6s). Om reveals ej hann visas
+      // under strid → visa dem NU (boss immun) innan gissnings-timern ens startar, så spelaren aldrig
+      // tvingas minnas osedda symboler. När alla 3 visats faller vi in i gissnings-fasen. (2026-07-10)
+      if (d.memRevealIdx < 3 || d.memReveal || d.memQueue.length) dragonTickMemoryReveals(state, dt, boss);
+      else tickDragonMemory(state, dt, boss);
+    }
     else if (d.mech === 2) tickDragonSoulLink(state, dt, boss);
     else if (d.mech === 3) tickDragonMeteor(state, dt, boss);
     return true;   // mekanik pågår → boss immun (bossWarsDmgMod) + AI pausad
@@ -3206,6 +3212,7 @@ function tickDragonMemory(state, dt, boss) {
 function dragonMemActivate(state, sideIdx) {
   const boss = state.boss, d = boss && boss.dragon;
   if (!d || !d.active || d.mech !== 1) return;
+  if (d.memRevealIdx < 3 || d.memReveal || d.memQueue.length) return;   // symbolerna visas fortf → gissning ej öppen än (2026-07-10)
   if ((d.memActLock || 0) > 0) return;   // debounce: hindra knapp-spam → burst-missar på en tick
   const actor = state.sides[sideIdx];
   if (!actor || actor.hero.dead) return;
