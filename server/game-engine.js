@@ -947,7 +947,7 @@ function recomputeSideStats(side) {
   const def = heroDef(side.heroId);
   side.attackRange = def.attackRange;
   side.attackInterval = def.attackInterval;
-  let attackDmg = def.baseDmg;
+  let attackDmg = def.baseDmg * AA_DMG_MUL;   // dubblad AA-skada (user 2026-07-10); pct/flat-modifiers appliceras ovanpå
   let moveSpeedFlat = def.baseMoveSpeed;
   let maxHpFlat = def.baseHp;
   let attackSpeedPct = 0, moveSpeedPct = 0, skillDmgPct = 0, cdrPct = 0, dmgReductionPct = 0, maxHpPct = 0;
@@ -998,8 +998,10 @@ function recomputeSideStats(side) {
     const _applyBwItem = (def, level) => {
       if (!def) return;
       const mul = itemBwLevelMul(level);
-      if (def.stats) { const s = {}; for (const k in def.stats) s[k] = def.stats[k] * mul; addStats(s); }
-      if (def.lifestealOnAa) _bwAaLifesteal += def.lifestealOnAa * mul;
+      // NERF (user 2026-07-10): cdrPct + lifesteal skalar EJ med item-nivå (Lv1/2/3 = samma värde) — annars
+      // gav gratis Lv3-items i Boss Wars 90%-CDR-tak + nästintill odödlig AA-lifesteal. Övriga stats skalar ×1/2/3.
+      if (def.stats) { const s = {}; for (const k in def.stats) s[k] = def.stats[k] * (ITEM_NONSCALING_STATS[k] ? 1 : mul); addStats(s); }
+      if (def.lifestealOnAa) _bwAaLifesteal += def.lifestealOnAa;   // ×1 (skalar ej med nivå)
       if (def.critDmgBonus) _bwCritDmgBonus += def.critDmgBonus * mul;
       if (def.phoenixRevive) _bwPhoenix = true;   // binär effekt — skalas ej
     };
@@ -1145,6 +1147,8 @@ const ENGINE_BOSS_WARS_TALENTS = {
 // (+active). Lv1 = bas → befintliga loadouts oförändrade tills man uppgraderar. Per-item nivå lagras i
 // side.bwItemLevels[itemId] (default 1) — Lv1/2/3 = ×1/×2/×3 alla stats. Köp/uppgradering för guld.
 const ITEM_BW_MAX_LEVEL = 3;
+const AA_DMG_MUL = 2;   // dubblad auto-attack-skada, ALLA hjältar (user 2026-07-10)
+const ITEM_NONSCALING_STATS = { cdrPct: true };   // item-stats som INTE skalar med nivå (nerf: CDR, user 2026-07-10)
 const itemBwLevelMul = (lvl) => Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1));   // Lv1/2/3 = ×1 / ×2 / ×3 på ALLA stats (user 2026-07-07)
 const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
 // === ITEMS (user 2026-07-07: ersatte hela gamla katalogen med 12 nya items från referensbild) ===
