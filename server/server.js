@@ -91,6 +91,9 @@ function send(ws, obj) {
 
 function startGame(room) {
   if (room.tickHandle || room.game) return;
+  room.everStarted = true;   // (2026-07-10) markerar att EN match faktiskt körts i rummet — skiljer
+                              // "aldrig startad lobby" (room.game null, legitim reclaim) från "match
+                              // slut" (room.game nollat av stopGame, ska nekas) i reclaim-handlern.
   room.game = engine.createGameState();
   room.lastStateMs = 0;
   room.lastTickMs = Date.now();
@@ -467,6 +470,7 @@ function relayPeerSend(peer, envelope, isState) {
 // a-state; host:ens egna a-state ignoreras då.
 function startArenaSim(room, heroes, bots, teamSize) {
   if (room.game || room.tickHandle) return;        // redan igång
+  room.everStarted = true;   // se kommentar i startGame()
   room.arenaSim = true;
   // Team-arena (Task 18): teamSize 2/3 → sides 1..4/1..6 (team 1 = 1..N, team 2 = N+1..2N).
   room.game = engine.initArenaMatch(heroes, teamSize);
@@ -521,6 +525,7 @@ function applyArenaInput(room, ws, payload) {
 // skickar b-sim-start startar servern boss-engine:n + äger b-state. 3-peer broadcast.
 function startBossWarsSim(room, heroes, tier, loadouts, bots) {
   if (room.game || room.tickHandle) return;        // redan igång
+  room.everStarted = true;   // se kommentar i startGame()
   room.bossSim = true;
   room.game = engine.initBossWarsMatch(heroes, tier, loadouts);
   // Host fyller tomma co-op-slots (2/3) med bots. bots = { "2": "medium", "3": "hard" }.
@@ -596,6 +601,7 @@ function handleBossMessage(room, fromWs, envelope) {
 // hjälte + 3 dummies; tickSandbox kör hjälte-combat (boss-wars-återanvändning).
 function startSandboxSim(room, heroId) {
   if (room.game || room.tickHandle) return;
+  room.everStarted = true;   // se kommentar i startGame()
   room.sandboxSim = true;
   room.game = engine.createSandboxState(heroId);
   room.lastStateMs = 0;
@@ -730,6 +736,7 @@ function relayBossWarsMessage(room, fromWs, envelope) {
 // ── Survival Wars (2026-06-27): server-auth 4-player co-op defend-the-building ──
 function startSurvivalSim(room, heroes, bots) {
   if (room.game || room.tickHandle) return;
+  room.everStarted = true;   // se kommentar i startGame()
   room.survivalSim = true;
   room.game = engine.initSurvivalMatch(heroes);
   // Host fyller tomma co-op-slots (2/3/4) med bots. bots = { "2": "medium", "3": "hard", "4": "medium" }.
@@ -939,9 +946,14 @@ wss.on('connection', (ws) => {
         send(ws, { t: 'reclaim-error', msg: 'Rummet är upptaget.' });
         return;
       }
-      if (!room.game) {
+      if (!room.game && room.everStarted) {
         // Matchen är redan slut (stopGame nollade room.game vid gameOver) — reclaim in i ett dött rum
         // gav en tom scen utan tick-loop/snapshots. Neka så klienten faller tillbaka till menyn. (2026-07-10)
+        // OBS: room.everStarted krävs för att skilja detta från en lobby där ingen match ÄNNU har
+        // startats (t.ex. sandbox/arena/boss hero-pick INNAN sb-sim-start/a-sim-start/b-sim-start,
+        // eller ett host-only-rum som väntar på en andra spelare) — där är room.game LIKA null men
+        // reclaim ska tillåtas (host kommer bara tillbaka till samma väntan, ingen dödscen). Utan
+        // denna flagga nekade alla dessa legitima reclaims felaktigt med "matchen är redan slut".
         send(ws, { t: 'reclaim-error', msg: 'Matchen är redan slut.' });
         return;
       }
