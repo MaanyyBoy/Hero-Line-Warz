@@ -11923,6 +11923,11 @@ function serializeState(state) {
     _serializeLwSide(state.sides[3], _lwSideBuf3, _lwMPool3, _lwCPool3, _lwInvPool3, _lwPPool3, _lwCPPool3, _lwMRPool3);
     _lwSideBuf3.rem = r1(state.cloneBot.remaining);
     _lwSideBuf3.tgt = state.cloneBot.targetIdx;   // vems lane klonen invaderar = DEN spelaren är försvarare (ska döda den); ägaren ser en positiv banner
+    // Invader-payoff (2026-07-09): ägaren betalar 50k men klonen slåss off-camera → skicka DEFENDERNS
+    // hero-HP-fraktion (thp 0..1) + död-flagga (tdead) så ägaren ser progress + ett kill-ögonblick.
+    const _tSide = state.sides[state.cloneBot.targetIdx];
+    _lwSideBuf3.thp = (_tSide && _tSide.hero) ? Math.max(0, Math.min(1, _tSide.hero.hp / Math.max(1, _tSide.hero.maxHp))) : 1;
+    _lwSideBuf3.tdead = (_tSide && _tSide.hero && _tSide.hero.dead) ? 1 : 0;
     snap.clone = _lwSideBuf3;
   } else {
     snap.clone = undefined;
