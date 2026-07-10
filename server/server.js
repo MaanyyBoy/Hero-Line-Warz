@@ -17,9 +17,10 @@ const TICK_RATE = 30;                       // simuleringssteg per sekund
 const STATE_RATE = 30;
 const TICK_INTERVAL_MS = 1000 / TICK_RATE;
 const STATE_INTERVAL_MS = 1000 / STATE_RATE;
-// Grace-period när host disconnect:ar utan client. Rummet behålls så
-// host kan reclaim:a med samma kod (t.ex. efter mobile-bakgrund/proxy-blip).
-const HOST_GRACE_MS = 30000;
+// Grace-period när host disconnect:ar utan client. Rummet behålls så host kan reclaim:a med
+// samma kod (mobile-bakgrund/proxy-blip ELLER app-omstart + rejoin — user 2026-07-10). Höjt
+// 30s→90s så en app-relaunch (+ ev. Fly cold-start) hinner reclaim:a innan rummet städas.
+const HOST_GRACE_MS = 90000;
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
