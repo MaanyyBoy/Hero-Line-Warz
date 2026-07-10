@@ -644,6 +644,7 @@ const CLONE_STAT_RATIO = 1.0;
 const HERO_COPY_TOWER_DAMAGE = 10;
 const HERO_COPY_ATTACK_RANGE = 4.0;
 const HERO_COPY_ATTACK_INTERVAL = 1.2;
+const HERO_COPY_LIFETIME = 15;   // klonen lever 15s på motståndarens sida, sedan despawn (user 2026-07-10)
 const HERO_COPY_SKILL_INTERVAL = 6.0; // hur ofta boten castar Eldklot (legacy = qInterval)
 const HERO_COPY_AGGRO_RANGE = 5.5;
 const HERO_COPY_RADIUS = 0.45;   // XP = creep.cost * 0.6
@@ -10670,6 +10671,11 @@ function spawnHeroCopy(state, winnerSide, statRatio) {
     attackDmg: winnerSide.attackDmg * stat,
     moveSpeed: winnerSide.moveSpeed * stat,
     skillDmg: ELDKLOT_DAMAGE * (winnerSide.skillDmgMul || 1) * stat,
+    // Exakt kopia (user 2026-07-10): kopiera hjältens AA-range/takt + nivå så klonen slår som originalet.
+    attackRange: winnerSide.attackRange || HERO_COPY_ATTACK_RANGE,
+    attackInterval: winnerSide.attackInterval || HERO_COPY_ATTACK_INTERVAL,
+    level: winnerSide.level || 1,
+    remaining: HERO_COPY_LIFETIME,   // 15s livstid
     attackCd: 0,
     // Decision 107: 3 skill-CDs istället för en (Q/F/E)
     qCd: 0, fCd: 0, eCd: 0,
@@ -10691,6 +10697,9 @@ function updateHeroCopies(state, arenaSide, dt) {
     hc.qCd = Math.max(0, (hc.qCd || 0) - dt);
     hc.fCd = Math.max(0, (hc.fCd || 0) - dt);
     hc.eCd = Math.max(0, (hc.eCd || 0) - dt);
+    // 15s livstid (user 2026-07-10) — despawn när tiden gått ut.
+    hc.remaining = (hc.remaining != null ? hc.remaining : HERO_COPY_LIFETIME) - dt;
+    if (hc.remaining <= 0) { arenaSide.heroCopies.splice(i, 1); continue; }
     // Nått tornet?
     const dxT = towerPos.x - hc.x, dzT = towerPos.z - hc.z;
     if (dxT * dxT + dzT * dzT < (TOWER_REACH + HERO_COPY_RADIUS) * (TOWER_REACH + HERO_COPY_RADIUS)) {
@@ -10735,10 +10744,10 @@ function updateHeroCopies(state, arenaSide, dt) {
         damageHero(arenaSide, hc.attackDmg * HERO_COPY_DASH_DMG_MUL);
         hc.eCd = HERO_COPY_E_INTERVAL;
       }
-      // AA mot hero om nära nog
-      if (aggro && d < HERO_COPY_ATTACK_RANGE && hc.attackCd <= 0) {
+      // AA mot hero om nära nog — exakt hjälte-range/takt (user 2026-07-10)
+      if (aggro && d < (hc.attackRange || HERO_COPY_ATTACK_RANGE) && hc.attackCd <= 0) {
         damageHero(arenaSide, hc.attackDmg);
-        hc.attackCd = HERO_COPY_ATTACK_INTERVAL;
+        hc.attackCd = (hc.attackInterval || HERO_COPY_ATTACK_INTERVAL);
       }
     }
     // Rörelse: chasa hero om aggro, annars mot tornet
@@ -10748,7 +10757,7 @@ function updateHeroCopies(state, arenaSide, dt) {
     const dx = tx - hc.x, dz = tz - hc.z;
     const m = Math.hypot(dx, dz);
     if (m > 0.1) {
-      const stop = aggro ? HERO_COPY_ATTACK_RANGE - 0.4 : TOWER_REACH;
+      const stop = aggro ? (hc.attackRange || HERO_COPY_ATTACK_RANGE) - 0.4 : TOWER_REACH;
       if (m > stop) {
         const step = hc.moveSpeed * dt;
         hc.x += (dx / m) * step;
