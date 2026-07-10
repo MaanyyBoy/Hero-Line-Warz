@@ -154,6 +154,14 @@ const _SIDE_KEYS = Object.freeze([1, 2]);
 function arenaKeys(state) { return (state && state.sideKeys) || _SIDE_KEYS; }
 function arenaOpp(state, idx) {
   if (idx === 3 && state && state.cloneBot) return state.sides[state.cloneBot.targetIdx] || null;   // 50k Line Wars clone (sides[3]) → jagar targetIdx-hjälten
+  // 50k Line Wars clone: medan klon-PvP-fönstret är ÖPPET (state._cloneActing) ska den INVADERADE sidan
+  // (targetIdx) rikta sina hero-skills mot KLONEN (sides[3]) i st f mot den riktiga (avlägsna) ägaren.
+  // Täcker self-resolving skill-fns (tickZheyna/tickXina/tickGanjiUlt) + cast-fns som själva kallar arenaOpp.
+  // Pure pass-through när fönstret är stängt → 0 påverkan på duel/arena/boss/normal push (ingen s1↔s2-läcka).
+  if (idx !== 3 && state && state._cloneActing && state.cloneBot && idx === state.cloneBot.targetIdx) {
+    const clone = state.sides[3];
+    if (clone && !clone.hero.dead) return clone;
+  }
   if (!state || !state.teamSize || state.teamSize <= 1) return state.sides[3 - idx];
   const me = state.sides[idx];
   if (!me) return state.sides[3 - idx] || null;
@@ -10526,6 +10534,13 @@ function applyEvent(state, sideIdx, ev) {
     side.skillDmgMul = _prevSkillDmgMul * _lvlMul * _ganjiSpeedSkillMul * _manaSurgeMul;
     // Cast-lyckad-detektering via cd-ökning (cast-fn:erna sätter side.skills[key].cd först vid lyckad cast).
     const _cdBefore = side.skills[ev.key] ? (side.skills[ev.key].cd || 0) : 0;
+    // 50k Line Wars clone: om den castande sidan just nu invaderas av klonen, öppna hero-PvP-fönstret runt
+    // själva casten så INSTANT cast-skada (t.ex. Frost Nova-burst, Shout) + hero-homing (targetSideIdx=3)
+    // träffar KLONEN — arenaOpp(targetIdx)→sides[3] via override, symmetriskt med klonens egna cast-fönster
+    // i tickCloneBot. Enbart DENNA sidas cast påverkas; ägaren/andra sidan får aldrig fönstret (ingen läcka).
+    const _castClonePvp = !!(state.cloneBot && sideIdx === state.cloneBot.targetIdx && state.sides[3] && !state.sides[3].hero.dead);
+    const _castPrevActing = state._cloneActing;
+    if (_castClonePvp) state._cloneActing = true;
     try {
       if (ev.key === 'q') {
         if (isLegolus) castLegolusVineTrap(state, sideIdx, ev);
@@ -10557,6 +10572,7 @@ function applyEvent(state, sideIdx, ev) {
       }
     } finally {
       side.skillDmgMul = _prevSkillDmgMul;
+      if (_castClonePvp) state._cloneActing = _castPrevActing;   // stäng klon-PvP-fönstret igen (aldrig öppet utanför denna cast)
     }
     if (side.skills[ev.key] && (side.skills[ev.key].cd || 0) > _cdBefore) {   // cd ökade → cast LYCKADES
       side._lastNonUltSkillKey = ev.key;                                       // Time Warp nollställer senast LYCKADE cast
@@ -11421,27 +11437,38 @@ function tickGame(state, dt) {
   state._cloneActing = false;   // säkerställ att riktiga spelares combat-loop ALDRIG ser klon-PvP-fönstret öppet (även om en tidigare klon-tick kastade)
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
+    // `opp` beräknas med klon-PvP-fönstret STÄNGT (11421 nollar det före loopen) → alltid den RIKTIGA
+    // motståndaren (ägaren), aldrig klonen. Används oförändrat av monster/creep/AA-systemen (geometri +
+    // creep-ägande + SIDE_CFG orört; SIDE_CFG[3] finns ej så klonen får aldrig flöda dit).
     const opp = arenaOpp(state, sideIdx);
+    // 50k Line Wars clone: när DENNA sida invaderas av klonen (sideIdx===targetIdx) ska dess hero-skills
+    // träffa klonen (sides[3]), symmetriskt med hur klonen redan träffar sidan i tickCloneBot. `pvpOpp`
+    // pekar på klonen och trädas ENDAST in i de hero-skada-fnser vars hero-gren är isHeroPvpActive-gate:ad.
+    // Fönstret (state._cloneActing) öppnas här och nollas i slutet av iterationen → ägarens/andra sidans
+    // iteration ser det ALDRIG öppet (ingen s1↔s2- eller ägare→försvarare-läcka).
+    const clonePvp = !!(state.cloneBot && sideIdx === state.cloneBot.targetIdx && state.sides[3] && !state.sides[3].hero.dead);
+    const pvpOpp = clonePvp ? state.sides[3] : opp;   // ägaren/andra sidan: pvpOpp === opp → oförändrat beteende
+    if (clonePvp) state._cloneActing = true;          // isHeroPvpActive→true + arenaOpp(targetIdx)→klonen (self-resolving fns)
     _dmgActor = side;   // attribuera denna sides utgående skada (Frozen Soul/Harvest/Chain Lightning i enemy-territory-PvP)
     updateSkillCooldowns(side, dt);
     updateWaves(state, side, dt);
-    updateMonsters(state, side, opp, dt);
-    updatePlayerCreeps(state, side, opp, dt);
+    updateMonsters(state, side, opp, dt);            // REAL opp (ägaren) — creep/monster-strid orörd
+    updatePlayerCreeps(state, side, opp, dt);        // REAL opp
     updateHeroCopies(state, side, dt);
-    updateBlackHoles(state, side, opp, dt);
-    updateVineTraps(state, side, opp, dt);
-    updateHammers(state, side, opp, dt);
-    updateIronWill(state, side, opp, dt);
-    updateAragurnWhirlwind(state, side, opp, dt);
-    updateAragurnLeap(state, side, opp, dt);
+    updateBlackHoles(state, side, pvpOpp, dt);       // hero-skada (isHeroPvpActive) → klonen
+    updateVineTraps(state, side, pvpOpp, dt);        // hero-root/mark → klonen
+    updateHammers(state, side, opp, dt);             // hero-gren duel-only → REAL opp (bevarar creep-skada, ingen klon-träff, symmetriskt)
+    updateIronWill(state, side, pvpOpp, dt);         // hero-skada (isHeroPvpActive) → klonen
+    updateAragurnWhirlwind(state, side, pvpOpp, dt); // hero-skada (isHeroPvpActive) → klonen
+    updateAragurnLeap(state, side, pvpOpp, dt);      // hero-skada (isHeroPvpActive) → klonen
     updateAragurnShoutHeal(side, dt);
-    updateSoulDrain(state, side, opp, dt);
+    updateSoulDrain(state, side, pvpOpp, dt);        // hero-skada (isHeroPvpActive) → klonen
     updateBossProjectiles(state, side, dt);
     updateBossPools(state, side, dt);
     tickLegolusInvis(side, dt);
     tickGanjiUlt(state, side, dt);
     tickThornPools(state, side, dt);
-    tickKostefoSkills(state, side, opp, dt);
+    tickKostefoSkills(state, side, pvpOpp, dt);      // hero-skada (isHeroPvpActive) → klonen
     // Aragurn passive: cache nearby-enemy-count för damageHero DR-beräkning.
     // Throttlad till 5 Hz (recompute var 0.2s) — O(N+M) iter onödig varje tick.
     if (side.heroId === 'elar') {
@@ -11452,7 +11479,7 @@ function tickGame(state, dt) {
       }
     }
     if ((side.nyroBuffRemaining || 0) > 0) side.nyroBuffRemaining = Math.max(0, side.nyroBuffRemaining - dt);
-    tickGimluTauntLvl5(state, side, opp, dt);
+    tickGimluTauntLvl5(state, side, pvpOpp, dt);     // hero-skada (isHeroPvpActive) → klonen
     if ((side.gandulfBuffRemaining || 0) > 0) {
       side.gandulfBuffRemaining = Math.max(0, side.gandulfBuffRemaining - dt);
       if (side.gandulfBuffRemaining <= 0) side.gandulfBuffStacks = 0;
@@ -11462,18 +11489,23 @@ function tickGame(state, dt) {
       side.ironWillExplosions[k].life -= dt;
       if (side.ironWillExplosions[k].life <= 0) side.ironWillExplosions.splice(k, 1);
     }
-    updateCreepProjectiles(state, side, opp, dt);
+    updateCreepProjectiles(state, side, opp, dt);    // REAL opp — egna creeps skjuter mot ägaren (ej hero-skill-PvP)
     updateMonsterProjectiles(state, side, dt);
+    // AA MÅSTE köra med klon-PvP-fönstret STÄNGT: annars lägger findClosestHostile:s portal-PvP-gren till
+    // realOpp.hero (ägaren) som AA-mål när isHeroPvpActive→true (läcka vid mittväggen). Klon-AA funkar ändå
+    // via targetType 'cloneHero' (oberoende av fönstret) → AA träffar vågor + ägar-creeps + klonen, aldrig ägaren.
+    const _cloneWin = state._cloneActing; if (_cloneWin) state._cloneActing = false;
     if (!side.hero.dead) updateHeroAttack(state, side, opp, dt);
-    updateProjectiles(state, side, opp, dt);
-    updateFireballs(state, side, opp, dt);
-    updateNovaEffects(state, side, opp, dt);
+    if (_cloneWin) state._cloneActing = true;
+    updateProjectiles(state, side, opp, dt);         // hero-skada via p.targetSideIdx (satt vid cast) → klonen; opp = bara creep-splice (REAL)
+    updateFireballs(state, side, opp, dt);           // hero-gren duel-only → REAL opp (bevarar creep-skada, symmetriskt ingen klon-träff)
+    updateNovaEffects(state, side, pvpOpp, dt);      // Ice Rain-zon DoT (isHeroPvpActive) → klonen
     updateActiveBuffs(side, dt);
     // Lvl-5 buff-timers (Gandulf Wind Puff MS, Gimlu Hammer MS m.fl.)
     if ((side.windPuffMsRem || 0) > 0) side.windPuffMsRem = Math.max(0, side.windPuffMsRem - dt);
     if ((side.kryxHammerMsRem || 0) > 0) side.kryxHammerMsRem = Math.max(0, side.kryxHammerMsRem - dt);
-    tickZheyna(state, side, dt); tickXina(state, side, dt);
-    flushIronWillReflectLvl5(state, side, opp);
+    tickZheyna(state, side, dt); tickXina(state, side, dt);   // self-resolving arenaOpp → klonen medan fönstret är öppet
+    flushIronWillReflectLvl5(state, side, pvpOpp);   // reflect-AoE hero-skada (isHeroPvpActive) → klonen
     tickAragurnBannersLvl5(side, dt);
     tickIncome(side, dt);
     // Fountain no longer self-heals (user 2026-06-14). Instead a hero standing NEAR its
@@ -11487,6 +11519,7 @@ function tickGame(state, dt) {
       }
     }
     _dmgActor = null;
+    state._cloneActing = false;   // stäng klon-PvP-fönstret före nästa sidas iteration (belt-and-suspenders; 11421 nollar också före loopen)
   }
   tickCloneBot(state, dt);   // 50k-shop-klonen (sides[3]) tickas EN gång/frame här — efter [1,2]-loopen, före chain-drain/kollision
   drainChainQueue(state);   // töm chain-kön (line wars enemy-territory-PvP + klon-chain)
