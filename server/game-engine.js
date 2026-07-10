@@ -153,6 +153,7 @@ const _SIDE_KEYS = Object.freeze([1, 2]);
 // över flera fiender är en v2-förbättring, dokumenterad i TEAM_ARENA_PLAN.md).
 function arenaKeys(state) { return (state && state.sideKeys) || _SIDE_KEYS; }
 function arenaOpp(state, idx) {
+  if (idx === 3 && state && state.cloneBot) return state.sides[state.cloneBot.targetIdx] || null;   // 50k Line Wars clone (sides[3]) → jagar targetIdx-hjälten
   if (!state || !state.teamSize || state.teamSize <= 1) return state.sides[3 - idx];
   const me = state.sides[idx];
   if (!me) return state.sides[3 - idx] || null;
@@ -1839,7 +1840,7 @@ function heroWalk(side, x, z, opts) {
   if (side.inBossWars) return isBossWarsWalkable(x, z, side._bwGateClosed);
   if (side.inArena1v1) return isArena1v1Walkable(x, z);
   if (side.inDuel) return isArenaWalkable(x, z);
-  return isHeroWalkable(side.idx, x, z, opts);
+  return isHeroWalkable(side._lwWalkIdx || side.idx, x, z, opts);   // _lwWalkIdx: 50k-klonen (idx 3) går på motståndarens territorium (undviker SIDE_CFG[3]-krasch)
 }
 // Arena-flöde-konstanter (speglar main.js — håll i sync)
 const ARENA_PREP_TIME = 18;        // nerf 25→18: ~2.5min meny/Bo5 var för mycket dödtid; ready-knappen skippar ändå (matchar klient)
@@ -6748,6 +6749,11 @@ function resolveSkillGroundTarget(state, side, opp, ev, defaultDistance) {
 // Hero-vs-hero PvP är aktiv om duel pågår ELLER om någon hero är i fiendens territorium via portal
 function isHeroPvpActive(state) {
   if (!state) return false;
+  // 50k Line Wars clone: öppna hero-PvP ENDAST medan KLONEN själv tickas (state._cloneActing sätts runt
+  // tickCloneBot). Då träffar klonens egna skills/AA sitt mål, men riktig-spelare-vs-riktig-spelare
+  // förblir STÄNGT i push-fasen. (En global gate läckte s1↔s2-PvP: inre lanes är bara ~5.6 enh isär vid
+  // mittväggen — inom Frost Nova/Black Hole/Leap/Titan's Rage-räckvidd — INTE 40+ som först antogs.)
+  if (state.cloneBot && state._cloneActing) return true;
   if (state.duelActive) return true;
   const s1 = state.sides && state.sides[1];
   const s2 = state.sides && state.sides[2];
@@ -6789,6 +6795,15 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
     const d2 = dx * dx + dz * dz;
     if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: opp.hero, isMonster: false, isHero: true, targetSideIdx: opp.idx }; }
   }
+  // 50k Line Wars clone: targetIdx-sidans hero får auto-AA:a klonen (sides[3]). Utan detta vore klonen
+  // osårbar för AA (den riktiga opp.hero = owner-sidan är 40+ enh bort, utanför range). Egen isHero-target
+  // med targetSideIdx:3 → AA-projektilen gör damageHero(state.sides[3]). Speglar opp.hero-pushen ovan.
+  if (state && state.cloneBot && state.cloneBot.targetIdx === side.idx && state.sides[3] && !state.sides[3].hero.dead) {
+    const ch = state.sides[3].hero;
+    const dx = ch.x - x, dz = ch.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestDistSq) { bestDistSq = d2; best = { entity: ch, isMonster: false, isHero: true, targetSideIdx: 3 }; }
+  }
   for (let i = 0; i < side.monsters.length; i++) {
     const m = side.monsters[i];
     const dx = m.x - x, dz = m.z - z;
@@ -6811,6 +6826,13 @@ function findClosestHostile(side, opp, x, z, maxDist, state) {
 function resolveTargetEntity(side, opp, state) {
   if (side.targetType === 'hero') {
     if (state && isHeroPvpActive(state) && opp && !opp.hero.dead) return opp.hero;
+    return null;
+  }
+  // 50k Line Wars clone: målspelarens AA-lås mot klonen (sides[3]). EGEN targetType (ej 'hero') så
+  // låset resolver mot KLONEN och inte mot `opp` (= den riktiga, avlägsna motståndaren) — annars
+  // droppas låset direkt och klonen blir osårbar för AA. opp lämnas orörd → creep-strid intakt.
+  if (side.targetType === 'cloneHero') {
+    if (state && state.cloneBot && state.sides[3] && !state.sides[3].hero.dead) return state.sides[3].hero;
     return null;
   }
   if (side.targetType === 'duelOrb') {
@@ -6876,7 +6898,7 @@ function maintainTargetLock(side, opp, state) {
   }
   let target = resolveTargetEntity(side, opp, state);
   let isMonster = side.targetType === 'monster';
-  let isHero = side.targetType === 'hero';
+  let isHero = side.targetType === 'hero' || side.targetType === 'cloneHero';   // cloneHero = AA-lås mot 50k-klonen (hero-projektil mot sides[3])
   let isDuelOrb = side.targetType === 'duelOrb';
   let isArenaOrb = side.targetType === 'arenaOrb';
   const baseRange = (side.attackRange || HERO_ATTACK_RANGE) * (side.heroId === 'zheyna' && (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_RANGE) : 1);
@@ -6904,10 +6926,17 @@ function maintainTargetLock(side, opp, state) {
   // Återanvänd ett cachat result-objekt per side (undviker ny allokering 30 Hz).
   // Fälten skrivs varje gång → ingen stale-data-risk. Objektet används bara
   // under samma sync-tick av updateHeroAttack (ej async/multi-tick).
-  if (!side._aaTarget) side._aaTarget = { entity: null, isMonster: false, isHero: false, isDuelOrb: false, isArenaOrb: false, inRange: false };
+  if (!side._aaTarget) side._aaTarget = { entity: null, isMonster: false, isHero: false, isDuelOrb: false, isArenaOrb: false, inRange: false, targetSideIdx: undefined };
   const r = side._aaTarget;
   r.entity = target; r.isMonster = isMonster; r.isHero = isHero; r.isDuelOrb = isDuelOrb; r.isArenaOrb = isArenaOrb;
   r.inRange = inRange;   // false = locked but out of attack range → chase, don't fire
+  // targetSideIdx för hero-projektilen (updateHeroAttack läser `target.targetSideIdx || (3 - side.idx)`):
+  //  • cloneHero → 3  (målspelaren slår KLONEN)
+  //  • klonen själv (idx 3, type 'hero') → targetIdx  (annars ger default 3-3=0 → sides[0]-krasch)
+  //  • annars undefined → befintlig default 3-side.idx (sides 1/2 oförändrade)
+  r.targetSideIdx = (side.targetType === 'cloneHero') ? 3
+                  : (side.idx === 3 && state && state.cloneBot) ? state.cloneBot.targetIdx
+                  : undefined;
   return r;
 }
 
@@ -9687,7 +9716,7 @@ function applyMovement(side, joyX, joyZ, dt) {
               : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
               : side.inArena1v1 ? isArena1v1Walkable
               : side.inDuel ? isArenaWalkable
-              : (x, z) => isHeroWalkable(side.idx, x, z, opts);
+              : (x, z) => isHeroWalkable(side._lwWalkIdx || side.idx, x, z, opts);
   const ox = side.hero.x, oz = side.hero.z;
   if (check(nx, nz)) { side.hero.x = nx; side.hero.z = nz; }
   else if (check(nx, side.hero.z)) side.hero.x = nx;
@@ -9728,7 +9757,7 @@ function heroWalkCheck(side) {
        : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
        : side.inDuel ? isArenaWalkable
-       : (x, z) => isHeroWalkable(side.idx, x, z, opts);
+       : (x, z) => isHeroWalkable(side._lwWalkIdx || side.idx, x, z, opts);
 }
 
 // Resolve overlaps among the currently-collected colliders (_collItems[0.._collN]). Two-phase so the
@@ -9853,7 +9882,7 @@ function zheynaWalk(side) {
        : side.inBossWars ? (x, z) => isBossWarsWalkable(x, z, side._bwGateClosed)
        : side.inArena1v1 ? isArena1v1Walkable
        : side.inDuel ? isArenaWalkable
-       : (x, z) => isHeroWalkable(side.idx, x, z, null);
+       : (x, z) => isHeroWalkable(side._lwWalkIdx || side.idx, x, z, null);   // _lwWalkIdx: 50k-klonen (idx 3) → motståndarens territorium
 }
 // Mode-agnostisk lista över giltiga fiender med {ent (har x/z + hp/maxHp), isHero/isMonster/isCreep}.
 function zheynaEnemies(state, side) {
@@ -10335,7 +10364,7 @@ function applyEvent(state, sideIdx, ev) {
     const t = findClosestHostile(side, opp, side.hero.x, side.hero.z, acqRange, state);
     if (t) {
       side.aaActive = true;
-      if (t.isHero) { side.targetId = 0; side.targetType = 'hero'; }
+      if (t.isHero) { side.targetId = 0; side.targetType = (t.targetSideIdx === 3) ? 'cloneHero' : 'hero'; }   // targetSideIdx 3 = 50k-klonen → eget lås-type så maintainTargetLock resolver rätt
       else if (t.isDuelOrb) { side.targetId = 0; side.targetType = 'duelOrb'; }
       else if (t.isArenaOrb) { side.targetId = 0; side.targetType = 'arenaOrb'; }
       else {
@@ -10616,11 +10645,13 @@ function applyEvent(state, sideIdx, ev) {
     side.income += Math.floor(def.cost * INCOME_MINION_RATIO);
     spawnMinion(state, side, ev.minionType, ev.lane);
   } else if (ev.kind === 'clone') {
-    // Decision 106: köp en 100%-stats-clone av din hero (50k g), spawnar på
-    // motståndarens sida och attackerar motståndarens hero (bot-AI).
+    // Step 2 (2026-07-10): köp en EXAKT bot-styrd kopia av din hero (50k g) som spawnar på
+    // motståndarens lane och jagar motståndarens hero med RIKTIGA Q/F/E/R + arena-bot-AI.
+    // Bara EN klon åt gången (globalt) — köpet ignoreras HELT (inget guld dras) om en redan lever.
+    if (state.cloneBot) return;
     if (side.gold < CLONE_COST) return;
     side.gold -= CLONE_COST;
-    spawnHeroCopy(state, side, CLONE_STAT_RATIO);
+    spawnCloneBot(state, side);
   } else if (ev.kind === 'unlock') {
     const tier = ev.tier;
     if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
@@ -10789,8 +10820,134 @@ function updateHeroCopies(state, arenaSide, dt) {
   }
 }
 
+// === 50k Line Wars clone (Step 2, 2026-07-10) ===
+// En EXAKT bot-styrd kopia av köparens hero i sides[3], spawnad på motståndarens lane, som jagar
+// motståndarens hero i 15s med hero:ns RIKTIGA Q/F/E/R + arena-bot-AI:n. Ersätter (för 50k-shop-clone)
+// den generiska heroCopy-mekaniken; duel-belönings-clone använder fortsatt spawnHeroCopy/updateHeroCopies.
+function spawnCloneBot(state, ownerSide) {
+  if (state.cloneBot) return;   // bara EN klon åt gången (belt-and-suspenders; applyEvent gate:ar redan)
+  const oppIdx = 3 - ownerSide.idx;
+  const oppCfg = SIDE_CFG[oppIdx];
+  if (!oppCfg) return;
+  // Alternera lane per köp (som spawnHeroCopy).
+  const lane = ((state._cloneSpawnCount = (state._cloneSpawnCount || 0) + 1) % 2 === 1) ? 1 : 2;
+  const c = createSide(3);
+  c.heroId = ownerSide.heroId;
+  c.level = ownerSide.level;
+  c.skillLvl = { q: Math.max(1, ownerSide.skillLvl.q || 0), f: Math.max(1, ownerSide.skillLvl.f || 0), e: Math.max(1, ownerSide.skillLvl.e || 0) };
+  c.statPts = { ...ownerSide.statPts };
+  c.inventory = ownerSide.inventory.map(x => ({ ...x }));   // deep copy classic-shop-items
+  // Line Wars-item-loadout (de 12 bw-items köps via bw-item-buy) — kopiera så klonen får samma
+  // item-stats/passiver (recomputeSideStats läser bossWarsItems/bwItemLevels i inLineWars).
+  if (ownerSide.bossWarsItems) c.bossWarsItems = ownerSide.bossWarsItems.slice();
+  if (ownerSide.bwItemLevels) c.bwItemLevels = { ...ownerSide.bwItemLevels };
+  c.inLineWars = true;
+  c.isBot = true;
+  c.botDifficulty = 'hard';
+  c.team = ownerSide.idx;             // team=owner → owner:s team-gated AoE hoppar över klonen
+  c._lwWalkIdx = oppIdx;              // walkable = motståndarens territorium (annars kraschar isHeroWalkable(3))
+  c.hero.x = oppCfg.spawnX;
+  c.hero.z = oppCfg.laneZ[lane];
+  recomputeSideStats(c);
+  recomputeArenaSideStats(state, c);  // no-op utöver recomputeSideStats i Line Wars (ingen state.talents) — kallad för paritet
+  c.hero.hp = c.hero.maxHp;
+  c.ultEnergy = ULT_ENERGY_MAX;       // full ult direkt så den kan casta R
+  state.sides[3] = c;
+  state.lastInputs[3] = { j: null };  // matchar lastInputs-formen; bot-AI:n skriver .j, castar via applyEvent direkt
+  state.cloneBot = { ownerIdx: ownerSide.idx, targetIdx: oppIdx, remaining: 15 };
+}
+
+function despawnCloneBot(state) {
+  delete state.sides[3];
+  delete state.lastInputs[3];
+  state.cloneBot = null;
+}
+
+// Driver klonen EXAKT som en arena-hero för en tick: arena-bot-AI (rörelse-input + real skill/AA-cast via
+// applyEvent) + rörelse + HELA arena per-side combat/timer-blocket (mirror av tickArenaCombat ~2226-2305,
+// side→c, opp→arenaOpp(3)). Anropas EN gång/frame i push-fasen (efter [1,2]-loopen).
+function tickCloneBot(state, dt) {
+  if (!state.cloneBot) return;
+  const c = state.sides[3];
+  if (!c) { despawnCloneBot(state); return; }
+  state.cloneBot.remaining -= dt;
+  if (state.cloneBot.remaining <= 0 || c.hero.dead) { despawnCloneBot(state); return; }
+  // Öppna hero-PvP BARA för klonens egna anrop (isHeroPvpActive läser state._cloneActing). Sätts här,
+  // nollas i slutet av ticket → riktiga spelares combat i [1,2]-loopen ser den ALDRIG (ingen s1↔s2-läcka).
+  state._cloneActing = true;
+  // 1) Bot-AI: sätter lastInputs[3].j + castar real skills/AA via applyEvent(state, 3, ...)
+  tickArenaBotServer(state, 3, dt);
+  // 2) Rörelse (som arena/LW-loopen)
+  heroAutoMove(c, state.lastInputs[3] && state.lastInputs[3].j, dt);
+  // 3) Arena per-side combat/timer-block (mirror av tickArenaCombat, ~2226-2305)
+  const opp = arenaOpp(state, 3);
+  _dmgActor = c;   // attribuera klonens utgående skada
+  updateSkillCooldowns(c, dt);
+  if (!c.hero.dead) updateHeroAttack(state, c, opp, dt);
+  updateProjectiles(state, c, opp, dt);
+  updateFireballs(state, c, opp, dt);
+  updateBlackHoles(state, c, opp, dt);
+  updateVineTraps(state, c, opp, dt);
+  updateHammers(state, c, opp, dt);
+  updateIronWill(state, c, opp, dt);
+  updateAragurnWhirlwind(state, c, opp, dt);
+  updateAragurnLeap(state, c, opp, dt);
+  updateAragurnShoutHeal(c, dt);
+  updateSoulDrain(state, c, opp, dt);
+  updateBossProjectiles(state, c, dt);
+  updateBossPools(state, c, dt);
+  tickLegolusInvis(c, dt);
+  tickGanjiUlt(state, c, dt);
+  tickThornPools(state, c, dt);
+  tickKostefoSkills(state, c, opp, dt);
+  if (c.laserBeam) tickMagikerLaserServer(state, c, dt);
+  if ((c.rageRemaining || 0) > 0) tickGimluRageServer(state, c, dt);
+  tickBurningAura(state, c, dt);
+  tickFrozenDomains(state, c, dt);
+  if ((c.berserkRemaining || 0) > 0) { if (c.hero.dead) c.berserkRemaining = 0; else c.berserkRemaining = Math.max(0, c.berserkRemaining - dt); }
+  if (c.heroId === 'elar') {
+    c._elarCountTickAccum = (c._elarCountTickAccum || 0) + dt;
+    if (c._elarCountTickAccum >= 0.2 || c.elarNearbyCount == null) {
+      c._elarCountTickAccum = 0;
+      c.elarNearbyCount = elarNearbyCount(state, c);
+    }
+  }
+  if (!c.hero.dead) gainUltEnergy(c, ULT_GAIN_PASSIVE * dt);
+  if ((c._ultLockoutTime || 0) > 0) c._ultLockoutTime = Math.max(0, c._ultLockoutTime - dt);
+  if ((c.nyroBuffRemaining || 0) > 0) c.nyroBuffRemaining = Math.max(0, c.nyroBuffRemaining - dt);
+  tickGimluTauntLvl5(state, c, opp, dt);
+  if ((c.windPuffMsRem || 0) > 0) c.windPuffMsRem = Math.max(0, c.windPuffMsRem - dt);
+  if ((c.kryxHammerMsRem || 0) > 0) c.kryxHammerMsRem = Math.max(0, c.kryxHammerMsRem - dt);
+  tickHeroBuffTimers(c, dt);
+  tickZheyna(state, c, dt); tickXina(state, c, dt);
+  if ((c.hero.frozenTime || 0) > 0) c.hero.frozenTime = Math.max(0, c.hero.frozenTime - dt);
+  if ((c.hero.tauntedTime || 0) > 0) c.hero.tauntedTime = Math.max(0, c.hero.tauntedTime - dt);
+  if ((c.hero.dotRemaining || 0) > 0) { c.hero.dotRemaining = Math.max(0, c.hero.dotRemaining - dt); damageHero(c, (c.hero.dotPerSec || 0) * dt); }
+  if ((c.hero.poisonRemaining || 0) > 0) c.hero.poisonRemaining = Math.max(0, c.hero.poisonRemaining - dt);
+  if ((c.heroSlowTime || 0) > 0) { c.heroSlowTime = Math.max(0, c.heroSlowTime - dt); if (c.heroSlowTime <= 0) { c.heroSlowTime = 0; c.heroSlowMul = 1; } }
+  tickKryxTimers(c, dt);
+  if ((c.heroFearTime || 0) > 0) c.heroFearTime = Math.max(0, c.heroFearTime - dt);
+  if ((c.iceBlockRemaining || 0) > 0) c.iceBlockRemaining = Math.max(0, c.iceBlockRemaining - dt);
+  if (!c.hero.dead && (c.healPerSecPct || 0) > 0 && c.hero.hp < c.hero.maxHp) {
+    c.hero.hp = Math.min(c.hero.maxHp, c.hero.hp + c.hero.maxHp * c.healPerSecPct * dt);
+  }
+  flushIronWillReflectLvl5(state, c, opp);
+  tickAragurnBannersLvl5(c, dt);
+  if (c.ironWillExplosions) for (let k = c.ironWillExplosions.length - 1; k >= 0; k--) {
+    c.ironWillExplosions[k].life -= dt;
+    if (c.ironWillExplosions[k].life <= 0) c.ironWillExplosions.splice(k, 1);
+  }
+  updateNovaEffects(state, c, opp, dt);
+  updateActiveBuffs(c, dt);
+  _dmgActor = null;
+  state._cloneActing = false;   // stäng hero-PvP-fönstret igen
+  // Dog under ticket (DoT/reflect) → despawna direkt.
+  if (c.hero.dead) despawnCloneBot(state);
+}
+
 // === Duel-system ===
 function startDuel(state) {
+  if (state.cloneBot) despawnCloneBot(state);   // en lingering push-fas-klon får ej hänga kvar in i duellen (den tickas ej i duel-grenen)
   state.duelActive = true;
   state.duelMatchTimer = DUEL_DURATION;
   state.duelAnnounceTimer = 0;
@@ -11259,6 +11416,7 @@ function tickGame(state, dt) {
       // (Stalwart Resolve regen borttagen i rework 2026-06-07 — passiven ersatt av berserk-mätaren.)
     }
   }
+  state._cloneActing = false;   // säkerställ att riktiga spelares combat-loop ALDRIG ser klon-PvP-fönstret öppet (även om en tidigare klon-tick kastade)
   for (const sideIdx of [1, 2]) {
     const side = state.sides[sideIdx];
     const opp = arenaOpp(state, sideIdx);
@@ -11328,7 +11486,8 @@ function tickGame(state, dt) {
     }
     _dmgActor = null;
   }
-  drainChainQueue(state);   // töm chain-kön (line wars enemy-territory-PvP)
+  tickCloneBot(state, dt);   // 50k-shop-klonen (sides[3]) tickas EN gång/frame här — efter [1,2]-loopen, före chain-drain/kollision
+  drainChainQueue(state);   // töm chain-kön (line wars enemy-territory-PvP + klon-chain)
   resolveLineWarsCollisions(state);   // characters can't overlap / walk through each other (2026-07-06)
   // Decision 105: synka wave-progression mellan sidor (nästa wave startar
   // bara när BÅDA har avslutat sin wave).
@@ -11380,6 +11539,7 @@ function _makeLwHeroBuf() {
 }
 const _lwHeroBuf1 = _makeLwHeroBuf();
 const _lwHeroBuf2 = _makeLwHeroBuf();
+const _lwHeroBuf3 = _makeLwHeroBuf();   // 50k-shop-klonen (sides[3])
 
 // Pool-helper: fyller pool in-place, returnerar pool (icke-tom) eller undefined (tom).
 // Tom → undefined → JSON.stringify skippar fältet, matchar arrOpt-beteendet.
@@ -11452,12 +11612,12 @@ function _writeLwDuelOrb(o, e) {
 }
 
 // Persistenta pool-arrayer (element + output i samma array).
-const _lwMPool1 = [], _lwMPool2 = [];       // monster-pools per sida
-const _lwCPool1 = [], _lwCPool2 = [];       // creep-pools per sida
-const _lwInvPool1 = [], _lwInvPool2 = [];   // inventory-pools per sida
-const _lwPPool1 = [], _lwPPool2 = [];       // hjälte-projektil-pools per sida (P)
-const _lwCPPool1 = [], _lwCPPool2 = [];     // creep-projektil-pools per sida (CP)
-const _lwMRPool1 = [], _lwMRPool2 = [];     // monster-projektil-pools per sida (MR)
+const _lwMPool1 = [], _lwMPool2 = [], _lwMPool3 = [];       // monster-pools per sida (3 = klon)
+const _lwCPool1 = [], _lwCPool2 = [], _lwCPool3 = [];       // creep-pools per sida
+const _lwInvPool1 = [], _lwInvPool2 = [], _lwInvPool3 = []; // inventory-pools per sida
+const _lwPPool1 = [], _lwPPool2 = [], _lwPPool3 = [];       // hjälte-projektil-pools per sida (P)
+const _lwCPPool1 = [], _lwCPPool2 = [], _lwCPPool3 = [];    // creep-projektil-pools per sida (CP)
+const _lwMRPool1 = [], _lwMRPool2 = [], _lwMRPool3 = [];    // monster-projektil-pools per sida (MR)
 const _lwDuelOrbPool = [];                  // duel-orb-pool + output-array för dO-fältet
 
 // Persistent duelBigOrb-buffer (dBO: null eller denna buffert).
@@ -11494,10 +11654,12 @@ function _makeLwSideBuf(heroBuf) {
     gbuf: undefined, gbStk: undefined, wpMs: undefined, ghMs: undefined,
     inAbn: undefined, ABN: undefined, kSTp: undefined, kCln: undefined, kCrM: undefined,
     shld: undefined, dSp: undefined, IWE: undefined, gmBk: undefined, gjMk: undefined,
+    rem: undefined,   // 50k-klon: kvarvarande livstid (bara satt på buf3 → JSON-skip på sides 1/2)
   };
 }
 const _lwSideBuf1 = _makeLwSideBuf(_lwHeroBuf1);
 const _lwSideBuf2 = _makeLwSideBuf(_lwHeroBuf2);
+const _lwSideBuf3 = _makeLwSideBuf(_lwHeroBuf3);   // 50k-shop-klonen (sides[3])
 
 // Persistent yttre snap. s.1/s.2 är pre-bundna till sidebuffrarna → ingen re-tilldelning per tick.
 const _lwSnap = {
@@ -11508,6 +11670,7 @@ const _lwSnap = {
   dA: 0, dT: 0, dM: 0, dC: 0, dW: 0, dAn: 0,
   dO: _lwDuelOrbPool,   // alltid samma referens; length + innehåll uppdateras varje tick
   dBO: null,
+  clone: undefined,     // 50k-shop-klonen: full sida-snap (sides[3]) eller undefined (ingen klon)
 };
 
 // Muterar hero-buffern in-place med klassiska fältnamn (frz/dot/poi/lMk/rt).
@@ -11716,6 +11879,15 @@ function serializeState(state) {
   }
   _serializeLwSide(state.sides[1], _lwSideBuf1, _lwMPool1, _lwCPool1, _lwInvPool1, _lwPPool1, _lwCPPool1, _lwMRPool1);
   _serializeLwSide(state.sides[2], _lwSideBuf2, _lwMPool2, _lwCPool2, _lwInvPool2, _lwPPool2, _lwCPPool2, _lwMRPool2);
+  // 50k-shop-klonen (sides[3]): samma _serializeLwSide-väg i en 3:e pooluppsättning → klienten får
+  // klonens hero-snap + skill-entiteter (P/F/BH/N/VT/…) för rendering. rem = kvarvarande livstid.
+  if (state.cloneBot && state.sides[3]) {
+    _serializeLwSide(state.sides[3], _lwSideBuf3, _lwMPool3, _lwCPool3, _lwInvPool3, _lwPPool3, _lwCPPool3, _lwMRPool3);
+    _lwSideBuf3.rem = r1(state.cloneBot.remaining);
+    snap.clone = _lwSideBuf3;
+  } else {
+    snap.clone = undefined;
+  }
   return snap;
 }
 
