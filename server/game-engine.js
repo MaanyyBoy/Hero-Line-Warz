@@ -11348,12 +11348,13 @@ function flag(v) { return v ? 1 : undefined; }               // boolean flag
 // Fältnamnen matchar EXAKT den ursprungliga serializeSide-output — ingen wireformat-ändring.
 // JSON.stringify bryr sig inte om objektidentitet; muterade buffrars data serialiseras identiskt.
 
-// Hero-snapshotbuffer med klassiska Line Wars-fältnamn.
-// Skiljer sig avsiktligt från serializeArenaHero (fzt/ibr/fer/slm m.fl.) — ej återanvändbar.
+// Hero-snapshotbuffer med klassiska Line Wars-fältnamn (frz i st f fzt m.fl.); ej återanvändbar
+// mot serializeArenaHero. fer/slm/slt delar dock nu arenans namn (slow/fear-VFX i duell, 2026-07-10).
 function _makeLwHeroBuf() {
   return {
     x: 0, z: 0, hp: 0, mh: 0, sh: undefined, fx: 0, fz: 0, d: false, rt: undefined,
     frz: undefined, dot: undefined, tnt: undefined, mlk: undefined, poi: undefined, lMk: undefined,
+    fer: undefined, slm: undefined, slt: undefined,   // slow/fear-VFX (LW-spegel av arenans fer/slm/slt)
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,
     xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,
     trg: undefined, lz: undefined, rg: undefined, bz: undefined,
@@ -11502,6 +11503,11 @@ function _serializeLwHero(side, buf) {
   buf.frz = nzr2(side.hero.frozenTime);
   buf.dot = nzr2(side.hero.dotRemaining);
   buf.tnt = nzr2(side.hero.tauntedTime);
+  // Slow + fear → klient-VFX (i praktiken duellen; user 2026-07-10). Speglar arenans fer/slm/slt (serializeArenaHero).
+  // OBS: enbart VISUELLT — mlk (movement-lock) hålls fortsatt undefined nedan (Line Wars-CC immobiliserar ej by design).
+  buf.fer = nzr2(side.heroFearTime);
+  buf.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined;
+  buf.slt = nzr2(side.heroSlowTime);
   // mlk (movement-locked) must mirror applyMovement's hard-CC gate (~line 8806):
   // `(side.inArena1v1 || side.inBossWars || side.inSurvival) && (frozen/iceBlock/fear)`.
   // Line Wars is intentionally EXCLUDED from that gate (CC does not immobilize in classic
