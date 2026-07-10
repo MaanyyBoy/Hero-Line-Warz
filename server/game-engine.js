@@ -10648,10 +10648,10 @@ function applyEvent(state, sideIdx, ev) {
     // Step 2 (2026-07-10): köp en EXAKT bot-styrd kopia av din hero (50k g) som spawnar på
     // motståndarens lane och jagar motståndarens hero med RIKTIGA Q/F/E/R + arena-bot-AI.
     // Bara EN klon åt gången (globalt) — köpet ignoreras HELT (inget guld dras) om en redan lever.
+    if (state.mode !== 'classic') return;   // klon-köp bara i Line Wars (classic) — defensiv, matchar item/unlock-branchen
     if (state.cloneBot) return;
     if (side.gold < CLONE_COST) return;
-    side.gold -= CLONE_COST;
-    spawnCloneBot(state, side);
+    if (spawnCloneBot(state, side)) side.gold -= CLONE_COST;   // dra guld ENDAST vid lyckad spawn
   } else if (ev.kind === 'unlock') {
     const tier = ev.tier;
     if (!TIER_UNLOCK_COST[tier] || side.tierUnlocks[tier]) return;
@@ -10825,10 +10825,10 @@ function updateHeroCopies(state, arenaSide, dt) {
 // motståndarens hero i 15s med hero:ns RIKTIGA Q/F/E/R + arena-bot-AI:n. Ersätter (för 50k-shop-clone)
 // den generiska heroCopy-mekaniken; duel-belönings-clone använder fortsatt spawnHeroCopy/updateHeroCopies.
 function spawnCloneBot(state, ownerSide) {
-  if (state.cloneBot) return;   // bara EN klon åt gången (belt-and-suspenders; applyEvent gate:ar redan)
+  if (state.cloneBot) return false;   // bara EN klon åt gången (belt-and-suspenders; applyEvent gate:ar redan)
   const oppIdx = 3 - ownerSide.idx;
   const oppCfg = SIDE_CFG[oppIdx];
-  if (!oppCfg) return;
+  if (!oppCfg) return false;
   // Alternera lane per köp (som spawnHeroCopy).
   const lane = ((state._cloneSpawnCount = (state._cloneSpawnCount || 0) + 1) % 2 === 1) ? 1 : 2;
   const c = createSide(3);
@@ -10855,6 +10855,7 @@ function spawnCloneBot(state, ownerSide) {
   state.sides[3] = c;
   state.lastInputs[3] = { j: null };  // matchar lastInputs-formen; bot-AI:n skriver .j, castar via applyEvent direkt
   state.cloneBot = { ownerIdx: ownerSide.idx, targetIdx: oppIdx, remaining: 15 };
+  return true;
 }
 
 function despawnCloneBot(state) {
