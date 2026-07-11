@@ -7119,7 +7119,7 @@ function updateHeroAttack(state, side, opp, dt) {
         targetIsMonster: ex.isMonster,
         targetIsHero: false,
         targetSideIdx: 0,
-        damage: side.attackDmg * AA_DMG_MUL * NYRO_AA_BONUS * auraDmg * buffDmgMul, isAoE: false, isCrit: false,   // Nyro split = AA → ×2 × NYRO_AA_BONUS (+100%, user 2026-07-11)
+        damage: side.attackDmg * AA_DMG_MUL * NYRO_AA_BONUS * auraDmg * buffDmgMul * kostefoDebuffOutMul(side), isAoE: false, isCrit: false,   // Nyro split = AA → ×2 × NYRO_AA_BONUS (+100%); Kostef-debuff-paritet med primär-AA (user 2026-07-11)
         lifestealRatio: 0,
         nyroBuffed: false,
         appliesPoison: true,
