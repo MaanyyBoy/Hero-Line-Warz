@@ -10668,6 +10668,7 @@ function applyEvent(state, sideIdx, ev) {
   const isArenaPrep = (state.mode === 'arena1v1') && (state.phase === 'prep');
   if (!isArenaPrep && !inSideBase(side.idx, side.hero.x, side.hero.z)) return;
   if (ev.kind === 'item') {
+    if (state.mode === 'classic') return;   // A1 (2026-07-11): legacy gold item-shop (ITEM_TYPES, cap 4 INVENTORY_SLOTS) HELT pensionerad — Unity köper items via bw-item-buy (cap 6). Kördes fortf. i classic → en modad klient kunde stacka 4 extra items ovanpå 6-cap. Non-classic gate:ades redan nedan; med denna rad är hela legacy-grenen no-op i ALLA lägen.
     if (state.mode !== 'classic') return;   // ONLY classic Line Wars uses the gold item shop; arena/boss/survival use the loadout / sv-buy — the gold-item path draws gold with no stat effect there (economy 2026-07-04, widened from arena1v1)
     const def = ITEM_TYPES[ev.item];
     if (!def) return;
