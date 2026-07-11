@@ -106,7 +106,7 @@ const ZHEYNA_Q_BUFF_HERO = 0.20, ZHEYNA_Q_BUFF_MINION = 0.05, ZHEYNA_Q_BUFF_DUR 
 const ZHEYNA_CLONE_DUR = 5, ZHEYNA_CLONE_DMG_MUL = 0.50;
 const ZHEYNA_CLONE_DMG_TAKEN_MUL = 1.5, ZHEYNA_CLONE_OWNER_DR = 0.50;
 // E Warpath
-const ZHEYNA_E_DUR = 5, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.20, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;   // cd via HERO_SKILL_CD.zheyna
+const ZHEYNA_E_DUR = 5, ZHEYNA_E_AS = 0.20, ZHEYNA_E_MS = 0.10, ZHEYNA_E_RANGE = 0.20, ZHEYNA_E_KNOCKBACK = 1.0;   // cd via HERO_SKILL_CD.zheyna — MS-buff halverad (user 2026-07-11)
 // R Spear God
 const ZHEYNA_R_RANGE = 20, ZHEYNA_R_MAX_CHARGE = 3.0, ZHEYNA_R_AIM_EXTRA = 2.0;
 const ZHEYNA_R_DMG_PER_SEC = 0.20, ZHEYNA_R_WIDTH_BASE = 2.0, ZHEYNA_R_WIDTH_PER_SEC = 1.5;
@@ -129,7 +129,7 @@ const XINA_Q_COUNT = 5, XINA_Q_RANGE = 8, XINA_Q_SPEED = 16, XINA_Q_CONE = 70 * 
 const XINA_Q_DMG_PCT = 0.05, XINA_Q_LIFESTEAL = 0.50, XINA_Q_HIT_RADIUS = 0.8;
 const XINA_Q_BUFF_PER_HIT = 0.05, XINA_Q_BUFF_DUR = 3.0;   // +5% MS & AS per träffande shuriken (max 5), 3s refresh
 // F Ninja's Cloak — buff
-const XINA_CLOAK_DUR = 3.0, XINA_CLOAK_AS = 0.50, XINA_CLOAK_MS = 0.50;
+const XINA_CLOAK_DUR = 3.0, XINA_CLOAK_AS = 0.50, XINA_CLOAK_MS = 0.25;   // MS-buff halverad (user 2026-07-11)
 const XINA_CLOAK_EVASION = 0.50, XINA_CLOAK_SKILL_DR = 0.50;   // 50% dodge vs AA, 50% DR mot skill-skada; 2 charges vid skill-lvl 5
 // E Xina's Slice — krok
 const XINA_E_RANGE = 11, XINA_E_SPEED = 22, XINA_E_STICK_DUR = 5.0, XINA_E_HIT_RADIUS = 0.9;
@@ -138,7 +138,7 @@ const XINA_E_AA_COUNT = 2, XINA_E_AA_LIFESTEAL = 0.50;   // 2 snabba AA: 100% cr
 // R Shuriken Storm — orbit 5s → skjuts ut
 const XINA_R_COUNT = 5, XINA_R_DUR = 5.0, XINA_R_ORBIT_RADIUS = 2.4, XINA_R_ORBIT_SPEED = 3.2;
 const XINA_R_TICK_DMG_PCT = 0.10, XINA_R_HEAL = 0.50, XINA_R_HIT_CD = 0.5, XINA_R_HIT_RADIUS = 0.9;
-const XINA_R_MS = 0.25, XINA_R_AS = 0.25, XINA_R_OUT_DMG = 0.25;
+const XINA_R_MS = 0.125, XINA_R_AS = 0.25, XINA_R_OUT_DMG = 0.25;   // MS-buff halverad (user 2026-07-11)
 const XINA_R_LAUNCH_RANGE = 10, XINA_R_LAUNCH_SPEED = 18, XINA_R_LAUNCH_DMG_PCT = 0.20;
 const XINA_R_LAUNCH_SLOW_MUL = 0.50, XINA_R_LAUNCH_SLOW_DUR = 2.0;
 
@@ -433,7 +433,7 @@ const KOSTEFO_CLOUD_STUN_DUR = 1.0;
 const KOSTEFO_CLOUD_TICK = 0.5;
 const KOSTEFO_CLOUD_DMG_PCT = 0.05;      // 5% current HP per tick
 const KOSTEFO_CLOUD_HEAL_PCT = 0.25;     // 25% maxHP direct heal vid cast
-const KOSTEFO_CLOUD_MS_BONUS = 0.20;     // +20% movespeed under cloud
+const KOSTEFO_CLOUD_MS_BONUS = 0.10;     // MS-buff halverad (user 2026-07-11)
 const KOSTEFO_CLOUD_AS_BONUS = 0.20;     // +20% attackspeed under cloud
 const KOSTEFO_CLOUD_CD = 12.0;
 // R (ult): Joint Avengers — 8 joints copy AA, 10% dmg, 50% lifesteal, 5s
@@ -451,7 +451,7 @@ const KOSTEFO_COMPANION_AA_INTERVAL = 0.9;
 
 // Legolus ult (Shadow Volley): invis + empowered next-AA + thorn pool
 const LEGOLUS_INVIS_DURATION = 5.0;
-const LEGOLUS_INVIS_SPEED_BONUS = 0.20;     // +20% movespeed under invis
+const LEGOLUS_INVIS_SPEED_BONUS = 0.10;     // MS-buff halverad (user 2026-07-11)
 const LEGOLUS_ULT_AA_RANGE_MUL = 2.0;       // dubbel range på empowered AA
 const LEGOLUS_ULT_AA_DMG_PCT = 0.20;        // 20% av target's maxHp (nerf -20% från 0.25)
 const LEGOLUS_ULT_AA_STUN_DUR = 1.5;        // stun target + nearby 1.5s
@@ -508,7 +508,7 @@ const GIMLU_PASSIVE_IMMUNE_EVERY = 6;
 // (cap 30%) - persistent tills shield-HP konsumerats av damage.
 const GANDULF_BUFF_DURATION = 3.0;
 const GANDULF_BUFF_SKILL_DMG_PER_STACK = 0.15;  // 15% skill-dmg per stack
-const GANDULF_BUFF_MS_PER_STACK = 0.10;         // 10% movement speed per stack
+const GANDULF_BUFF_MS_PER_STACK = 0.05;         // MS-buff halverad (user 2026-07-11)
 const GANDULF_SHIELD_PER_STACK = 0.10;          // 10% maxHP shield per stack
 const GANDULF_MAX_STACKS = 3;                   // cap stacks
 // Legacy-konstanter (Soul Mark) — INTE LÄNGRE ANVÄNDA i nya passive-mekaniken,
@@ -569,7 +569,7 @@ const SKILL_LEVEL_DMG_PER_PT = 0.25;   // +25% skada per skill-level (lvl 5 = +1
 // === Max-level (lvl 5) bonus-effekter per skill (decision-pending) ===
 // Gandulf
 const GANDULF_LVL5_WP_MS_DURATION = 1.5;   // Wind Puff lvl5: caster MS-buff varaktighet
-const GANDULF_LVL5_WP_MS_MUL = 1.30;       // +30% movement speed
+const GANDULF_LVL5_WP_MS_MUL = 1.15;       // MS-buff halverad (user 2026-07-11)
 const GANDULF_LVL5_FN_AS_DURATION = 3.0;   // Frost Nova lvl5: enemies AS-slow varaktighet
 const GANDULF_LVL5_FN_AS_MUL = 0.50;       // -50% attack speed (halverar AA-frekvens)
 const GANDULF_LVL5_BH_STUN_DURATION = 1.0; // Black Hole lvl5: stun varaktighet vid explosion
@@ -584,7 +584,7 @@ const GIMLU_LVL5_TT_EXPLOSION_RADIUS = 3.5;    // Taunt-explosion radie
 const GIMLU_LVL5_IW_REFLECT_PCT = 0.30;        // Iron Will lvl5: 30% av incoming dmg reflekteras
 const GIMLU_LVL5_IW_REFLECT_RADIUS = 3.0;      // Reflect-AoE radie runt Gimlu
 const GIMLU_LVL5_HAMMER_MS_DURATION = 1.0;     // Hammer lvl5: caster MS-buff varaktighet
-const GIMLU_LVL5_HAMMER_MS_MUL = 1.50;         // +50% MS
+const GIMLU_LVL5_HAMMER_MS_MUL = 1.25;         // MS-buff halverad (user 2026-07-11)
 const GIMLU_LVL5_HAMMER_SLOW_DURATION = 2.0;   // Hammer lvl5: slow på hit-targets
 const GIMLU_LVL5_HAMMER_SLOW_MUL = 0.80;       // -20% MS på hit
 const GIMLU_LVL5_STOMP_RADIUS_MUL = 1.30;      // Titan's Stomp lvl5: +30% AoE radius (audit 2026-07-05, user-approved)
@@ -597,7 +597,7 @@ const ARAGURN_LVL5_BANNER_DURATION = 5.0;      // Hero Leap lvl5: banner-livstid
 const ARAGURN_LVL5_BANNER_RADIUS = 4.5;        // banner-aura-radie
 const ARAGURN_LVL5_BANNER_HEAL_PCT = 0.05;     // 5% max HP/s heal
 const ARAGURN_LVL5_BANNER_AS_BONUS = 0.10;     // +10% AS
-const ARAGURN_LVL5_BANNER_MS_BONUS = 0.10;     // +10% MS
+const ARAGURN_LVL5_BANNER_MS_BONUS = 0.05;     // MS-buff halverad (user 2026-07-11)
 const ARAGURN_LVL5_BANNER_DR_BONUS = 0.20;     // -20% incoming dmg
 // Kostefo
 const KOSTEFO_LVL5_Q_SLOW_DURATION = 2.0;      // Joint Attack lvl5: slow på hit-targets
@@ -611,7 +611,7 @@ const KOSTEFO_LVL5_CLONE_SPEED = 4.0;          // base run speed
 const STAT_KEYS = ['as', 'ms', 'hp', 'sd', 'dr'];
 const STAT_PER_POINT = {
   as: 0.05,    // +5% attackSpeedPct
-  ms: 0.03,    // +3% moveSpeedPct
+  ms: 0.015,    // MS-buff halverad (user 2026-07-11): +1.5% moveSpeedPct/point
   hp: 0.05,    // +5% maxHpPct
   sd: 0.05,    // +5% skillDmgPct
   dr: 0.03,    // +3% dmgReductionPct
@@ -638,7 +638,7 @@ const DUEL_BIG_ORB_HEAL_PCT = 0.30;
 const DUEL_BIG_ORB_SHIELD_PCT = 0.30;
 // Duel pickup orbs
 const DUEL_ORB_HEAL_PCT = 0.15;            // 15% av maxHP
-const DUEL_ORB_SPEED_BONUS = 0.30;         // +30% movement speed
+const DUEL_ORB_SPEED_BONUS = 0.15;         // MS-buff halverad (user 2026-07-11)
 const DUEL_ORB_SPEED_DURATION = 1.0;       // sek
 const DUEL_ORB_COUNT_PER_TYPE = 3;
 const DUEL_ORB_SPAWN_WINDOW = 30;          // alla orbs har spawnat inom 30s
@@ -766,15 +766,15 @@ const ITEM_TYPES = {
     variants: {
       speed: {
         id: 'speed', name: 'Boots of Speed',
-        statsAtLevel: (level) => ({ moveSpeedPct: bootsPct(level), attackSpeedPct: bootsPctSlow(level) }),
-        activeAtMax: { duration: 5, cooldown: 30, stats: { moveSpeedPct: 0.5, attackSpeedPct: 0.5 } },
+        statsAtLevel: (level) => ({ moveSpeedPct: bootsPct(level) * 0.5, attackSpeedPct: bootsPctSlow(level) }),   // MS-buff halverad (user 2026-07-11): isolerat på MS-siten (bootsPct delas med skillDmg/dmgReduction)
+        activeAtMax: { duration: 5, cooldown: 30, stats: { moveSpeedPct: 0.25, attackSpeedPct: 0.5 } },   // MS-buff halverad (user 2026-07-11)
       },
       magic: {
         // Differentiated from Glove of Spell (both were skillDmg+cdr, byte-identical): boots =
         // mobile burst mage (skillDmg + move speed), glove keeps skillDmg + cdr (cooldown spammer).
         id: 'magic', name: 'Boots of Magic',
-        statsAtLevel: (level) => ({ skillDmgPct: bootsPct(level), moveSpeedPct: bootsPctSlow(level) }),
-        activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, moveSpeedPct: 0.5 } },
+        statsAtLevel: (level) => ({ skillDmgPct: bootsPct(level), moveSpeedPct: bootsPctSlow(level) * 0.5 }),   // MS-buff halverad (user 2026-07-11): isolerat på MS-siten (bootsPctSlow delas med attackSpeed/maxHp)
+        activeAtMax: { duration: 5, cooldown: 30, stats: { skillDmgPct: 0.5, moveSpeedPct: 0.25 } },   // MS-buff halverad (user 2026-07-11)
       },
       tank: {
         id: 'tank', name: 'Boots of Tank',
@@ -1080,7 +1080,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'm_cdr',          stats: { cdrPct: 0.10 } },
     { id: 'm_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'm_dr',           stats: { dmgReductionPct: 0.10 } },
-    { id: 'm_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'm_ms',           stats: { moveSpeedPct: 0.05 } },   // MS-buff halverad (user 2026-07-11)
     { id: 'm_frost_heal' }, // Frost Nova heals 15% of damage dealt
     { id: 'm_drain_extend' }, // Soul Drain +2s (5s → 7s)
     { id: 'm_bh_radius' },  // Black Hole radius + explosion +30%
@@ -1089,7 +1089,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'l_dmg',          stats: { attackDmg: 5 } },
     { id: 'l_as',           stats: { attackSpeedPct: 0.15 } },
     { id: 'l_crit',         stats: { critChancePct: 0.10 } },
-    { id: 'l_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'l_ms',           stats: { moveSpeedPct: 0.05 } },   // MS-buff halverad (user 2026-07-11)
     { id: 'l_cdr',          stats: { cdrPct: 0.10 } },
     { id: 'l_vine_dot' },   // Vine Trap DoT doubles damage
     { id: 'l_focus_dur' },  // Hunter's Focus +2s duration
@@ -1110,7 +1110,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'a_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'a_as',           stats: { attackSpeedPct: 0.12 } },
     { id: 'a_dr',           stats: { dmgReductionPct: 0.12 } },
-    { id: 'a_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'a_ms',           stats: { moveSpeedPct: 0.05 } },   // MS-buff halverad (user 2026-07-11)
     { id: 'a_spin_extend' }, // Whirlwind +1.5s
     { id: 'a_shout_radius' }, // Shout cone +30%
     { id: 'a_leap_heal' },  // Hero Leap heal 10% → 15%
@@ -1120,7 +1120,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'k_cdr',          stats: { cdrPct: 0.10 } },
     { id: 'k_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'k_dr',           stats: { dmgReductionPct: 0.10 } },
-    { id: 'k_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'k_ms',           stats: { moveSpeedPct: 0.05 } },   // MS-buff halverad (user 2026-07-11)
     { id: 'k_dmg',          stats: { attackDmg: 5 } },
     { id: 'k_as',           stats: { attackSpeedPct: 0.12 } },
     { id: 'k_crit',         stats: { critChancePct: 0.10 } },
@@ -1131,7 +1131,7 @@ const ENGINE_ARENA_TALENTS = {
     { id: 'z_crit',         stats: { critChancePct: 0.10 } },
     { id: 'z_hp',           stats: { maxHpPct: 0.15 } },
     { id: 'z_dr',           stats: { dmgReductionPct: 0.10 } },
-    { id: 'z_ms',           stats: { moveSpeedPct: 0.10 } },
+    { id: 'z_ms',           stats: { moveSpeedPct: 0.05 } },   // MS-buff halverad (user 2026-07-11)
     { id: 'z_skill',        stats: { skillDmgPct: 0.10 } },
     { id: 'z_cdr',          stats: { cdrPct: 0.10 } },
   ],
@@ -1150,7 +1150,7 @@ const ENGINE_BOSS_WARS_TALENTS = {
   bwt_dr:    { stats: { dmgReductionPct: 0.18 } },
   bwt_ls:    { stats: {}, lifestealOnAa: 0.12 },
   bwt_crit:  { stats: { critChancePct: 0.15 }, critDmgBonus: 0.25 },
-  bwt_ms:    { stats: { moveSpeedPct: 0.25 } },   // buffed 0.15→0.25 (was a dead pick vs Iron Body +25% HP)
+  bwt_ms:    { stats: { moveSpeedPct: 0.125 } },   // buffed 0.15→0.25; MS-buff halverad 0.25→0.125 (user 2026-07-11)
   bwt_heal:  { stats: { healPerSecPct: 0.035 } }, // buffed 0.02→0.035 (real sustain identity)
 };
 // 3-nivå item-uppgradering (user 2026-07-07): loadout-items skalas Lv1/2/3 = ×1/×2/×3 på ALLA stats
@@ -1178,9 +1178,9 @@ const ENGINE_BOSS_WARS_ITEMS = {
   soulcollector:  { name: 'Soul Collector',     buyCost: 280, stats: { skillDmgPct: 0.20, cdrPct: 0.15 }, passive: 'harvest' },
   infernal:       { name: 'Infernal Crown',     buyCost: 300, stats: { attackDmgPct: 0.15, skillDmgPct: 0.15 }, passive: 'burningAura' },
   chrono:         { name: 'Chrono Crystal',     buyCost: 300, stats: { skillDmgPct: 0.20, cdrPct: 0.20 }, active: { id: 'timeWarp', cd: 75 } },
-  shadowstep:     { name: 'Shadowstep Boots',   buyCost: 220, stats: { moveSpeedPct: 0.15 }, passive: 'silentSteps',   active: { id: 'blink', cd: 30 }, boots: true },
-  warbringer:     { name: 'Warbringer Greaves', buyCost: 240, stats: { moveSpeedPct: 0.20, maxHp: 400, dmgReductionPct: 0.08 }, passive: 'battleMomentum', active: { id: 'charge', cd: 60 }, boots: true },
-  arcanestriders: { name: 'Arcane Striders',    buyCost: 240, stats: { moveSpeedPct: 0.18, skillDmgPct: 0.10, cdrPct: 0.10 }, passive: 'arcaneFlow', active: { id: 'manaSurge', cd: 60 }, boots: true },
+  shadowstep:     { name: 'Shadowstep Boots',   buyCost: 220, stats: { moveSpeedPct: 0.075 }, passive: 'silentSteps',   active: { id: 'blink', cd: 30 }, boots: true },   // MS-buff halverad (user 2026-07-11)
+  warbringer:     { name: 'Warbringer Greaves', buyCost: 240, stats: { moveSpeedPct: 0.10, maxHp: 400, dmgReductionPct: 0.08 }, passive: 'battleMomentum', active: { id: 'charge', cd: 60 }, boots: true },   // MS-buff halverad (user 2026-07-11)
+  arcanestriders: { name: 'Arcane Striders',    buyCost: 240, stats: { moveSpeedPct: 0.09, skillDmgPct: 0.10, cdrPct: 0.10 }, passive: 'arcaneFlow', active: { id: 'manaSurge', cd: 60 }, boots: true },   // MS-buff halverad (user 2026-07-11)
 };
 
 // Kolla om en side valt en specifik talent (för arena server-auth skill-modifier-logic).
@@ -7897,7 +7897,7 @@ const GANJI_STEP_DISTANCE = 8;
 // Ganji hero. SkillSetup.cs Ganji-E spec: 5s, +20% each of MS/AS/outgoing dmg (skill+AA)/DR/
 // evasion(dodge chance vs a hit)/AA-crit-chance. Cooldown 12s (HERO_SKILL_CD override below).
 const GANJI_E_DUR = 5.0;
-const GANJI_E_MS = 0.20;
+const GANJI_E_MS = 0.10;   // MS-buff halverad (user 2026-07-11)
 const GANJI_E_AS = 0.20;
 const GANJI_E_DMG = 0.20;
 const GANJI_E_DR = 0.10;      // nerf 2026-07-03 (was 0.20): E was overloaded — 6 buffs on one button
@@ -7910,7 +7910,7 @@ const GANJI_E_CRIT = 0.20;
 // 100% lifesteal, refills Katana's Slice (next normal AA is ALSO an empowered guaranteed crit)
 // and marks the target with true sight (clears the target's own invis, if any).
 const GANJI_ULT_MS_BURST_DUR = 1.0;
-const GANJI_ULT_MS_BURST_BONUS = 1.0;
+const GANJI_ULT_MS_BURST_BONUS = 0.5;   // MS-buff halverad (user 2026-07-11)
 const GANJI_ULT_CLONE_SPEED = 14;          // m/s rush speed toward the locked target
 const GANJI_ULT_CLONE_STRIKE_RANGE = 1.6;  // melee reach for the stunning strike
 const GANJI_ULT_CLONE_STUN_DUR = 1.5;      // "1.5 s stunning strike"
@@ -8710,7 +8710,7 @@ function elarLifestealHeal(side, dmgDealt) {
   const heal = dmgDealt * lifestealPct;
   side.hero.hp = Math.min(side.hero.maxHp, side.hero.hp + heal);
 }
-const WHIRLWIND_MS_BUFF = 0.20;
+const WHIRLWIND_MS_BUFF = 0.10;   // MS-buff halverad (user 2026-07-11)
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;
 const SHOUT_DIRECT_DMG_PCT = 0.105;   // War Shout cone-damage −30% (0.15→0.105) user 2026-07-11
@@ -8722,7 +8722,7 @@ const SHOUT_HEAL_SELF_PCT = 0.13;    // War Shout self-heal +30% (0.10→0.13) u
 // +20% MS / +20% utgående skada / +20% DR under fönstret. Allierade får även en
 // (lägre) HoT. Buffen tickas i tickKryxTimers (alla loopar) så den gäller alla lägen.
 const SHOUT_BUFF_DURATION = 4.0;
-const SHOUT_BUFF_MS = 0.20;
+const SHOUT_BUFF_MS = 0.10;   // MS-buff halverad (user 2026-07-11)
 const SHOUT_BUFF_DMG = 0.20;
 const SHOUT_BUFF_DR = 0.20;
 const SHOUT_BUFF_RADIUS = 8.0;       // stor buff-cirkel runt Aragurn
@@ -9710,7 +9710,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Zheyna: Warpath +20% MS / ult-laddning -50% MS.
   const warpathMs = (side.zheynaWarpathRem || 0) > 0 ? (1 + ZHEYNA_E_MS) : 1;
   const ultChargeMs = side.zheynaUltCharging ? ZHEYNA_R_CHARGE_MS_MUL : 1;
-  const rageMs = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage MS-buff (all modes — added inLineWars 2026-07-03)
+  const rageMs = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0) * 0.5) : 1;   // Titan's Rage MS-buff (all modes — added inLineWars 2026-07-03) — MS-buff halverad (user 2026-07-11): endast MS-halvan, titansRageBuff-konst orörd (delas med dmg/DR/AS)
   const shoutMs = (side.elarShoutBuffTime || 0) > 0 ? (1 + SHOUT_BUFF_MS) : 1;   // E3 War Shout MS-buff (alla lägen)
   const xinaMs = xinaMoveSpeedMul(side);   // Xina (decision 139) — cloak/ult/Q-stack MS (1 för icke-Xina)
   // Ganji: E "Ninja's Speed" +20% MS (dedicated ganjiSpeedRem) + R "Ninja's Mastery" +100% MS
@@ -9721,9 +9721,9 @@ function applyMovement(side, joyX, joyZ, dt) {
   // Item-MS-buffar (Fas B 2026-07-07): Silent Steps (+15% efter 4s oskadd), Battle Momentum (+15% 2s),
   // Arcane Flow (+20% 1.5s). battleMomentum/arcaneFlow-timers sätts i senare batchar; multiplikatorerna är redo.
   let itemMsMul = 1;
-  if (side.itemPassives && side.itemPassives.has('silentSteps') && (side.noDamageTime || 0) >= 4) itemMsMul *= 1.15;
-  if ((side.battleMomentumRem || 0) > 0) itemMsMul *= 1.15;
-  if ((side.arcaneFlowRem || 0) > 0) itemMsMul *= 1.20;
+  if (side.itemPassives && side.itemPassives.has('silentSteps') && (side.noDamageTime || 0) >= 4) itemMsMul *= 1.075;   // MS-buff halverad (user 2026-07-11)
+  if ((side.battleMomentumRem || 0) > 0) itemMsMul *= 1.075;   // MS-buff halverad (user 2026-07-11)
+  if ((side.arcaneFlowRem || 0) > 0) itemMsMul *= 1.10;   // MS-buff halverad (user 2026-07-11)
   // Effektiv hastighet (alla buffar/items/slows, utan strength/dt) → serialiseras som buf.ms så KLIENTEN
   // predikterar med RÄTT hastighet vid hög MS (annars springer servern ifrån → snap-loop/stutter, user 2026-07-08).
   side._effMoveSpeed = side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul;
@@ -10099,7 +10099,9 @@ function xinaAttackSpeedMul(side) {
 }
 function xinaMoveSpeedMul(side) {
   if (side.heroId !== 'xina') return 1;
-  return (1 + xinaQBuffMul(side)) * ((side.xinaCloakRem || 0) > 0 ? (1 + XINA_CLOAK_MS) : 1) * ((side.xinaUltRem || 0) > 0 ? (1 + XINA_R_MS) : 1);
+  // MS-buff halverad (user 2026-07-11): Q-stack-bonusen delas med AS (xinaAttackSpeedMul), så halvera
+  // ENDAST MS-portionen här (×0.5), inte XINA_Q_BUFF_PER_HIT-konsten.
+  return (1 + xinaQBuffMul(side) * 0.5) * ((side.xinaCloakRem || 0) > 0 ? (1 + XINA_CLOAK_MS) : 1) * ((side.xinaUltRem || 0) > 0 ? (1 + XINA_R_MS) : 1);
 }
 // Skada + returnerar faktiskt utdelad skada (lifesteal-gate mot immun boss).
 function xinaApplyHitDamage(state, side, e, dmg) {
