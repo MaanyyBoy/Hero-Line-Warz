@@ -46,7 +46,7 @@ const HERO_DEFS = {
     baseHp: 85,           // glass-cannon
     baseDmg: 6,           // mer per AA
     attackRange: 9.0,     // AA-range +50% (6.0 → 9.0) — bågskytt på avstånd
-    attackInterval: 0.7,  // snabbare AA än Gandulf (1.0)
+    attackInterval: 0.5833, // AA-speed +20% (0.7→0.5833) user 2026-07-11
     baseMoveSpeed: 7.0,   // snabbare än Gandulf (6.0)
   },
   kryx: {
@@ -74,7 +74,7 @@ const HERO_DEFS = {
     baseHp: 95,           // spjut-carry: medium HP
     baseDmg: 15,          // hög skada per träff (motsats till snabba archers)
     attackRange: 7.5,     // ranged spjut
-    attackInterval: 1.5,  // AA-takt (1.8→1.5 balans 2026-06-08)
+    attackInterval: 1.25, // AA-speed +20% (1.5→1.25) user 2026-07-11; (1.8→1.5 balans 2026-06-08)
     baseMoveSpeed: 6.0,
   },
   ganji: {
@@ -82,7 +82,7 @@ const HERO_DEFS = {
     baseHp: 110,          // melee sword ninja
     baseDmg: 9,
     attackRange: 2.6,     // melee
-    attackInterval: 0.9,
+    attackInterval: 0.6923, // AA-speed +30% (0.9→0.6923) user 2026-07-11
     baseMoveSpeed: 6.4,
   },
   xina: {                 // 8:e hjälten (2026-06-23) — melee female assassin, crit-passive + shurikens
@@ -1159,6 +1159,8 @@ const ENGINE_BOSS_WARS_TALENTS = {
 const ITEM_BW_MAX_LEVEL = 3;
 const AA_DMG_MUL = 2;   // dubblad auto-attack-skada — ENDAST auto-attacker (appliceras i AA-fire-sites, ej på attackDmg), ALLA hjältar (user 2026-07-10)
 const ZHEYNA_AA_BONUS = 1.5;   // Zheyna: +50% extra AA-skada ovanpå (långsam AA kompenseras) (user 2026-07-10)
+const NYRO_AA_BONUS = 2.0;     // Nyro: +100% AA-skada ovanpå AA_DMG_MUL (user 2026-07-11)
+const GANJI_AA_BONUS = 1.5;    // Ganji: +50% AA-skada ovanpå AA_DMG_MUL (user 2026-07-11)
 const ITEM_NONSCALING_STATS = { cdrPct: true, dmgReductionPct: true };   // item-stats som INTE skalar med nivå: CDR + DR (nerf 2026-07-10; gratis Lv3 ×3 DR nådde 100% odödlighet)
 const itemBwLevelMul = (lvl) => Math.max(1, Math.min(ITEM_BW_MAX_LEVEL, lvl || 1));   // Lv1/2/3 = ×1 / ×2 / ×3 på ALLA stats (user 2026-07-07)
 const ITEM_BW_UPGRADE_COST = { 2: 220, 3: 380 };   // guld för att NÅ Lv2 / Lv3
@@ -1295,7 +1297,7 @@ function onGandulfSkillHit(side, target) {
   // shield-state — duel-orb-reward delar samma field). Cap PASSIVE-bidraget vid
   // stacks × 10% maxHP, men om side.shield redan är högre (duel-orb-reward) bevaras det.
   if (side.gandulfBuffStacks > prevStacks && !side.hero.dead) {
-    const stackCap = side.hero.maxHp * GANDULF_SHIELD_PER_STACK * GANDULF_MAX_STACKS;
+    const stackCap = side.hero.maxHp * 0.5;   // Zyro passive-shield cap = 50% maxHP (var 30% = 0.10×3) user 2026-07-11
     const oldShield = side.shield || 0;
     if (oldShield < stackCap) {
       const add = side.hero.maxHp * GANDULF_SHIELD_PER_STACK;
@@ -1890,7 +1892,7 @@ const RAGE_PULSE_RADIUS = 7.0;       // buff från 5.5: rage-ulten var nästan o
 const RAGE_PULSE_DMG_PCT = 0.05;     // buff från 0.035: rage var svagast i 1v1 (~35%→50% maxHP-ceiling)
 const RAGE_HEAL_PCT = 0.20;
 const BERSERK_DURATION = 5.0;
-const BERSERK_AA_DMG_MUL = 2.50;     // +150% AA-damage
+const BERSERK_AA_DMG_MUL = 4.00;     // Elar-ult (Aragurn Berserk): dubblad bonus +150%→+300% (2.5→4.0) user 2026-07-11
 const BERSERK_AA_LIFESTEAL = 0.25;
 function createArenaState(teamSize) {
   // Team-arena (Task 18): teamSize 1 = exakt gamla 1v1; 2/3 = sides 1..2N där
@@ -7018,7 +7020,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Ganji E "Ninja's Speed": +20% outgoing AA dmg (dedicated ganjiSpeedRem). R break-stealth AA: +50%.
   const ganjiSpeedDmgMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_DMG) : 1;
   const ganjiUltAaDmgMul = ganjiUltAaNow ? GANJI_ULT_AA_DMG_MUL : 1;
-  let aaDmg = side.attackDmg * AA_DMG_MUL * (side.heroId === 'zheyna' ? ZHEYNA_AA_BONUS : 1) * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
+  let aaDmg = side.attackDmg * AA_DMG_MUL * (side.heroId === 'zheyna' ? ZHEYNA_AA_BONUS : side.heroId === 'nyro' ? NYRO_AA_BONUS : side.heroId === 'ganji' ? GANJI_AA_BONUS : 1) * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -7101,7 +7103,7 @@ function updateHeroAttack(state, side, opp, dt) {
         targetIsMonster: ex.isMonster,
         targetIsHero: false,
         targetSideIdx: 0,
-        damage: side.attackDmg * AA_DMG_MUL * auraDmg * buffDmgMul, isAoE: false, isCrit: false,   // Nyro split = AA → ×2
+        damage: side.attackDmg * AA_DMG_MUL * NYRO_AA_BONUS * auraDmg * buffDmgMul, isAoE: false, isCrit: false,   // Nyro split = AA → ×2 × NYRO_AA_BONUS (+100%, user 2026-07-11)
         lifestealRatio: 0,
         nyroBuffed: false,
         appliesPoison: true,
@@ -8409,6 +8411,8 @@ const WIND_PUFF_DMG_PCT = 0.10;                  // 10% maxHP (0.20→0.07 var �
 const WIND_PUFF_PUSH_DIST = 3;                   // 3m pushback i cast-riktning
 const WIND_PUFF_DEBUFF_DURATION = 4.0;
 const WIND_PUFF_DEBUFF_MUL = 1.20;               // +20% taken damage
+const WIND_PUFF_SLOW_MUL = 0.5;                  // Zyro Q: 50% MS-slow på allt den träffar (user 2026-07-11)
+const WIND_PUFF_SLOW_DUR = 2;                     // ...i 2 sekunder
 
 function castWindPuff(state, sideIdx, dirX, dirZ) {
   const side = state.sides[sideIdx];
@@ -8452,6 +8456,7 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
       m.z += dirZ * WIND_PUFF_PUSH_DIST;
       m.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
       m.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+      m.slowMul = Math.min(m.slowMul || 1, WIND_PUFF_SLOW_MUL); m.slowTime = Math.max(m.slowTime || 0, WIND_PUFF_SLOW_DUR);   // 50% MS-slow 2s
     }
   }
   // Opp creeps
@@ -8466,6 +8471,7 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
       c.z += dirZ * WIND_PUFF_PUSH_DIST;
       c.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
       c.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+      c.slowMul = Math.min(c.slowMul || 1, WIND_PUFF_SLOW_MUL); c.slowTime = Math.max(c.slowTime || 0, WIND_PUFF_SLOW_DUR);   // 50% MS-slow 2s
     } else {
       const idx = opp.playerCreeps.indexOf(c);
       if (idx >= 0) { opp.playerCreeps.splice(idx, 1); side.gold += minionBounty(c); gainXp(side, minionXp(c)); }
@@ -8482,6 +8488,7 @@ function castWindPuff(state, sideIdx, dirX, dirZ) {
       eSide.hero.z += dirZ * WIND_PUFF_PUSH_DIST;
       eSide.hero.dmgTakenDebuffTime = WIND_PUFF_DEBUFF_DURATION;
       eSide.hero.dmgTakenDebuffMul = WIND_PUFF_DEBUFF_MUL;
+      eSide.heroSlowMul = Math.min(eSide.heroSlowMul == null ? 1 : eSide.heroSlowMul, WIND_PUFF_SLOW_MUL); eSide.heroSlowTime = Math.max(eSide.heroSlowTime || 0, WIND_PUFF_SLOW_DUR);   // 50% MS-slow 2s
     }
   }
 }
@@ -8706,11 +8713,11 @@ function elarLifestealHeal(side, dmgDealt) {
 const WHIRLWIND_MS_BUFF = 0.20;
 const SHOUT_LENGTH = 8.0;
 const SHOUT_HALF_ANGLE = Math.PI / 3;
-const SHOUT_DIRECT_DMG_PCT = 0.15;
+const SHOUT_DIRECT_DMG_PCT = 0.105;   // War Shout cone-damage −30% (0.15→0.105) user 2026-07-11
 const SHOUT_SLOW_DURATION = 3.0;
 const SHOUT_SLOW_MUL = 0.80;
 const SHOUT_HEAL_DURATION = 2.0;
-const SHOUT_HEAL_SELF_PCT = 0.10;
+const SHOUT_HEAL_SELF_PCT = 0.13;    // War Shout self-heal +30% (0.10→0.13) user 2026-07-11
 // E3 War Shout buff (utöver cone-skadan): self + allierade i stor cirkel får
 // +20% MS / +20% utgående skada / +20% DR under fönstret. Allierade får även en
 // (lägre) HoT. Buffen tickas i tickKryxTimers (alla loopar) så den gäller alla lägen.
@@ -8719,7 +8726,7 @@ const SHOUT_BUFF_MS = 0.20;
 const SHOUT_BUFF_DMG = 0.20;
 const SHOUT_BUFF_DR = 0.20;
 const SHOUT_BUFF_RADIUS = 8.0;       // stor buff-cirkel runt Aragurn
-const SHOUT_HEAL_ALLY_PCT = 0.06;    // allierad HoT (lägre än Aragurns egen)
+const SHOUT_HEAL_ALLY_PCT = 0.078;   // allierad HoT +30% (0.06→0.078) user 2026-07-11
 // +20% utgående skada medan War Shout-buffen är aktiv (self eller buffad allierad).
 function elarShoutDmgMul(side) {
   return (side && (side.elarShoutBuffTime || 0) > 0) ? (1 + SHOUT_BUFF_DMG) : 1;
