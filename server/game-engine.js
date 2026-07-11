@@ -2423,6 +2423,7 @@ function _arenaResetHero(state, side, spawn, roundNum) {
   side.hero.dotRemaining = 0; side.hero.poisonRemaining = 0; side.hero.poisonStacks = 0;
   side.heroFearTime = 0; side.heroSlowTime = 0; side.heroSlowMul = 1;
   side.heroASlowTime = 0; side.heroASlowMul = 1;   // Kryx-rework: hjälte-AS-slow
+  side.kostefoDebuffStacks = 0; side.kostefoDebuffTime = 0; side._kostefoStackCd = 0;   // Kostef-debuff får ej bäras in i nästa arena-runda (resilience-audit 2026-07-11)
   side.titansStompDrTime = 0; side.titansStompDr = 0; side.titansRageTime = 0; side.titansRageBuff = 0;
   side.rageLeechStart = 0; side.rageLeechTime = 0; side.rageLeechOwner = 0;
   side.berserkCharged = false; side.berserkDmgAccum = 0;   // berserk-mätare
