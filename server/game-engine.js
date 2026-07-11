@@ -1331,6 +1331,16 @@ function damageHero(side, amount, isAaDamage) {
   if (side.hero.dead) return;
   if ((side.phoenixImmuneRemaining || 0) > 0) return;   // boss-wars phoenix post-revive-immunitet
   if (amount > 0) side.noDamageTime = 0;   // Silent Steps (Shadowstep Boots): återställ "tid utan skada"
+  // Kostef passiv-debuff: varje gång Kostef skadar en fiende-hjälte → +1 stack (max 5), refresh 3s.
+  // _kostefoStackCd (0.3s) hindrar att ett multi-hit-frame maxar direkt. Centralt här → fångar ALL
+  // Kostef-skada (AA/skills/DoT/companion) via _dmgActor. Enbart PvP-hjältar; boss/monster oberörda. (user 2026-07-11)
+  if (_dmgActor && _dmgActor !== side && _dmgActor.heroId === 'kostefo' && side.hero && !side.hero.dead) {
+    if ((side._kostefoStackCd || 0) <= 0) {
+      side.kostefoDebuffStacks = Math.min(5, (side.kostefoDebuffStacks || 0) + 1);
+      side._kostefoStackCd = 0.3;
+    }
+    side.kostefoDebuffTime = 3;
+  }
   // Kryx-DR (rework 2026-06-07): Titan's Stomp-stack + Titan's Rage, cap 70%. Passiven
   // är nu berserk-mätaren (offensiv empower, INGEN DR) → gamla Stalwart Resolve borttagen.
   let kryxMul = 1;
@@ -2188,6 +2198,10 @@ function tickHeroBuffTimers(sd, dt) {
     sd.hero.frozenTime = 0; sd.hero.tauntedTime = 0; sd.heroFearTime = 0;
     if (sd.iceBlockRemaining) sd.iceBlockRemaining = 0;
   }
+  // Kostef-debuff: anti-burst-cd + stack-expiry (user 2026-07-11). OBS: classic Line Wars kör EJ
+  // denna fn → samma nedräkning speglas i tickGame:s [1,2]-loop så stacks alltid rensas.
+  if ((sd._kostefoStackCd || 0) > 0) sd._kostefoStackCd = Math.max(0, sd._kostefoStackCd - dt);
+  if ((sd.kostefoDebuffTime || 0) > 0) { sd.kostefoDebuffTime -= dt; if (sd.kostefoDebuffTime <= 0) { sd.kostefoDebuffTime = 0; sd.kostefoDebuffStacks = 0; } }
   tickItemPassiveTimers(sd, dt);   // item-passiv/aktiv-timers (delad; ANROPAS ÄVEN från tickGame för Line Wars)
 }
 
@@ -2644,6 +2658,7 @@ function _makeHeroSnapBuf() {
     sh: undefined, lv: 0, sk: { q: 0, f: 0, e: 0 }, hid: 'zyro',
     ac: 0, g: undefined, ms: 6, ue: undefined, tnt: undefined, fzt: undefined,
     fer: undefined, ibr: undefined, slm: undefined, slt: undefined,
+    kd: undefined,   // Kostef-debuff-stacks (1..5) → klient-indikator; utelämnas när 0
     asp: undefined, adm: undefined, wwr: undefined,
     lp: undefined, lz: undefined, rg: undefined, bz: undefined,
     lInv: undefined, kUlt: undefined, kJoints: undefined,
@@ -2700,6 +2715,7 @@ function serializeArenaHero(side, buf) {
   buf.mlk = flag((side.hero.frozenTime || 0) > 0 || (side.iceBlockRemaining || 0) > 0 || (side.heroFearTime || 0) > 0);
   buf.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined;
   buf.slt = nzr2(side.heroSlowTime);
+  buf.kd = ((side.kostefoDebuffTime || 0) > 0 && (side.kostefoDebuffStacks || 0) > 0) ? side.kostefoDebuffStacks : undefined;   // Kostef-debuff-stacks
   buf.asp = nzr2(side.arenaSpeedBuff);
   buf.adm = nzr2(side.arenaDamageBuff);
   buf.wwr = nzr2(side.whirlwindRemaining);
@@ -6647,7 +6663,7 @@ function applySkillDamageToMonster(state, side, opp, mIdx, dmg) {
     triggerShatter(state, side, opp, m.x, m.z, side);
     m.frozenTime = 0;
   }
-  const finalDmg = bossWarsDmgMod(m, dmg * elarShoutDmgMul(side) * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR (+E3 shout)
+  const finalDmg = bossWarsDmgMod(m, dmg * elarShoutDmgMul(side) * kostefoDebuffOutMul(side) * dmgTakenDebuffMul(m));   // boss: fas-immunitet + DR (+E3 shout + Kostef-debuff)
   const actualDealt = Math.min(m.hp, finalDmg);
   m.hp -= finalDmg;
   elarLifestealHeal(side, actualDealt);
@@ -6660,7 +6676,7 @@ function applySkillDamageToCreep(state, attackerSide, oppSide, creep, dmg) {
     triggerShatter(state, oppSide, attackerSide, creep.x, creep.z, attackerSide);
     creep.frozenTime = 0;
   }
-  const finalDmg = dmg * elarShoutDmgMul(attackerSide) * dmgTakenDebuffMul(creep);
+  const finalDmg = dmg * elarShoutDmgMul(attackerSide) * kostefoDebuffOutMul(attackerSide) * dmgTakenDebuffMul(creep);
   const actualDealt = Math.min(creep.hp, finalDmg);
   creep.hp -= finalDmg;
   elarLifestealHeal(attackerSide, actualDealt);
@@ -6672,7 +6688,7 @@ function applySkillDamageToOppHero(state, side, opp, dmg) {
     triggerShatter(state, opp, side, opp.hero.x, opp.hero.z, side);
     opp.hero.frozenTime = 0;
   }
-  const finalDmg = dmg * elarShoutDmgMul(side) * dmgTakenDebuffMul(opp.hero);
+  const finalDmg = dmg * elarShoutDmgMul(side) * kostefoDebuffOutMul(side) * dmgTakenDebuffMul(opp.hero);
   const actualDealt = Math.min(opp.hero.hp, finalDmg);
   damageHero(opp, finalDmg);
   elarLifestealHeal(side, actualDealt);
@@ -7020,7 +7036,7 @@ function updateHeroAttack(state, side, opp, dt) {
   // Ganji E "Ninja's Speed": +20% outgoing AA dmg (dedicated ganjiSpeedRem). R break-stealth AA: +50%.
   const ganjiSpeedDmgMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_DMG) : 1;
   const ganjiUltAaDmgMul = ganjiUltAaNow ? GANJI_ULT_AA_DMG_MUL : 1;
-  let aaDmg = side.attackDmg * AA_DMG_MUL * (side.heroId === 'zheyna' ? ZHEYNA_AA_BONUS : side.heroId === 'nyro' ? NYRO_AA_BONUS : side.heroId === 'ganji' ? GANJI_AA_BONUS : 1) * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * xinaOutMul(side);
+  let aaDmg = side.attackDmg * AA_DMG_MUL * (side.heroId === 'zheyna' ? ZHEYNA_AA_BONUS : side.heroId === 'nyro' ? NYRO_AA_BONUS : side.heroId === 'ganji' ? GANJI_AA_BONUS : 1) * auraDmg * buffDmgMul * critMul * (berserkActive ? BERSERK_AA_DMG_MUL : 1) * rageDmgMul * (ganjiEmpowered ? GANJI_EMPOWER_DMG_MUL : 1) * ganjiSpeedDmgMul * ganjiUltAaDmgMul * elarShoutDmgMul(side) * kostefoDebuffOutMul(side) * xinaOutMul(side);
   if (ultAaNow) {
     const tMax = target.entity.maxHp || target.entity.hp || aaDmg;
     aaDmg = tMax * LEGOLUS_ULT_AA_DMG_PCT;
@@ -7136,7 +7152,7 @@ function updateHeroAttack(state, side, opp, dt) {
   const kryxAsSlowMul = (side.heroASlowTime || 0) > 0 ? (side.heroASlowMul || 1) : 1;
   const rageAsMul = (side.inArena1v1 || side.inBossWars || side.inLineWars || side.inSurvival) && (side.titansRageTime || 0) > 0 ? (1 + (side.titansRageBuff || 0)) : 1;   // Titan's Rage AS-buff (all modes — was arena/boss only, inconsistent with the dmg/DR/MS buff; server-debug 2026-07-03)
   const ganjiSpeedAsMul = (side.ganjiSpeedRem || 0) > 0 ? (1 + GANJI_E_AS) : 1;   // Ganji E "Ninja's Speed" +20% AS (dedicated field)
-  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * ganjiSpeedAsMul * xinaAttackSpeedMul(side));
+  side.attackCd = interval / ((side.attackSpeedMul || 1) * auraAs * focusAsMul * cloudAsMul * bannerAsMul * warpathAsMul * kryxAsSlowMul * rageAsMul * ganjiSpeedAsMul * xinaAttackSpeedMul(side) * kostefoDebuffAsMul(side));
   // Face the target and commit to the swing: the hero stops to attack (can't run + AA at once).
   // Lock scales with the just-computed interval → faster attack speed = shorter stop.
   { const _fx = target.entity.x - side.hero.x, _fz = target.entity.z - side.hero.z, _fd = Math.hypot(_fx, _fz) || 1;
@@ -8731,6 +8747,12 @@ const SHOUT_HEAL_ALLY_PCT = 0.078;   // allierad HoT +30% (0.06→0.078) user 20
 function elarShoutDmgMul(side) {
   return (side && (side.elarShoutBuffTime || 0) > 0) ? (1 + SHOUT_BUFF_DMG) : 1;
 }
+// Kostef stacking-debuff (user 2026-07-11): per stack (max 5) −5% MS / −5% AS / −5% utgående skada.
+// Faktorn läses på den DEBUFFADE sidan; 0 om ingen aktiv debuff.
+function kostefoDebuffFactor(side){ if(!side||(side.kostefoDebuffTime||0)<=0) return 0; return 0.05*Math.min(5, side.kostefoDebuffStacks||0); }
+function kostefoDebuffOutMul(side){ return 1 - kostefoDebuffFactor(side); }   // utgående skada
+function kostefoDebuffMsMul(side){ return 1 - kostefoDebuffFactor(side); }    // move speed
+function kostefoDebuffAsMul(side){ return 1 - kostefoDebuffFactor(side); }    // attack speed
 const LEAP_TRAVEL_TIME = 1.0;
 const LEAP_MAX_DISTANCE = 11.5;
 const LEAP_RADIUS = 4.55;
@@ -9726,7 +9748,7 @@ function applyMovement(side, joyX, joyZ, dt) {
   if ((side.arcaneFlowRem || 0) > 0) itemMsMul *= 1.10;   // MS-buff halverad (user 2026-07-11)
   // Effektiv hastighet (alla buffar/items/slows, utan strength/dt) → serialiseras som buf.ms så KLIENTEN
   // predikterar med RÄTT hastighet vid hög MS (annars springer servern ifrån → snap-loop/stutter, user 2026-07-08).
-  side._effMoveSpeed = side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul;
+  side._effMoveSpeed = side.moveSpeed * speedMul * invisMul * cloudMul * wpMul * hammerMul * bannerMul * zyroPassiveMs * warpathMs * ultChargeMs * rageMs * shoutMs * slowMul * xinaMs * ganjiSpeedMs * ganjiUltMs * wwMul * itemMsMul * kostefoDebuffMsMul(side);
   const nx = side.hero.x + ndx * side._effMoveSpeed * strength * dt;
   const nz = side.hero.z + ndz * side._effMoveSpeed * strength * dt;
   const opts = side.inEnemyTerritory ? { inEnemyTerritory: true } : null;
@@ -11251,6 +11273,9 @@ function tickGame(state, dt) {
     tickBurningAura(state, us, dt);   // Burning Aura även i classic Line Wars/duell (framtidssäkrar Line Wars-item-shop)
     tickFrozenDomains(state, us, dt);
     tickItemPassiveTimers(us, dt);    // item-aktiv-cd + MS-buffar + iron wall + rebirth (Line Wars kör ej tickHeroBuffTimers)
+    // Kostef-debuff-expiry (spegel av tickHeroBuffTimers; Line Wars kör ej den) → stacks rensas alltid.
+    if ((us._kostefoStackCd || 0) > 0) us._kostefoStackCd = Math.max(0, us._kostefoStackCd - dt);
+    if ((us.kostefoDebuffTime || 0) > 0) { us.kostefoDebuffTime -= dt; if (us.kostefoDebuffTime <= 0) { us.kostefoDebuffTime = 0; us.kostefoDebuffStacks = 0; } }
     if ((us.berserkRemaining || 0) > 0) { if (us.hero.dead) us.berserkRemaining = 0; else us.berserkRemaining = Math.max(0, us.berserkRemaining - dt); }
   }
   // Duel-fas: bara hero-kombat, hoppa över wave/monster/creep/income
@@ -11578,6 +11603,7 @@ function _makeLwHeroBuf() {
     x: 0, z: 0, hp: 0, mh: 0, sh: undefined, fx: 0, fz: 0, d: false, rt: undefined,
     frz: undefined, dot: undefined, tnt: undefined, mlk: undefined, poi: undefined, lMk: undefined,
     fer: undefined, slm: undefined, slt: undefined,   // slow/fear-VFX (LW-spegel av arenans fer/slm/slt)
+    kd: undefined,   // Kostef-debuff-stacks (1..5) → klient-indikator; utelämnas när 0
     zc: undefined, zsp: undefined, zus: undefined, zch: undefined, zwr: undefined,
     xsh: undefined, xhk: undefined, xstm: undefined, xlnch: undefined, xcl: undefined, xul: undefined,
     trg: undefined, lz: undefined, rg: undefined, bz: undefined,
@@ -11735,6 +11761,7 @@ function _serializeLwHero(side, buf) {
   buf.fer = nzr2(side.heroFearTime);
   buf.slm = (side.heroSlowMul != null && side.heroSlowMul !== 1) ? r3(side.heroSlowMul) : undefined;
   buf.slt = nzr2(side.heroSlowTime);
+  buf.kd = ((side.kostefoDebuffTime || 0) > 0 && (side.kostefoDebuffStacks || 0) > 0) ? side.kostefoDebuffStacks : undefined;   // Kostef-debuff-stacks
   // mlk (movement-locked) must mirror applyMovement's hard-CC gate (~line 8806):
   // `(side.inArena1v1 || side.inBossWars || side.inSurvival) && (frozen/iceBlock/fear)`.
   // Line Wars is intentionally EXCLUDED from that gate (CC does not immobilize in classic
